@@ -1,0 +1,107 @@
+name: client-js
+
+# The JS/TS gate client (clients/js, T-82): Biome (lint and format), tsc strict, every test (the vectors of
+# spec/vectors included) on the current and the previous Node LTS release, the build and a smoke test of the built
+# package, npm audit and the registry signatures of the dev tools. Conventions: clients/README.md ("CI per client").
+#
+# No path filter on the triggers: a required check that is skipped blocks the merge forever. Instead the first step
+# looks at what the pull request changes and ends the job early and green when nothing of the client, the
+# specification or this workflow is touched. On main, by hand and on the schedule it always runs in full — the
+# schedule because advisories appear without a code change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # GitHub cron only knows UTC: 03:35 UTC = 05:35 Europe/Berlin (CEST) or 04:35 (CET).
+    - cron: "35 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest  # public repository: GitHub-hosted runners only
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The current and the previous LTS release; setup-node resolves the aliases to the newest patch.
+        node: [lts/*, lts/-1]
+    defaults:
+      run:
+        working-directory: clients/js
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit of a pull request and its first parent (the base): enough to see what the PR changes.
+          fetch-depth: 2
+
+      - name: Changes that concern the client
+        id: scope
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "not a pull request: full run"; exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if printf '%s\n' "$changed" | grep -qE '^(clients/js/|spec/|\.github/workflows/client-js\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "the client, the specification or this workflow changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing of the JS client changed: green without a run"
+          fi
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          node-version: ${{ matrix.node }}
+          # No cache: eight dev packages install in seconds, and a cache is one more thing a pull request could poison.
+          package-manager-cache: false
+
+      - name: Node version
+        if: steps.scope.outputs.run == 'true'
+        run: node --version && npm --version
+
+      # Lifecycle scripts stay off: the dev tools need none, and `prepare` (the build) runs as its own step below.
+      - name: Install the dev tools from the lock file
+        if: steps.scope.outputs.run == 'true'
+        run: npm ci --ignore-scripts --no-fund
+
+      - name: Vulnerabilities (npm audit, every dependency)
+        if: steps.scope.outputs.run == 'true'
+        run: npm audit --audit-level=low
+
+      - name: Registry signatures and provenance of the installed packages
+        if: steps.scope.outputs.run == 'true'
+        run: npm audit signatures
+
+      - name: Lint and format (Biome)
+        if: steps.scope.outputs.run == 'true'
+        run: npm run lint
+
+      - name: Type check (tsc strict)
+        if: steps.scope.outputs.run == 'true'
+        run: npm run typecheck
+
+      - name: Tests (every vector of spec/vectors, HTTP, properties)
+        if: steps.scope.outputs.run == 'true'
+        run: npm test
+
+      - name: Build and load the built package
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          npm run build
+          node --input-type=module -e '
+            const gate = await import("./dist/index.js");
+            const node = await import("./dist/node.js");
+            const g = await gate.createGate({ mode: "header" });
+            const id = await g.identify({ headers: [["Remote-User", "anna"], ["Remote-Auth", "session"]] });
+            if (id.user !== "anna" || !id.isSession() || typeof node.gateMiddleware !== "function") process.exit(1);
+            console.log("dist loads and identifies");
+          '

@@ -2,7 +2,7 @@
 # The gate before every push: functional tests + browser test + hygiene + website build.
 #
 #   scripts/check.sh            # everything
-#   scripts/check.sh --fast     # without the browser test (only when really in a hurry)
+#   scripts/check.sh --fast     # without the browser test and the Rust and JS clients (only when really in a hurry)
 #
 # The pre-push hook (.githooks/pre-push) calls this script. Once per clone:
 #   git config core.hooksPath .githooks
@@ -92,6 +92,29 @@ if [[ -z "$RUST_SKIP" ]]; then
         "$CARGO" test --locked --all-features --quiet) || fail "Rust gate client"
 else
     printf '\n\033[33m! Rust gate client not tested here (%s) — the CI job client-rust runs it\033[0m\n' "$RUST_SKIP"
+fi
+
+# The JS/TS gate client (clients/js, T-82): its own CI workflow (client-js.yml, mandatory there, on two Node LTS
+# releases with npm audit and the build). Here it runs in the full gate when Node runs TypeScript directly (22.18,
+# 23.6, 24 and later); otherwise the step says why it did not run. `--fast` leaves it out like the Rust client. The dev
+# tools go into clients/js/node_modules — an ignored setup directory like .venv — from the lock file and without
+# lifecycle scripts, so `prepare` builds nothing into the tree (the build runs in CI only).
+if [[ $FAST -eq 1 ]]; then
+    JS_SKIP="--fast"
+elif ! command -v node >/dev/null || ! command -v npm >/dev/null; then
+    JS_SKIP="no node and npm"
+elif ! node -e 'const [a, b] = process.versions.node.split(".").map(Number);
+                process.exit(a >= 24 || (a === 23 && b >= 6) || (a === 22 && b >= 18) ? 0 : 1)'; then
+    JS_SKIP="node $(node --version) cannot run TypeScript directly (needs 22.18, 23.6 or 24+)"
+else
+    JS_SKIP=""
+fi
+if [[ -z "$JS_SKIP" ]]; then
+    step "JS/TS gate client (clients/js): Biome, tsc, tests"
+    (cd clients/js && npm ci --ignore-scripts --no-audit --no-fund --prefer-offline --loglevel=error \
+        && npm run --silent lint && npm run --silent typecheck && npm test --silent) || fail "JS/TS gate client"
+else
+    printf '\n\033[33m! JS/TS gate client not tested here (%s) — the CI job client-js runs it\033[0m\n' "$JS_SKIP"
 fi
 
 step "Build the website — exactly what the Pages action ships"

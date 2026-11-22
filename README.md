@@ -2021,9 +2021,12 @@ existing forward auth, so a request and its body are not lost.
   token mode, standard library only; not published yet, use it by commit), the **Rust client** in
   [`clients/rust/`](https://github.com/Ollornog/TinySesam/tree/main/clients/rust) (crate `tinysesam-gate`: header and
   token mode, the key set fetch behind the feature `jwks`, framework-neutral via the `http` crate, an axum example; not
-  published to the Rust crate registry, use it as a git dependency); clients for JS/TS and PHP are planned under
-  [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no FastAPI)
-  in the package itself (backlog T-86).
+  published to the Rust crate registry, use it as a git dependency), the **JS/TS client** in
+  [`clients/js/`](https://github.com/Ollornog/TinySesam/tree/main/clients/js) (TypeScript, ESM, no runtime dependency:
+  WebCrypto `Ed25519` and `fetch`, so it runs on Node, Deno, Bun and edge runtimes; Node/Express middleware and a Fetch
+  adapter for Hono and edge handlers; not published to npm, use it from the repository); a client for PHP is planned
+  under [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no
+  FastAPI) in the package itself (backlog T-86).
 
 ### Signing in at the gate: invisible or with a page (T-21)
 

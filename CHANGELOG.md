@@ -28,6 +28,49 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   relaxations this needs (`lenient_utf8`, `allow_bom`, `allow_nan`, `skip_signature`, `no_ts_id_check`,
   `header_lenient_utf8`, `header_any_id`), each measured by the self-probes.
 
+### Added — the gate client in JavaScript and TypeScript (T-82)
+
+- `clients/js/`, package `@tinysesam/gate` 0.1.0 (TypeScript, ESM, `"private": true`), following
+  `spec/gate-client.md`: header mode (`mode: 'header'` as the explicit opt-in, optional trusted proxy list, renamed
+  headers) and token mode with fixed keys or a key set URL (5 s deadline through `AbortSignal.timeout`, 64 KiB read
+  limit, freshness 60–3600 s, one attempt per 10 s, the last good set for up to 3600 s, a running fetch shared by
+  concurrent requests, no redirects, a monotonic cache clock). The checking order and the error classes of spec
+  §4.4/§4.5 as a typed `GateError` (`code`, `kid`); `alg` is a constant, never taken from the token. **No runtime
+  dependency:** WebCrypto `Ed25519`, `fetch`, `TextDecoder` and `JSON.parse` behind a scan that refuses repeated member
+  names and lone surrogates and keeps the source text of integers; the core loads no Node module, so it runs on Node,
+  Deno, Bun and edge runtimes, and `createGate` refuses to start where WebCrypto `Ed25519` is missing. A Node/Express
+  adapter (`@tinysesam/gate/node`: middleware over the raw field lines, `requireAuth`, `requireRole`,
+  `requireSession`), a Fetch adapter for Hono and edge handlers (`identifyRequest`, `guardResponse`, `withGate`), the
+  top bar helper of spec §8, two examples. A setting of the other mode or an unknown setting stops the start too. Header
+  mode is the default: token mode passes every vector but cannot get the token with today's proxy template (T-84). Not
+  published to npm; used from the repository (pnpm Git dependency with a path, or a vendored copy).
+- Tests (`node --test`, TypeScript run directly): every vector of `spec/vectors/*.json`, read from the repository
+  (token 114, headers 33 — also through `Gate.identify` and through a real Node HTTP server with the middleware —, key
+  sets 19, cache scenarios 10, top bar 6, the test keys); against a real HTTP server a JWKS endpoint that never answers
+  (the request returns after the 5 s deadline, the next one at once), one that stalls the body, a body above 64 KiB
+  (exactly 64 KiB as its counterpart), 32 concurrent requests sharing one fetch, no redirects; tokens signed with test
+  key A that carry exactly one defect each (invalid UTF-8, BOM, repeated claim — also spelled with an escape —, `NaN`,
+  lone surrogate, `1.0` or `1e3` as a time, a control character); fast-check properties (no input throws past the API,
+  a changed or inserted character never verifies, the group and control-character rules). 104 hand mutations, one
+  per rule, each restored from a saved copy with a hash check: 97 red, 7 equivalent because a second guard holds the
+  same rule (the base64url alphabet behind the canonical check, the byte order mark as bytes and as a character, an
+  empty segment failing as empty JSON with the same class, the key length in the JWK and in the import, a key set
+  that is no object failing on its missing `keys`, a second fetch in one request stopped by the rate limit, the two
+  deadlines of a fetch). The first run left ten mutations green; each got a test (see T-82). The core also ran
+  unchanged on Deno 2.9 and Bun 1.4 (a local smoke test, not in CI).
+- CI: `.github/workflows/client-js.yml` on `ubuntu-latest` (Biome, `tsc` strict, the tests on the current and the
+  previous Node LTS release, the build and a smoke test of `dist/`, `npm audit`, `npm audit signatures`; nightly for new
+  advisories; no path filter — a pull request that touches neither the client nor the specification ends early and
+  green). Dependabot `npm` for `/clients/js`; the auto-merge counts `client-js.yml` among its mandatory workflows and
+  accepts `npm` updates. `scripts/check.sh` runs the client in the full gate when Node can run TypeScript directly
+  (22.18+), and says why it skipped otherwise or with `--fast`.
+
+### Added — CodeQL for the JS/TS and the Rust gate client
+
+- `.github/workflows/codeql.yml` analyses `javascript-typescript` (limited to `clients/js`) and `rust` (limited to
+  `clients/rust`) without a build, each in the pattern of the Go analysis: a job without write permission writes SARIF,
+  a separate job with `security-events: write` uploads it and runs no code.
+
 ### Added — the gate client in Rust (T-81)
 
 - `clients/rust/`, crate `tinysesam-gate` 0.1.0 (edition 2024, `#![forbid(unsafe_code)]`), following

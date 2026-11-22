@@ -79,7 +79,7 @@ name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
   workflow_run:
-    workflows: ["tests", "release", "audit", "CodeQL", "client-go", "client-rust"]
+    workflows: ["tests", "release", "audit", "CodeQL", "client-go", "client-rust", "client-js"]
     types: [completed]
   # Geplanter Nachlauf: ein Intervall, keine Uhrzeit — die Zeitzone spielt keine Rolle.
   schedule:
@@ -207,9 +207,11 @@ jobs:
           #                    und fährt sie)
           #   cargo          — clients/rust, the Rust gate client (`client-rust`: format, clippy, every test with all
           #                    features, cargo audit)
-          AUTO_OEKO: "github_actions pip uv docker docker_compose go_modules cargo"
+          #   npm_and_yarn   — clients/js, the JS/TS gate client (`client-js`: npm audit, registry signatures, Biome,
+          #                    tsc, every test on two Node LTS releases, the build)
+          AUTO_OEKO: "github_actions pip uv docker docker_compose go_modules cargo npm_and_yarn"
           # Die Workflows, deren Jobs die Abnahme sind. Jeder läuft auf `pull_request` ohne Pfadfilter.
-          PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml client-go.yml client-rust.yml"
+          PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml client-go.yml client-rust.yml client-js.yml"
           # Abnahme nach dem Merge (PO 2026-10-11): Die Pages-Actions laufen nur auf main (deploy-pages hat keine
           # öffentliche Probe). Ihr Update mergt selbst, der Nachlauf von pages.yml nimmt es ab; scheitert er, bleibt
           # die alte Seite online und ci-wache meldet den roten Lauf.
@@ -660,6 +662,7 @@ jobs:
           gh workflow run audit.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run ci.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run client-go.yml --repo "$REPO" --ref "$STANDARD"
+          gh workflow run client-js.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run client-rust.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run codeql.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run pages.yml --repo "$REPO" --ref "$STANDARD"

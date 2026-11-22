@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 67/79 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 68/79 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -94,7 +94,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-79](T-79-diagnostics-report-and-bug-form-instead-of-telemetry.md)** Diagnostics report and bug form instead of telemetry · M-2
 * ☑ **[T-80](T-80-gate-client-in-go.md)** Gate client in Go · M-2
 * ☑ **[T-81](T-81-gate-client-in-rust.md)** Gate client in Rust · M-2
-* ☐ **[T-82](T-82-gate-client-in-javascript-and-typescript.md)** Gate client in JavaScript and TypeScript · M-2
+* ☑ **[T-82](T-82-gate-client-in-javascript-and-typescript.md)** Gate client in JavaScript and TypeScript · M-2
 * ☐ **[T-83](T-83-gate-client-in-php.md)** Gate client in PHP · M-2
 * ☐ **[T-84](T-84-token-mode-delivery-to-the-application.md)** Token mode: deliver the gate token to the application · M-2
 * ☐ **[T-85](T-85-role-names-without-comma.md)** Role names without comma and control characters · M-2

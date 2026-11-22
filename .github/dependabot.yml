@@ -178,6 +178,23 @@ updates:
         patterns: ["*"]
         update-types: ["patch", "minor"]
 
+  # The JS/TS gate client (clients/js, T-82): its package-lock.json. The library has no runtime dependency; the lock file
+  # holds the dev tools only (TypeScript, Biome, fast-check, the Node types). The workflow client-js.yml accepts a bump
+  # (npm audit, registry signatures, Biome, tsc, every test on two Node LTS releases, the build). Patch and minor
+  # bundled, majors singly, as for the other clients.
+  - package-ecosystem: npm
+    directory: /clients/js
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "client-js"
+    groups:
+      all:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+
   # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
   # if the registry or the package server does not start, `rehearsal` is red.
   # NOT under .github/ (2026-11-13): there Dependabot may not open a PR for docker files — the job of 2026-11-12 ended

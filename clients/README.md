@@ -1,7 +1,8 @@
 # Gate clients
 
 Small libraries for applications behind TinySesam's gate, one per language (Python lives in the package itself). Built so far:
-**Go** ([`clients/go/`](go/README.md)) and **Rust** ([`clients/rust/`](rust/README.md)). This directory holds the
+**Go** ([`clients/go/`](go/README.md)), **Rust** ([`clients/rust/`](rust/README.md)) and **JS/TS**
+([`clients/js/`](js/README.md)). This directory holds the
 conventions every client follows. The contract is [`spec/gate-client.md`](../spec/gate-client.md); the
 proof is that a client passes every vector in [`spec/vectors/`](../spec/vectors/).
 
@@ -9,7 +10,7 @@ proof is that a client passes every vector in [`spec/vectors/`](../spec/vectors/
 |---|---|---|
 | [`clients/go/`](go/README.md) | Go | [T-80](../backlog/T-80-gate-client-in-go.md) — built |
 | [`clients/rust/`](rust/README.md) | Rust | [T-81](../backlog/T-81-gate-client-in-rust.md) — built (crate `tinysesam-gate`) |
-| `clients/js/` | JavaScript / TypeScript | [T-82](../backlog/T-82-gate-client-in-javascript-and-typescript.md) |
+| [`clients/js/`](js/README.md) | JavaScript / TypeScript | [T-82](../backlog/T-82-gate-client-in-javascript-and-typescript.md) — built (package `@tinysesam/gate`, private) |
 | `clients/php/` | PHP | [T-83](../backlog/T-83-gate-client-in-php.md) |
 | `tinysesam/gate_client.py` (module `tinysesam.gate_client`) | Python | [T-86](../backlog/T-86-python-gate-client.md) |
 
@@ -51,7 +52,7 @@ library enforces all of them. Starting points — check the current stable relea
 |---|---|---|---|
 | Go | `crypto/ed25519` (standard library) | `encoding/json` `Decoder.Token` walk | a JOSE library (`go-jose/v4`) is optional; never let it choose the algorithm |
 | Rust | `ed25519-dalek` (with `verify_strict`) | `serde_json` with a visitor that rejects repeated keys | `jsonwebtoken` takes the algorithm from a `Validation` you pin — still do the pre-checks |
-| JS/TS | WebCrypto `Ed25519` (Node ≥ 22, browsers) or `jose` (panva) with `algorithms: ['EdDSA']` | a small scanner before `JSON.parse` (it keeps the last duplicate) | ESM, typed; no Node-only APIs in the core so it runs on edge runtimes |
+| JS/TS | WebCrypto `Ed25519` (Node ≥ 22, Deno, Bun, edge runtimes, browsers) — chosen, no runtime dependency; `jose` (panva) with `algorithms: ['EdDSA']` was the alternative | `JSON.parse`, then a scan of the accepted text (it keeps the last duplicate, accepts lone surrogates and loses `1.0` vs `1`) | ESM, typed; no Node-only APIs in the core so it runs on edge runtimes |
 | PHP | `sodium_crypto_sign_verify_detached` (ext-sodium, bundled) | a check before `json_decode` (it keeps the last duplicate) | `web-token/jwt-framework` only if it can be pinned to EdDSA |
 | Python | `cryptography` (`Ed25519PublicKey.verify`) | `json.loads` with an `object_pairs_hook` that refuses repeats and a `parse_constant` that refuses `NaN` | no JOSE library needed; see `tests/_gate_reference.py` |
 
