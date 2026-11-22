@@ -66,7 +66,18 @@ for must in ("image: tinysesam-probe:local", "fail-build: true", "severity-cutof
     assert must in scan, f"release.yml image scan without {must!r}"
 assert re.search(r"anchore/scan-action@[0-9a-f]{40}\b", scan), "scan-action not pinned by SHA"
 assert "continue-on-error" not in probe
-ok("deadlines named (en/de); image scan: fixable ≥ high fails, exceptions from .grype.yaml checked before the scan")
+# Both images are scanned in every run: a red gateway step must not skip the Caddy build and scan (2026-11-22: the job
+# then reported only "no report from ['(empty)']"). Each Caddy step runs unless the run was cancelled; the scan needs
+# its own build. The job stays red through the failed step itself — no continue-on-error (above).
+caddy_build = next(s for s in steps if 'name: "Caddy image: build' in s)
+caddy_scan = next(s for s in steps if 'name: "Caddy image: scan' in s)
+assert re.search(r"^\s*if: \$\{\{ !cancelled\(\) \}\}$", caddy_build, re.M) and "id: build-caddy" in caddy_build, \
+    "the Caddy build is skipped when a gateway step is red"
+assert "if: ${{ !cancelled() && steps.build-caddy.outcome == 'success' }}" in caddy_scan, \
+    "the Caddy scan is skipped when a gateway step is red, or runs without its build"
+assert "if: always()" in next(s for s in steps if "--report" in s), "the report step must run after a red scan"
+ok("deadlines named (en/de); image scan: fixable ≥ high fails, exceptions from .grype.yaml checked before the scan; "
+   "the Caddy image is built and scanned also after a red gateway step")
 
 # ---------- (c) the exception check ----------
 import _grype_exceptions as ge  # noqa: E402
@@ -90,7 +101,16 @@ until = [dt.date.fromisoformat(d) for d in re.findall(r'reason:\s*"until (\d{4}-
 assert len(until) == n_rules, "a rule in .grype.yaml without 'until YYYY-MM-DD:'"
 # Form only: the date itself is the CI's business (a suite that turns red by the calendar would block unrelated work).
 assert all(not ge.problems(shipped, d) for d in until), "a shipped exception is malformed or reaches too far"
-ok(f"_grype_exceptions: no end / expired / > 31 days each refused; .grype.yaml well-formed ({n_rules} rule(s))")
+# The deadline works through the command the CI runs (`--today` feeds the clock): the last valid day is green, the
+# next one red — for every shipped rule, measured on the file itself.
+if until:
+    with contextlib.redirect_stdout(io.StringIO()) as _cli:
+        assert ge.main(["--today", min(until).isoformat()]) == 0, "a shipped exception is refused on its last day"
+        assert ge.main(["--today", (max(until) + dt.timedelta(days=1)).isoformat()]) == 1, \
+            "an expired exception does not turn the check red"
+    assert "expired" in _cli.getvalue()
+ok(f"_grype_exceptions: no end / expired / > 31 days each refused; .grype.yaml well-formed ({n_rules} rule(s)); "
+   "the CLI is red the day after the deadline")
 
 # ---------- (d) no exception that matches nothing (T-59) ----------
 # After the scans: a rule that no ignored match in any report names has outlived its reason. The zlib rule for
