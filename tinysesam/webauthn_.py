@@ -270,3 +270,59 @@ def register_passkey_routes(router, auth):
         if not auth.remove_passkey(u["id"], passkey_id, auth.client_ip(request)):
             raise HTTPException(404, auth.t("api.not_found"))
         return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7
+
+
+# ---------- Approvals: a passkey gesture bound to one approval (stage A) ----------
+
+def approval_options(auth, user, challenge: bytes) -> str:
+    """WebAuthn request options for the approval step-up: the given challenge (bound to the approval's id and payload
+    hash, `tinysesam.approvals.challenge`), only this account's passkeys, user verification as at sign-in."""
+    try:
+        from webauthn import generate_authentication_options, options_to_json
+        from webauthn.helpers.structs import PublicKeyCredentialDescriptor, UserVerificationRequirement
+        from webauthn.helpers import base64url_to_bytes
+    except ModuleNotFoundError as e:
+        raise _missing_extra(e) from e
+    uv = (UserVerificationRequirement.REQUIRED if str(auth.cfg.passkey_user_verification) == "required"
+          else UserVerificationRequirement.PREFERRED)
+    opts = generate_authentication_options(
+        rp_id=auth.cfg.rp_id, challenge=challenge, user_verification=uv,
+        allow_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["credential_id"]))
+                           for c in auth.store.list_webauthn(user["id"])])
+    return options_to_json(opts)
+
+
+def approval_verify(auth, user, answer: str, challenge: bytes) -> bool:
+    """Check a WebAuthn assertion for the approval step-up: a passkey of THIS account, the bound challenge, the
+    configured origin and RP, user verification when required. A refusal leaves an audit line and a security-log line
+    (`passkey`, like a failed sign-in) and returns False."""
+    try:
+        from webauthn import verify_authentication_response
+        from webauthn.helpers import base64url_to_bytes
+    except ModuleNotFoundError as e:
+        raise _missing_extra(e) from e
+    try:
+        data = _json.loads(answer)
+        row = auth.store.get_webauthn_by_credid(data.get("id") or data.get("rawId"))
+    except Exception:
+        row = None
+    ip = auth._request_ip()
+    if row is None or int(row["user_id"]) != int(user["id"]):
+        auth.audit("passkey_failed", user["username"], ip, "reason=unknown_key context=approval")
+        return False
+    try:
+        v = verify_authentication_response(
+            credential=answer, expected_challenge=challenge, expected_rp_id=auth.cfg.rp_id,
+            expected_origin=auth.cfg.origin, credential_public_key=base64url_to_bytes(row["public_key"]),
+            credential_current_sign_count=row["sign_count"],
+            require_user_verification=(str(auth.cfg.passkey_user_verification) == "required"))
+    except Exception as e:
+        # A step-up, not a sign-in (the session exists): `failed verification` with the step-up's method word, like
+        # a wrong password on the reauth page — the shipped sign-in jail leaves it alone.
+        security.seclog.warning("%s user=%s ip=%s method=%s reason=%s", security.log_event("reauth"),
+                                security.for_log(str(user["username"])), security.for_log(ip), "reauth",
+                                type(e).__name__)
+        auth.audit("passkey_failed", user["username"], ip, f"reason={type(e).__name__} context=approval")
+        return False
+    auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
+    return True

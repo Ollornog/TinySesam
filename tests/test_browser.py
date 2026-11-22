@@ -100,7 +100,9 @@ t33 = _TinySesam(_TinySesamConfig(
     topbar_links=[("Home", "/"), ("Docs", "/docs")], topbar_menu_links=[("My things", "/things")],
     # The accounts here have no second factor; the default refusal for them (T-44) is measured in
     # tests/test_h2_hardening.py — the browser measures the page, the number and the step-up.
-    qr_login_require_second_factor=False))
+    qr_login_require_second_factor=False,
+    # Approvals (T-89): the page, the badge, light/dark and the phone width are measured in `approvals_page`.
+    approvals_enabled=True))
 t33.set_security("password_min_length_single_factor", 8)
 t33.ensure_admin("boss", "boss-pw-12345")
 t33.create_user("carol", password="carol-pw-12345")
@@ -767,6 +769,7 @@ async def run():
         await top_bar(p)
         await delegate_panel(p)
         await accounts_panel(p)
+        await approvals_page(p)
 
 
 async def t33_alternatives(p):
@@ -2071,6 +2074,88 @@ async def _top_bar(p):
     broken = [f for f in p.failed[failed_before:] if f != (401, T33 + "/auth/me")]   # the probe above answers 401
     assert not broken, f"broken requests: {broken[:3]}"
     print("  top bar: sign-out from the menu ends the session (POST with CSRF)")
+
+
+async def approvals_page(_first):
+    """T-89 in a real browser on the T-33 app (strict CSP, real CSRF), in a tab of its own: the account menu shows
+    "Approvals (n)" with the number on the menu button, the list leads to the approval page, which shows the summary,
+    the match code and the ⚠ for a permanent action, stays on screen at 375 px in light and dark without sideways
+    scrolling, and confirms with the password of THIS approval (a POST with CSRF) — no CSP violation, no console
+    error. The page is never framed: `frame-ancestors 'none'`."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
+        try:
+            await _approvals_page(p)
+        finally:
+            await p.cmd("Emulation.clearDeviceMetricsOverride")
+            await p.js("localStorage.removeItem('themeMode');true")
+
+
+async def _approvals_page(p):
+    failed_before = len(p.failed)
+    boss = t33.store.get_user_by_name("boss")["id"]
+    victim = t33.create_api_key(boss, name="old-ci")
+    asker = t33.create_api_key(boss, name="claude")["key"]
+    created = urllib.request.urlopen(urllib.request.Request(
+        T33 + "/auth/api/approvals", method="POST", headers={"X-Api-Key": asker, "Content-Type": "application/json"},
+        data=json.dumps({"type": "tinysesam.apikey.revoke", "fields": {"key": str(victim["id"])}}).encode()))
+    approval = json.load(created)
+    assert created.status == 201 and approval["state"] == "pending", approval
+    token, _ = t33.start_session(boss, "password")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+    # 1) The account menu: number and word, the number on the menu button too.
+    await p.cmd("Page.navigate", url=T33 + "/auth/account")
+    await p.until("!!document.querySelector('.tsbar-btn')", "account page without the top bar")
+    entry = await p.js("(document.querySelector('.tsbar-pop a[href$=\"/auth/approvals\"]')||{}).textContent||''")
+    assert entry.strip() == "Approvals (1)", f"menu entry: {entry!r}"
+    assert await p.js("document.querySelector('.tsbar-btn .tsbar-count').textContent") == "1"
+    assert "Approvals (1)" in await p.js("document.querySelector('.tsbar-btn').getAttribute('aria-label')")
+    # 2) The list leads to the page.
+    await p.cmd("Page.navigate", url=T33 + "/auth/approvals")
+    await p.until(f"!!document.querySelector('a[data-apv=\"{approval['id']}\"]')", "the request is not listed")
+    await p.js(f"document.querySelector('a[data-apv=\"{approval['id']}\"]').click();true")
+    await p.until("!!document.getElementById('apvform')", "the approval page did not open")
+    assert await p.js("document.getElementById('apvcode').textContent") == approval["match_code"]
+    assert "old-ci" in await p.js("document.getElementById('apvsum').textContent")
+    assert "⚠" in await p.js("document.getElementById('apvirrev').textContent"), "no ⚠ for a permanent action"
+    r = await p.cmd("Runtime.evaluate", awaitPromise=True, returnByValue=True, expression=(
+        "fetch(location.href).then(r=>[r.headers.get('content-security-policy'),r.headers.get('x-frame-options')])"))
+    policy, xfo = r["result"]["value"]
+    assert "frame-ancestors 'none'" in policy and xfo == "DENY", (policy, xfo)
+    # 3) 375 px, light and dark: on screen, no sideways scrolling, the theme applied.
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=375, height=812, deviceScaleFactor=1, mobile=True)
+    for theme in ("light", "dark"):
+        await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+        await p.cmd("Page.navigate", url=T33 + f"/auth/approvals/{approval['id']}")
+        await p.until("!!document.getElementById('apvform')", "page not built")
+        await p.js("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+        assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")
+        width = await p.js("document.documentElement.scrollWidth")
+        assert width <= 375, f"{theme}: {width}px wide at 375px"
+        buttons = await p.js("[...document.querySelectorAll('#apvyes,#apvno')].map(b=>b.getBoundingClientRect().height)")
+        assert all(h >= 44 for h in buttons), f"{theme}: buttons too small {buttons}"
+    # 4) Confirm with the password: the key is revoked, the page says so.
+    await p.js("document.querySelector('input[name=password]').value='boss-pw-12345';"
+               "document.getElementById('apvyes').click();true")
+    await p.until("!!document.getElementById('apvstate')", "no result page after confirming")
+    assert await p.js("document.getElementById('apvstate').dataset.state") == "consumed"
+    await until_py(lambda: t33.store.get_api_key(victim["id"])["revoked"], "the key was not revoked")
+    assert t33.store.get_approval(approval["id"])["result"] == "ok"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation on the approval pages: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  approvals: menu 'Approvals (1)' with the number on the button, list → page (code, ⚠, summary), "
+          "frame-ancestors 'none', 375px light/dark without sideways scrolling, confirmed with the password (strict CSP)")
 
 
 try:

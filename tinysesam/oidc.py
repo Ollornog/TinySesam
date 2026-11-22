@@ -603,7 +603,7 @@ def register_oidc_routes(router, auth):
         auth._set_flow_cookie(resp, _OIDCFLOW, value, max_age=600)
 
     @router.get("/auth/oidc/start")
-    def oidc_start(request: Request, next: str = "", app: str = "", reauth: str = ""):
+    def oidc_start(request: Request, next: str = "", app: str = "", reauth: str = "", approval: str = ""):
         # Every call leaves a `flow` row (600 s), which is deleted only on the
         # successful return path or by `gc`. In gateway operation this is exactly the entry point
         # to which the proxy sends every non-signed-in visitor — every abort, every
@@ -635,9 +635,16 @@ def register_oidc_routes(router, auth):
         # `asked` is the moment of the request: an `auth_time` before it means the provider answered from a
         # session it already had — the callback measures freshness against it.
         again = bool(reauth) and bool(cfg.oidc_reauth_check)
+        # Approvals (stage A): the provider button of an approval page — always an active sign-in (`max_age=0`),
+        # and its `auth_time` becomes the step-up of THAT approval only (the callback leaves a one-time grant).
+        from .approvals import valid_id as _approval_id
+        bound = approval if (getattr(cfg, "approvals_enabled", False) and cfg.oidc_reauth_check
+                             and _approval_id(approval)) else ""
+        if bound:
+            again = True
         auth.store.put_flow("oidc:" + state,
                             {"nonce": nonce, "next": next, "fk": _hash(flow_key), "app": destination,
-                             "pkce": verifier, "reauth": again, "asked": now()},
+                             "pkce": verifier, "reauth": again, "asked": now(), "approval": bound},
                             ttl=600)
         resp = RedirectResponse(client.auth_url(_redirect_uri(request), state, nonce,
                                                 code_challenge=challenge, reauth=again), 303)
@@ -847,6 +854,15 @@ def register_oidc_routes(router, auth):
         stepping_up = bool(before and before["user_id"] == uid and before["mfa_ok"])
         if cfg.oidc_reauth_check and stepping_up and not provider_fresh:
             account_name = str(_account["username"]) if _account else "?"
+            if flow.get("approval"):
+                # The approval page asked for a sign-in and the provider did not do one: no grant — back to the page,
+                # which says so. Fail-closed also without `auth_time`.
+                auth.audit("oidc_reauth_stale", account_name, ip,
+                           f"approval={flow['approval']} auth_time={'missing' if authenticated is None else asked - authenticated}")
+                resp = RedirectResponse(auth.browser_path(request, f"/auth/approvals/{flow['approval']}") +
+                                        "?stepup=stale", 303)
+                auth._delete_flow_cookie(resp, _OIDCFLOW)
+                return resp
             if flow.get("reauth"):
                 # The confirmation page asked for a sign-in and the provider did not do one (it ignores
                 # `prompt=login`, or sends no `auth_time`): no step-up — the page says so instead of a silent success.
@@ -871,6 +887,10 @@ def register_oidc_routes(router, auth):
                 # A NEW session: its confirmation dates from the provider's sign-in, not from this round — a
                 # silent sign-in an hour after the last password is an hour old (`stepup_fresh`, `login_fresh`).
                 auth.store.backdate_confirmation(token, authenticated)
+        if flow.get("approval") and stepping_up and provider_fresh and authenticated is not None:
+            # The step-up of one approval (stage A): consumed once by `POST /auth/approvals/{id}` of this account.
+            auth.store.put_flow("apvoidc:" + str(flow["approval"]), {"user_id": int(uid), "auth_time": int(authenticated)},
+                                ttl=300)
         # 4a: remember the refresh token — with it TinySesam regularly asks the provider whether the
         # person is still allowed (`oidc_session_refresh_minutes`). Without a refresh token this does not work.
         if tok.get("refresh_token"):

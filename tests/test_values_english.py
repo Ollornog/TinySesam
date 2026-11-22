@@ -445,16 +445,21 @@ r.check("(f) panel: an unknown account → 404 instead of 200 (up to 0.21.x “o
         ca.post("/auth/admin/api/users/9999/disable", json={"disabled": True}).status_code == 404)
 f.close()
 
-# One source: the panel route calls `auth.set_disabled` and none of the steps itself.
+# One source: the panel route hands over to `PanelActions.disable` (shared with the approvals, stage A), which calls
+# `auth.set_disabled` and none of the steps itself.
 _admin = ast.parse((ROOT / "tinysesam" / "admin.py").read_text(encoding="utf-8"))
 _route = next(k for k in ast.walk(_admin) if isinstance(k, ast.AsyncFunctionDef) and k.name == "user_disable")
+_action = next(k for k in ast.walk(_admin) if isinstance(k, ast.FunctionDef) and k.name == "disable")
 _call = {ast.unparse(k.func) for k in ast.walk(_route) if isinstance(k, ast.Call)}
-_everywhere = {ast.unparse(k.func) for k in ast.walk(_admin) if isinstance(k, ast.Call)}
-r.check("(f) one source: `user_disable` calls `auth.set_disabled`, no step itself; admin.py calls "
-        "`store.set_disabled` nowhere",
-        "auth.set_disabled" in _call
-        and not _call & {"auth.store.set_disabled", "auth.store.delete_user_sessions", "auth._keys_widerrufen",
-                         "auth.store.revoke_user_magic_tokens", "protokoll"}
-        and "auth.store.set_disabled" not in _everywhere, str(sorted(_call)))
+_call_action = {ast.unparse(k.func).replace("self.auth.", "auth.") for k in ast.walk(_action)
+                if isinstance(k, ast.Call)}
+_everywhere = {ast.unparse(k.func).replace("self.auth.", "auth.") for k in ast.walk(_admin) if isinstance(k, ast.Call)}
+r.check("(f) one source: `user_disable` → `PanelActions.disable` calls `auth.set_disabled`, no step itself; "
+        "admin.py calls `store.set_disabled` nowhere",
+        "pa.disable" in _call and "auth.set_disabled" in _call_action
+        and not (_call | _call_action) & {"auth.store.set_disabled", "auth.store.delete_user_sessions",
+                                          "auth._keys_widerrufen", "auth.store.revoke_user_magic_tokens",
+                                          "protokoll"}
+        and "auth.store.set_disabled" not in _everywhere, str(sorted(_call | _call_action)))
 
 raise SystemExit(r.done())

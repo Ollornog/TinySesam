@@ -865,8 +865,8 @@
       "value": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth', 'kind': 'Remote-Kind'}"
     },
     "FORWARD_HEADERS_MANDATORY": {
-      "value": "('kind',)",
-      "tier": "A"
+      "tier": "A",
+      "value": "('kind',)"
     },
     "IDENTIFYING": {
       "since": "0.22.0",
@@ -900,7 +900,7 @@
     },
     "SECURITY_EVENTS": {
       "tier": "A",
-      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked', 'signed_in_after_failures')"
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked', 'signed_in_after_failures', 'approval_approved')"
     },
     "TOKEN_PATHS": {
       "tier": "B",
@@ -946,6 +946,14 @@
       "keys": [
         "count",
         "reason"
+      ],
+      "tier": "A"
+    },
+    "approval_approved": {
+      "keys": [
+        "approval_id",
+        "result",
+        "type"
       ],
       "tier": "A"
     },
@@ -1156,6 +1164,30 @@
     },
     "app_password_default_days": {
       "field": "int = 365",
+      "tier": "B"
+    },
+    "approval_open_per_account": {
+      "field": "int = 5",
+      "tier": "B"
+    },
+    "approval_open_per_token": {
+      "field": "int = 3",
+      "tier": "B"
+    },
+    "approval_pending_sec": {
+      "field": "int = 600",
+      "tier": "B"
+    },
+    "approval_reject_limit": {
+      "field": "int = 3",
+      "tier": "B"
+    },
+    "approval_requests_per_hour": {
+      "field": "int = 20",
+      "tier": "B"
+    },
+    "approvals_enabled": {
+      "field": "bool = False",
       "tier": "B"
     },
     "audit_ip_pseudonymize": {
@@ -2526,6 +2558,7 @@
     "GET /auth/oidc/start": {
       "keys": [
         "query:app",
+        "query:approval",
         "query:next",
         "query:reauth"
       ],

@@ -1070,6 +1070,27 @@ everyone in again once**, nothing else breaks. Coming forward again does not rew
 on purpose: a rewrite that a missing marker could trigger again would turn a planted sha256 row into a valid session),
 so the sessions the older version created meanwhile end as well.
 
+## Approvals: table and rollback (schema 22)
+
+Schema 22 (T-89, stage A) only **adds** the table `approval`; nothing existing changes. An older version opens the file
+with the "newer schema version" warning and has no approval routes: requests get 404, open ones simply expire, and the
+rest keeps working. No SQL is needed either way; `DROP TABLE approval` removes the rows if you go back for good.
+
+- **Switch:** `approvals_enabled` (needs `base_url`, API keys and CSRF — `config_check` refuses otherwise). Without it
+  there are no routes, no menu entry, no `approvals` member in `topbar_data`, and `gc()` leaves the table alone.
+- **Housekeeping:** `gc()` / `tinysesam gc` sets open requests past `approval_pending_sec` to `expired` (one
+  `approval_expired` line each, `source=gc`) and deletes closed rows after `audit_retention_days` — 30 days when that is
+  0 (`approvals_expired`, `approvals_deleted` in the result).
+- **Audit events:** `approval_requested`, `approval_approved` (`amr=`), `approval_rejected`, `approval_withdrawn`,
+  `approval_expired`, `approval_executed` (`result=`), `approval_throttled` (`reason=open_per_account|open_per_token|
+  per_hour|rejections`), `approval_denied` (`reason=token|other_account|stepup|payload_changed|no_approver`) — id, type,
+  asking key and payload hash, never the field values (they stay in the row). The executed action writes its own panel
+  line too (`user_roles`, `user_disable`, `apikey_revoke`) with the confirming person as actor.
+- **A flood of requests** from one key: revoke the key (`/auth/apikeys`, the panel). The limits answer `429` before.
+- **Step-up through the provider** needs `oidc_reauth_check` (default on) and a provider that sends `auth_time` with
+  `max_age=0`; without it an account that has only the provider cannot confirm (fail-closed) — give it a passkey or a
+  TOTP.
+
 ## Sign-in methods and their strength
 
 **By default TinySesam is single-factor:** a password alone signs in completely. A second

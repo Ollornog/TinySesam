@@ -114,6 +114,10 @@ from _german_words import history_lines  # noqa: E402
 _DOC_ROOTS = r"(?:auth|tinysesam|TinySesam|Store|TinySesamConfig)"
 _DOTTED = re.compile(r"(?<![\w.])" + _DOC_ROOTS + r"((?:\.[A-Za-z_]\w*)+)")
 _NOT_NAMES = frozenset({"NAME", "git"})
+#: The approval types (`tinysesam.approvals.TYPES`, T-89) are dotted names of a namespace of their own
+#: (`tinysesam.apikey.revoke`), not Python names — exactly the registered ones are exempt, nothing around them.
+_APPROVAL_TYPES = frozenset(re.findall(r'^    "(tinysesam(?:\.[a-z_]+){2,})": \{', read("tinysesam/approvals.py"), re.M))
+assert "tinysesam.apikey.revoke" in _APPROVAL_TYPES and len(_APPROVAL_TYPES) == 3, _APPROVAL_TYPES
 
 
 def package_words(sources) -> set:
@@ -150,6 +154,8 @@ def stale_doc_names(text: str, words: set) -> list:
             for m in _DOTTED.finditer(span):
                 parts = m.group(1).split(".")[1:]
                 unknown = [w for w in parts if w not in words and w not in _NOT_NAMES]
+                if m.group(0) in _APPROVAL_TYPES and not re.match(r"[\w.(]", span[m.end():m.end() + 1]):
+                    continue                              # an approval type, not a Python name
                 if unknown and parts[0] != "example":     # `auth.example.com` is a host name, not a Python name
                     out.append((n, m.group(0), unknown))
     return out
@@ -167,6 +173,8 @@ assert stale_doc_names("Use `auth.store.old_write_probe()` here.\n", _probe_word
 assert stale_doc_names("| Row | `Store.old_deletion_guard` |\n", _probe_words)
 assert stale_doc_names("```python\nauth.store.write_probe()\nauth.store.old_write_probe()\n```\n", _probe_words)
 assert not stale_doc_names("Use `auth.store.write_probe()` and `Store.deletion_guard`, see `auth.example.com`.\n", _probe_words)
+assert not stale_doc_names("Ask for `tinysesam.apikey.revoke`.\n", _probe_words)
+assert stale_doc_names("Ask for `tinysesam.apikey.revoked`.\n", _probe_words), "only registered approval types are exempt"
 assert not stale_doc_names("Up to 0.24.x `auth.store.old_write_probe()`, now `auth.store.write_probe()`.\n", _probe_words)
 assert not stale_doc_names("Renamed: `auth.store.old_write_probe()` → `auth.store.write_probe()`.\n", _probe_words)
 assert not stale_doc_names("## Rollback to 0.24.x\n\nSee `Store.old_deletion_guard`.\n\n## Next\n", _probe_words)

@@ -425,6 +425,36 @@ CREATE TABLE IF NOT EXISTS app_password (
     revoked_at     INTEGER,
     revoked_reason TEXT                      -- holder | admin | account_disabled | admin_password_reset | …
 );
+-- Approvals (schema 22): a request to confirm ONE sensitive action, made by a token (class a: a TinySesam action) or
+-- later by an application (class b). The row is the whole state machine: every transition is one
+-- `UPDATE … WHERE state = <old>`, so two confirmations race to exactly one winner. `payload` is canonical JSON
+-- (RFC 8785 for the values used here: strings, integers, booleans, lists), `payload_hash` its SHA-256 in base64url.
+-- No secret lives here: the id is public in the link, the match code is shown on both sides.
+CREATE TABLE IF NOT EXISTS approval (
+    id             TEXT PRIMARY KEY,           -- apv_ + 128 bits of randomness (base32)
+    class          TEXT NOT NULL,              -- tinysesam | app
+    type           TEXT NOT NULL,              -- e.g. tinysesam.account.set_roles
+    app_id         TEXT,                       -- class b only (stage B), otherwise NULL
+    subject_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,   -- who must confirm
+    requester_kind TEXT NOT NULL,              -- apikey | oauth | app
+    requester_ref  TEXT NOT NULL,              -- key id, grant id or app account id
+    payload        TEXT NOT NULL,
+    payload_hash   TEXT NOT NULL,
+    match_code     TEXT NOT NULL,              -- "418 207": in the channel of the requester and on the page
+    return_url     TEXT,                       -- class b, browser entry only (stage B)
+    state          TEXT NOT NULL,              -- pending | approved | consumed | rejected | expired | withdrawn
+    created_at     INTEGER NOT NULL,
+    expires_at     INTEGER NOT NULL,
+    decided_at     INTEGER,
+    issued_at      INTEGER,                    -- class b: when the confirmation was handed out (stage B)
+    stepup_amr     TEXT,                       -- JSON list of RFC 8176 values of the per-approval step-up
+    auth_time      INTEGER,                    -- when that step-up happened
+    result         TEXT,                       -- class a: ok | forbidden | not_found | invalid | conflict
+    ip_request     TEXT,
+    ip_decision    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_approval_subject ON approval(subject_id, state);
+CREATE INDEX IF NOT EXISTS idx_approval_requester ON approval(requester_kind, requester_ref, created_at);
 CREATE INDEX IF NOT EXISTS idx_app_password_user ON app_password(user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_grant_user ON oauth_grant(user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_grant_client ON oauth_grant(client_id);
@@ -987,7 +1017,9 @@ class Store:
     #:      not know the grant type — the services are refused until the update is back. Their `oauth_client` rows
     #:      have no redirect URI, so an older version cannot start an authorization with them either. Its cleanup
     #:      (`gc_oauth`) does remove a service without a live token after a day — then it is paired again.
-    SCHEMA_VERSION = 21
+    #: 22 — `approval` (approvals, stage A): requests to confirm one sensitive action with a step-up. Additive; an
+    #:      older version leaves the table in place and has no approval routes — open requests simply expire.
+    SCHEMA_VERSION = 22
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -4336,6 +4368,81 @@ class Store:
     def gc_audit(self, older_than_ts: int) -> int:
         """Delete audit rows before a point in time (`audit_retention_days`, B5-11)."""
         return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
+
+    def get_api_key(self, key_id):
+        """One API key row by its id (never the secret — only its digest is stored) — or None."""
+        try:
+            return self._one("SELECT * FROM api_key WHERE id=?", (int(key_id),))
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    # ---------- Approvals (schema 22) ----------
+    #: The states an approval can be in; only `pending` and `approved` are open.
+    APPROVAL_OPEN = ("pending", "approved")
+
+    def add_approval(self, row: dict) -> None:
+        """Insert a new approval row (all columns named in `row`)."""
+        cols = ", ".join(row)
+        marks = ", ".join("?" for _ in row)
+        self._exec(f"INSERT INTO approval({cols}) VALUES ({marks})", tuple(row.values()))
+
+    def get_approval(self, approval_id: str):
+        return self._one("SELECT * FROM approval WHERE id=?", (str(approval_id),))
+
+    def approval_transition(self, approval_id: str, old: str, new: str, **fields) -> bool:
+        """Move an approval from `old` to `new` — atomically: `UPDATE … WHERE state = old`. True only for the ONE
+        caller whose update changed the row; a second, parallel caller gets False and must not act."""
+        sets = ", ".join(["state=?"] + [f"{k}=?" for k in fields])
+        args = (new, *fields.values(), str(approval_id), old)
+        return self._exec(f"UPDATE approval SET {sets} WHERE id=? AND state=?", args).rowcount == 1
+
+    def set_approval_fields(self, approval_id: str, state: str, **fields) -> bool:
+        """Set result columns of an approval that is (still) in `state` — no state change."""
+        sets = ", ".join(f"{k}=?" for k in fields)
+        return self._exec(f"UPDATE approval SET {sets} WHERE id=? AND state=?",
+                          (*fields.values(), str(approval_id), state)).rowcount == 1
+
+    def list_approvals_pending(self, subject_id: int, now: int) -> list:
+        """The open, unexpired approvals an account has to decide — newest first."""
+        return self._all("SELECT * FROM approval WHERE subject_id=? AND state='pending' AND expires_at>=? "
+                         "ORDER BY created_at DESC", (int(subject_id), int(now)))
+
+    def count_approvals_pending(self, subject_id: int, now: int) -> int:
+        r = self._one("SELECT COUNT(*) AS n FROM approval WHERE subject_id=? AND state='pending' AND expires_at>=?",
+                      (int(subject_id), int(now)))
+        return int(r["n"]) if r else 0
+
+    def count_approvals_open_by(self, requester_kind: str, requester_ref: str, now: int) -> int:
+        r = self._one("SELECT COUNT(*) AS n FROM approval WHERE requester_kind=? AND requester_ref=? "
+                      "AND state='pending' AND expires_at>=?", (requester_kind, str(requester_ref), int(now)))
+        return int(r["n"]) if r else 0
+
+    def count_approvals_since(self, subject_id: int, since: int) -> int:
+        """How many approvals were requested for an account since `since` (every state counts)."""
+        r = self._one("SELECT COUNT(*) AS n FROM approval WHERE subject_id=? AND created_at>=?",
+                      (int(subject_id), int(since)))
+        return int(r["n"]) if r else 0
+
+    def approval_rejections(self, requester_kind: str, requester_ref: str, type_: str, since: int) -> list:
+        """The decision times of the rejections of one type from one requester since `since`, oldest first."""
+        return [int(r["decided_at"]) for r in self._all(
+            "SELECT decided_at FROM approval WHERE requester_kind=? AND requester_ref=? AND type=? "
+            "AND state='rejected' AND decided_at>=? ORDER BY decided_at", (requester_kind, str(requester_ref),
+                                                                            type_, int(since)))]
+
+    def gc_approvals(self, now: int, keep_until: int) -> tuple[list, int]:
+        """Expire open approvals past their deadline (returns their rows, for the audit) and delete closed rows
+        decided (or created) before `keep_until`. One transaction, so a row is never expired twice."""
+        with self._writing():
+            stale = self.db.execute("SELECT id, type, subject_id, requester_kind, requester_ref, payload_hash "
+                                    "FROM approval WHERE state IN ('pending','approved') AND expires_at<?",
+                                    (int(now),)).fetchall()
+            self.db.execute("UPDATE approval SET state='expired', decided_at=? "
+                            "WHERE state IN ('pending','approved') AND expires_at<?", (int(now), int(now)))
+            away = self.db.execute("DELETE FROM approval WHERE state NOT IN ('pending','approved') "
+                                   "AND COALESCE(decided_at, created_at)<?", (int(keep_until),)).rowcount
+            self.db.commit()
+        return list(stale), int(away)
 
     def anonymize_audit(self, username, replacement, additional=(), since=None, since_id=0,
                             unlimited=(), from_ids=None) -> int:

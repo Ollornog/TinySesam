@@ -114,6 +114,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `api_keys_revoked`). A complete sign-in after at least three consecutive failed attempts (T-63, ASVS 6.3.5):
   `signed_in_after_failures` (`details={"failures": n, "ip": …}` — the streak counts every failed sign-in under
   the account's names since the last complete sign-in, across methods; also the audit event `login_after_failures`).
+  Approvals (stage A): `approval_approved` (`details={"approval_id": …, "type": …, "result": …}` — the holder
+  confirmed an action a token had asked for and TinySesam carried it out; TinySesam itself mails nothing for it).
   The full list of event names is `TinySesam.SECURITY_EVENTS`.
   The `details` keys and the reasons are English since
   0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
@@ -230,6 +232,54 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   answers, with no line for fail2ban. An API key never counts for these building
   blocks — it confirms no person and changes no password (`POST /auth/password` refuses it with a
   403 since 0.22.0).
+
+## Approvals (stage A): a token proposes, the person confirms
+
+With `approvals_enabled=True` an API key of an account can **ask** for one of three TinySesam actions it may not do
+on its own — `tinysesam.account.set_roles` (add and remove roles), `tinysesam.apikey.revoke`,
+`tinysesam.account.disable`. TinySesam stores the request and answers with a link and a six-digit match code; the
+person opens the link in their browser session, confirms once more and decides. The design rests on these rules:
+
+- **The token only proposes.** `POST /auth/api/approvals` writes a row; it grants nothing. Only an API key may ask
+  (a `human` key only beside a session of its account, as everywhere); a session has the panel, an OAuth or MCP token
+  is refused until TinySesam is an MCP resource itself, an app password never. A service account's key gets
+  `no_approver`: nobody could confirm.
+- **Only a browser session of the same account decides** (`POST /auth/approvals/{id}`). A request that carries
+  `Authorization` or `X-Api-Key` is refused with 403 — also a `human` key beside its session. Another account sees a
+  neutral page ("does not exist or belongs to another account"), the same answer as for an unknown id; the id itself is
+  128 random bits.
+- **A step-up per approval, never a time window.** Password, PIN or TOTP (what `stepup_options()` offers, so
+  `stepup_methods` narrows it), a passkey whose WebAuthn challenge is SHA-256(`"tinysesam-approval:"` ‖ server
+  nonce ‖ id ‖ payload hash) — single use, bound to exactly this action, so an agent driving the browser cannot replay
+  a gesture —, or a fresh sign-in at the provider (`prompt=login`, `max_age=0`) whose `auth_time` must be later than
+  the request (without `auth_time`: no approval, fail-closed). A fresh session does not count, and confirming an
+  approval does not make the session fresh. The secret checks run through the reauth page's lock, counter and
+  fail2ban lines.
+- **The rights at confirmation time decide (E4).** TinySesam executes with the admin panel's own code
+  (`admin.PanelActions`) as the confirming session: an administrator, a delegate within their scope (T-74), the holder
+  for their own key. A delegation that ended in between gives `result=forbidden`. **Admin rights never travel this
+  way:** `set_roles` takes only `add`/`remove` of roles, never the admin flag — and a type that grants it needs a
+  decision of the maintainer of its own, not just code.
+- **Nothing lasting.** One action, once, for minutes (`approval_pending_sec`, 120–1800 s). Every state change is one
+  `UPDATE … WHERE state = <old>`: a double or parallel confirmation has exactly one winner, and only the winner
+  executes. A GET never decides anything; the POST carries CSRF and the `payload_hash` the page showed — a request that
+  changed in between is refused.
+- **No free text from the requester.** Title and summary come from TinySesam's own texts, filled from the stored
+  payload and the database at page time; every value is escaped and bidi-isolated, control characters and commas in
+  role names are refused, not stripped. A target account or key the viewer may not manage right now is named by its id
+  only. The page is never framed: `frame-ancestors 'none'` and `X-Frame-Options: DENY` whatever `csp` says.
+- **Fatigue and spam.** No bulk confirmation; open requests per account (`approval_open_per_account`, 5) and per key
+  (`approval_open_per_token`, 3), new ones per account and hour (`approval_requests_per_hour`, 20), and
+  `approval_reject_limit` (3) rejections of one type from one key within an hour block that key for that type for an
+  hour — `429` each, audited as `approval_throttled`.
+- **Audit without values:** `approval_requested`, `approval_approved` (with `amr`), `approval_rejected`,
+  `approval_withdrawn`, `approval_expired`, `approval_executed` (with `result`), `approval_throttled`,
+  `approval_denied` (`reason=token|other_account|stepup|payload_changed|no_approver`) carry id, type, key and payload
+  hash — the values stay in the row. `approval_approved` reaches `on_security_event`.
+
+Remaining risk: a person who confirms without reading. The match code, the step-up per approval and the limits make
+that harder, not impossible — the page is deliberately plain: who asks (key name and date), what (one sentence and the
+values), the code, the time left. Revoking the asking key ends a flood of requests.
 
 ## Vulnerable dependencies
 

@@ -533,7 +533,9 @@ NEW_ACCESS = {
     ("admin.py", "invite"): "invitation",
     ("admin.py", "user_signin_link"): "sign-in link by an admin",
     ("admin.py", "user_create"): "account with a password or admin rights by an admin",
-    ("admin.py", "user_roles"): "admin rights granted by an admin",
+    # The route `user_roles` hands over to `PanelActions.set_roles` (shared with the approvals, which never send
+    # `is_admin`) — the bolt sits there.
+    ("admin.py", "set_roles"): "admin rights granted by an admin",
     ("router.py", "claim_admin"): "first admin and owner via the one-time token",
 }
 _BOLTS = {"_require_fresh", "_reauth_target", "_fresh_enough"}

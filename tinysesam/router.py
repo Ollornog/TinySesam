@@ -2029,6 +2029,11 @@ def build_router(auth) -> APIRouter:
                 "(pip install 'tinysesam[passkey]'). Without it there are no passkey routes; "
                 "passkey_enabled=False switches them off.", extra="passkey") from e
 
+    # ---------- Approvals (stage A, only if enabled) ----------
+    if cfg.approvals_enabled:
+        from .approvals import register_routes as register_approval_routes
+        register_approval_routes(r, auth)
+
     # ---------- SAML 2.0 SP (only if enabled) ----------
     if auth.saml:
         from fastapi.responses import Response as _Resp

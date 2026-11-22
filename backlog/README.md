@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 72/81 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 72/83 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -101,6 +101,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-86](T-86-python-gate-client.md)** Python gate client · M-2
 * ☑ **[T-87](T-87-accounts-page-and-role-levels-in-the-admin-panel.md)** Accounts page and role levels in the admin panel · M-2
 * ☑ **[T-88](T-88-account-kind-menu-links-logo-tooltip.md)** Account kind (Remote-Kind, spec v2), account menu links and the logo tooltip · M-2
+* ◐ **[T-89](T-89-approvals-confirm-one-sensitive-action-with-a-step.md)** 'Approvals: confirm one sensitive action with a step-up (stage A: TinySesam actions; stage B: application · M-2
 
 ## Fehler
 
@@ -119,6 +120,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-13](B-13-flaky-ci-suite-died-silently-and-chrome-start.md)** CI flakes: a suite died from a segfault without a word, a dialog wait raced, Chrome hung at startup · M-2
 * ☑ **[B-14](B-14-late-key-list-overwrites-the-sign-in-link-browser-test-reauth-flakes.md)** Admin panel: a late key list overwrote the sign-in link; browser test ran out after a dialog that navigates · M-2
 * ☑ **[B-15](B-15-totp-codes-in-the-suites-flip-at-a-step-boundary.md)** Test flake: TOTP codes in the suites flip at a 30-second step boundary · M-2
+* ☐ **[B-16](B-16-the-sql-check-of-test-english-code-goes-blind-afte.md)** The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment · M-2
 
 ## Entscheidungen (ADR)
 
