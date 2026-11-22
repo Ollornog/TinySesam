@@ -25,11 +25,18 @@ Konfiguration je Repo: `.github/release-automatik.json`
       "versionsdateien": [{"datei": "pyproject.toml", "muster": "^version = \\"(?P<v>[^\\"]+)\\"$"}],   # nur semver;
                                                # "alle": true = jeder Treffer (mind. einer, alle gleich) wird gehoben
       "changelog": {"datei": "CHANGELOG.md", "form": "keepachangelog" | "datum", "sprache": "de" | "en",
-                    "kopf": "## [{version}] - {datum}"} | null,   # kopf optional, Vorgaben siehe KOPF
+                    "kopf": "## [{version}] - {datum}",   # kopf optional, Vorgaben siehe KOPF
+                    "erlaubt": ["Fixed", "Security", "Dependencies"]} | null,   # erlaubt optional, siehe unten
       "versionsbefehl": ["scripts/_release.py", "{version}"],   # optional: eigenes Werkzeug des Repos setzt die Version
       "pruefbefehl": ["scripts/_release.py", "--check"],        # optional: vor dem Tag, rc != 0 → kein Tag
       "abbilder": ["<registry>/<owner>/<name>"]   # was der Tag-Lauf veröffentlicht; fc-pin hebt genau diese Pins
     }
+
+Schutz vor falschen Patch-Releases (seit 0.55.0): `vorbereiten` schneidet nur einen Patch. Steht unter [Unreleased] aber
+Neues (`### Added`, `### Changed` …) oder Text ohne Kategorie, verweigert es (rc 1, Meldung samt Job-Summary): Das ist ein
+Minor und gehört einem Menschen. Erlaubt sind die Kategorien aus `changelog.erlaubt` (Namen ohne Beachtung der
+Groß-/Kleinschreibung; ein Zusatz nach ` — ` an der Überschrift zählt nicht); Vorgabe je Sprache: en Fixed, Security,
+Dependencies · de Behoben, Sicherheit, Abhängigkeiten. `["*"]` schaltet die Prüfung ab. Gilt für `keepachangelog`.
 
 Aufrufe (GH_TOKEN = App-Token; GITHUB_REPOSITORY wie in Actions):
 
@@ -159,6 +166,36 @@ _TEXTE = {
 KOPF = {"keepachangelog": "## [{version}] — {datum}", "datum": "## {datum} — {titel} (v{version})"}
 
 
+ERLAUBT = {"de": ["Behoben", "Sicherheit", "Abhängigkeiten"], "en": ["Fixed", "Security", "Dependencies"]}
+
+
+def unreleased_unerlaubt(text: str, erlaubt: list[str]) -> list[str]:
+    """Kategorien unter [Unreleased], die kein Patch-Release tragen dürfen (leer = alles in Ordnung). Text ohne
+    Kategorie-Überschrift zählt als `(ohne Kategorie)`. `*` in `erlaubt` schaltet die Prüfung ab."""
+    if "*" in erlaubt:
+        return []
+    m = UNVEROEFFENTLICHT.search(text)
+    if not m:
+        return []
+    rest = text[m.end():]
+    n = re.search(r"^## ", rest, re.M)
+    block = rest[:n.start()] if n else rest
+    ok = {e.casefold() for e in erlaubt}
+    schlecht: list[str] = []
+    lose = False
+    in_kategorie = False
+    for zeile in block.splitlines():
+        h = re.match(r"^### (.+?)\s*$", zeile)
+        if h:
+            in_kategorie = True
+            name = re.split(r"\s+[—–-]\s+", h.group(1), maxsplit=1)[0].strip()
+            if name.casefold() not in ok and name not in schlecht:
+                schlecht.append(name)
+        elif zeile.strip() and not in_kategorie:
+            lose = True
+    return (["(ohne Kategorie)"] if lose else []) + schlecht
+
+
 def changelog_eintragen(text: str, form: str, sprache: str, version: str, datum: str, eintraege: list[str],
                         kopf: str | None = None) -> str:
     """Den Abschnitt des neuen Release in den CHANGELOG setzen.
@@ -181,7 +218,13 @@ def changelog_eintragen(text: str, form: str, sprache: str, version: str, datum:
         # Hat das Werkzeug des Repos den Abschnitt schon geschlossen ([Unreleased] → [version]), kommt der Eintrag dort hinein.
         da = re.search(rf"^## \[{re.escape(version)}\][^\n]*\n", text, re.M)
         if da:
-            return text[:da.end()] + f"\n### {t['kategorie']}\n\n{rumpf}" + text[da.end():]
+            neu = text[:da.end()] + f"\n### {t['kategorie']}\n\n{rumpf}" + text[da.end():]
+            if not UNVEROEFFENTLICHT.search(neu):
+                # Das Werkzeug hat [Unreleased] umbenannt statt ein leeres zu lassen: ohne den Kopf landen spätere
+                # Einträge im veröffentlichten Abschnitt (TinySesam v0.26.3/v0.27.1). Ein leeres kommt darüber.
+                label = "Unveröffentlicht" if sprache == "de" else "Unreleased"
+                neu = neu[:da.start()] + f"## [{label}]\n\n" + neu[da.start():]
+            return neu
         m = UNVEROEFFENTLICHT.search(text)
         neu_kopf = f"{zeile}\n\n"
         if m:
@@ -380,6 +423,14 @@ def vorbereiten(root: str, repo: str, basis: str, trocken: bool = False) -> str:
     version = naechste_version(k["schema"], quelltext, _tags(root), _heute())
     if trocken:
         return version
+    cl0 = k.get("changelog")
+    if cl0 and cl0.get("form") == "keepachangelog":
+        with open(os.path.join(root, cl0["datei"]), encoding="utf-8") as fh:
+            erlaubt = cl0.get("erlaubt") or ERLAUBT.get(cl0.get("sprache", "en"), ERLAUBT["en"])
+            schlecht = unreleased_unerlaubt(fh.read(), erlaubt)
+        if schlecht:
+            raise Fehler(f"{cl0['datei']}: unter [Unreleased] steht {', '.join(schlecht)} — das ist kein Patch-Release "
+                         f"(erlaubt: {', '.join(erlaubt)}; changelog.erlaubt). Kein Release-PR; das Release schneidet ein Mensch.")
     if k.get("versionsbefehl"):
         # Das Repo hat ein eigenes Werkzeug, das die Version überall setzt (TinySesam: scripts/_release.py) — es wird
         # benutzt, statt seine Stellen hier nachzubauen. Was es ändert, kommt in den PR (die Diff-Prüfung des Auto-Merge
@@ -590,6 +641,13 @@ def main(argv: list[str]) -> int:
             fc_pin(a.root, repo, a.tag, a.ziel)
     except Fehler as e:
         print(f"::error::{e}", file=sys.stderr)
+        zusammenfassung = os.environ.get("GITHUB_STEP_SUMMARY")
+        if zusammenfassung:
+            try:
+                with open(zusammenfassung, "a", encoding="utf-8") as fh:
+                    fh.write(f"### Release automation stopped\n\n{e}\n")
+            except OSError:
+                pass
         return 1
     return 0
 
