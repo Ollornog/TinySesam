@@ -27,14 +27,6 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   security event `approval_approved`; `gc()` expires and deletes (`approvals_expired`, `approvals_deleted`).
 - Schema 22: table `approval` (additive; rollback note in `docs/OPERATIONS.md`).
 
-## [0.27.1] — 2026-11-22
-
-### Changed
-
-Patch release cut by the release automation after Dependabot merges:
-
-- chore(deps): bump the all group in /deploy/gateway with 2 updates (#315)
-
 ### Changed — local gate (`scripts/check.sh`) finds what the CI finds
 
 - Go gate client: `gofmt -l` (must list nothing), `go vet`, `staticcheck` and `govulncheck` (built from the tools pinned
@@ -47,6 +39,14 @@ Patch release cut by the release automation after Dependabot merges:
   `ci-local` counts as a gap. The old `! … not tested here` lines were never counted, so these gaps passed unnoticed.
 - Rust build directories (about 1 GB per checkout) record their checkout in `.checkout`; the next run removes the
   directories whose checkout is gone and only reports older ones without the record.
+
+## [0.27.1] — 2026-11-22
+
+### Changed
+
+Patch release cut by the release automation after Dependabot merges:
+
+- chore(deps): bump the all group in /deploy/gateway with 2 updates (#315)
 
 ### Added — gate client in PHP (T-83)
 
