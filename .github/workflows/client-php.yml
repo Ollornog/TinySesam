@@ -63,6 +63,9 @@ jobs:
           extensions: sodium, curl, mbstring
           tools: composer:v2
           coverage: none
+          # setup-php ships a production php.ini (assertions off); the tests narrow types with assert(), as in the
+          # image, which has no php.ini. zend.assertions can only be set here, not at runtime.
+          ini-values: zend.assertions=1
 
       - name: Every check of the client (clients/php/ci.sh)
         if: steps.scope.outputs.run == 'true'
