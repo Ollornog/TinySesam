@@ -2067,9 +2067,11 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   Prüfreihenfolge, Gruppen, JWKS-Regeln, die nie hängen). Ihre sprachneutralen Test- und Angriffsvektoren in
   [`spec/vectors/`](../spec/vectors/) werden aus TinySesams eigenem Code erzeugt. Der **Go-Client** liegt in
   [`clients/go/`](../clients/go/) (`net/http`-Middleware, Header- und Token-Modus, nur Standardbibliothek; noch nicht
-  veröffentlicht, Nutzung per Commit); Clients für Rust, JS/TS und PHP sind unter [`clients/`](../clients/) geplant,
-  ein schlanker Python-Client (WSGI/ASGI, ohne FastAPI) als
-  Teil des Pakets (Backlog T-86).
+  veröffentlicht, Nutzung per Commit), der **Rust-Client** in [`clients/rust/`](../clients/rust/) (Crate
+  `tinysesam-gate`: Header- und Token-Modus, der Abruf des Schlüsselsatzes hinter dem Feature `jwks`, unabhängig vom
+  Web-Framework über die Crate `http`, ein axum-Beispiel; nicht in der Rust-Crate-Registry veröffentlicht, Nutzung als
+  Git-Abhängigkeit); Clients für JS/TS und PHP sind unter [`clients/`](../clients/) geplant, ein schlanker
+  Python-Client (WSGI/ASGI, ohne FastAPI) als Teil des Pakets (Backlog T-86).
 
 ### Anmelden vor dem Gate: unsichtbar oder mit Seite (T-21)
 
