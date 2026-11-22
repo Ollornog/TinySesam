@@ -352,7 +352,12 @@ jobs:
       # commit, the plugin inside, every shipped Caddyfile it is meant for accepted, then the same Grype scan — for a Go
       # binary Grype reads the module list (Caddy, caddy-jwt and all below), so a vulnerable Go dependency turns red too.
       # The behaviour behind the templates is measured in ci.yml, job `gate-caddy`.
+      # `!cancelled()`: the Caddy image is built and scanned also when a step about the gateway image is red. Until
+      # 2026-11-22 a red gateway scan skipped both Caddy steps, and the last step said only "no report from ['(empty)']"
+      # — the Caddy findings stayed unseen until the gateway was fixed. The job stays red through the failed step.
       - name: "Caddy image: build, plugin, templates"
+        id: build-caddy
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           image=tinysesam-caddy-gate-probe:local
@@ -369,6 +374,7 @@ jobs:
           done
       - name: "Caddy image: scan for known vulnerabilities (Grype)"
         id: scan-caddy
+        if: ${{ !cancelled() && steps.build-caddy.outcome == 'success' }}
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
         with:
           image: tinysesam-caddy-gate-probe:local

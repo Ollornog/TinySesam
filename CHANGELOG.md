@@ -4,6 +4,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security — the image scan shows the findings of both images in every run
+
+- `release.yml`, job `image-probe`: the Caddy image (`tinysesam-caddy-gate`) is now built and scanned also when a step
+  about the gateway image is red (`if: ${{ !cancelled() }}`; the scan needs its own build). Until now a red gateway
+  scan skipped both Caddy steps, and the report step said only `no report from ['(empty)']` — the Caddy findings stayed
+  unseen until the gateway was fixed. The job stays red through the failed step itself. `tests/test_security_doc.py`
+  guards it (mutation: either condition removed → red).
+- Known, not fixed here: the gateway image carries `libc6 2.41-12+deb13u4` with CVE-2026-19499 and CVE-2026-5435 (high;
+  fixed in Debian's `2.41-12+deb13u5`) and Python 3.15.2 with medium findings. Neither base has a rebuilt image yet:
+  `python:3.15-slim` and `gcr.io/distroless/base-debian13:nonroot` still point to the pinned digests (2026-11-22), both
+  with `deb13u4`, and there is no Python 3.15.3. No exception in `.grype.yaml`; the digest bump follows when upstream
+  rebuilds (Dependabot, daily).
+
 ### Added — the gate client for Python (T-86)
 
 - **Who needs it:** a Flask, Django, Starlette or any other WSGI/ASGI application behind TinySesam's gate that is not
