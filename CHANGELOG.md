@@ -63,7 +63,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   advisories; no path filter — a pull request that touches neither the client nor the specification ends early and
   green). Dependabot `npm` for `/clients/js`; the auto-merge counts `client-js.yml` among its mandatory workflows and
   accepts `npm` updates. `scripts/check.sh` runs the client in the full gate when Node can run TypeScript directly
-  (22.18+), and says why it skipped otherwise or with `--fast`.
+  (22.18+) and the npm registry answers, and says why it skipped otherwise or with `--fast` (the first push went red in
+  the offline container of the pre-push hook: `npm ci` got `EAI_AGAIN`; the probe was proven by mutation).
 
 ### Added — CodeQL for the JS/TS and the Rust gate client
 

@@ -106,6 +106,10 @@ elif ! command -v node >/dev/null || ! command -v npm >/dev/null; then
 elif ! node -e 'const [a, b] = process.versions.node.split(".").map(Number);
                 process.exit(a >= 24 || (a === 23 && b >= 6) || (a === 22 && b >= 18) ? 0 : 1)'; then
     JS_SKIP="node $(node --version) cannot run TypeScript directly (needs 22.18, 23.6 or 24+)"
+elif ! (cd clients/js && timeout 30 npm ping --loglevel=silent >/dev/null 2>&1); then
+    # Measured, not assumed: ci-local runs this script with `--network none`, where `npm ci` cannot fetch the dev
+    # tools. Without the probe that container run went red on EAI_AGAIN although nothing of the client was wrong.
+    JS_SKIP="the npm registry is not reachable (offline container?)"
 else
     JS_SKIP=""
 fi
