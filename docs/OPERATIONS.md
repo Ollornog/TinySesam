@@ -1091,6 +1091,47 @@ rest keeps working. No SQL is needed either way; `DROP TABLE approval` removes t
   `max_age=0`; without it an account that has only the provider cannot confirm (fail-closed) — give it a passkey or a
   TOTP.
 
+## Account API for applications: columns, lock value and rollback (schema 23)
+
+Schema 23 (account API, stage A) **adds** three columns to `users` — `managed_by` (the id of the application that
+created the account, indexed), `last_login_at` (the last complete sign-in) and `delete_after` (deletion with a grace
+period, used from stage B on) — and a fourth value of `users.disabled`: `3` = locked by the application that manages the
+account. Existing rows get `NULL` and keep their lock values.
+
+- **Rollback:** an older version opens the file with the "newer schema version" warning and has no account API routes
+  (the application gets 404). It ignores the three columns: accounts created by an application stay, `last_login_at`
+  is not kept up meanwhile. The value `3` stays **fail-closed** there: every version reads `disabled <> 0` as locked,
+  and the confirmation link of an older version lifts only `1`. Unlocking in the panel lifts `3` as it lifts every
+  lock. Back for good, the marks can be removed with SQL (after a backup, `tinysesam backup`):
+  `UPDATE users SET disabled=2 WHERE disabled=3; DROP INDEX IF EXISTS ix_users_managed_by;` — the columns may stay
+  (`ALTER TABLE users DROP COLUMN …` only on SQLite 3.35 or newer, after the index is gone).
+- **Switch:** an application in `apps` with a `provisioning` block. Without one there are no routes and nothing reads
+  the columns besides `last_login_at`, which is written on every complete sign-in from now on.
+- **Library or gateway:** whoever embeds TinySesam as a library (an own `TinySesamConfig(...)` in the application's
+  code) can set `apps` now. The ready-made gateway container (`python -m tinysesam.gateway`, configured only by
+  `TINYSESAM_*` variables on the `oidc_gateway` preset) cannot yet: it needs a variable `TINYSESAM_APPS` and the
+  switches the preset turns off — API keys, the sign-in link and a way to set up a factor (backlog T-90, "Later").
+- **Service account:** create it as a service account (panel "New service account", or `auth.create_service`) and
+  issue an automation key for it (panel: the account's API keys, or `auth.create_api_key`). If it is
+  missing or is a person, the start writes one security-log line (`Account API for application … is shut`) and every
+  call is refused (403) — fail-closed.
+- **Revoke an application at once:** revoke the key of its service account (panel). The API is shut from that moment;
+  the accounts stay.
+- **An application disappears from `apps`:** its accounts stay as they are, `managed_by` keeps its id; adopting and
+  releasing accounts comes with stage B.
+- **Audit events:** the panel's names where the panel has the action — `user_create`, `user_roles` (before → after),
+  `user_disable`/`user_enable`, `signin_link_issue` — each with `app=<id> actor_claimed=<name>#<id>` (or
+  `actor_claimed=-` for a job), under the service account (`actor=`, the only proven actor). Only the account API's own:
+  `provision_display_name`, `provision_name_taken` (`field=`), `provision_throttled` (`action=create|disable|link|taken`,
+  plus a security-log warning), `provision_denied` (`reason=not_a_provisioning_app|scope|role|not_found`). Never the
+  link, the token or field values beyond the name.
+- **Signals of a leaked key:** a rate of `provision_name_taken` or `provision_denied reason=not_found` lines, `429`
+  answers (`provision_throttled`), and the hourly `apikey_use` line of the service account's key from a new address.
+- **Limits** count per application and hour in the `flow` table (shared by every worker on the file, cleared by the
+  flow cleanup): `create_per_hour` 60, `disable_per_hour` 60 (lock and unlock), `link_per_hour` 30, `taken_per_hour` 30
+  (answers "taken" and `actor_invalid`; beyond it even a free name answers 429). `max_accounts` (1000) caps the accounts
+  with `managed_by` = the application.
+
 ## Sign-in methods and their strength
 
 **By default TinySesam is single-factor:** a password alone signs in completely. A second

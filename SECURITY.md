@@ -281,6 +281,59 @@ Remaining risk: a person who confirms without reading. The match code, the step-
 that harder, not impossible — the page is deliberately plain: who asks (key name and date), what (one sentence and the
 values), the code, the time left. Revoking the asking key ends a flood of requests.
 
+## Account API for applications (stage A)
+
+With an application in `apps` that has a `provisioning` block, the application manages the accounts **it creates
+itself** through `/auth/api/users`: create (with a one-time link until the first sign-in), read, change the display name
+and the roles of its allowlist, lock and unlock. It calls TinySesam directly with an automation key of its service
+account.
+
+**What a leaked application key can do at most:** create accounts with the roles of the allowlist (`create_per_hour`,
+`max_accounts`) and receive their one-time links — so: own ways in with the application's roles, which is why those
+roles should belong to the application alone (`config_check` warns about a role without the `<app>-` prefix); change
+allowlist roles on the application's accounts; lock and unlock them (only its own lock, `disable_per_hour`); read the
+names, addresses, roles of the allowlist and sign-in times of the application's accounts.
+
+**What it cannot do:** become administrator or delegate, see or change any other account, take over an account that
+has been used (no link after the first sign-in, no address change, no password, no factor), issue keys or app passwords,
+create service accounts, lift a lock of the operator. The rules behind that:
+
+- **Only the key counts.** The caller is resolved through `verify_api_key` alone, never `current_user()` — a session
+  cookie neither authenticates nor changes anything (401 without a key). Demanded: an automation key, an account with
+  `is_service == 1`, named as `account` of an application with `provisioning` (403 `not_a_provisioning_app` otherwise).
+  Rule E4 stays: the key carries neither admin flag nor delegate role; the account API is a narrow door of its own and
+  opens no panel route.
+- **Ownership only by `users.managed_by`** — set when the application creates the account, never derived from roles.
+  An account the application did not create, an administrator, owner, service account or delegate answers **404**
+  like an account that does not exist, on every route, decided before any field of the request is read. Whole-account
+  actions (display name, lock, link) additionally need all roles of the account in the allowlist (`409
+  account_shared` otherwise — the application sees the account, so that is no oracle); the rule is
+  `config_check.may_manage`, the same as for the panel's delegates.
+- **Roles only from the allowlist,** never `admin`, a delegate role or a role a group map assigns (`config_check`
+  errors). A role outside it is refused (400 `role_not_allowed`), never dropped silently. `PATCH` writes
+  `(current − allowlist) ∪ wanted` in one transaction, so roles the operator granted stay. `is_admin`, `is_service` and
+  `password` are refused; a name or address from `admin_identifiers` answers like a taken one.
+- **No access to sign-in methods.** No password, passkey or TOTP is set or reset; the address is accepted only on
+  creation (`email_verified=0`), never by `PATCH` — otherwise a key would set its own address and take over the account
+  through "forgot password".
+- **The one-time link only before the first sign-in** (`409 already_signed_in` afterwards — after it a link from a key
+  would be a takeover). A new link discards the open ones. The link exists only in the answer: the database stores the
+  hash, the audit names `ttl_min`, no log line carries it. The holder learns of it (`signin_link_issued`).
+- **The application's own lock** (`disabled=3`): it never downgrades another lock (`UPDATE … WHERE disabled=0`), and
+  `enable` lifts only `3` (`409 disabled_by_operator` otherwise). Every check reads `disabled <> 0`, so `3` signs in
+  nowhere — not by password, passkey, sign-in link, OIDC, SAML, LDAP or key. Locking ends sessions, keys, devices, app
+  passwords and open links like every lock.
+- **The person behind the call is claimed, not proven.** Writes carry `TinySesam-On-Behalf-Of` (an active person's id,
+  or `-` for a job; 400 without it). The audit names the service account as actor and the claim as
+  `actor_claimed=<name>#<id>`. Answers `actor_invalid` count against `taken_per_hour`, like answers "taken": they would
+  otherwise enumerate accounts.
+- **Limits per application** in the database (shared by every worker): creations, locks, links and "taken" answers per
+  hour (`429` with `Retry-After`, a security-log warning and `provision_throttled`); `max_accounts`.
+
+Remaining risk: whoever holds the key can create accounts with the application's roles until a limit stops them, and
+lock the application's accounts. Revoking the service account's key in the panel shuts the API at once; the audit
+(`provision_*`, `apikey_use`) shows what happened.
+
 ## Vulnerable dependencies
 
 Deadlines for fixing a known vulnerability in a dependency of the package or the gateway image

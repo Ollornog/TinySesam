@@ -192,6 +192,7 @@ FIELDS: dict[str, Any] = {
     "approval_open_per_token": SHOW,
     "approval_requests_per_hour": SHOW,
     "approval_reject_limit": SHOW,
+    "apps": REDACT,
     "session_cookie": REDACT,
     "session_ttl_hours": SHOW,
     "session_ttl_transient_hours": SHOW,

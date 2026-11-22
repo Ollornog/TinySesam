@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `approval_open_per_account` (B), `approval_open_per_token` (B), `approval_pending_sec` (B), `approval_reject_limit` (B), `approval_requests_per_hour` (B), `approvals_enabled` (B), `brand_icon_title` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `role_levels` (B), `topbar_enabled` (B), `topbar_links` (B), `topbar_menu_links` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `approval_open_per_account` (B), `approval_open_per_token` (B), `approval_pending_sec` (B), `approval_reject_limit` (B), `approval_requests_per_hour` (B), `approvals_enabled` (B), `apps` (B), `brand_icon_title` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `role_levels` (B), `topbar_enabled` (B), `topbar_links` (B), `topbar_menu_links` (B), `totp_required` (B).
 
 ## Store
 
@@ -231,6 +231,12 @@ individual ones can be overridden via `**overrides`.
 | `approval_requests_per_hour` | `int` | `20` | **Tier B.** New requests per account and hour (1–500); more give 429. |
 | `approval_reject_limit` | `int` | `3` | **Tier B.** Rejections of the same type from the same token within an hour that block that token for that type for an hour (1–20). The answer to a token that keeps asking for something the person keeps refusing. |
 
+## Applications: the account API (provisioning, stage A)
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `apps` | `dict` | `dict` | **Tier B.** The register of applications that speak to TinySesam through a service account — one entry per product: `{"example": {"account": "svc-example", "name": {"en": "Example"}, "provisioning": {…}}}`. The id (lower-case letters, digits, `_`, at most 32) is what `users.managed_by` stores. `account` names the service account (`is_service`) whose automation keys speak for the application — a key of any other account, a `human` key or a session is refused. With `provisioning` the application manages the accounts it creates itself through `/auth/api/users`: create (with a one-time link until the first sign-in), read, change the display name and the roles of its allowlist, lock and unlock. Members of `provisioning`: `roles` (the allowlist — listed in `available_roles`, never `admin`, a delegate role or a role a group map assigns), `scopes` (`users:read`, `users:invite`, `users:update`, `users:disable`), `link_ttl_min` (default 60, at most `signin_link_max_ttl_min`), `max_accounts` (default 1000) and `limits` (per hour: `create_per_hour` 60, `disable_per_hour` 60, `link_per_hour` 30, `taken_per_hour` 30). It never touches passwords, passkeys, TOTP, the address after creation, an account it did not create, an administrator or a delegate. Empty = no account API. See README "Accounts for applications" and SECURITY.md "Account API". |
+
 ## Sessions (server-side, revocable)
 
 | Field | Type | Default | Meaning |
@@ -369,4 +375,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-213 fields, generated from `tinysesam/config.py`.
+214 fields, generated from `tinysesam/config.py`.

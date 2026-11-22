@@ -594,13 +594,13 @@ raw.execute("PRAGMA user_version = 21")
 raw.commit()
 raw.close()
 s1 = Store(path)
-assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION == 22
+assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 22
 assert {r["name"] for r in s1.db.execute("PRAGMA table_info(approval)")} >= {
     "id", "class", "type", "app_id", "subject_id", "requester_kind", "requester_ref", "payload", "payload_hash",
     "match_code", "return_url", "state", "created_at", "expires_at", "decided_at", "issued_at", "stepup_amr",
     "auth_time", "result", "ip_request", "ip_decision"}
 s1.db.close()
-ok("migration: a schema-21 file gets the table `approval` (with the columns stage B needs) and stamp 22")
+ok("migration: a schema-21 file gets the table `approval` (with the columns stage B needs) and the current stamp")
 
 # ══ without approvals_enabled nothing changes ═══════════════════════════════════════════════════════════════════
 off, off_app = build(approvals_enabled=False)

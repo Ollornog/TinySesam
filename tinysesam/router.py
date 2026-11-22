@@ -2034,6 +2034,12 @@ def build_router(auth) -> APIRouter:
         from .approvals import register_routes as register_approval_routes
         register_approval_routes(r, auth)
 
+    # ---------- Account API for applications (stage A, only with an application in `apps` that has provisioning) ----
+    if any(isinstance(e, dict) and isinstance(e.get("provisioning"), dict)
+           for e in (cfg.apps.values() if isinstance(getattr(cfg, "apps", None), dict) else [])):
+        from .provisioning import register_routes as register_provisioning_routes
+        register_provisioning_routes(r, auth)
+
     # ---------- SAML 2.0 SP (only if enabled) ----------
     if auth.saml:
         from fastapi.responses import Response as _Resp
