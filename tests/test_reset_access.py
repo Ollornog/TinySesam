@@ -208,8 +208,8 @@ def block_0():
     a_nobody = ask(app, key, nobody, v0)
     p_nobody = session(auth, app, nobody).get(f"/auth/approvals/{a_nobody['id']}").text
     assert "vera" not in p_nobody and f"#{v0}" in p_nobody and "approver role" in p_nobody, p_nobody[:2000]
-    assert client(app).delete(f"/auth/api/approvals/{a_nobody['id']}", headers={"X-Api-Key": key}).json()["state"] \
-        == "withdrawn"
+    withdrawn = client(app).delete(f"/auth/api/approvals/{a_nobody['id']}", headers={"X-Api-Key": key})
+    assert withdrawn.json()["state"] == "withdrawn", withdrawn.text
     ok("page: 'Reset the access of vera … for Example', ⚠ warning, methods now; without the role only #id and 'missing'")
 
     # ══ the effect, pick-up once, the link signs in ═════════════════════════════════════════════════════════════════
@@ -396,7 +396,8 @@ def block_3():
     assert login(app, auth, "vince"), "reset by an account that lost the role"
     # … and an administrator without the role is no approver either.
     a3b = ask(app, key, boss, v3)
-    assert confirm(session(auth, app, boss), a3b["id"]).status_code == 200
+    by_admin = confirm(session(auth, app, boss), a3b["id"])
+    assert by_admin.status_code == 200, by_admin.status_code
     assert row(auth, a3b["id"])["result"] == "forbidden" and login(app, auth, "vince")
     ok("3: the role withdrawn between request and confirmation → forbidden; an administrator without it → forbidden")
 
@@ -452,7 +453,8 @@ run('4. scope of the target', block_4)
 def block_5():
     v5 = victim("vic5")
     a5 = ask(app, key, lead, v5)
-    assert confirm(c_lead, a5["id"]).status_code == 200
+    confirmed5 = confirm(c_lead, a5["id"])
+    assert confirmed5.status_code == 200, confirmed5.status_code
     issued_before = len([z for z in audit(auth, "signin_link_issue") if z["username"] == "vic5"])
     outs, gate = [], threading.Barrier(2, timeout=20)
 
@@ -536,8 +538,9 @@ def block_7():
     skey = auth.create_api_key(stranger, name="s")["key"]
     assert ask(app, skey, lead, v7, status=403)["error"] == "no_approver"
     a7 = ask(app, key, lead, v7)
-    assert client(app).get(f"/auth/api/approvals/{a7['id']}", headers={"X-Api-Key": skey}).status_code == 403
-    assert client(app).get(f"/auth/api/approvals/{a7['id']}", headers={"X-Api-Key": human}).status_code == 404
+    foreign_read = client(app).get(f"/auth/api/approvals/{a7['id']}", headers={"X-Api-Key": skey})
+    person_read = client(app).get(f"/auth/api/approvals/{a7['id']}", headers={"X-Api-Key": human})
+    assert foreign_read.status_code == 403 and person_read.status_code == 404, (foreign_read.text, person_read.text)
     auth_n, app_n = build(apps=apps(scopes=["users:read", "users:invite"], approver_role=None))
     svc_n = auth_n.create_service("svc-example")
     key_n = auth_n.create_api_key(svc_n, name="k")["key"]
@@ -583,8 +586,9 @@ def block_9():
     ac = ask(app_c, key_c, lead_c, vc)
     cc = session(auth_c, app_c, lead_c)
     hc = page_hash(cc, ac["id"])
-    assert cc.post(f"/auth/approvals/{ac['id']}", data={"_csrf": CSRF, "decision": "approve", "payload_hash": hc,
-                                                        "password": PW}).status_code == 200
+    confirmed_c = cc.post(f"/auth/approvals/{ac['id']}", data={"_csrf": CSRF, "decision": "approve",
+                                                               "payload_hash": hc, "password": PW})
+    assert confirmed_c.status_code == 200, confirmed_c.status_code
     outc = status(app_c, key_c, ac["id"])
     assert outc["result"] == "ok" and outc["output"]["signin_url"], outc
     c_c = client(app_c)
