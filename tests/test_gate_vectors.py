@@ -334,6 +334,11 @@ for v in JWKS["sets"]:
     if v["attack"] == "jwks-entry" and v["id"] != "duplicate-kid":
         e = v["input"]["jwks"]["keys"][0]
         changed = {m for m in set(e) | set(_jwk_a) if e.get(m, None) != _jwk_a.get(m, None)}
+        try:   # a kid recomputed for a changed x follows the x: one defect, not two
+            if {"x", "kid"} <= changed and e["kid"] == ref.key_id(ref.b64u_decode(e["x"])):
+                changed.discard("kid")
+        except (ref.GateError, KeyError, TypeError):
+            pass
         assert len(changed) == 1, f"jwks/{v['id']}: the skipped entry differs from a usable one in {sorted(changed)}"
 ok(f"one defect: {len(attack_vectors) - len(INHERENT)} attack vectors accepted after one repair, {len(INHERENT)} "
    "listed where the defect cannot occur alone; key-set entries differ from a usable one in one member")

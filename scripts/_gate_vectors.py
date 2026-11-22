@@ -64,6 +64,11 @@ def kid(label: str) -> str:
     return gate.key_name_id(_public(label))
 
 
+def gate_kid(raw: bytes) -> str:
+    """The kid rule of spec §4.1 over arbitrary bytes (for an entry whose only defect is elsewhere)."""
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
 def jwk(label: str) -> dict:
     return {"kty": "OKP", "crv": "Ed25519", "x": b64u(_public(label)), "kid": kid(label), "alg": "EdDSA", "use": "sig"}
 
@@ -447,6 +452,7 @@ def token_vectors(p: Probe) -> list:
             ("iat-missing", {"iat": None}, "no iat"),
             ("sub-missing", {"sub": None}, "no sub"),
             ("sub-number", {"sub": 1}, "sub as a number"),
+            ("sub-empty", {"sub": "", "ts_id": None}, "sub empty (and no ts_id, which would differ)"),
             ("iss-missing", {"iss": None}, "no iss"),
             ("aud-number", {"aud": 1}, "aud as a number"),
             ("aud-empty-array", {"aud": []}, "aud as an empty array"),
@@ -630,7 +636,8 @@ def jwks_sets() -> list:
             ("kty-rsa", entry(kty="RSA"), "kty RSA"),
             ("crv-x25519", entry(crv="X25519"), "crv X25519 is a key-agreement curve"),
             ("crv-ed448", entry(crv="Ed448"), "crv Ed448 is not this protocol's curve"),
-            ("x-short", entry(x=b64u(_public("A")[:31])), "x of 31 bytes"),
+            ("x-short", entry(x=b64u(_public("A")[:31]), kid=gate_kid(_public("A")[:31])),
+             "x of 31 bytes (its kid computed over those bytes, so only the length is wrong)"),
             ("x-padded", entry(x=b64u(_public("A")) + "="), "x with padding"),
             ("alg-hs256", entry(alg="HS256"), "alg HS256"),
             ("use-enc", entry(use="enc"), "use enc"),

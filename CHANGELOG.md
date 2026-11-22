@@ -14,6 +14,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   triggers a key set fetch — with an empty, a fresh and a stale cache —, while a well-formed unknown `kid` does, at
   most every 10 s. With fixed keys both answer `kid`, so only the fetch tells a client that checks the form loosely
   (case-insensitive, by length) from one that checks it exactly; the token vectors could not.
+- Two gaps found by hand mutations of the Python gate client (T-86): a new token vector `attack-claim-sub-empty` (an
+  empty `sub` is `claims`; no vector had one), and `skip-x-short` now carries a `kid` computed over its 31 bytes, so
+  only the length check refuses it (before, the `kid` mismatch did too).
 - `tests/test_gate_vectors.py` guards the rule for every token and header attack vector: switching off exactly one check
   of the reference (or adding the missing key, or configuring the issuer or audience the token names) must make it
   accepted; the vectors whose defect cannot occur alone are listed with a reason, and the list is measured both ways.

@@ -46,7 +46,7 @@ HEADER_ERRORS = ("unauthenticated", "header")
 #: signature); `tests/test_gate_vectors.py` also uses them to show that every attack vector carries one defect.
 RELAXATIONS = ("alg_from_header", "ignore_typ", "embedded_jwk", "unknown_header_members", "no_duplicate_check",
                "lenient_base64", "lenient_utf8", "allow_bom", "allow_nan", "no_size_limit", "skip_signature",
-               "no_exp", "no_nbf", "no_lifetime", "no_control_check", "no_ts_id_check",
+               "no_exp", "no_nbf", "no_lifetime", "no_control_check", "no_ts_id_check", "allow_empty_sub",
                "aud_casefold", "iss_prefix", "kid_any_format", "claim_types_loose", "jwks_any_entry",
                "jwks_no_interval", "jwks_no_stale_limit", "header_strip_control", "header_first_value",
                "header_lenient_utf8", "header_any_id", "remote_auth_empty_is_session", "groups_no_trim",
@@ -261,7 +261,7 @@ def _check_claims(claims: dict, *, issuer, audience, now, leeway, relax) -> None
             if "no_control_check" not in relax and has_control(str(claims[name])):
                 raise GateError("claims", f"control character in {name}")
     sub = str(claims.get("sub"))
-    if not sub or ("no_control_check" not in relax and has_control(sub)):
+    if (not sub and "allow_empty_sub" not in relax) or ("no_control_check" not in relax and has_control(sub)):
         raise GateError("claims", "sub")
     if "ts_id" in claims and claims["ts_id"] != claims.get("sub") and "no_ts_id_check" not in relax:
         raise GateError("claims", "ts_id differs from sub")

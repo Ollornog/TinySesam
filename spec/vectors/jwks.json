@@ -168,7 +168,7 @@
     {
       "id": "skip-x-short",
       "attack": "jwks-entry",
-      "reason": "An entry with x of 31 bytes is skipped; the others stay usable.",
+      "reason": "An entry with x of 31 bytes (its kid computed over those bytes, so only the length is wrong) is skipped; the others stay usable.",
       "input": {
         "jwks": {
           "keys": [
@@ -176,7 +176,7 @@
               "kty": "OKP",
               "crv": "Ed25519",
               "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVA",
-              "kid": "a033507ca61ad979",
+              "kid": "e494949056a9a881",
               "alg": "EdDSA",
               "use": "sig"
             },
