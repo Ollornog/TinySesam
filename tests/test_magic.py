@@ -177,9 +177,11 @@ ok("B5-18: invalid sign-in token (GET and POST) is in the audit log")
 import asyncio, threading
 import anyio.to_thread
 _lot = threading.Event()
+_first_send = threading.Event()
 _mail_threads = []
 def _hangs(to, subject, text, html=None):
     _mail_threads.append(threading.current_thread().name)
+    _first_send.set()
     _lot.wait(10)
 auth.set_mailer(_hangs)
 auth.set_security("rate_limit_max", 1000)
@@ -223,8 +225,13 @@ async def _measurement():
     # All fifty responses are THERE, although not a single send has finished (R4-05) …
     codes = await asyncio.wait_for(asyncio.gather(*(f for f, _ in post)), 5)
     assert codes == [200] * 50, codes
-    await asyncio.sleep(0.2)
-    assert _mail_threads and not _lot.is_set()
+    # Wait for the first send to have started (an event, polled without taking a threadpool slot) — not a fixed 0.2 s:
+    # once in a local gate run (2026-11-22) the mail worker had not started its first job after 0.2 s.
+    for _ in range(2000):
+        if _first_send.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert _mail_threads and not _lot.is_set(), "no send started within 20 s"
     # … the threadpool is free, a synchronous route responds immediately (B6-6) …
     proven = anyio.to_thread.current_default_thread_limiter().borrowed_tokens
     f_login, _ = await _asgi("GET", "/auth/login")

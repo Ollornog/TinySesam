@@ -60,7 +60,7 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   Python audit tool by name: the kit's audit-gate check reads comments as calls (false positive, fix pending in the
   kit; revert after the kit sync).
 
-### Fixed — two suites that read the clock instead of an event (red under load)
+### Fixed — suites that read the clock instead of an event (red under load)
 
 - `tests/test_close.py`: the job in the shutdown race wrote 400 rows; under load (two CPUs, a dozen suites) that took
   longer than `close()`'s 10 s deadline, and `close()` correctly kept the database open (`False`) — the test read that
@@ -70,6 +70,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - `tests/test_browser.py`: after the demo sign-in it waited a fixed 2 s and then read the page ("not signed in: ''"
   when the answer came later); it now waits for the signed-in page (`until`, up to 20 s). With 4 s network latency
   injected before the sign-in: the old version 3 of 3 red, the new one 0 of 3.
+- `tests/test_magic.py` (R4-05): it waited a fixed 0.2 s for the mail worker to start the first send; once in a local
+  gate run the worker had not started yet. It now waits for an event set by the first send (up to 20 s). With a mail
+  worker that starts 0.5 s late: the old version 3 of 3 red, the new one 0 of 3.
 
 ### Security — the image scan shows the findings of both images in every run
 
