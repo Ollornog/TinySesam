@@ -1,0 +1,1587 @@
+{
+  "format": 1,
+  "kind": "jwks",
+  "spec": "spec/gate-client.md",
+  "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
+  "defaults": {
+    "issuer": "https://auth.example.com",
+    "audience": "app.example.com",
+    "now": 1767225600
+  },
+  "sets": [
+    {
+      "id": "valid",
+      "attack": null,
+      "reason": "Active and previous key, as /auth/gate/jwks.json serves them.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "a033507ca61ad979",
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "minimal-entry",
+      "attack": null,
+      "reason": "alg and use are optional.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "a033507ca61ad979"
+        ]
+      }
+    },
+    {
+      "id": "skip-kty-rsa",
+      "attack": "jwks-entry",
+      "reason": "An entry with kty RSA is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "RSA",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-crv-x25519",
+      "attack": "jwks-entry",
+      "reason": "An entry with crv X25519 is a key-agreement curve is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "X25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-crv-ed448",
+      "attack": "jwks-entry",
+      "reason": "An entry with crv Ed448 is not this protocol's curve is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed448",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-x-short",
+      "attack": "jwks-entry",
+      "reason": "An entry with x of 31 bytes is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVA",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-x-padded",
+      "attack": "jwks-entry",
+      "reason": "An entry with x with padding is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY=",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-alg-hs256",
+      "attack": "jwks-entry",
+      "reason": "An entry with alg HS256 is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "HS256",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-use-enc",
+      "attack": "jwks-entry",
+      "reason": "An entry with use enc is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "enc"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-key-ops-sign",
+      "attack": "jwks-entry",
+      "reason": "An entry with key_ops without verify is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig",
+              "key_ops": [
+                "sign"
+              ]
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-private-d",
+      "attack": "jwks-entry",
+      "reason": "An entry with private material `d` in a public set is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig",
+              "d": "2xkqD-MfK5NQTd7ZeCskNxD0aFo_Gq10R13-LUdCjGI"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-kid-mismatch",
+      "attack": "jwks-entry",
+      "reason": "An entry with a kid that is not the SHA-256 prefix of x is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-kid-missing",
+      "attack": "jwks-entry",
+      "reason": "An entry with no kid is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "skip-x5u",
+      "attack": "jwks-entry",
+      "reason": "An entry with x5u: no remote key material is skipped; the others stay usable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig",
+              "x5u": "https://evil.example.com/cert.pem"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "duplicate-kid",
+      "attack": "jwks-entry",
+      "reason": "Two entries with the same kid make that kid unusable.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "kids": [
+          "6ccee68f2fc14294"
+        ]
+      }
+    },
+    {
+      "id": "not-object",
+      "attack": "jwks-shape",
+      "reason": "The document is an array.",
+      "input": {
+        "jwks": [
+          {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+            "kid": "a033507ca61ad979",
+            "alg": "EdDSA",
+            "use": "sig"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "jwks_invalid"
+      }
+    },
+    {
+      "id": "keys-missing",
+      "attack": "jwks-shape",
+      "reason": "The document has no `keys` member.",
+      "input": {
+        "jwks": {
+          "key": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "jwks_invalid"
+      }
+    },
+    {
+      "id": "keys-not-list",
+      "attack": "jwks-shape",
+      "reason": "`keys` is an object, not an array.",
+      "input": {
+        "jwks": {
+          "keys": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+            "kid": "a033507ca61ad979",
+            "alg": "EdDSA",
+            "use": "sig"
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "jwks_invalid"
+      }
+    },
+    {
+      "id": "too-many-keys",
+      "attack": "jwks-shape",
+      "reason": "More than 32 entries in one set.",
+      "input": {
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+              "kid": "6ccee68f2fc14294",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "jwks_invalid"
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "cold-start-failure-backoff",
+      "attack": "jwks-cache",
+      "reason": "The first fetch fails: fail closed at once (no waiting, no hang), no new attempt within 10 s, then a successful fetch.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": false,
+            "error": "key_unavailable"
+          },
+          "fetch": {
+            "error": "timeout"
+          }
+        },
+        {
+          "now": 1767225601,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAxLCJuYmYiOjE3NjcyMjU2MDEsImV4cCI6MTc2NzIyNTkwMSwianRpIjoicy1BLTE3NjcyMjU2MDEtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.apBF-Bx66XMNIgL_lDP7W8dw12QnZCWowOLuk1K1z5hLxKqEl2MRmOk_7ujj8sJbrcTU4hK9zgPMbv2X1X-GAA",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "key_unavailable"
+          }
+        },
+        {
+          "now": 1767225609,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjA5LCJuYmYiOjE3NjcyMjU2MDksImV4cCI6MTc2NzIyNTkwOSwianRpIjoicy1BLTE3NjcyMjU2MDktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.IypKvGQZ0SYnKNmIPA_BuT4xrclm3mX6WdDpp6MHx1ETdcXDMmdfL0p07tpLDXZO6cHbzmSXWwWQgj121FC0Aw",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "key_unavailable"
+          }
+        },
+        {
+          "now": 1767225610,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjEwLCJuYmYiOjE3NjcyMjU2MTAsImV4cCI6MTc2NzIyNTkxMCwianRpIjoicy1BLTE3NjcyMjU2MTAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.e4fSXGxjz-_Pu8A9cQNRDsq7iccEOo3O7BU0vxI_8sKNN-DgeJa7VVw7rt3BYw5_YslaWzAgVaI9sOSgXktuCg",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        }
+      ]
+    },
+    {
+      "id": "fresh-cache",
+      "attack": "jwks-cache",
+      "reason": "A fetched set is fresh for its max-age; no fetch per request.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225899,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1ODk5LCJuYmYiOjE3NjcyMjU4OTksImV4cCI6MTc2NzIyNjE5OSwianRpIjoicy1BLTE3NjcyMjU4OTktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.KfRsaTWNrNyIXMqBpBNxbQSl4r1Ya0lbNaBuxwMdnt0IosP5V4WaDIlDCo6hU68OMo0QThpOXHS5a0eDeEs6Aw",
+          "expect": {
+            "fetched": false,
+            "ok": true
+          }
+        },
+        {
+          "now": 1767225900,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTAwLCJuYmYiOjE3NjcyMjU5MDAsImV4cCI6MTc2NzIyNjIwMCwianRpIjoicy1BLTE3NjcyMjU5MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.7QqpuJwSWqSom3v6XBiS6HG9wHsPBWU_LOSzLYB3WgNvZejNL0LGnUZvgI7a7zPgTIcR95hYx1Cwy3ck8RTjAw",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        }
+      ]
+    },
+    {
+      "id": "default-freshness",
+      "attack": "jwks-cache",
+      "reason": "Without Cache-Control the set is fresh for 300 s.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "now": 1767225899,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1ODk5LCJuYmYiOjE3NjcyMjU4OTksImV4cCI6MTc2NzIyNjE5OSwianRpIjoicy1BLTE3NjcyMjU4OTktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.KfRsaTWNrNyIXMqBpBNxbQSl4r1Ya0lbNaBuxwMdnt0IosP5V4WaDIlDCo6hU68OMo0QThpOXHS5a0eDeEs6Aw",
+          "expect": {
+            "fetched": false,
+            "ok": true
+          }
+        },
+        {
+          "now": 1767225900,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTAwLCJuYmYiOjE3NjcyMjU5MDAsImV4cCI6MTc2NzIyNjIwMCwianRpIjoicy1BLTE3NjcyMjU5MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.7QqpuJwSWqSom3v6XBiS6HG9wHsPBWU_LOSzLYB3WgNvZejNL0LGnUZvgI7a7zPgTIcR95hYx1Cwy3ck8RTjAw",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "max-age-floor",
+      "attack": "jwks-cache",
+      "reason": "max-age=0 is raised to 60 s — no fetch per request.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "no-cache, max-age=0"
+          }
+        },
+        {
+          "now": 1767225659,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjU5LCJuYmYiOjE3NjcyMjU2NTksImV4cCI6MTc2NzIyNTk1OSwianRpIjoicy1BLTE3NjcyMjU2NTktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.Jbg3-kT3KYPXEbTBXuTLx8TTvw-xi_Y9pBNpqOblh-0sOQxO-rU0rMlmyUboU0Zl4espq09NYOSSmZVpZfEuAA",
+          "expect": {
+            "fetched": false,
+            "ok": true
+          }
+        },
+        {
+          "now": 1767225660,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjYwLCJuYmYiOjE3NjcyMjU2NjAsImV4cCI6MTc2NzIyNTk2MCwianRpIjoicy1BLTE3NjcyMjU2NjAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.vAt0VC7HDMzgVpITfQCuB_CJUnHUx8mvZCFH2g4Bj7cO_ypnrvUIU6Uo91AGX9_iO_cOylG_kQTug3luwYd-Ag",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        }
+      ]
+    },
+    {
+      "id": "max-age-ceiling",
+      "attack": "jwks-cache",
+      "reason": "max-age=86400 is lowered to 3600 s — a rotation arrives within the hour.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "public, max-age=86400"
+          }
+        },
+        {
+          "now": 1767229199,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI5MTk5LCJuYmYiOjE3NjcyMjkxOTksImV4cCI6MTc2NzIyOTQ5OSwianRpIjoicy1BLTE3NjcyMjkxOTktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.5REhWc8iP9i6r9sGR2SRDJ4LjZD1CLfnVU_Jv1BhKJbAkLDbg-EuGZnQk5ujhfhuWLDfrwxp3PHWHjodYFzMDA",
+          "expect": {
+            "fetched": false,
+            "ok": true
+          }
+        },
+        {
+          "now": 1767229200,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI5MjAwLCJuYmYiOjE3NjcyMjkyMDAsImV4cCI6MTc2NzIyOTUwMCwianRpIjoicy1BLTE3NjcyMjkyMDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.gfx12w44-q0Z5XSX667HVllMMYY-IbEz9HhOtdS3cMHPDfK6cGUkknUJBAqyy8UCnNEoHlmu0sbQkIyD8oy0Dg",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rotation-unknown-kid",
+      "attack": "jwks-cache",
+      "reason": "A token of a new key: an unknown kid triggers one fetch, at most every 10 s.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225605,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjZjY2VlNjhmMmZjMTQyOTQifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjA1LCJuYmYiOjE3NjcyMjU2MDUsImV4cCI6MTc2NzIyNTkwNSwianRpIjoicy1CLTE3NjcyMjU2MDUtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.8mPccTK1G_fd7Y_AtuohsBnGqWMXQl-k1FDsJ-yM2kJGkUB5J4AwZb6l9GE_3Xw90rPnbnIc67RKUgVlmkhNDQ",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225610,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjZjY2VlNjhmMmZjMTQyOTQifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjEwLCJuYmYiOjE3NjcyMjU2MTAsImV4cCI6MTc2NzIyNTkxMCwianRpIjoicy1CLTE3NjcyMjU2MTAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.ukbRLVK1e0cd6shNAdllZXSyljskj4bFoSK6VJaqTWlX7Xo-WM31HLc1wx3H0Ti5MIC3vta_ni7SY7PRlxSNDQ",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                },
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+                  "kid": "6ccee68f2fc14294",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225611,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjExLCJuYmYiOjE3NjcyMjU2MTEsImV4cCI6MTc2NzIyNTkxMSwianRpIjoicy1BLTE3NjcyMjU2MTEtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.hqYhOyZh-iPkCZcGABw3wx0y_jWIVuVta8VhvT3LipXBLKsUWgQzLkJCwZ_psK4a2eWxBCLL5TsTS_ZHKA4NDw",
+          "expect": {
+            "fetched": false,
+            "ok": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "unknown-kid-flood",
+      "attack": "jwks-cache",
+      "reason": "Tokens with a kid that never appears cannot make the client fetch more than every 10 s.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225610,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjFkNTQ0YjQxMjFkMDg1ZjgifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjEwLCJuYmYiOjE3NjcyMjU2MTAsImV4cCI6MTc2NzIyNTkxMCwianRpIjoicy1YLTE3NjcyMjU2MTAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.f2jYn_s6UAZT4S0Bn5DLSNrKd8R36Tv9JI0bJFZIYbvKaM0BWcd_O-1AjsxVUJKiHZbQd6WMtXImp9ZQT4WFBQ",
+          "expect": {
+            "fetched": true,
+            "ok": false,
+            "error": "kid"
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225611,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjFkNTQ0YjQxMjFkMDg1ZjgifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjExLCJuYmYiOjE3NjcyMjU2MTEsImV4cCI6MTc2NzIyNTkxMSwianRpIjoicy1YLTE3NjcyMjU2MTEtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.OLEAUufZjd2M2rLD-hii4wE2yPbqVHtloHGJwfftbZK8CffuogI8fvSupxiL9LyaNfjom9laKRGtTTxH0xAsCg",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225619,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjFkNTQ0YjQxMjFkMDg1ZjgifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjE5LCJuYmYiOjE3NjcyMjU2MTksImV4cCI6MTc2NzIyNTkxOSwianRpIjoicy1YLTE3NjcyMjU2MTktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.DullwyxJKzUADLDdvIj9URe0orPjQwQYb17YcaggIHauzgtijkU7ZcdCon7xQOaS6WxGHOyd_wAQv2QYRr52Ag",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225619,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjE5LCJuYmYiOjE3NjcyMjU2MTksImV4cCI6MTc2NzIyNTkxOSwianRpIjoicy1BLTE3NjcyMjU2MTktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.KJMkgovfeYitc8_vaE5o4M7xkU5Q8LsiXVMvYIr24cKAnigy-9wOrfW4T5lPhU1tWQFq6tkhQh3perhc_iCECA",
+          "expect": {
+            "fetched": false,
+            "ok": true
+          }
+        },
+        {
+          "now": 1767225620,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjFkNTQ0YjQxMjFkMDg1ZjgifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjIwLCJuYmYiOjE3NjcyMjU2MjAsImV4cCI6MTc2NzIyNTkyMCwianRpIjoicy1YLTE3NjcyMjU2MjAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.lZXMr2Z-_RFdPnTVTeRizgv5sAMSIul2Gz_ueIZT4FPuGPnKc10BNcwI0H8CX_hnvZjyIk_iXTRr6Wmy65-4Ag",
+          "expect": {
+            "fetched": true,
+            "ok": false,
+            "error": "kid"
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        }
+      ]
+    },
+    {
+      "id": "invalid-kid-no-fetch",
+      "attack": "jwks-cache",
+      "reason": "A kid of the wrong form is refused before the key set is consulted — even with an empty cache.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6Ii4uL2tleXMifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.ydMzNm6RWKGTLGsd6ptvTVqX5Gp6fnlt5-sG7pX7kuctptom8pIlrYSK8S_TI6OsibfJRsjpZjZJAakZt1IDCw",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225601,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAxLCJuYmYiOjE3NjcyMjU2MDEsImV4cCI6MTc2NzIyNTkwMSwianRpIjoicy1BLTE3NjcyMjU2MDEtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.apBF-Bx66XMNIgL_lDP7W8dw12QnZCWowOLuk1K1z5hLxKqEl2MRmOk_7ujj8sJbrcTU4hK9zgPMbv2X1X-GAA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        }
+      ]
+    },
+    {
+      "id": "stale-if-error",
+      "attack": "jwks-cache",
+      "reason": "A failed refresh keeps the last good set for up to 3600 s past its freshness, then the client fails closed.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225900,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTAwLCJuYmYiOjE3NjcyMjU5MDAsImV4cCI6MTc2NzIyNjIwMCwianRpIjoicy1BLTE3NjcyMjU5MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.7QqpuJwSWqSom3v6XBiS6HG9wHsPBWU_LOSzLYB3WgNvZejNL0LGnUZvgI7a7zPgTIcR95hYx1Cwy3ck8RTjAw",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "error": "timeout"
+          }
+        },
+        {
+          "now": 1767225905,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTA1LCJuYmYiOjE3NjcyMjU5MDUsImV4cCI6MTc2NzIyNjIwNSwianRpIjoicy1BLTE3NjcyMjU5MDUtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.w37HidBwDK3GIpZ0kxs3_-kpERcXNnVAXzWNYPx-EBexqGeOsEbcrqxzCTdDuGuXYLdu8vmGjjQZbUK2uF3uCg",
+          "expect": {
+            "fetched": false,
+            "ok": true
+          }
+        },
+        {
+          "now": 1767229499,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI5NDk5LCJuYmYiOjE3NjcyMjk0OTksImV4cCI6MTc2NzIyOTc5OSwianRpIjoicy1BLTE3NjcyMjk0OTktMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.ozrGZ_bQbA6UDRJt408yWlALtP8IaJMKKL6j5pMGHTlpAtUw6-rJfv1V4-VCJA3GIIBlSmlrAHk3-fzp9CoPBw",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 503
+          }
+        },
+        {
+          "now": 1767229510,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI5NTEwLCJuYmYiOjE3NjcyMjk1MTAsImV4cCI6MTc2NzIyOTgxMCwianRpIjoicy1BLTE3NjcyMjk1MTAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.-mFKWedCO1S3FDPLqbbBZpDFPWg7U0qe26PRZEULHH-QVQ2Edq8jlwrmB1PjM0t3fHAFSn2HxgN_wJAlCYAGCw",
+          "expect": {
+            "fetched": true,
+            "ok": false,
+            "error": "key_unavailable"
+          },
+          "fetch": {
+            "error": "timeout"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bad-document-is-failure",
+      "attack": "jwks-cache",
+      "reason": "A body that is no JSON, or a set without one usable key, counts as a failed fetch: the last good set stays.",
+      "steps": [
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.D27VG6S0bloWOFpQES7pMlpLm00DuW45f3KbmJGglMk0nRsibZBCt1y_QOC1vAOsdcwWVceWsjcoe6oNWjtqCA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225900,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTAwLCJuYmYiOjE3NjcyMjU5MDAsImV4cCI6MTc2NzIyNjIwMCwianRpIjoicy1BLTE3NjcyMjU5MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.7QqpuJwSWqSom3v6XBiS6HG9wHsPBWU_LOSzLYB3WgNvZejNL0LGnUZvgI7a7zPgTIcR95hYx1Cwy3ck8RTjAw",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body_text": "<html>maintenance</html>"
+          }
+        },
+        {
+          "now": 1767225910,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTEwLCJuYmYiOjE3NjcyMjU5MTAsImV4cCI6MTc2NzIyNjIxMCwianRpIjoicy1BLTE3NjcyMjU5MTAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.t3bhJ527KIyds0StEm4H4uvmwFs44ZHgoQ6AERmFQpnO9A2cKLl7SF4fhTCYsRvqpD_6yp-c5RNvh2FedLgADQ",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "RSA",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "now": 1767225920,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTIwLCJuYmYiOjE3NjcyMjU5MjAsImV4cCI6MTc2NzIyNjIyMCwianRpIjoicy1BLTE3NjcyMjU5MjAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.bcD8aMSloY6SqvI6VWq6B10KdxCd3L69-qAwAFG7jVQvDZrW9Afy1PaZqecig4b-RF6NOLGGvw7JjaHWDpKdBw",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": [
+              {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                "kid": "a033507ca61ad979",
+                "alg": "EdDSA",
+                "use": "sig"
+              }
+            ]
+          }
+        },
+        {
+          "now": 1767225930,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1OTMwLCJuYmYiOjE3NjcyMjU5MzAsImV4cCI6MTc2NzIyNjIzMCwianRpIjoicy1BLTE3NjcyMjU5MzAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.FxiFNsd8kDFpZQgLMU2bjN5pOb5elYl9y8Y2hCYxGlW5DWNC51pKYYXsGF0nhf5qM-RptdpZMoqsTSZhppgoCQ",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                },
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "hTRqJPFZl52gIri4LXR1T3l8uxcZXNN9VGZ68dfykis",
+                  "kid": "6ccee68f2fc14294",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        }
+      ]
+    }
+  ]
+}
