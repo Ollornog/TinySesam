@@ -63,7 +63,7 @@ class TinySesamConfig:
     # Known roles/groups: the admin panel offers them as checkboxes (empty = free-text fallback).
     available_roles: list[str] = field(default_factory=list)
     # Role levels: ladders the admin panel offers as ONE choice per entry instead of single checkboxes, e.g.
-    # `[{"name": "collections", "label": {"en": "Collections", "de": "Sammlungen"}, "levels": [
+    # `[{"name": "collections", "label": "Collections", "levels": [
     #   {"name": "read", "role": "coll:{1}-read"}, {"name": "write", "role": "coll:{1}"}]}]`.
     # Levels lowest first, each adds one role template with `{1}`; a level stores its role and every role below it.
     # The entries (`{1}`) come from `available_roles`. A way to pick roles, not a role hierarchy: headers, gate token

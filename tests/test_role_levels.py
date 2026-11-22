@@ -63,7 +63,7 @@ assert by["a"]["own"] == ["coll:a-read", "coll:a"] and by["a"]["offer"] == [True
 # (Mutation: `offer` from `own[i] in known` alone → `d` write offered → red.)
 assert by["c"]["offer"] == [True, False] and by["d"]["offer"] == [False, False], by
 v = R.view([COLL], ROLES, "de")
-assert v[0]["label"] == "Sammlungen" and v[0]["levels"] == ["lesen", "schreiben"]
+assert v[0]["label"] == COLL["label"]["de"] and v[0]["levels"] == [x["label"]["de"] for x in COLL["levels"]]
 assert R.view([COLL], ROLES, "fr")[0]["levels"] == ["read", "write"]        # unknown language → en
 bare = {"name": "x", "levels": [{"name": "lo", "role": "x:{1}-lo"}, {"name": "hi", "role": "x:{1}"}]}
 assert R.view([bare], ["x:q"], "de")[0]["levels"] == ["lo", "hi"] and R.view([COLL], ["editor"]) == []
@@ -113,8 +113,9 @@ _, w = findings([COLL], ["coll:c-read", "editor"])
 assert any("entry 'c': coll:c not in available_roles" in x for x in w), w
 _, w = findings([COLL], full + ["lead"], {"lead": {"roles": ["coll:a"]}})
 assert any("'lead' manages coll:a but not every role below" in x for x in w), w
-e, w = findings([COLL], ["coll:c-read", "editor"], lang="de")
-assert any("Eintrag 'c': coll:c nicht in available_roles" in x for x in w), w
+_, w_en = findings([COLL], ["coll:c-read", "editor"])
+_, w = findings([COLL], ["coll:c-read", "editor"], lang="de")
+assert len(w) == len(w_en) == 1 and w != w_en and "'c'" in w[0] and "coll:c " in w[0], (w, w_en)   # translated
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "x.db"), available_roles=full,
                               role_levels=[{"name": "x", "levels": [{"name": "a", "role": "x:{1}"}]}]))

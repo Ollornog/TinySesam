@@ -1654,10 +1654,10 @@ cfg = TinySesamConfig(
     available_roles=["coll:photos", "coll:photos-read", "coll:recipes", "coll:recipes-read", "editor"],
     role_levels=[{
         "name": "collections",
-        "label": {"en": "Collections", "de": "Sammlungen"},
+        "label": "Collections",            # a text, or one per language: {"en": …, "de": …}
         "levels": [  # lowest first
-            {"name": "read", "label": {"en": "read", "de": "lesen"}, "role": "coll:{1}-read"},
-            {"name": "write", "label": {"en": "write", "de": "schreiben"}, "role": "coll:{1}"},
+            {"name": "read", "label": "read", "role": "coll:{1}-read"},
+            {"name": "write", "label": "write", "role": "coll:{1}"},
         ],
     }],
 )
