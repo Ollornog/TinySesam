@@ -1,0 +1,95 @@
+name: client-rust
+
+# The Rust gate client (clients/rust, T-81): format, clippy, every test with all features (the vectors of spec/vectors
+# included), the vulnerability check. Conventions: clients/README.md ("CI per client").
+#
+# No path filter on the triggers: a required check that is skipped blocks the merge forever. Instead the first step
+# looks at what the pull request changes and ends the job early and green when nothing of the client, the
+# specification or this workflow is touched. On main, by hand and on the schedule it always runs in full — the
+# schedule because advisories appear without a code change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # GitHub cron only knows UTC: 03:15 UTC = 05:15 Europe/Berlin (CEST) or 04:15 (CET).
+    - cron: "15 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest  # public repository: GitHub-hosted runners only
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: clients/rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit of a pull request and its first parent (the base): enough to see what the PR changes.
+          fetch-depth: 2
+
+      - name: Changes that concern the client
+        id: scope
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "not a pull request: full run"; exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if printf '%s\n' "$changed" | grep -qE '^(clients/rust/|spec/|\.github/workflows/client-rust\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "the client, the specification or this workflow changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing of the Rust client changed: green without a run"
+          fi
+
+      # The current stable toolchain (the only maintained Rust release); rustup is part of the runner image.
+      - name: Toolchain
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt --no-self-update
+          rustup default stable
+          rustc --version
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        if: steps.scope.outputs.run == 'true'
+        with:
+          workspaces: clients/rust
+
+      - name: Format
+        if: steps.scope.outputs.run == 'true'
+        run: cargo fmt --check
+
+      - name: Clippy
+        if: steps.scope.outputs.run == 'true'
+        run: cargo clippy --locked --all-features --all-targets -- -D warnings
+
+      - name: Tests without features (the core has no network dependency)
+        if: steps.scope.outputs.run == 'true'
+        run: cargo test --locked
+
+      - name: Tests with all features (vectors, HTTP, properties, example build)
+        if: steps.scope.outputs.run == 'true'
+        run: cargo test --locked --all-features
+
+      - name: Documentation
+        if: steps.scope.outputs.run == 'true'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --all-features --no-deps
+
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f  # v2.90.6
+        if: steps.scope.outputs.run == 'true'
+        with:
+          tool: cargo-audit
+
+      - name: Vulnerabilities (RustSec advisory database)
+        if: steps.scope.outputs.run == 'true'
+        run: cargo audit --deny warnings

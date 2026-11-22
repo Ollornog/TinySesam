@@ -72,6 +72,28 @@ else
     step "Go gate client SKIPPED — no Go toolchain here (the CI workflow client-go runs it)"
 fi
 
+# The Rust gate client (clients/rust, T-81): its own toolchain, its own CI workflow (client-rust.yml, mandatory there).
+# Here it runs in the full gate when a working cargo is installed; otherwise the step says why it did not run — the CI
+# job is the gate that never skips. `--fast` leaves it out like the browser test (a cold build takes minutes, and
+# tests/test_runner.py runs this script with `--fast` under a two-minute limit). "Working" is measured, not assumed:
+# a GitHub runner has rustup's `cargo` without a default toolchain. The build directory lies outside the tree (a suite
+# must not write into it) and survives between runs.
+CARGO="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
+if [[ $FAST -eq 1 ]]; then
+    RUST_SKIP="--fast"
+elif ! "$CARGO" --version >/dev/null 2>&1; then
+    RUST_SKIP="no working cargo"
+else
+    RUST_SKIP=""
+fi
+if [[ -z "$RUST_SKIP" ]]; then
+    step "Rust gate client (clients/rust)"
+    (cd clients/rust && CARGO_TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tinysesam-client-rust" \
+        "$CARGO" test --locked --all-features --quiet) || fail "Rust gate client"
+else
+    printf '\n\033[33m! Rust gate client not tested here (%s) — the CI job client-rust runs it\033[0m\n' "$RUST_SKIP"
+fi
+
 step "Build the website — exactly what the Pages action ships"
 # Into a throwaway directory, not into `_site/` in the tree: there the build sat silently next to a
 # `_site/` of its own (and deleted it afterwards), and two runs in the same tree cleaned each other away.

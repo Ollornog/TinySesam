@@ -4,6 +4,36 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — the gate client in Rust (T-81)
+
+- `clients/rust/`, crate `tinysesam-gate` 0.1.0 (edition 2024, `#![forbid(unsafe_code)]`), following
+  `spec/gate-client.md`: header mode (`HeaderMode::trust_proxy()`, optional trusted peer list, renamed headers) and
+  token mode with fixed keys (`TokenVerifier`) or — behind the feature `jwks` — a fetched key set (`JwksVerifier`,
+  `RemoteKeys`: 5 s deadline, 64 KiB body limit, freshness 60–3600 s, one attempt per 10 s, the last good set for up
+  to 3600 s, a running fetch shared by concurrent requests, no redirects, a monotonic cache clock). Framework-neutral
+  through the `http` crate; guards `authorize` with `SignedIn`, `Role`, `Session` (401/403); the top bar helper of
+  spec §8; an axum example. Ed25519 from `ed25519-dalek` 3 (`verify_strict`), JSON from `serde_json` with a visitor
+  that refuses repeated member names, base64url from `base64`; the structural checks of spec §4.4 are the crate's own.
+  Header mode is the default: token mode passes every vector but cannot get the token with today's proxy template
+  (T-84). Not published to the Rust crate registry; used as a git dependency.
+- Tests: every vector of `spec/vectors/*.json`, read from the repository (token 114, headers 33 — also through
+  `http::HeaderMap` —, key sets 19, cache scenarios 10 through the synchronous cache and once more through the async
+  client, top bar 6, the test keys); a server that never answers (one deadline, then fail closed), a body above 64 KiB
+  (exactly 64 KiB as its counterpart), 32 concurrent requests sharing one fetch, no redirects; property tests (no
+  panic on any input, a changed character never verifies, the group and control-character rules); the README's Rust
+  examples compile as doctests; tokens signed with test key A carry exactly one payload defect each (invalid UTF-8,
+  BOM, repeated claim, `NaN`, lone surrogate) — the vector `attack-payload-invalid-utf8` also repeats a claim, so it
+  alone does not prove the UTF-8 check. 65 hand mutations, one per rule: 63 red, two equivalent (`clients/rust/README.md`).
+  Found on the way: the vectors cannot tell an upper-case or wrong-length `kid` from an unknown one with fixed keys —
+  the crate pins the format check with a unit test (noted in T-81).
+- CI: `.github/workflows/client-rust.yml` on `ubuntu-latest` (format, clippy `-D warnings`, tests without and with all
+  features, rustdoc, `cargo audit --deny warnings`; nightly for new advisories; no path filter — a pull request that
+  touches neither the client nor the specification ends early and green). Dependabot `cargo` for `/clients/rust`; the
+  auto-merge counts `client-rust.yml` among its mandatory workflows and accepts `cargo` updates. `scripts/check.sh` runs
+  the client in the full gate when a working cargo is installed (build directory outside the tree); with `--fast`, or
+  with a cargo that cannot run (a GitHub runner has rustup without a default toolchain — the first CI run of this PR
+  went red on exactly that), it says why it skipped.
+
 ### Added — gate client in Go (T-80)
 
 - `clients/go/` (module `github.com/Ollornog/TinySesam/clients/go`, package `tinysesam`, Go 1.26+): the gate client

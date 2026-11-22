@@ -2018,8 +2018,11 @@ existing forward auth, so a request and its body are not lost.
   [`spec/vectors/`](https://github.com/Ollornog/TinySesam/tree/main/spec/vectors) are generated from TinySesam's own
   code. The **Go client** is in
   [`clients/go/`](https://github.com/Ollornog/TinySesam/tree/main/clients/go) (`net/http` middleware, header and
-  token mode, standard library only; not published yet, use it by commit); clients for Rust, JS/TS and PHP are planned
-  under [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no FastAPI)
+  token mode, standard library only; not published yet, use it by commit), the **Rust client** in
+  [`clients/rust/`](https://github.com/Ollornog/TinySesam/tree/main/clients/rust) (crate `tinysesam-gate`: header and
+  token mode, the key set fetch behind the feature `jwks`, framework-neutral via the `http` crate, an axum example; not
+  published to the Rust crate registry, use it as a git dependency); clients for JS/TS and PHP are planned under
+  [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients), a slim Python client (WSGI/ASGI, no FastAPI)
   in the package itself (backlog T-86).
 
 ### Signing in at the gate: invisible or with a page (T-21)

@@ -163,6 +163,21 @@ updates:
         patterns: ["*"]
         update-types: ["patch", "minor"]
 
+  # The Rust gate client (clients/rust, T-81): its Cargo.lock. The workflow client-rust.yml accepts a bump (format, clippy,
+  # every test with all features, cargo audit). Patch and minor bundled, majors singly, as for the Python lists.
+  - package-ecosystem: cargo
+    directory: /clients/rust
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "client-rust"
+    groups:
+      all:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+
   # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
   # if the registry or the package server does not start, `rehearsal` is red.
   # NOT under .github/ (2026-11-13): there Dependabot may not open a PR for docker files — the job of 2026-11-12 ended

@@ -79,7 +79,7 @@ name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
   workflow_run:
-    workflows: ["tests", "release", "audit", "CodeQL", "client-go"]
+    workflows: ["tests", "release", "audit", "CodeQL", "client-go", "client-rust"]
     types: [completed]
   # Geplanter Nachlauf: ein Intervall, keine Uhrzeit — die Zeitzone spielt keine Rolle.
   schedule:
@@ -205,9 +205,11 @@ jobs:
           #                    tests/test_gate_caddy.py + tests/test_quickstart.py, `image-probe` scannt es)
           #                    clients/go und .github/audit: der Go-Gate-Client und seine Werkzeuge (`client-go` baut
           #                    und fährt sie)
-          AUTO_OEKO: "github_actions pip uv docker docker_compose go_modules"
+          #   cargo          — clients/rust, the Rust gate client (`client-rust`: format, clippy, every test with all
+          #                    features, cargo audit)
+          AUTO_OEKO: "github_actions pip uv docker docker_compose go_modules cargo"
           # Die Workflows, deren Jobs die Abnahme sind. Jeder läuft auf `pull_request` ohne Pfadfilter.
-          PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml client-go.yml"
+          PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml client-go.yml client-rust.yml"
           # Abnahme nach dem Merge (PO 2026-10-11): Die Pages-Actions laufen nur auf main (deploy-pages hat keine
           # öffentliche Probe). Ihr Update mergt selbst, der Nachlauf von pages.yml nimmt es ab; scheitert er, bleibt
           # die alte Seite online und ci-wache meldet den roten Lauf.
@@ -658,6 +660,7 @@ jobs:
           gh workflow run audit.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run ci.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run client-go.yml --repo "$REPO" --ref "$STANDARD"
+          gh workflow run client-rust.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run codeql.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run pages.yml --repo "$REPO" --ref "$STANDARD"
       # Release-Automatik (seit 0.45.0): nach dem Merge release.yml anstoßen — `vorbereiten` (Dependabot hat das Abbild

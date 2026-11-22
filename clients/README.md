@@ -1,13 +1,14 @@
 # Gate clients
 
-Small libraries for applications behind TinySesam's gate, one per language (Python lives in the package itself). Built so far: **Go** ([`clients/go/`](go/README.md)). This
-directory holds the conventions every client follows. The contract is [`spec/gate-client.md`](../spec/gate-client.md); the
+Small libraries for applications behind TinySesam's gate, one per language (Python lives in the package itself). Built so far:
+**Go** ([`clients/go/`](go/README.md)) and **Rust** ([`clients/rust/`](rust/README.md)). This directory holds the
+conventions every client follows. The contract is [`spec/gate-client.md`](../spec/gate-client.md); the
 proof is that a client passes every vector in [`spec/vectors/`](../spec/vectors/).
 
 | Path | Language | Backlog |
 |---|---|---|
 | [`clients/go/`](go/README.md) | Go | [T-80](../backlog/T-80-gate-client-in-go.md) — built |
-| `clients/rust/` | Rust | [T-81](../backlog/T-81-gate-client-in-rust.md) |
+| [`clients/rust/`](rust/README.md) | Rust | [T-81](../backlog/T-81-gate-client-in-rust.md) — built (crate `tinysesam-gate`) |
 | `clients/js/` | JavaScript / TypeScript | [T-82](../backlog/T-82-gate-client-in-javascript-and-typescript.md) |
 | `clients/php/` | PHP | [T-83](../backlog/T-83-gate-client-in-php.md) |
 | `tinysesam/gate_client.py` (module `tinysesam.gate_client`) | Python | [T-86](../backlog/T-86-python-gate-client.md) |

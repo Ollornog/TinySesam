@@ -1,0 +1,39 @@
+[package]
+name = "tinysesam-gate"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Gate client for applications behind TinySesam: header mode and gate token checks (Ed25519)."
+repository = "https://github.com/ollornog/TinySesam"
+readme = "README.md"
+keywords = ["authentication", "forward-auth", "jwt", "ed25519", "tinysesam"]
+categories = ["authentication", "web-programming"]
+# Not published to the Rust crate registry until the product owner decides (clients/README.md, "Publishing").
+publish = false
+
+[features]
+default = []
+# Fetch the key set over HTTPS (async, tokio + reqwest with rustls). Without it the crate has no network dependency.
+jwks = ["dep:reqwest", "dep:tokio"]
+
+[dependencies]
+base64 = "0.23.1"
+ed25519-dalek = { version = "3.0.0", default-features = false, features = ["fast", "zeroize"] }
+http = "1.5.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"], optional = true }
+tokio = { version = "1.54.1", default-features = false, features = ["sync", "time"], optional = true }
+
+[dev-dependencies]
+axum = "0.8.9"
+proptest = "1.12.0"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+
+[[test]]
+name = "remote"
+required-features = ["jwks"]
+
+[[example]]
+name = "axum_gate"
