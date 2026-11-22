@@ -4,11 +4,14 @@ One building block for the account page, the admin panel, the setup, reauth and 
 pages show only logo and name. An app builds its own pages with the same bar through `auth.topbar_head()` (into
 `<head>`) and `auth.topbar(request)` (first thing in `<body>`).
 
-* **Left:** the application logo (`brand_icon` when it is a path or a `data:image/…` address, otherwise the
-  built-in mark drawn in `--ts-accent`), the name (`gate_brand`, else `rp_name`) and the links of `topbar_links`.
-* **Right:** the account menu — account name, "Account", "Admin panel" (admins and delegated admins, T-74), Light / Dark / System and
-  "Sign out" (a POST with the CSRF field, like the sign-out confirmation page).
-* **Phone:** below 640 px the links move into the menu; every tap target is at least 44 px high.
+* **Left:** the application logo (`brand_icon` when it is a path or a `data:image/…` address, with `brand_icon_title`
+  as its tooltip; otherwise the built-in mark drawn in `--ts-accent`), the name (`gate_brand`, else `rp_name`) and the
+  links of `topbar_links`.
+* **Right:** the account menu — account name, the links of `topbar_menu_links`, "Account", "Admin panel" (admins and
+  delegated admins, T-74), Light / Dark / System and "Sign out" (a POST with the CSRF field, like the sign-out
+  confirmation page).
+* **Phone:** below 640 px the bar links move into the menu (first, before the menu links); every tap target is at
+  least 44 px high.
 * **Keyboard:** the menu button carries `aria-expanded`; Escape closes and puts the focus back on the button, a click
   or the focus outside closes it too. The menu is a disclosure (links and buttons in a list), not an ARIA
   `role=menu` — Tab walks through it like through the page.
@@ -167,12 +170,18 @@ def _field(row, key):
 
 def logo(cfg) -> str:
     """The logo in the bar: `brand_icon` as an image when it is a path on the own origin or a `data:image/…`
-    address (what the strict CSP's img-src allows), nothing with "none", else the built-in mark."""
+    address (what the strict CSP's img-src allows), nothing with "none", else the built-in mark.
+
+    `brand_icon_title` becomes the image's `title` (a tooltip, escaped — `'` too, the attribute is single-quoted);
+    empty = no attribute. `alt` stays empty: the name stands next to the logo in the same link, an `alt` would read
+    it out twice."""
     icon = getattr(cfg, "brand_icon", "") or ""
     if icon == "none":
         return ""
     if (icon.startswith("/") and not icon.startswith("//")) or icon.startswith("data:image/"):
-        return f"<img class=tsbar-logo src='{_e(icon)}' alt='' width=26 height=26>"
+        title = getattr(cfg, "brand_icon_title", "") or ""
+        tip = f" title='{_e(title)}'" if title else ""
+        return f"<img class=tsbar-logo src='{_e(icon)}' alt=''{tip} width=26 height=26>"
     return _MARK
 
 
@@ -194,11 +203,12 @@ def link_visible(auth, viewer, rule) -> bool:
     return False
 
 
-def visible_links(auth, viewer) -> list:
-    """The (title, target) pairs of `topbar_links` that `viewer` may see — one filter for the bar, the phone menu and
-    `/auth/topbar.json`. An entry is `(title, target)` (everyone) or `(title, target, rule)` (`link_visible`)."""
+def visible_links(auth, viewer, field: str = "topbar_links") -> list:
+    """The (title, target) pairs of `topbar_links` (or `topbar_menu_links`) that `viewer` may see — one filter for the
+    bar, the phone menu, the account menu and `/auth/topbar.json`. An entry is `(title, target)` (everyone) or
+    `(title, target, rule)` (`link_visible`)."""
     out = []
-    for entry in getattr(auth.cfg, "topbar_links", None) or []:
+    for entry in getattr(auth.cfg, field, None) or []:
         if not isinstance(entry, (list, tuple)) or len(entry) not in (2, 3):
             continue
         if link_visible(auth, viewer, entry[2] if len(entry) == 3 else None):
@@ -209,15 +219,17 @@ def visible_links(auth, viewer) -> list:
 def data(auth, viewer, *, base: str) -> dict:
     """The bar as data for an application that draws its own (T-76, `GET /auth/topbar.json`): what `render` would show
     `viewer`. `base` is put in front of TinySesam's own paths (the origin of `base_url` plus the mount prefix), so a
-    page on another host links back correctly. Without a viewer: no links, no menu — like the bar."""
+    page on another host links back correctly. Without a viewer: no links, no menu links, no menu — like the bar."""
     cfg = auth.cfg
     out: dict = {"brand": getattr(cfg, "gate_brand", "") or cfg.rp_name, "signed_in": bool(viewer), "name": None,
-           "links": [], "account": {"shown": False, "href": None}, "admin_panel": {"shown": False, "href": None},
-           "logout": None}
+           "links": [], "menu_links": [], "account": {"shown": False, "href": None},
+           "admin_panel": {"shown": False, "href": None}, "logout": None}
     if not viewer:
         return out
     out["name"] = str(_field(viewer, "display_name") or _field(viewer, "username") or "")
     out["links"] = [{"title": title, "href": href} for title, href in visible_links(auth, viewer)]
+    out["menu_links"] = [{"title": title, "href": href}
+                         for title, href in visible_links(auth, viewer, "topbar_menu_links")]
     if getattr(cfg, "account_enabled", True):
         out["account"] = {"shown": True, "href": f"{base}/auth/account"}
     if auth._admin_panel_visible(viewer) and getattr(cfg, "admin_ui_enabled", True):
@@ -251,6 +263,12 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
         items.append("<div class=tsbar-mlinks>"
                      + "".join(f"<a class=tsbar-item href='{_e(h)}'{cur(h)}>{_svg('link')}{_e(title)}</a>"
                                for title, h in links)
+                     + "<div class=tsbar-sep></div></div>")
+    menu_links = visible_links(auth, viewer, "topbar_menu_links")
+    if menu_links:
+        items.append("<div class=tsbar-menulinks>"
+                     + "".join(f"<a class=tsbar-item href='{_e(h)}'{cur(h)}>{_svg('link')}{_e(title)}</a>"
+                               for title, h in menu_links)
                      + "<div class=tsbar-sep></div></div>")
     if getattr(cfg, "account_enabled", True):
         items.append(f"<a class=tsbar-item href='__TS_P__/auth/account'{cur('account')}>{_svg('user')}"

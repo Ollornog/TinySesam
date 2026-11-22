@@ -4,6 +4,9 @@ It answers one question per request: *who is this, and may they do this?* It nev
 and issues no token; that stays in TinySesam. The contract is `spec/gate-client.md` in the repository; the test suite
 passes every vector of `spec/vectors/`.
 
+Spec version 2: every identity carries `account_kind` (`user` or `service`, from `Remote-Kind` or the claim
+`ts_kind`); a request without it is refused. It needs TinySesam and the proxy templates of the same release.
+
 Two modes, chosen explicitly:
 
 - **header mode** (`GateClient(mode="header")`): the proxy asks TinySesam and passes the identity as `Remote-*`
@@ -13,7 +16,7 @@ Two modes, chosen explicitly:
   the Ed25519-signed gate token itself and ignores every `Remote-*` header.
 
 `WSGIMiddleware` and `ASGIMiddleware` identify every request and store the `Identity` (or `None`); the guards
-`require_auth`, `require_role` and `require_session` answer 401/403 without a reason.
+`require_auth`, `require_role`, `require_session` and `require_account_kind` answer 401/403 without a reason.
 
 Only the standard library and `cryptography` (which TinySesam requires anyway); importing this module never imports
 FastAPI. Every check of the specification is a small function of its own, so the test suite can switch off exactly one
@@ -48,7 +51,8 @@ __all__ = [
     "GateError", "Unauthenticated", "UntrustedPeer", "HeaderError", "InternalError", "TokenError", "MalformedToken",
     "KidError", "SignatureError", "KeyUnavailable", "ClaimsError", "IssuerError", "AudienceError", "LifetimeError",
     "NotYetValid", "Expired",
-    "WSGIMiddleware", "ASGIMiddleware", "require_auth", "require_role", "require_session", "guard_status",
+    "WSGIMiddleware", "ASGIMiddleware", "require_auth", "require_role", "require_session", "require_account_kind",
+    "guard_status",
     "current_identity", "Topbar", "TopbarLink", "parse_topbar", "fetch_topbar",
 ]
 
@@ -58,15 +62,16 @@ DEFAULT_GATE_COOKIE = "__Host-tinysesam_gate"
 _ALGORITHM = "EdDSA"
 _TOKEN_TYPE = "tinysesam-gate+jwt"
 _HEADER_MEMBERS = frozenset({"alg", "typ", "kid"})
-_IDENTITY_CLAIMS = ("ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth")
+_IDENTITY_CLAIMS = ("ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth", "ts_kind")
 _AUTH_KINDS = ("session", "oauth", "apikey", "app-password")
+_ACCOUNT_KINDS = ("user", "service")
 _MAX_TOKEN_BYTES = 4096
 _MAX_LEEWAY = 60
 _MAX_LIFETIME = 3600
 _MAX_SAFE_INTEGER = 2 ** 53 - 1
-_SLOTS = ("user", "name", "email", "groups", "id", "auth")
+_SLOTS = ("user", "name", "email", "groups", "id", "auth", "kind")
 _DEFAULT_HEADER_NAMES = {"user": "Remote-User", "name": "Remote-Name", "email": "Remote-Email",
-                         "groups": "Remote-Groups", "id": "Remote-Id", "auth": "Remote-Auth"}
+                         "groups": "Remote-Groups", "id": "Remote-Id", "auth": "Remote-Auth", "kind": "Remote-Kind"}
 
 # Fetching the key set (spec §5).
 _FETCH_TIMEOUT = 5.0           # seconds for one fetch in total: connect, TLS, headers, body
@@ -117,7 +122,8 @@ class UntrustedPeer(GateError):
 
 
 class HeaderError(GateError):
-    """A malformed `Remote-*` header, or a forbidden member, `alg` or `typ` in the token's header."""
+    """A malformed `Remote-*` header (a missing or malformed `Remote-Kind` included), or a forbidden member, `alg` or
+    `typ` in the token's header."""
     kind = "header"
 
 
@@ -151,7 +157,7 @@ class KeyUnavailable(TokenError):
 
 
 class ClaimsError(TokenError):
-    """A claim of the wrong type, a control character, an inconsistency."""
+    """A claim of the wrong type, a control character, an inconsistency, a missing or malformed `ts_kind`."""
     kind = "claims"
 
 
@@ -189,7 +195,10 @@ class _JWKSInvalid(GateError):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Identity:
-    """Who the request is. Key your own records by `id`, the only value that survives a rename."""
+    """Who the request is. Key your own records by `id`, the only value that survives a rename.
+
+    `kind` says how the request signed in (`session` or `token`), `account_kind` what the account is (`user` or
+    `service`): a paired service acting as a person is `token` and `user`."""
 
     user: str
     name: str
@@ -198,6 +207,7 @@ class Identity:
     id: str
     auth: str
     kind: str
+    account_kind: str
 
     def has_role(self, role: str) -> bool:
         """Exactly `role in groups`: no case folding, no normalization, `admin` implies nothing else."""
@@ -207,6 +217,10 @@ class Identity:
         """True only when the request signed in with a browser session (`Remote-Auth`/`ts_auth` exactly `session`).
         A token request's groups are incomplete on purpose: never revoke a role because one lacks it."""
         return self.kind == "session"
+
+    def is_service(self) -> bool:
+        """True only for a service account (`Remote-Kind`/`ts_kind` exactly `service`)."""
+        return self.account_kind == "service"
 
 
 def _has_control(text: str) -> bool:
@@ -232,9 +246,36 @@ def _kind_of(auth: str) -> str:
     return "session" if auth == "session" else "token"
 
 
-def _identity(user: str, name: str, email: str, groups: str, uid: str, auth: str) -> Identity:
+def _identity(user: str, name: str, email: str, groups: str, uid: str, auth: str, account_kind: str) -> Identity:
     return Identity(user=user, name=name, email=email, groups=_parse_groups(groups), id=uid,
-                    auth=auth if auth in _AUTH_KINDS else "", kind=_kind_of(auth))
+                    auth=auth if auth in _AUTH_KINDS else "", kind=_kind_of(auth), account_kind=account_kind)
+
+
+# ---------- the account kind (spec v2), one set of rules for both modes ----------
+# Each check takes the error class of its mode (HeaderError or ClaimsError) and returns the value it passed, so that
+# the test suite can relax exactly one rule.
+
+def _check_kind_present(kind: Any, error: type[GateError]) -> Any:
+    if kind is None or kind == "":
+        raise error("Remote-Kind/ts_kind missing (TinySesam or proxy older than spec v2?)")
+    return kind
+
+
+def _check_kind_value(kind: Any, error: type[GateError]) -> str:
+    if not isinstance(kind, str) or kind not in _ACCOUNT_KINDS:
+        raise error("Remote-Kind/ts_kind is not exactly user or service")
+    return kind
+
+
+def _check_kind_consistent(kind: str, auth: Any, error: type[GateError]) -> None:
+    if kind == "service" and auth == "session":
+        raise error("a service account has no session")
+
+
+def _account_kind(kind: Any, auth: Any, error: type[GateError]) -> str:
+    value = _check_kind_value(_check_kind_present(kind, error), error)
+    _check_kind_consistent(value, auth, error)
+    return value
 
 
 # ---------- strict decoding ----------
@@ -505,12 +546,13 @@ def _check_expiry(exp: int, now: int, leeway: int) -> None:
 
 
 def _check_claims(claims: dict[str, Any], *, issuer: str, audience: str, now: int, leeway: int) -> None:
-    """Steps 9–10: types and consistency, then issuer, audience, lifetime, nbf, exp."""
+    """Steps 9–10: types and consistency (`ts_kind` included), then issuer, audience, lifetime, nbf, exp."""
     _check_claim_types(claims)
     _check_sub(claims)
     _check_claim_controls(claims)
     _check_ts_id(claims)
     _check_iat(claims)
+    _account_kind(claims.get("ts_kind"), claims.get("ts_auth"), ClaimsError)
     _check_issuer(claims["iss"], issuer)
     _check_audience(claims["aud"], audience)
     _check_lifetime(claims["nbf"], claims["exp"])
@@ -534,7 +576,8 @@ def _verify(jws: Any, lookup: Callable[[str], bytes], *, issuer: str, audience: 
 
 def _identity_from_claims(claims: dict[str, Any]) -> Identity:
     return _identity(claims.get("ts_user", ""), claims.get("ts_name", ""), claims.get("ts_email", ""),
-                     str(claims.get("ts_groups", "")), claims["sub"], claims.get("ts_auth", ""))
+                     str(claims.get("ts_groups", "")), claims["sub"], claims.get("ts_auth", ""),
+                     _account_kind(claims.get("ts_kind"), claims.get("ts_auth"), ClaimsError))
 
 
 def _check_leeway(leeway: Any) -> int:
@@ -610,8 +653,9 @@ def _identity_from_headers(pairs: Iterable[tuple[Any, Any]], names: Mapping[str,
     if not values.get("user"):
         raise Unauthenticated()
     _check_remote_id(values.get("id", ""))
+    account_kind = _account_kind(values.get("kind"), values.get("auth"), HeaderError)
     return _identity(values["user"], values.get("name", ""), values.get("email", ""), values.get("groups", ""),
-                     values.get("id", ""), values.get("auth", ""))
+                     values.get("id", ""), values.get("auth", ""), account_kind)
 
 
 def _pairs(headers: Any) -> list[tuple[Any, Any]]:
@@ -1041,12 +1085,15 @@ def current_identity(source: Any = None) -> Optional[Identity]:
     return None
 
 
-def guard_status(identity: Optional[Identity], *, role: Optional[str] = None, session: bool = False) -> Optional[int]:
-    """None when the request may pass, else the status to answer: 401 without an identity, 403 when the role or the
-    session is missing. For view decorators in any framework."""
+def guard_status(identity: Optional[Identity], *, role: Optional[str] = None, session: bool = False,
+                 account_kind: Optional[str] = None) -> Optional[int]:
+    """None when the request may pass, else the status to answer: 401 without an identity, 403 when the role, the
+    session or the account kind (`user`/`service`) is missing. For view decorators in any framework."""
     if not isinstance(identity, Identity):
         return 401
     if session and not identity.is_session():
+        return 403
+    if account_kind is not None and identity.account_kind != account_kind:
         return 403
     if role is not None and not identity.has_role(role):
         return 403
@@ -1065,7 +1112,8 @@ def _is_asgi(app: Any) -> bool:
     return inspect.iscoroutinefunction(app) or inspect.iscoroutinefunction(getattr(app, "__call__", None))
 
 
-def _guard(app: Callable[..., Any], role: Optional[str], session: bool) -> Callable[..., Any]:
+def _guard(app: Callable[..., Any], role: Optional[str], session: bool,
+           account_kind: Optional[str] = None) -> Callable[..., Any]:
     if not callable(app):
         raise ConfigError("a guard wraps a WSGI or ASGI application")
     if _is_asgi(app):
@@ -1073,7 +1121,7 @@ def _guard(app: Callable[..., Any], role: Optional[str], session: bool) -> Calla
             if scope.get("type") not in ("http", "websocket"):
                 await app(scope, receive, send)
                 return
-            status = guard_status(current_identity(scope), role=role, session=session)
+            status = guard_status(current_identity(scope), role=role, session=session, account_kind=account_kind)
             if status is None:
                 await app(scope, receive, send)
             elif scope["type"] == "websocket":
@@ -1087,7 +1135,7 @@ def _guard(app: Callable[..., Any], role: Optional[str], session: bool) -> Calla
         return functools.update_wrapper(asgi_guard, app)
 
     def wsgi_guard(environ: dict[str, Any], start_response: Callable[..., Any]) -> Any:
-        status = guard_status(current_identity(environ), role=role, session=session)
+        status = guard_status(current_identity(environ), role=role, session=session, account_kind=account_kind)
         if status is None:
             return app(environ, start_response)
         body = _REASONS[status][4:].encode("ascii")
@@ -1117,6 +1165,14 @@ def require_session(app: Callable[..., Any]) -> Callable[..., Any]:
     return _guard(app, None, True)
 
 
+def require_account_kind(kind: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """`require_account_kind("user")(app)`: 401 without an identity, 403 for another account kind — e.g. a route that
+    only people may use, or (`"service"`) an endpoint only for service accounts."""
+    if kind not in _ACCOUNT_KINDS:
+        raise ConfigError('require_account_kind takes "user" or "service"')
+    return lambda app: _guard(app, None, False, kind)
+
+
 # ---------- top bar data, spec §8 ----------
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1133,14 +1189,16 @@ class Topbar:
     signed_in: bool = False
     name: Optional[str] = None
     links: tuple[TopbarLink, ...] = ()
+    menu_links: tuple[TopbarLink, ...] = ()
     account: Optional[str] = None
     admin_panel: Optional[str] = None
     logout: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
-        """The normalized form of spec §8 (`links` as a list of `{title, href}`)."""
+        """The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`)."""
         return {"brand": self.brand, "signed_in": self.signed_in, "name": self.name,
                 "links": [{"title": link.title, "href": link.href} for link in self.links],
+                "menu_links": [{"title": link.title, "href": link.href} for link in self.menu_links],
                 "account": self.account, "admin_panel": self.admin_panel, "logout": self.logout}
 
 
@@ -1152,6 +1210,12 @@ def _safe_href(href: Any) -> bool:
     return href.startswith("/") and not href.startswith(("//", "/\\"))
 
 
+def _topbar_links(raw: Any) -> tuple[TopbarLink, ...]:
+    """The safe `{title, href}` entries of a link list; anything that is no list counts as none."""
+    return tuple(TopbarLink(link["title"], link["href"]) for link in (raw if isinstance(raw, list) else [])
+                 if isinstance(link, dict) and isinstance(link.get("title"), str) and _safe_href(link.get("href")))
+
+
 def parse_topbar(data: Any) -> Topbar:
     """Normalize the answer of `/.tinysesam/topbar.json` (or `/auth/topbar.json`): signed out on any doubt, unsafe
     links (`javascript:`, `data:`, `//host`) dropped."""
@@ -1160,9 +1224,7 @@ def parse_topbar(data: Any) -> Topbar:
     brand = data["brand"] if isinstance(data.get("brand"), str) else ""
     if data.get("signed_in") is not True or not isinstance(data.get("name"), str):
         return Topbar(brand=brand)
-    raw_links = data.get("links")
-    links = tuple(TopbarLink(link["title"], link["href"]) for link in (raw_links if isinstance(raw_links, list) else [])
-                  if isinstance(link, dict) and isinstance(link.get("title"), str) and _safe_href(link.get("href")))
+    links, menu_links = _topbar_links(data.get("links")), _topbar_links(data.get("menu_links"))
     slots: dict[str, Optional[str]] = {}
     for slot in ("account", "admin_panel"):
         entry = data.get(slot)
@@ -1170,7 +1232,7 @@ def parse_topbar(data: Any) -> Topbar:
         slots[slot] = entry["href"] if ok and isinstance(entry, dict) else None
     logout = data.get("logout")
     slots["logout"] = logout["href"] if isinstance(logout, dict) and _safe_href(logout.get("href")) else None
-    return Topbar(brand=brand, signed_in=True, name=data["name"], links=links, **slots)
+    return Topbar(brand=brand, signed_in=True, name=data["name"], links=links, menu_links=menu_links, **slots)
 
 
 def _tinysesam_cookies(cookie_header: str) -> str:

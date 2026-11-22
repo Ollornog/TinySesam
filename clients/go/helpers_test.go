@@ -56,7 +56,7 @@ func sessionClaims(groups string) map[string]any {
 	return map[string]any{
 		"iss": testIssuer, "aud": testAudience, "sub": "1", "iat": testNow, "nbf": testNow, "exp": testNow + 300,
 		"jti": "test", "ts_user": "anna", "ts_name": "Anna Berg", "ts_email": "anna@example.com",
-		"ts_groups": groups, "ts_id": "1", "ts_auth": "session",
+		"ts_groups": groups, "ts_id": "1", "ts_auth": "session", "ts_kind": "user",
 	}
 }
 

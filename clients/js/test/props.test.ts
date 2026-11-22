@@ -118,15 +118,19 @@ test('a control character anywhere in a header value is refused, never stripped'
       fc.stringMatching(/^[a-z]{0,8}$/),
       fc.integer({ min: 0, max: 0x20 }).map((c) => (c === 0x20 ? 0x7f : c)),
       fc.stringMatching(/^[a-z]{0,8}$/),
-      fc.constantFrom('Remote-User', 'Remote-Name', 'Remote-Email', 'Remote-Groups', 'Remote-Auth'),
+      fc.constantFrom('Remote-User', 'Remote-Name', 'Remote-Email', 'Remote-Groups', 'Remote-Auth', 'Remote-Kind'),
       (before, control, after, header) => {
         const value = before + String.fromCharCode(control) + after;
+        // Every other header well-formed (Remote-Kind included), so the control character is the only defect.
         const pairs: [string, string][] = [
           ['Remote-User', 'anna'],
-          [header, value],
+          ['Remote-Kind', 'user'],
         ];
-        if (header === 'Remote-User') {
-          pairs.shift();
+        const at = pairs.findIndex(([name]) => name === header);
+        if (at >= 0) {
+          pairs[at] = [header, value];
+        } else {
+          pairs.push([header, value]);
         }
         try {
           identityFromHeaders(pairs);
@@ -145,7 +149,10 @@ test('header values: well-formed UTF-8 round-trips exactly', () => {
     fc.property(fc.string({ unit: 'grapheme', minLength: 1 }), (name) => {
       fc.pre(!hasControl(name) && name.trim() === name);
       const octets = String.fromCharCode(...new TextEncoder().encode(name));
-      const id = identityFromHeaders([['Remote-User', octets]]);
+      const id = identityFromHeaders([
+        ['Remote-User', octets],
+        ['Remote-Kind', 'user'],
+      ]);
       return id.user === name;
     }),
     RUNS,

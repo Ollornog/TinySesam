@@ -20,6 +20,7 @@
 //! headers.insert("remote-user", HeaderValue::from_static("anna"));
 //! headers.insert("remote-groups", HeaderValue::from_static("editors"));
 //! headers.insert("remote-auth", HeaderValue::from_static("session"));
+//! headers.insert("remote-kind", HeaderValue::from_static("user"));
 //! let identity = mode.identify(&headers, None).ok();
 //! assert!(authorize(identity.as_ref(), &[Requirement::Role("editors")]).status().is_none());
 //! ```
@@ -51,7 +52,7 @@ pub use cache::{
 pub use error::{ConfigError, HeaderError, JwksInvalid, TokenError};
 pub use guard::{Decision, Requirement, authorize};
 pub use header::{HeaderMode, HeaderNames, REMOTE_HEADERS};
-pub use identity::{Auth, Identity, Kind, parse_groups};
+pub use identity::{AccountKind, Auth, Identity, Kind, parse_groups};
 pub use keys::{JWKS_MAX_KEYS, KeySet, PublicKey, key_id};
 #[cfg(feature = "jwks")]
 pub use remote::{

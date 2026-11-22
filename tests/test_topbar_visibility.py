@@ -163,7 +163,7 @@ j = c_plain.get("/auth/topbar.json").json()
 assert [x["title"] for x in j["links"]] == ["Docs"] and j["admin_panel"] == {"shown": False, "href": None}, j
 assert [x["title"] for x in c_lead.get("/auth/topbar.json").json()["links"]] == ["Docs", "Team"]
 j = anon.get("/auth/topbar.json").json()
-assert j == {"brand": auth.cfg.rp_name, "signed_in": False, "name": None, "links": [],
+assert j == {"brand": auth.cfg.rp_name, "signed_in": False, "name": None, "links": [], "menu_links": [],
              "account": {"shown": False, "href": None}, "admin_panel": {"shown": False, "href": None},
              "logout": None}, j
 # An API key is no browser session: the bar shows it no menu, the JSON says the same.

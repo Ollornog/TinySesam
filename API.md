@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 205 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 207 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 205
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 405 · B 271 · C 38 names.
+**Status:** A 406 · B 275 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -306,7 +306,13 @@ Class attributes, read as `TinySesam.NAME` or `auth.NAME`. The value is part of 
 
 Default: the set that Authelia/Traefik setups expect.
 
-Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth'}`
+Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth', 'kind': 'Remote-Kind'}`
+
+### `FORWARD_HEADERS_MANDATORY` — Constant
+
+Slots sent even when an own `forward_headers` mapping leaves them out — under their default name.
+
+Value: `('kind',)`
 
 ### `SECURITY_EVENTS` — Constant
 
@@ -651,7 +657,7 @@ The top bar of the built-in pages for an own page of the app (T-64) — first th
 
 ### `topbar_data(user=None, *, base: 'Optional[str]' = None) -> 'dict'`
 
-The top bar as data (T-76) for an account — the same answer `GET /auth/topbar.json` gives its session: the links of `topbar_links` this account may see (`{"title", "href"}`), its display name, whether *Account* and *Admin panel* appear and where they lead, the sign-out address.
+The top bar as data (T-76) for an account — the same answer `GET /auth/topbar.json` gives its session: the links of `topbar_links` this account may see (`{"title", "href"}`), those of `topbar_menu_links` as `menu_links` (the account menu, always present, `[]` without an account), its display name, whether *Account* and *Admin panel* appear and where they lead, the sign-out address.
 
 ### `topbar_head(*, nonce: 'str' = '') -> 'str'`
 
@@ -723,7 +729,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `role_levels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `hsts`, `totp_required`, `admin_delegates`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `hsts`, `totp_required`, `admin_delegates`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -761,7 +767,7 @@ Identifies every HTTP and WebSocket request and stores the `Identity` (or `None`
 
 ### `ClaimsError(detail: 'str' = '', *, kid: 'str' = '')` — class
 
-A claim of the wrong type, a control character, an inconsistency.
+A claim of the wrong type, a control character, an inconsistency, a missing or malformed `ts_kind`.
 
 ### `ClaimsError.kind` — Constant
 
@@ -801,19 +807,23 @@ A refused request. `kind` is the error class of the specification; every class m
 
 ### `HeaderError(detail: 'str' = '', *, kid: 'str' = '')` — class
 
-A malformed `Remote-*` header, or a forbidden member, `alg` or `typ` in the token's header.
+A malformed `Remote-*` header (a missing or malformed `Remote-Kind` included), or a forbidden member, `alg` or `typ` in the token's header.
 
 ### `HeaderError.kind` — Constant
 
 `'header'`
 
-### `Identity(user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str') -> None` — class
+### `Identity(user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str', account_kind: 'str') -> None` — class
 
 Who the request is. Key your own records by `id`, the only value that survives a rename.
 
 ### `Identity.has_role(role: 'str') -> 'bool'`
 
 Exactly `role in groups`: no case folding, no normalization, `admin` implies nothing else.
+
+### `Identity.is_service() -> 'bool'`
+
+True only for a service account (`Remote-Kind`/`ts_kind` exactly `service`).
 
 ### `Identity.is_session() -> 'bool'`
 
@@ -887,13 +897,13 @@ The signature has the wrong length or does not verify.
 
 Base of the token-mode classes below.
 
-### `Topbar(brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None` — class
+### `Topbar(brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None` — class
 
 TinySesam's top bar data reduced to what an application may render. Do not cache it across sessions.
 
 ### `Topbar.to_dict() -> 'dict[str, Any]'`
 
-The normalized form of spec §8 (`links` as a list of `{title, href}`).
+The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`).
 
 ### `TopbarLink(title: 'str', href: 'str') -> None` — class
 
@@ -927,13 +937,17 @@ The identity the middleware stored: from a WSGI environ or ASGI scope, from a re
 
 Fetch the top bar server-side, forwarding only TinySesam's cookies of the request (`tinysesam_*`, `__Host-tinysesam_*`); 5-second deadline, 64 KiB. Signed out on any failure.
 
-### `guard_status(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False) -> 'Optional[int]'`
+### `guard_status(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False, account_kind: 'Optional[str]' = None) -> 'Optional[int]'`
 
-None when the request may pass, else the status to answer: 401 without an identity, 403 when the role or the session is missing. For view decorators in any framework.
+None when the request may pass, else the status to answer: 401 without an identity, 403 when the role, the session or the account kind (`user`/`service`) is missing. For view decorators in any framework.
 
 ### `parse_topbar(data: 'Any') -> 'Topbar'`
 
 Normalize the answer of `/.tinysesam/topbar.json` (or `/auth/topbar.json`): signed out on any doubt, unsafe links (`javascript:`, `data:`, `//host`) dropped.
+
+### `require_account_kind(kind: 'str') -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'`
+
+`require_account_kind("user")(app)`: 401 without an identity, 403 for another account kind — e.g. a route that only people may use, or (`"service"`) an endpoint only for service accounts.
 
 ### `require_auth(app: 'Callable[..., Any]') -> 'Callable[..., Any]'`
 
@@ -1031,12 +1045,12 @@ Observed on probe instances; values are recorded where they are the contract (`X
 
 | Case | Response |
 |---|---|
-| forward: API key | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User |
+| forward: API key | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User |
 | forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login |
 | forward: role missing (?roles=) | 403 \| X-TinySesam-Reason: role |
 | forward: role missing (X-TinySesam-Roles) | 403 \| X-TinySesam-Reason: role |
-| forward: role present (?roles=) | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
-| forward: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: role present (?roles=) | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
 | forward: signed out of this application | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login \| X-TinySesam-Reason: app-signed-out |
 | gate logout: host not protected | 404 |
 | gate logout: sign out everywhere | 303 \| Location -> /.tinysesam/after-logout \| cookies: __Host-tinysesam_gate (cleared), tinysesam_session (cleared) |
@@ -1046,12 +1060,12 @@ Observed on probe instances; values are recorded where they are the contract (`X
 | gateway callback: unknown code | 400 |
 | gateway callback: valid code | 303 \| Location -> /page \| cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared) |
 | gateway forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /.tinysesam/start |
-| gateway forward: signed in via the connection | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| gateway forward: signed in via the connection | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
 | gateway logged-out page: host not protected | 400 |
 | gateway logout: host not protected | 400 |
 | gateway start | 303 \| Location -> /auth/gate/authorize \| cookies: __Host-tinysesam_linkflow |
 | gateway start: host not protected | 404 |
-| verify alias: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| verify alias: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
 
 #### Headers, reasons, inputs, cookies
 
@@ -1254,4 +1268,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-164 methods, 3 properties, 11 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+164 methods, 3 properties, 12 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

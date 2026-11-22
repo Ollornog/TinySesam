@@ -18,6 +18,8 @@ export interface Topbar {
   readonly signed_in: boolean;
   readonly name: string | null;
   readonly links: readonly TopbarLink[];
+  /** The links of the account menu (spec version 2); empty when the answer has none. */
+  readonly menu_links: readonly TopbarLink[];
   readonly account: string | null;
   readonly admin_panel: string | null;
   readonly logout: string | null;
@@ -25,7 +27,16 @@ export interface Topbar {
 
 /** The top bar of a signed-out request (also the answer to anything doubtful). */
 export function signedOutTopbar(brand = ''): Topbar {
-  return { brand, signed_in: false, name: null, links: [], account: null, admin_panel: null, logout: null };
+  return {
+    brand,
+    signed_in: false,
+    name: null,
+    links: [],
+    menu_links: [],
+    account: null,
+    admin_panel: null,
+    logout: null,
+  };
 }
 
 const WHITE_SPACE = /\p{White_Space}/u;
@@ -44,6 +55,22 @@ export function isSafeHref(href: string): boolean {
   return href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/\\');
 }
 
+/** The safe `{title, href}` entries of a link list; anything that is no list counts as none. */
+function topbarLinks(raw: unknown): TopbarLink[] {
+  const links: TopbarLink[] = [];
+  for (const l of Array.isArray(raw) ? raw : []) {
+    if (!isObject(l)) {
+      continue;
+    }
+    const title = own(l, 'title');
+    const href = own(l, 'href');
+    if (typeof title === 'string' && typeof href === 'string' && isSafeHref(href)) {
+      links.push({ title, href });
+    }
+  }
+  return links;
+}
+
 /**
  * Normalizes the body of `/.tinysesam/topbar.json` or `/auth/topbar.json` (text or UTF-8 bytes). Anything but a JSON
  * object with `signed_in` true (the boolean) and a string `name` counts as signed out; unsafe links are dropped.
@@ -60,18 +87,6 @@ export function parseTopbar(body: string | Uint8Array): Topbar {
   if (own(data, 'signed_in') !== true || typeof name !== 'string') {
     return signedOutTopbar(brand);
   }
-  const links: TopbarLink[] = [];
-  const rawLinks = own(data, 'links');
-  for (const l of Array.isArray(rawLinks) ? rawLinks : []) {
-    if (!isObject(l)) {
-      continue;
-    }
-    const title = own(l, 'title');
-    const href = own(l, 'href');
-    if (typeof title === 'string' && typeof href === 'string' && isSafeHref(href)) {
-      links.push({ title, href });
-    }
-  }
   const shown = (slot: string): string | null => {
     const m = own(data, slot);
     if (!isObject(m) || own(m, 'shown') !== true) {
@@ -86,7 +101,8 @@ export function parseTopbar(body: string | Uint8Array): Topbar {
     brand,
     signed_in: true,
     name,
-    links,
+    links: topbarLinks(own(data, 'links')),
+    menu_links: topbarLinks(own(data, 'menu_links')),
     account: shown('account'),
     admin_panel: shown('admin_panel'),
     logout: typeof logoutHref === 'string' && isSafeHref(logoutHref) ? logoutHref : null,

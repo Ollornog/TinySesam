@@ -4,23 +4,24 @@
 //! proxy duties of spec §2.1 — see the crate README. [`HeaderMode::trust_proxy`] is the explicit opt-in.
 
 use crate::error::{ConfigError, HeaderError};
-use crate::identity::Identity;
+use crate::identity::{Identity, check_account_kind};
 use crate::strict::has_control;
 use http::HeaderMap;
 use http::header::HeaderName;
 use std::net::IpAddr;
 
-/// The six identity headers under their default names.
-pub const REMOTE_HEADERS: [&str; 6] = [
+/// The seven identity headers under their default names (spec version 2 added `Remote-Kind`).
+pub const REMOTE_HEADERS: [&str; 7] = [
     "Remote-User",
     "Remote-Name",
     "Remote-Email",
     "Remote-Groups",
     "Remote-Id",
     "Remote-Auth",
+    "Remote-Kind",
 ];
 
-/// Names of the six identity headers. TinySesam's `forward_headers` can rename them; the defaults are
+/// Names of the seven identity headers. TinySesam's `forward_headers` can rename them; the defaults are
 /// [`REMOTE_HEADERS`]. Header names are compared case-insensitively.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeaderNames {
@@ -36,11 +37,13 @@ pub struct HeaderNames {
     pub id: String,
     /// How the request signed in (default `Remote-Auth`).
     pub auth: String,
+    /// What the account is, `user` or `service` (default `Remote-Kind`).
+    pub kind: String,
 }
 
 impl Default for HeaderNames {
     fn default() -> Self {
-        let [user, name, email, groups, id, auth] = REMOTE_HEADERS.map(str::to_owned);
+        let [user, name, email, groups, id, auth, kind] = REMOTE_HEADERS.map(str::to_owned);
         HeaderNames {
             user,
             name,
@@ -48,12 +51,13 @@ impl Default for HeaderNames {
             groups,
             id,
             auth,
+            kind,
         }
     }
 }
 
 impl HeaderNames {
-    fn slots(&self) -> [&str; 6] {
+    fn slots(&self) -> [&str; 7] {
         [
             &self.user,
             &self.name,
@@ -61,6 +65,7 @@ impl HeaderNames {
             &self.groups,
             &self.id,
             &self.auth,
+            &self.kind,
         ]
     }
 }
@@ -191,7 +196,7 @@ impl HeaderMode {
             }
         }
         let slots = self.names.slots();
-        let mut raw: [Option<&[u8]>; 6] = [None; 6];
+        let mut raw: [Option<&[u8]>; 7] = [None; 7];
         for (name, value) in fields {
             if let Some(i) = slots.iter().position(|s| s.eq_ignore_ascii_case(name)) {
                 if raw[i].is_some() {
@@ -201,7 +206,7 @@ impl HeaderMode {
                 raw[i] = Some(value);
             }
         }
-        let mut values: [String; 6] = Default::default();
+        let mut values: [String; 7] = Default::default();
         for (slot, value) in values.iter_mut().zip(raw) {
             if let Some(octets) = value {
                 let text = std::str::from_utf8(octets).map_err(|_| HeaderError::Header)?;
@@ -211,14 +216,25 @@ impl HeaderMode {
                 *slot = text.to_owned();
             }
         }
-        let [user, name, email, groups, id, auth] = values;
+        let [user, name, email, groups, id, auth, kind] = values;
         if user.is_empty() {
             return Err(HeaderError::Unauthenticated);
         }
         if !id.is_empty() && !id.bytes().all(|b| b.is_ascii_digit()) {
             return Err(HeaderError::Header);
         }
-        Ok(Identity::new(user, name, email, &groups, id, &auth))
+        // Spec v2, rules 6–8: missing, empty, not exactly user/service, or service with a session. A missing value
+        // means TinySesam or the proxy template is older than spec v2 — refused, never taken as `user`.
+        let account_kind = check_account_kind(&kind, &auth).ok_or(HeaderError::Header)?;
+        Ok(Identity::new(
+            user,
+            name,
+            email,
+            &groups,
+            id,
+            &auth,
+            account_kind,
+        ))
     }
 }
 
@@ -260,7 +276,10 @@ mod tests {
         let mode = HeaderMode::trust_proxy()
             .with_trusted_peers(["127.0.0.1"])
             .unwrap();
-        let fields = [("Remote-User", b"anna".as_slice())];
+        let fields = [
+            ("Remote-User", b"anna".as_slice()),
+            ("Remote-Kind", b"user".as_slice()),
+        ];
         assert!(
             mode.identify_fields(fields, Some("127.0.0.1".parse().unwrap()))
                 .is_ok()
@@ -292,10 +311,45 @@ mod tests {
             Err(HeaderError::Unauthenticated)
         );
         assert_eq!(
-            mode.identify_fields([("x-gate-user", b"anna".as_slice())], None)
-                .unwrap()
-                .user,
+            mode.identify_fields(
+                [
+                    ("x-gate-user", b"anna".as_slice()),
+                    ("Remote-Kind", b"user".as_slice())
+                ],
+                None
+            )
+            .unwrap()
+            .user,
             "anna"
+        );
+        let kind = HeaderMode::trust_proxy()
+            .with_names(HeaderNames {
+                kind: "X-Account-Kind".into(),
+                ..HeaderNames::default()
+            })
+            .unwrap();
+        let bot = kind
+            .identify_fields(
+                [
+                    ("Remote-User", b"bot".as_slice()),
+                    ("Remote-Auth", b"apikey".as_slice()),
+                    ("X-Account-Kind", b"service".as_slice()),
+                    ("Remote-Kind", b"user".as_slice()),
+                ],
+                None,
+            )
+            .unwrap();
+        assert!(bot.is_service() && !bot.is_session());
+        assert_eq!(
+            kind.identify_fields(
+                [
+                    ("Remote-User", b"anna".as_slice()),
+                    ("Remote-Kind", b"user".as_slice())
+                ],
+                None
+            ),
+            Err(HeaderError::Header),
+            "the default Remote-Kind no longer counts after renaming"
         );
         let twice = HeaderNames {
             name: "remote-user".into(),
@@ -307,6 +361,32 @@ mod tests {
             ..HeaderNames::default()
         };
         assert!(HeaderMode::trust_proxy().with_names(invalid).is_err());
+    }
+
+    #[test]
+    fn account_kind_rules() {
+        let mode = HeaderMode::trust_proxy();
+        assert_eq!(
+            mode.identify_fields([("Remote-User", b"anna".as_slice())], None),
+            Err(HeaderError::Header),
+            "missing Remote-Kind"
+        );
+        assert_eq!(
+            mode.identify_fields([("Remote-Groups", b"admin".as_slice())], None),
+            Err(HeaderError::Unauthenticated),
+            "no user comes first"
+        );
+        let person = mode
+            .identify_fields(
+                [
+                    ("Remote-User", b"anna".as_slice()),
+                    ("Remote-Auth", b"oauth".as_slice()),
+                    ("Remote-Kind", b"user".as_slice()),
+                ],
+                None,
+            )
+            .unwrap();
+        assert!(!person.is_service() && !person.is_session());
     }
 
     #[test]

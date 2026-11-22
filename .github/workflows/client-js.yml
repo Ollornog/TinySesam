@@ -97,11 +97,4 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: |
           npm run build
-          node --input-type=module -e '
-            const gate = await import("./dist/index.js");
-            const node = await import("./dist/node.js");
-            const g = await gate.createGate({ mode: "header" });
-            const id = await g.identify({ headers: [["Remote-User", "anna"], ["Remote-Auth", "session"]] });
-            if (id.user !== "anna" || !id.isSession() || typeof node.gateMiddleware !== "function") process.exit(1);
-            console.log("dist loads and identifies");
-          '
+          node test/dist-smoke.mjs dist

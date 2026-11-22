@@ -29,7 +29,7 @@ function payload(name: Uint8Array | string, tail = '', head = ''): Uint8Array {
     `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":"1","iat":${now},"nbf":${now},"exp":${now + 300},`,
     `"ts_user":"anna","ts_name":"`,
     name,
-    `","ts_auth":"session"${tail}}`,
+    `","ts_auth":"session","ts_kind":"user"${tail}}`,
   );
 }
 
@@ -90,7 +90,7 @@ test('integer claims: fraction, exponent, sign and range are refused exactly', a
   const { now } = DEFAULTS;
   const withExp = (exp: string) =>
     concat(
-      `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":"1","iat":${now},"nbf":${now},"exp":${exp}}`,
+      `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":"1","iat":${now},"nbf":${now},"exp":${exp},"ts_kind":"user"}`,
     );
   assert.equal(await checkAtNow(withExp(String(now + 300))), 'ok');
   assert.equal(await checkAtNow(withExp(`${now + 300}.0`)), 'claims');
@@ -103,7 +103,7 @@ test('integer claims: fraction, exponent, sign and range are refused exactly', a
   assert.equal(
     await checkAtNow(
       concat(
-        `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":"1","x":{"iat":1},"iat":${now}.0,"nbf":${now},"exp":${now + 300}}`,
+        `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":"1","x":{"iat":1},"iat":${now}.0,"nbf":${now},"exp":${now + 300},"ts_kind":"user"}`,
       ),
     ),
     'claims',
@@ -116,6 +116,27 @@ test('a control character in one identity claim alone is claims', async () => {
   }
   // C1 controls and bidi overrides are characters, not refused (spec section 3.2).
   assert.equal(await checkAtNow(payload('\\u0085\\u202e')), 'ok');
+});
+
+test('ts_kind (spec v2): missing, of another type or case, unknown, or service with a session alone is claims', async () => {
+  const { now } = DEFAULTS;
+  const withKind = (kind: string, auth = '"session"') =>
+    concat(
+      `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":"1","iat":${now},"nbf":${now},"exp":${now + 300},"ts_auth":${auth}${kind}}`,
+    );
+  assert.equal(await checkAtNow(withKind(',"ts_kind":"user"')), 'ok');
+  assert.equal(await checkAtNow(withKind(',"ts_kind":"service"', '"apikey"')), 'ok');
+  for (const bad of [
+    '',
+    ',"ts_kind":""',
+    ',"ts_kind":1',
+    ',"ts_kind":"User"',
+    ',"ts_kind":"admin"',
+    ',"ts_kind":null',
+  ]) {
+    assert.equal(await checkAtNow(withKind(bad)), 'claims', bad);
+  }
+  assert.equal(await checkAtNow(withKind(',"ts_kind":"service"')), 'claims', 'service with a session');
 });
 
 test('a payload that is not an object is malformed', async () => {
@@ -134,7 +155,7 @@ test('sub: empty or with a control character alone is claims (without ts_id, whi
   const { now } = DEFAULTS;
   const withSub = (sub: string) =>
     concat(
-      `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":${sub},"iat":${now},"nbf":${now},"exp":${now + 300}}`,
+      `{"iss":"${DEFAULTS.issuer}","aud":"${DEFAULTS.audience}","sub":${sub},"iat":${now},"nbf":${now},"exp":${now + 300},"ts_kind":"user"}`,
     );
   assert.equal(await checkAtNow(withSub('"7"')), 'ok');
   assert.equal(await checkAtNow(withSub('""')), 'claims');

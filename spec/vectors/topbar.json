@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "topbar",
   "spec": "spec/gate-client.md",
   "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
@@ -26,6 +26,12 @@
             {
               "title": "Files",
               "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
             }
           ],
           "account": {
@@ -57,6 +63,12 @@
               "href": "/files/"
             }
           ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
           "account": "https://auth.example.com/auth/account",
           "admin_panel": null,
           "logout": "https://auth.example.com/auth/logout"
@@ -80,6 +92,16 @@
             {
               "title": "Files",
               "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            },
+            {
+              "title": "App admin",
+              "href": "https://app.example.com/admin"
             }
           ],
           "account": {
@@ -111,6 +133,16 @@
               "href": "/files/"
             }
           ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            },
+            {
+              "title": "App admin",
+              "href": "https://app.example.com/admin"
+            }
+          ],
           "account": "https://auth.example.com/auth/account",
           "admin_panel": "https://auth.example.com/auth/admin",
           "logout": "https://auth.example.com/auth/logout"
@@ -127,6 +159,7 @@
           "signed_in": false,
           "name": null,
           "links": [],
+          "menu_links": [],
           "account": {
             "shown": false,
             "href": null
@@ -145,6 +178,7 @@
           "signed_in": false,
           "name": null,
           "links": [],
+          "menu_links": [],
           "account": null,
           "admin_panel": null,
           "logout": null
@@ -154,7 +188,7 @@
     {
       "id": "unsafe-hrefs",
       "attack": "topbar-href",
-      "reason": "Only http(s) URLs and paths starting with a single `/` are rendered; everything else is dropped.",
+      "reason": "Only http(s) URLs and paths starting with a single `/` are rendered; everything else is dropped — in `links` and in `menu_links` alike.",
       "input": {
         "topbar": {
           "brand": "Example",
@@ -190,6 +224,32 @@
               "href": "/ok"
             }
           ],
+          "menu_links": [
+            {
+              "title": "m",
+              "href": "javascript:void(0)"
+            },
+            {
+              "title": "n",
+              "href": "//evil.example.com/"
+            },
+            {
+              "title": "o",
+              "href": "/\\evil.example.com"
+            },
+            {
+              "title": "p",
+              "href": "/menu\tok"
+            },
+            {
+              "title": null,
+              "href": "/menu"
+            },
+            {
+              "title": "menu",
+              "href": "/menu"
+            }
+          ],
           "account": {
             "shown": true,
             "href": "JavaScript:alert(1)"
@@ -215,7 +275,127 @@
               "href": "/ok"
             }
           ],
+          "menu_links": [
+            {
+              "title": "menu",
+              "href": "/menu"
+            }
+          ],
           "account": null,
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout"
+        }
+      }
+    },
+    {
+      "id": "menu-links-missing",
+      "attack": "topbar-types",
+      "reason": "An answer of an older TinySesam without `menu_links`: no menu links, the rest as usual.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout"
+        }
+      }
+    },
+    {
+      "id": "menu-links-not-list",
+      "attack": "topbar-types",
+      "reason": "`menu_links` that is no list counts as none.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": {
+            "title": "x",
+            "href": "/x"
+          },
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
           "admin_panel": null,
           "logout": "https://auth.example.com/auth/logout"
         }
@@ -241,6 +421,7 @@
           "signed_in": false,
           "name": null,
           "links": [],
+          "menu_links": [],
           "account": null,
           "admin_panel": null,
           "logout": null
@@ -263,6 +444,7 @@
           "signed_in": false,
           "name": null,
           "links": [],
+          "menu_links": [],
           "account": null,
           "admin_panel": null,
           "logout": null

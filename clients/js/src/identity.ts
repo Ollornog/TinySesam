@@ -12,6 +12,30 @@ export type Auth = 'session' | 'oauth' | 'apikey' | 'app-password' | '';
 const AUTH_VALUES: ReadonlySet<string> = new Set(['session', 'oauth', 'apikey', 'app-password']);
 
 /**
+ * What the account is (spec version 2): a person (`user`) or a service account (`service`). Independent of
+ * {@link Kind}: a paired service acting as a person is `token` and `user`.
+ */
+export type AccountKind = 'user' | 'service';
+
+/**
+ * The account-kind rules of spec version 2 (section 2.2 rules 6–8, section 4.4 step 9): `kind` is the value of
+ * Remote-Kind or ts_kind (empty when missing), `auth` that of Remote-Auth or ts_auth. Returns the reason for a refusal,
+ * or null — a missing or unknown kind is never taken as `user`, and a service account has no session.
+ */
+export function accountKindProblem(kind: unknown, auth: unknown): string | null {
+  if (kind === undefined || kind === null || kind === '') {
+    return 'Remote-Kind/ts_kind missing (TinySesam or proxy older than spec v2?)';
+  }
+  if (kind !== 'user' && kind !== 'service') {
+    return 'Remote-Kind/ts_kind is not exactly user or service';
+  }
+  if (kind === 'service' && auth === 'session') {
+    return 'a service account has no session';
+  }
+  return null;
+}
+
+/**
  * Who made the request, the same in both modes. Key your own records by {@link Identity.id}: it is the only value that
  * survives a rename. `user`, `name` and `email` may hold any character except controls — bidirectional overrides and
  * zero-width characters included — so escape them for HTML and isolate them as bidi text.
@@ -31,8 +55,23 @@ export class Identity {
   readonly auth: Auth;
   /** `session` only when auth is exactly `session`. */
   readonly kind: Kind;
+  /** `user` or `service`, never empty (spec version 2). */
+  readonly accountKind: AccountKind;
 
-  constructor(fields: { user: string; name: string; email: string; groups: string; id: string; auth: string }) {
+  constructor(fields: {
+    user: string;
+    name: string;
+    email: string;
+    groups: string;
+    id: string;
+    auth: string;
+    accountKind: string;
+  }) {
+    const problem = accountKindProblem(fields.accountKind, fields.auth);
+    if (problem !== null) {
+      // Fail closed: an identity never exists without a valid account kind.
+      throw new GateError('header', problem);
+    }
     const auth = AUTH_VALUES.has(fields.auth) ? (fields.auth as Auth) : '';
     this.user = fields.user;
     this.name = fields.name;
@@ -41,6 +80,7 @@ export class Identity {
     this.id = fields.id;
     this.auth = auth;
     this.kind = auth === 'session' ? 'session' : 'token';
+    this.accountKind = fields.accountKind as AccountKind;
     Object.freeze(this);
   }
 
@@ -60,8 +100,22 @@ export class Identity {
     return this.kind === 'session';
   }
 
+  /** Whether the account is a service account (Remote-Kind or ts_kind exactly `service`). */
+  isService(): boolean {
+    return this.accountKind === 'service';
+  }
+
   /** The plain fields, as the vectors of the specification spell them. */
-  toJSON(): { user: string; name: string; email: string; groups: string[]; id: string; auth: Auth; kind: Kind } {
+  toJSON(): {
+    user: string;
+    name: string;
+    email: string;
+    groups: string[];
+    id: string;
+    auth: Auth;
+    kind: Kind;
+    account_kind: AccountKind;
+  } {
     return {
       user: this.user,
       name: this.name,
@@ -70,6 +124,7 @@ export class Identity {
       id: this.id,
       auth: this.auth,
       kind: this.kind,
+      account_kind: this.accountKind,
     };
   }
 }
@@ -102,7 +157,7 @@ function trimSpaces(s: string): string {
   return s.slice(start, end);
 }
 
-/** The six headers of header mode. TinySesam's forward_headers can rename them. */
+/** The seven headers of header mode. TinySesam's forward_headers can rename them. */
 export interface HeaderNames {
   user: string;
   name: string;
@@ -110,6 +165,7 @@ export interface HeaderNames {
   groups: string;
   id: string;
   auth: string;
+  kind: string;
 }
 
 /** The names TinySesam sends unless forward_headers renames them. */
@@ -120,9 +176,10 @@ export const DEFAULT_HEADER_NAMES: Readonly<HeaderNames> = Object.freeze({
   groups: 'Remote-Groups',
   id: 'Remote-Id',
   auth: 'Remote-Auth',
+  kind: 'Remote-Kind',
 });
 
-const SLOTS = ['user', 'name', 'email', 'groups', 'id', 'auth'] as const;
+const SLOTS = ['user', 'name', 'email', 'groups', 'id', 'auth', 'kind'] as const;
 
 /** Fills missing names with the defaults and checks them; null when a name is invalid or two are equal. */
 export function resolveHeaderNames(names: Partial<HeaderNames> | undefined): Readonly<HeaderNames> | null {
@@ -173,7 +230,7 @@ export function identityFromHeaders(
   names: Readonly<HeaderNames> = DEFAULT_HEADER_NAMES,
 ): Identity {
   const pairs = [...headers];
-  const values = { user: '', name: '', email: '', groups: '', id: '', auth: '' };
+  const values = { user: '', name: '', email: '', groups: '', id: '', auth: '', kind: '' };
   for (const slot of SLOTS) {
     const found = headerValues(pairs, names[slot]);
     if (found.length === 0) {
@@ -198,5 +255,9 @@ export function identityFromHeaders(
   if (values.id !== '' && !ASCII_DIGITS.test(values.id)) {
     throw new GateError('header', 'the id header is not a number');
   }
-  return new Identity(values);
+  const problem = accountKindProblem(values.kind, values.auth);
+  if (problem !== null) {
+    throw new GateError('header', problem);
+  }
+  return new Identity({ ...values, accountKind: values.kind });
 }

@@ -193,6 +193,7 @@ test('header mode: trusted proxies, renamed headers, peer addresses', async () =
   const headers: [string, string][] = [
     ['Remote-User', 'anna'],
     ['Remote-Auth', 'session'],
+    ['Remote-Kind', 'user'],
   ];
   for (const peer of ['127.0.0.1', '::ffff:127.0.0.1', '198.51.100.3', '::1', '[::1]', '0:0:0:0:0:0:0:1']) {
     assert.equal(await outcome(gate.identify({ headers, peer })), 'ok', peer);
@@ -209,6 +210,7 @@ test('header mode: trusted proxies, renamed headers, peer addresses', async () =
       ['x-user', 'anna'],
       ['X-Roles', 'a, b'],
       ['Remote-User', 'admin'],
+      ['Remote-Kind', 'user'],
     ],
   });
   assert.equal(id.user, 'anna');
@@ -232,7 +234,10 @@ test('Remote-Auth: only exactly "session" is a session', async () => {
     ['', 'token', ''],
     ['session ', 'session', 'session'], // trailing whitespace is not part of the value (the HTTP layer drops it)
   ] as const) {
-    const headers: [string, string][] = [['Remote-User', 'anna']];
+    const headers: [string, string][] = [
+      ['Remote-User', 'anna'],
+      ['Remote-Kind', 'user'],
+    ];
     if (auth.trim() !== '') {
       headers.push(['Remote-Auth', auth.trim()]);
     }
@@ -243,9 +248,63 @@ test('Remote-Auth: only exactly "session" is a session', async () => {
   }
 });
 
+test('account kind (spec v2): renamed header, missing value, unauthenticated first, the identity refuses a bad one', async () => {
+  const renamed = await createGate({ mode: 'header', headerNames: { kind: 'X-Account-Kind' } });
+  const bot = await renamed.identify({
+    headers: [
+      ['Remote-User', 'bot'],
+      ['Remote-Auth', 'apikey'],
+      ['X-Account-Kind', 'service'],
+      ['Remote-Kind', 'user'],
+    ],
+  });
+  assert.equal(bot.accountKind, 'service');
+  assert.ok(bot.isService() && !bot.isSession());
+  assert.equal(bot.toJSON().account_kind, 'service');
+  const plain = await createGate({ mode: 'header' });
+  await assert.rejects(plain.identify({ headers: [['Remote-User', 'anna']] }), (err: GateError) => {
+    return err.code === 'header' && err.message.includes('older than spec v2') && !err.message.includes('anna');
+  });
+  assert.equal(await outcome(plain.identify({ headers: [['Remote-Groups', 'admin']] })), 'unauthenticated');
+  const fields = { user: 'a', name: '', email: '', groups: '', id: '1', auth: 'session' };
+  for (const accountKind of ['', 'User', 'admin']) {
+    assert.throws(() => new Identity({ ...fields, accountKind }), GateError, accountKind);
+  }
+  assert.throws(() => new Identity({ ...fields, accountKind: 'service' }), GateError, 'service with a session');
+});
+
 test('guards: 401 without identity, 403 for a missing role or a token request', () => {
-  const session = new Identity({ user: 'a', name: '', email: '', groups: 'editors,admin', id: '1', auth: 'session' });
-  const token = new Identity({ user: 'a', name: '', email: '', groups: 'editors', id: '1', auth: 'apikey' });
+  const session = new Identity({
+    user: 'a',
+    name: '',
+    email: '',
+    groups: 'editors,admin',
+    id: '1',
+    auth: 'session',
+    accountKind: 'user',
+  });
+  const token = new Identity({
+    user: 'a',
+    name: '',
+    email: '',
+    groups: 'editors',
+    id: '1',
+    auth: 'apikey',
+    accountKind: 'user',
+  });
+  const service = new Identity({
+    user: 'bot',
+    name: '',
+    email: '',
+    groups: 'editors',
+    id: '2',
+    auth: 'apikey',
+    accountKind: 'service',
+  });
+  assert.equal(authorize(token, [{ accountKind: 'user' }]), 'allow');
+  assert.equal(authorize(service, [{ accountKind: 'user' }]), 403);
+  assert.equal(authorize(service, [{ accountKind: 'service' }]), 'allow');
+  assert.equal(authorize(null, [{ accountKind: 'service' }]), 401);
   assert.equal(authorize(null), 401);
   assert.equal(authorize(undefined, ['signed-in']), 401);
   assert.equal(authorize(session), 'allow');
@@ -342,16 +401,25 @@ test('Node guards: the middleware identifies, the guards answer 401/403 without 
   };
   const send = (headers: string) =>
     rawRequest(handler, latin1Bytes(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n${headers}\r\n`));
-  assert.deepEqual(await send('Remote-User: anna\r\nRemote-Groups: editors\r\nRemote-Auth: session\r\n'), {
-    status: 200,
-    body: 'hello anna',
-  });
+  assert.deepEqual(
+    await send('Remote-User: anna\r\nRemote-Groups: editors\r\nRemote-Auth: session\r\nRemote-Kind: user\r\n'),
+    {
+      status: 200,
+      body: 'hello anna',
+    },
+  );
   assert.deepEqual(await send(''), { status: 401, body: 'Unauthorized' });
-  assert.deepEqual(await send('Remote-User: anna\r\nRemote-Auth: session\r\n'), { status: 403, body: 'Forbidden' });
-  assert.deepEqual(await send('Remote-User: anna\r\nRemote-Groups: editors\r\nRemote-Auth: apikey\r\n'), {
+  assert.deepEqual(await send('Remote-User: anna\r\nRemote-Auth: session\r\nRemote-Kind: user\r\n'), {
     status: 403,
     body: 'Forbidden',
   });
+  assert.deepEqual(
+    await send('Remote-User: anna\r\nRemote-Groups: editors\r\nRemote-Auth: apikey\r\nRemote-Kind: user\r\n'),
+    {
+      status: 403,
+      body: 'Forbidden',
+    },
+  );
   // Guards without the middleware fail closed.
   const bare = (req: IncomingMessage, res: ServerResponse) => requireAuth()(req, res, () => res.end('through'));
   assert.equal(
@@ -365,12 +433,12 @@ test('the middleware clears an identity of an earlier pass when the check fails'
   const gate = await createGate({ mode: 'header' });
   const m = gateMiddleware(gate);
   const req = {
-    rawHeaders: ['Remote-User', 'anna'],
+    rawHeaders: ['Remote-User', 'anna', 'Remote-Kind', 'user'],
     socket: { remoteAddress: '127.0.0.1' },
   } as unknown as IncomingMessage;
   await new Promise<void>((resolve) => m(req, {} as ServerResponse, () => resolve()));
   assert.equal(identityOf(req)?.user, 'anna');
-  (req as unknown as { rawHeaders: string[] }).rawHeaders = ['Remote-User', 'boss\u0001'];
+  (req as unknown as { rawHeaders: string[] }).rawHeaders = ['Remote-User', 'boss\u0001', 'Remote-Kind', 'user'];
   await new Promise<void>((resolve) => m(req, {} as ServerResponse, () => resolve()));
   assert.equal(identityOf(req), null);
 });
@@ -378,18 +446,33 @@ test('the middleware clears an identity of an earlier pass when the check fails'
 test('Fetch adapter: identifyRequest and withGate', async () => {
   const gate = await createGate({ mode: 'header', trustedProxies: ['127.0.0.1'] });
   const request = (headers: Record<string, string>) => new Request('https://app.example.com/', { headers });
-  assert.equal((await identifyRequest(gate, request({ 'Remote-User': 'anna' }), '127.0.0.1'))?.user, 'anna');
-  assert.equal(await identifyRequest(gate, request({ 'Remote-User': 'anna' })), null, 'no peer, untrusted');
+  assert.equal(
+    (await identifyRequest(gate, request({ 'Remote-User': 'anna', 'Remote-Kind': 'user' }), '127.0.0.1'))?.user,
+    'anna',
+  );
+  assert.equal(
+    await identifyRequest(gate, request({ 'Remote-User': 'anna', 'Remote-Kind': 'user' })),
+    null,
+    'no peer, untrusted',
+  );
   const app = withGate(gate, [{ role: 'editors' }], (_r, id) => new Response(`hi ${id.user}`), {
     peer: () => '127.0.0.1',
   });
-  assert.equal(await (await app(request({ 'Remote-User': 'anna', 'Remote-Groups': 'editors' }))).text(), 'hi anna');
-  const denied = await app(request({ 'Remote-User': 'anna' }));
+  assert.equal(
+    await (await app(request({ 'Remote-User': 'anna', 'Remote-Groups': 'editors', 'Remote-Kind': 'user' }))).text(),
+    'hi anna',
+  );
+  const denied = await app(request({ 'Remote-User': 'anna', 'Remote-Kind': 'user' }));
   assert.equal(denied.status, 403);
   assert.equal(await denied.text(), 'Forbidden');
   assert.equal((await app(request({}))).status, 401);
   // UTF-8 on the wire arrives as octets in Fetch Headers too.
-  const utf8 = new Request('https://app.example.com/', { headers: [['Remote-User', 'JÃ¼rgen']] });
+  const utf8 = new Request('https://app.example.com/', {
+    headers: [
+      ['Remote-User', 'JÃ¼rgen'],
+      ['Remote-Kind', 'user'],
+    ],
+  });
   assert.equal((await identifyRequest(gate, utf8, '127.0.0.1'))?.user, 'Jürgen');
 });
 
@@ -488,6 +571,7 @@ test('top bar fetch: only TinySesam cookies go out, any failure is signed out', 
       signed_in: true,
       name: 'Anna',
       links: [],
+      menu_links: [],
       account: null,
       admin_panel: null,
       logout: '/auth/logout',

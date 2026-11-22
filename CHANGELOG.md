@@ -60,7 +60,7 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   Python audit tool by name: the kit's audit-gate check reads comments as calls (false positive, fix pending in the
   kit; revert after the kit sync).
 
-### Fixed — two suites that read the clock instead of an event (red under load)
+### Fixed — suites that read the clock instead of an event (red under load)
 
 - `tests/test_close.py`: the job in the shutdown race wrote 400 rows; under load (two CPUs, a dozen suites) that took
   longer than `close()`'s 10 s deadline, and `close()` correctly kept the database open (`False`) — the test read that
@@ -70,6 +70,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - `tests/test_browser.py`: after the demo sign-in it waited a fixed 2 s and then read the page ("not signed in: ''"
   when the answer came later); it now waits for the signed-in page (`until`, up to 20 s). With 4 s network latency
   injected before the sign-in: the old version 3 of 3 red, the new one 0 of 3.
+- The JS/TS client's check of the built package (`clients/js/test/dist-smoke.mjs`) is a file now, run by the CI
+  workflow `client-js` and by `scripts/check.sh` (built into a throwaway directory). It stood inline in the workflow,
+  check.sh never ran it, and a request without `Remote-Kind` reached the CI first. A build of the v1 client fails it.
+- `tests/test_magic.py` (R4-05): it waited a fixed 0.2 s for the mail worker to start the first send; once in a local
+  gate run the worker had not started yet. It now waits for an event set by the first send (up to 20 s). With a mail
+  worker that starts 0.5 s late: the old version 3 of 3 red, the new one 0 of 3.
 
 ### Security — the image scan shows the findings of both images in every run
 
@@ -88,6 +94,77 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   high finding left, both rules matched.
 - `tests/test_security_doc.py` now drives the deadline through the command the CI runs (`--today`): green on the last
   valid day of every shipped rule, red the day after (mutation: the expiry check removed → red).
+
+### Added — `Remote-Kind` (user | service): what the account is
+
+- **Who needs it:** an application behind the gate that must tell a person from a service account. `Remote-Auth`
+  says how a request came in (`session`, `oauth`, `apikey`, `app-password`); the new `Remote-Kind` says what the account
+  is — `service` when `users.is_service` is set, otherwise `user`. A paired service acting as a person is `oauth` +
+  `user`, a service account's API key `apikey` + `service`.
+- `/auth/forward` sends it on every 200 (never on 401/403); every gate token carries the claim `ts_kind`. A value of
+  `is_service` that is neither 0 nor 1 (or a missing field) is refused with 403 `api.kind_invalid` and a security log
+  line — never guessed as `user`. A service account never gets a gate token (it has no session; the bolt in
+  `_gate_cookie` keeps that so).
+- **Behaviour change — a mandatory slot:** `forward_headers` is the complete list, except for the slots in
+  `TinySesam.FORWARD_HEADERS_MANDATORY` (`kind`). A mapping without `kind` still sends `Remote-Kind` (and `ts_kind`);
+  `{"kind": "X-Account-Kind"}` renames it; `{"kind": []}` or an empty name is a `ConfigError`.
+- Every proxy template strips a client's `Remote-Kind` on every path (share paths included) and sets it only from
+  TinySesam's answer: the Caddyfiles (`request_header -Remote-Kind`, `header_up -Remote-Kind`, `@ts_kind` on the way
+  back), `Caddyfile.gate` (`ts_kind` in `meta_claims`, `header_up Remote-Kind {http.auth.user.ts_kind}` on the fast
+  path), nginx, nginx/FastCGI (`fastcgi_param HTTP_REMOTE_KIND`, emptied in the open part) and Traefik
+  (`authResponseHeaders` of both middlewares). Measured through the real proxies with a forged `Remote-Kind`
+  (`tests/test_gate_caddy.py`, `tests/test_proxies.py`). Measured too: a gate token without `ts_kind` (issued before the
+  update) still takes caddy-jwt's fast path, and the application gets `Remote-Kind` with an **empty** value — never
+  placeholder text; the proxy does not fall back to `/auth/forward` for it (`docs/OPERATIONS.md`).
+- `deploy/forward-auth/acceptance.sh`: a self-sent `Remote-Kind: service` opens nothing; with `ECHO=1` (an application
+  that reflects its request headers, like the quickstart's whoami) it also checks that a forged `Remote-Kind` never
+  arrives, with a session and on the share path.
+
+### Changed — gate client specification version 2 (vectors format 2)
+
+- `spec/gate-client.md` v2: the identity gets `account_kind` (`user` | `service`; the field is not `kind`, which says
+  `session`/`token` since v1). Header mode §2.2 rules 6–8: `Remote-Kind` missing or empty, not exactly `user`/`service`,
+  or `service` with `Remote-Auth: session` → `header`; without `Remote-User` it stays `unauthenticated`. Token mode
+  §4.4 step 9: `ts_kind` mandatory and exact, never `service` with `ts_auth: session` → `claims`. §8: `menu_links`. New
+  attack class `remote-kind`; every file says `"format": 2`; the header vectors about other defects carry
+  `Remote-Kind: user`, so each still has one defect (the one-defect guard of #304 holds: `attack-claim-kind-type` joins
+  the listed inherent ones — a kind of the wrong type has no value a repair could assume).
+- **All four clients on v2**, failing closed: Go (`AccountKind`, `Identity.AccountKind`, `IsService()`,
+  `RequireAccountKind`, `HeaderNames.Kind`, the fuzz target with the seventh header), Rust (`AccountKind`
+  `#[non_exhaustive]`, `Identity::account_kind`, `is_service()`, `Requirement::AccountKind`, `HeaderNames::kind`,
+  `REMOTE_HEADERS` now seven), JS/TS (`AccountKind`, `identity.accountKind`, `isService()`, `{ accountKind }` as a
+  requirement, `headerNames.kind`; the `Identity` constructor refuses an invalid kind) and Python
+  (`Identity.account_kind`, `is_service()`, `require_account_kind`, `guard_status(account_kind=…)`). Each checks the
+  vector format 2 and parses `menu_links` of the top bar.
+- **Breaks v2 clients against an older TinySesam or older proxy templates — on purpose.** Clients after v1 keep
+  working against this release (they read six headers and ignore unknown claims). The clients are not published, so
+  there is no transition rule and no switch that takes a missing kind as `user`. **Upgrade order:** TinySesam and the
+  proxy templates first, wait `gate_token_ttl_sec`, then the applications on v2 clients (`SECURITY.md`,
+  `docs/OPERATIONS.md`).
+
+### Added — `topbar_menu_links` and `brand_icon_title`
+
+- `topbar_menu_links`: links in the account menu of the top bar, after "Signed in as …" and before "Account", with a
+  separator of their own; the same shape, targets and visibility rules as `topbar_links` — one check in
+  `config_check`, one filter (`topbar.visible_links(auth, viewer, field)`). Without a signed-in account there are none.
+  `topbar_data`, `/auth/topbar.json` and `/.tinysesam/topbar.json` answer them as `menu_links` (always present, `[]`
+  signed out or for a locked account). More than 10 entries warn. Gateway: `TINYSESAM_TOPBAR_MENU_LINKS`. Redacted by
+  `tinysesam diagnose`.
+- `brand_icon_title`: a tooltip (`title`) on the logo image of `brand_icon`, escaped (`'` included — the attribute is
+  single-quoted), at most 200 characters, no control characters (`ConfigError`); empty keeps the `<img>` byte for byte
+  as before; with the built-in mark or `"none"` it has no effect and warns. Gateway: `TINYSESAM_BRAND_ICON_TITLE`.
+- `topbar_links` titles with a control character are a `ConfigError` now too (the shared check).
+- Tests: `tests/test_remote_kind.py`, `tests/test_topbar_menu.py`, the browser test (menu order at 390 and 1280 px),
+  Remote-Kind in `tests/test_gate_caddy.py`, `tests/test_proxies.py`, `tests/test_remote_auth.py` (text guards with
+  self-probes), `tests/test_gate_vectors.py` (four new relaxations: missing as `user`, case folding, any value, no
+  consistency rule). Mutation proof, each restored from a saved copy: server 9/9 red (kind always `user`, kind from the
+  way in, mandatory slot dropped, default name sent besides a rename, `{"kind": []}` allowed, `bool()` instead of the
+  exact check, `ts_kind` only with the slot, gate bolt removed, a generator rule changed); top bar and logo 10/10 red;
+  per client the five targets (missing as `user`, case folded, duplicate allowed, consistency rule dropped, `ts_kind`
+  unchecked) — Go 5/5, JS 5/5, Rust and Python 4/5 alone and red together with the second guard (`ts_kind` is checked in
+  the claims step and again when the identity is built); templates through the real proxies 7/9 red — the two green ones
+  are the second strip layers of Caddy (top-level `request_header -Remote-Kind` and the share path's `header_up`), red
+  together (share path) and caught by the text guard where the top-level strip is concerned.
 
 ### Added — the gate client for Python (T-86)
 

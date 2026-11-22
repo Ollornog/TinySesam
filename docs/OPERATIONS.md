@@ -515,6 +515,34 @@ cookie itself and asks `/auth/forward` only when it is missing or expires. Templ
   `error` — that is the fallback path, not an outage. So is every request with an
   `Authorization` header that is not a gate token: caddy-jwt always checks this header too.
 
+### `Remote-Kind` and gate clients after spec v2: the upgrade
+
+`Remote-Kind: user|service` (what the account is; claim `ts_kind` in the gate token) is new and always sent.
+Applications on a gate client after spec version 2 refuse a request without it — so the order matters:
+
+1. **TinySesam and the proxy** — the templates of this release (or your own rules: strip `Remote-Kind` on every path,
+   share paths included; set it only from TinySesam's answer, or in `Caddyfile.gate`'s fast path from
+   `{http.auth.user.ts_kind}` with `ts_kind` in `meta_claims`; nginx/FastCGI `fastcgi_param HTTP_REMOTE_KIND`, Traefik
+   `"Remote-Kind"` in `authResponseHeaders` of every middleware). Check with `deploy/forward-auth/acceptance.sh`.
+2. **Wait `gate_token_ttl_sec`** (default 300 s). A gate token issued before the update has no `ts_kind`, and caddy-jwt
+   still accepts it on the fast path: the application then gets `Remote-Kind` with an empty value (measured with Caddy
+   2.11.9 and caddy-jwt 1.4.0 in `tests/test_gate_caddy.py`; never placeholder text), and a spec v2 client refuses the
+   request (401) until the token expires. The proxy does **not** fall back to `/auth/forward` for it.
+3. **The applications** on clients after spec v2.
+
+An application switched too early: its users get 401 until their gate token expires, or they sign out at the
+application once (`/.tinysesam/logout`, which deletes the gate cookie) and sign in again. Clients after spec v1 keep
+working throughout: they ignore the new header and claim. `forward_headers` sends `kind` even when your own mapping
+leaves it out; rename it with `{"kind": "X-Account-Kind"}` and carry the new name through the proxy and the clients'
+header names. No schema change, nothing to roll back in the database.
+
+### Top bar: account menu links and the logo's tooltip (gateway)
+
+`TINYSESAM_TOPBAR_MENU_LINKS` takes the links of the account menu in the JSON form of `TINYSESAM_TOPBAR_LINKS`
+(`[["My collections", "/collections"], ["Moderation", "/mod", {"role": "moderators"}]]`); broken JSON ends the start.
+`TINYSESAM_BRAND_ICON_TITLE` sets the tooltip of the logo image (`brand_icon_title`, at most 200 characters, no control
+characters). `/auth/topbar.json` and `/.tinysesam/topbar.json` answer the menu links as `menu_links` (always present).
+
 ## Managing federated identities
 
 A foreign identity is **bound** to a local account — via an identifier that belongs to the foreign

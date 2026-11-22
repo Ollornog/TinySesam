@@ -30,7 +30,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 OUT = os.path.join(ROOT, "spec", "vectors")
 
-FORMAT = 1
+FORMAT = 2                # spec version 2: Remote-Kind / ts_kind (account_kind)
 NOW = 1767225600          # 2026-01-01T00:00:00Z
 ISSUER = "https://auth.example.com"
 AUDIENCE = "app.example.com"
@@ -149,7 +149,9 @@ class Probe:
                 db_path=os.path.join(self.dir, "probe.db"), base_url=ISSUER, forward_auth_enabled=True,
                 gate_token_enabled=True, gate_key_file=key_file, trusted_redirect_hosts=[AUDIENCE],
                 passkey_enabled=False, oidc_enabled=False, rp_name="Example",
-                topbar_links=[("Wiki", "https://app.example.com/wiki"), ("Files", "/files/")]))
+                topbar_links=[("Wiki", "https://app.example.com/wiki"), ("Files", "/files/")],
+                topbar_menu_links=[("My collections", "/collections"),
+                                   ("App admin", "https://app.example.com/admin", {"admin": True})]))
         a = self.auth
         self.users = {
             "anna": a.create_user("anna", None, roles=["editors"], display_name="Anna Berg",
@@ -159,6 +161,7 @@ class Probe:
                                      email="juergen@example.com"),
             "ivan": a.create_user("иван", None, roles=["readers"], display_name="Иван Петров"),
             "homoglyph": a.create_user("аdmin", None, roles=["аdmin"], display_name="Not The Admin"),
+            "service": a.create_service("backup-bot", roles=["editors"], display_name="Backup Bot"),
         }
         assert a.gate_public_key() == base64.b64encode(_public("A")).decode("ascii"), "probe does not use key A"
 
@@ -211,7 +214,7 @@ def identity(claims: dict) -> dict:
     return {"user": claims.get("ts_user", ""), "name": claims.get("ts_name", ""), "email": claims.get("ts_email", ""),
             "groups": groups(claims.get("ts_groups", "")), "id": claims["sub"],
             "auth": auth if auth in ("session", "oauth", "apikey", "app-password") else "",
-            "kind": "session" if auth == "session" else "token"}
+            "kind": "session" if auth == "session" else "token", "account_kind": claims["ts_kind"]}
 
 
 # ---------- token vectors ----------
@@ -280,11 +283,12 @@ def token_vectors(p: Probe) -> list:
         "`admin` stays closed.", p.token("homoglyph"), attack="unicode-homoglyph",
         guards={"admin": False, "аdmin": True})
     add("valid-zero-width-group", "A zero-width joiner is no control character; the group is not `admin`.",
-        issue("A", sub="7", claims={"user": "zw", "groups": "ad‍min", "id": "7", "auth": "session"}, jti="zw"),
+        issue("A", sub="7", claims={"user": "zw", "groups": "ad‍min", "id": "7", "auth": "session", "kind": "user"},
+              jti="zw"),
         attack="unicode-homoglyph", guards={"admin": False})
     add("valid-bidi-name", "A right-to-left override in the name is allowed; rendering it safely is the app's job.",
         issue("A", sub="8", claims={"user": "bidi", "name": "evil‮txt.exe", "groups": "", "id": "8",
-                                    "auth": "session"}, jti="bidi"), attack="unicode-homoglyph")
+                                    "auth": "session", "kind": "user"}, jti="bidi"), attack="unicode-homoglyph")
 
     # The largest valid token: a long display name, padded until the next character would cross the limit.
     size_ok = size_over = None
@@ -462,6 +466,12 @@ def token_vectors(p: Probe) -> list:
             ("auth-object", {"ts_auth": {"kind": "session"}}, "ts_auth as an object"),
             ("jti-number", {"jti": 5}, "jti as a number"),
             ("ts-id-differs", {"ts_id": "2"}, "ts_id differs from sub — one account, one ID"),
+            ("kind-missing", {"ts_kind": None}, "no ts_kind (a token issued before spec v2, or by an older TinySesam)"),
+            ("kind-type", {"ts_kind": 1}, "ts_kind as a number"),
+            ("kind-case", {"ts_kind": "User"}, "ts_kind `User` — compared exactly, no case folding"),
+            ("kind-unknown", {"ts_kind": "admin"}, "ts_kind `admin` — only `user` and `service` exist"),
+            ("kind-service-session", {"ts_kind": "service"}, "ts_kind `service` with ts_auth `session` — a service "
+             "account has no session, so TinySesam never issues such a token; only a holder of the key can mint it"),
     ):
         add(f"attack-claim-{vid}", f"Validly signed, but {why}.", signed(head(), variant(**change)), error="claims",
             attack="claim-types")
@@ -475,7 +485,7 @@ def token_vectors(p: Probe) -> list:
             ("tab-email", {"email": "anna@example.com\t"}, "a tab in ts_email"),
     ):
         c = {"user": "anna", "name": "Anna Berg", "email": "anna@example.com", "groups": "editors", "id": "1",
-             "auth": "session"}
+             "auth": "session", "kind": "user"}
         c.update(claims)
         add(f"attack-control-{vid}", f"{why.capitalize()}. TinySesam strips control characters before signing; a client "
             "that meets one refuses instead of stripping (stripping can produce another account's name).",
@@ -525,15 +535,19 @@ def token_vectors(p: Probe) -> list:
 def header_vectors(p: Probe) -> list:
     out = []
 
-    def add(vid, reason, headers, *, error=None, attack=None, ident=None, guards=None):
+    def add(vid, reason, headers, *, error=None, attack=None, ident=None, guards=None, with_kind=True):
+        # Since spec v2 every request TinySesam answers carries Remote-Kind: a vector about another defect carries
+        # `user`, so that it fails for its own defect and not for a missing Remote-Kind (one defect per vector).
+        if with_kind and not any(k.lower() == "remote-kind" for k in headers):
+            headers = dict(headers, **{"Remote-Kind": "user"})
         exp = {"ok": False, "error": error} if error else {"ok": True, "identity": ident}
         if guards:
             exp["has_role"] = guards
         out.append({"id": vid, "attack": attack, "reason": reason, "input": {"headers": headers}, "expected": exp})
 
-    def ident(user, name="", email="", groups_=(), rid="", auth="", kind="token"):
+    def ident(user, name="", email="", groups_=(), rid="", auth="", kind="token", account_kind="user"):
         return {"user": user, "name": name, "email": email, "groups": list(groups_), "id": rid, "auth": auth,
-                "kind": kind}
+                "kind": kind, "account_kind": account_kind}
 
     uid = {k: str(v) for k, v in p.users.items()}
     add("valid-session", "The headers /auth/forward sends for a browser session.", p.headers("anna"),
@@ -605,6 +619,49 @@ def header_vectors(p: Probe) -> list:
     add("id-arabic-digits", "Arabic-Indic digits are no ASCII digits.",
         {"Remote-User": "anna", "Remote-Id": "١".encode("utf-8").decode("latin-1")}, error="header",
         attack="id-format")
+
+    # --- Remote-Kind (spec v2): what the account is; always sent, refused when missing or malformed ---
+    add("valid-kind-user", "Remote-Kind `user` with a browser session: a person.",
+        {"Remote-User": "anna", "Remote-Auth": "session", "Remote-Kind": "user"},
+        ident=ident("anna", auth="session", kind="session"), attack="remote-kind")
+    add("valid-kind-service", "The headers /auth/forward sends for a service account's API key: Remote-Kind "
+        "`service`, a token request.", p.headers("service", "apikey"),
+        ident=ident("backup-bot", "Backup Bot", "", ["editors"], uid["service"], "apikey", "token", "service"),
+        attack="remote-kind")
+    add("valid-kind-service-oauth", "A paired service that acts as a service account: `oauth` with `service`.",
+        {"Remote-User": "backup-bot", "Remote-Auth": "oauth", "Remote-Kind": "service"},
+        ident=ident("backup-bot", auth="oauth", account_kind="service"), attack="remote-kind")
+    add("valid-kind-user-oauth", "A paired service that acts as a person: the request comes from a machine "
+        "(Remote-Auth `oauth`), the account is a person (`user`).",
+        {"Remote-User": "anna", "Remote-Auth": "oauth", "Remote-Kind": "user"},
+        ident=ident("anna", auth="oauth"), attack="remote-kind")
+    sess = {"Remote-User": "anna", "Remote-Auth": "session"}
+    tok = {"Remote-User": "backup-bot", "Remote-Auth": "apikey"}
+    add("kind-missing", "No Remote-Kind: an older TinySesam or proxy template. Refused, never taken as `user` (the "
+        "log may say: TinySesam/proxy older than spec v2?).", sess, error="header", attack="remote-kind",
+        with_kind=False)
+    add("kind-empty", "An empty Remote-Kind is no kind.", dict(sess, **{"Remote-Kind": ""}), error="header",
+        attack="remote-kind")
+    add("kind-upper-user", "`User` is not `user`: compared exactly.", dict(sess, **{"Remote-Kind": "User"}),
+        error="header", attack="remote-kind")
+    add("kind-upper-service", "`SERVICE` is not `service`.", dict(tok, **{"Remote-Kind": "SERVICE"}), error="header",
+        attack="remote-kind")
+    for value in ("admin", "machine", "human"):
+        add(f"kind-unknown-{value}", f"`{value}` is no account kind: only `user` and `service` exist.",
+            dict(sess, **{"Remote-Kind": value}), error="header", attack="remote-kind")
+    add("kind-inner-space", "`us er` is no kind (no trimming inside a value).", dict(sess, **{"Remote-Kind": "us er"}),
+        error="header", attack="remote-kind")
+    add("kind-twice", "Remote-Kind twice (a proxy that appends the client's value to TinySesam's).",
+        dict(sess, **{"Remote-Kind": ["user", "service"]}), error="header", attack="remote-kind")
+    add("kind-twice-spelling", "Remote-Kind twice under two spellings.",
+        dict(sess, **{"Remote-Kind": "user", "remote-kind": "service"}), error="header", attack="remote-kind")
+    add("kind-control", "A NUL after `user`: refused, not stripped.", dict(sess, **{"Remote-Kind": "user\x00"}),
+        error="header", attack="header-injection")
+    add("kind-service-session", "`service` with Remote-Auth `session`: TinySesam never sends this (a service account "
+        "has no session).", dict(sess, **{"Remote-Kind": "service"}), error="header", attack="remote-kind")
+    add("kind-missing-no-user", "Neither Remote-User nor Remote-Kind (an anonymous request on a public share path): "
+        "not signed in — `unauthenticated` comes first, never `header`.", {"Remote-Groups": "editors"},
+        error="unauthenticated", attack="remote-kind", with_kind=False)
     return out
 
 
@@ -661,7 +718,7 @@ def jwks_sets() -> list:
 def jwks_scenarios() -> list:
     out = []
     claims = {"user": "anna", "name": "Anna Berg", "email": "anna@example.com", "groups": "editors", "id": "1",
-              "auth": "session"}
+              "auth": "session", "kind": "user"}
 
     def tok(label, now, kid_override=None):
         t = issue(label, sub="1", claims=claims, now=now, jti=f"s-{label}-{now}")
@@ -766,17 +823,20 @@ def topbar_vectors(p: Probe) -> list:
         out.append({"id": vid, "attack": attack, "reason": reason, "input": {"topbar": data},
                     "expected": {"ok": True, "topbar": want}})
 
-    signed_out = {"brand": "Example", "signed_in": False, "name": None, "links": [], "account": None,
-                  "admin_panel": None, "logout": None}
+    signed_out = {"brand": "Example", "signed_in": False, "name": None, "links": [], "menu_links": [],
+                  "account": None, "admin_panel": None, "logout": None}
     anna = p.topbar("anna")
     add("signed-in", "GET /auth/topbar.json for a signed-in account.", anna,
         {"brand": "Example", "signed_in": True, "name": "Anna Berg",
          "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
+         "menu_links": [{"title": "My collections", "href": "/collections"}],
          "account": f"{ISSUER}/auth/account", "admin_panel": None, "logout": f"{ISSUER}/auth/logout"})
     admin = p.topbar("admin")
     add("admin", "The admin panel link is shown to an admin.", admin,
         dict(signed_out, signed_in=True, name="Admin", links=[{"title": "Wiki", "href": "https://app.example.com/wiki"},
                                                               {"title": "Files", "href": "/files/"}],
+             menu_links=[{"title": "My collections", "href": "/collections"},
+                         {"title": "App admin", "href": "https://app.example.com/admin"}],
              account=f"{ISSUER}/auth/account", admin_panel=f"{ISSUER}/auth/admin", logout=f"{ISSUER}/auth/logout"))
     add("signed-out", "No session: the brand only, no links.", p.topbar(None), signed_out)
     evil = json.loads(json.dumps(anna))
@@ -784,10 +844,29 @@ def topbar_vectors(p: Probe) -> list:
                      {"title": "z", "href": "data:text/html,<script>"}, {"title": "w", "href": "/\\evil.example.com"},
                      {"title": "v", "href": "https://ok.example.com/a b"}, {"title": 5, "href": "/a"},
                      {"title": "ok", "href": "/ok"}]
+    evil["menu_links"] = [{"title": "m", "href": "javascript:void(0)"}, {"title": "n", "href": "//evil.example.com/"},
+                          {"title": "o", "href": "/\\evil.example.com"}, {"title": "p", "href": "/menu\tok"},
+                          {"title": None, "href": "/menu"}, {"title": "menu", "href": "/menu"}]
     evil["account"] = {"shown": True, "href": "JavaScript:alert(1)"}
-    add("unsafe-hrefs", "Only http(s) URLs and paths starting with a single `/` are rendered; everything else is dropped.",
+    add("unsafe-hrefs", "Only http(s) URLs and paths starting with a single `/` are rendered; everything else is dropped "
+        "— in `links` and in `menu_links` alike.",
         evil, dict(signed_out, signed_in=True, name="Anna Berg", links=[{"title": "ok", "href": "/ok"}],
-                   logout=f"{ISSUER}/auth/logout"), attack="topbar-href")
+                   menu_links=[{"title": "menu", "href": "/menu"}], logout=f"{ISSUER}/auth/logout"),
+        attack="topbar-href")
+    old = json.loads(json.dumps(anna))
+    del old["menu_links"]
+    add("menu-links-missing", "An answer of an older TinySesam without `menu_links`: no menu links, the rest as usual.",
+        old, {"brand": "Example", "signed_in": True, "name": "Anna Berg",
+              "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
+              "menu_links": [], "account": f"{ISSUER}/auth/account", "admin_panel": None,
+              "logout": f"{ISSUER}/auth/logout"}, attack="topbar-types")
+    wrong = json.loads(json.dumps(anna))
+    wrong["menu_links"] = {"title": "x", "href": "/x"}
+    add("menu-links-not-list", "`menu_links` that is no list counts as none.", wrong,
+        {"brand": "Example", "signed_in": True, "name": "Anna Berg",
+         "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
+         "menu_links": [], "account": f"{ISSUER}/auth/account", "admin_panel": None,
+         "logout": f"{ISSUER}/auth/logout"}, attack="topbar-types")
     add("wrong-types", "signed_in as a string is no `true`: shown as signed out.",
         {"brand": "Example", "signed_in": "true", "name": "anna", "links": [], "account": None},
         signed_out, attack="topbar-types")

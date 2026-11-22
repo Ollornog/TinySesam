@@ -1,7 +1,7 @@
 //! Token mode (spec §4): the identity from a gate token whose Ed25519 signature the client verifies itself.
 
 use crate::error::{ConfigError, TokenError};
-use crate::identity::Identity;
+use crate::identity::{Identity, check_account_kind};
 use crate::keys::{KeySet, PublicKey};
 use crate::strict::{b64url, has_control, json_object};
 use ed25519_dalek::Signature;
@@ -21,13 +21,14 @@ pub const TOKEN_TYPE: &str = "tinysesam-gate+jwt";
 
 const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 const HEADER_MEMBERS: [&str; 3] = ["alg", "typ", "kid"];
-const IDENTITY_CLAIMS: [&str; 6] = [
+const IDENTITY_CLAIMS: [&str; 7] = [
     "ts_user",
     "ts_name",
     "ts_email",
     "ts_groups",
     "ts_id",
     "ts_auth",
+    "ts_kind",
 ];
 
 /// Seconds since the Unix epoch from the system clock (0 if the clock stands before 1970).
@@ -104,7 +105,7 @@ impl TokenConfig {
             .map_err(|_| TokenError::Signature)?;
         let claims = json_object(&token.payload).ok_or(TokenError::Malformed)?;
         self.check_claims(&claims, now)?;
-        let identity = identity_from_claims(&claims);
+        let identity = identity_from_claims(&claims)?;
         Ok(Verified {
             claims: Claims(claims),
             identity,
@@ -157,6 +158,10 @@ impl TokenConfig {
         if iat > nbf {
             return Err(Bad);
         }
+        // Spec v2: ts_kind present and exactly user or service, never service with a session (its type was checked
+        // with the identity claims above).
+        let text = |name: &str| c.get(name).and_then(Value::as_str).unwrap_or_default();
+        check_account_kind(text("ts_kind"), text("ts_auth")).ok_or(Bad)?;
         if iss != self.issuer {
             return Err(TokenError::Issuer);
         }
@@ -251,21 +256,25 @@ pub fn precheck(jws: &str) -> Result<Unverified<'_>, TokenError> {
     })
 }
 
-fn identity_from_claims(c: &Map<String, Value>) -> Identity {
+fn identity_from_claims(c: &Map<String, Value>) -> Result<Identity, TokenError> {
     let text = |name: &str| {
         c.get(name)
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned()
     };
-    Identity::new(
+    // Checked in check_claims already; refused again rather than guessed, should the order ever change.
+    let account_kind =
+        check_account_kind(&text("ts_kind"), &text("ts_auth")).ok_or(TokenError::Claims)?;
+    Ok(Identity::new(
         text("ts_user"),
         text("ts_name"),
         text("ts_email"),
         &text("ts_groups"),
         text("sub"),
         &text("ts_auth"),
-    )
+        account_kind,
+    ))
 }
 
 /// The claims of a verified token. Unknown claims are kept but mean nothing to the client.

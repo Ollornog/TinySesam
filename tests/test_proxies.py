@@ -5,9 +5,10 @@ supported too; every request of theirs goes through `/auth/forward`. The claims 
 proxy, so they are measured with the proxy:
 
 * without sign-in the template's answer (nginx: redirect to the sign-in, Traefik: 401 with `X-TinySesam-Location`);
-* with a session the application sees TinySesam's `Remote-*`, `Remote-Auth` included;
-* `Remote-User`, `Remote-Groups`, `Remote-Id`, `Remote-Auth`, `X-Original-URL` and `X-Forwarded-Host` sent by the client
-  never reach the application — also when TinySesam sends NO value for a header (`forward_headers` reduced);
+* with a session the application sees TinySesam's `Remote-*`, `Remote-Auth` and `Remote-Kind` included;
+* `Remote-User`, `Remote-Groups`, `Remote-Id`, `Remote-Auth`, `Remote-Kind`, `X-Original-URL` and `X-Forwarded-Host`
+  sent by the client never reach the application — also when TinySesam sends NO value for a header (`forward_headers`
+  reduced); a service account's API key arrives as `Remote-Kind: service` although the client says `user`;
 * an API key signs in (`Remote-Auth: apikey`), and neither the key nor `Authorization` reaches the application or the
   proxy's log;
 * `/.tinysesam/*` (top bar JSON, sign-out of the application, T-22) reaches TinySesam on the application's host.
@@ -91,6 +92,8 @@ auth.store._exec("UPDATE users SET display_name=? WHERE id=?", ("Anna Example", 
 TOKEN, _ = auth.start_session(uid, "password")
 SESSION = f"{auth.session_cookie_name}={TOKEN}"
 API_KEY = auth.create_api_key(uid, name="ci", expires_days=1)["key"]
+bot = auth.create_service("backup-bot", roles=["editors"])
+SERVICE_KEY = auth.create_api_key(bot, name="kind", expires_days=1)["key"]
 
 
 def throwaway_session() -> str:
@@ -316,10 +319,10 @@ def request(port, path, host, head=None, cookies=None):
 
 #: What a client forges. TinySesam's own values must arrive instead, or nothing.
 FORGED = {"Remote-User": "admin", "Remote-Groups": "admin", "Remote-Id": "1", "Remote-Auth": "oauth",
-          "Remote-Email": "boss@example.com", "Remote-Name": "Boss",
+          "Remote-Email": "boss@example.com", "Remote-Name": "Boss", "Remote-Kind": "service",
           "X-Original-URL": "https://evil.example/", "X-Forwarded-Host": "evil.example",
           # Aliases: a CGI/WSGI/PHP backend derives HTTP_REMOTE_USER from `Remote_User` and `Remote.User` too.
-          "Remote_User": "admin", "Remote.Groups": "admin"}
+          "Remote_User": "admin", "Remote.Groups": "admin", "Remote_Kind": "service"}
 
 
 def lower(d) -> dict:
@@ -330,6 +333,7 @@ def app_header_checks(was, hd, *, auth_kind):
     """The application's view after a successful check: TinySesam's identity, never the forgery."""
     assert hd.get("remote-user") == "anna" and hd.get("remote-groups") == "editors", (was, hd)
     assert hd.get("remote-id") == str(uid) and hd.get("remote-auth") == auth_kind, (was, hd)
+    assert hd.get("remote-kind") == "user", (was, "Remote-Kind: the client's service or nothing", hd)
     assert hd.get("remote-name") == "Anna Example" and hd.get("remote-email", "") == "", (was, hd)
     assert "x-original-url" not in hd, (was, "X-Original-URL from the client reaches the application", hd)
     assert hd.get("x-forwarded-host", "") != "evil.example", (was, "X-Forwarded-Host from the client", hd)
@@ -343,6 +347,16 @@ def reduced_checks(was, hd):
     leaked = {k: v for k, v in hd.items() if k in ("remote-email", "remote-name", "remote-id", "remote-auth")}
     assert not leaked, (was, "a forged header passes where TinySesam sends none", leaked)
     assert hd.get("remote-user") == "anna", (was, hd)
+    assert hd.get("remote-kind") == "user", (was, "the mandatory Remote-Kind, TinySesam's value", hd)
+
+
+def service_checks(was, hd):
+    """A service account's API key, the client claiming `user`: TinySesam's `service` arrives, once."""
+    assert hd.get("remote-user") == "backup-bot" and hd.get("remote-kind") == "service", (was, hd)
+    assert hd.get("remote-auth") == "apikey", (was, hd)
+
+
+SERVICE_FORGED = {**FORGED, "Remote-Kind": "user", "Remote_Kind": "user", "X-Api-Key": SERVICE_KEY}
 
 
 try:
@@ -358,6 +372,9 @@ try:
         st, h, a = request(NG, "/key", "app.example.com", {**FORGED, **head, "Remote-Auth": "session"})
         assert st == 200 and a and a.get("app"), (st, a)
         app_header_checks(f"nginx, {list(head)[0]}", lower(a["header"]), auth_kind="apikey")
+    st, h, a = request(NG, "/service", "app.example.com", SERVICE_FORGED)
+    assert st == 200 and a and a.get("app"), (st, a)
+    service_checks("nginx, service key", lower(a["header"]))
     auth.cfg.forward_headers = {"user": "Remote-User", "groups": "Remote-Groups"}
     try:
         st, h, a = request(NG, "/reduced", "app.example.com", FORGED, SESSION)
@@ -372,7 +389,7 @@ try:
     log = logs_of(ng)
     assert API_KEY not in log and API_KEY[:12] not in log and TOKEN[:12] not in log, "a credential in nginx's log"
     ok("nginx: anonymous → redirect to the sign-in; session and API key (Bearer, X-Api-Key) → TinySesam's Remote-* "
-       "incl. Remote-Auth, no forgery (also X-Original-URL, X-Forwarded-Host, and where TinySesam sends no value), no "
+       "incl. Remote-Auth and Remote-Kind (a service key → service), no forgery (also X-Original-URL, X-Forwarded-Host, and where TinySesam sends no value), no "
        "credential at the application or in the log; /.tinysesam/* reaches TinySesam")
 
     # ══ nginx with PHP (nginx-path.conf: one host, protected paths, FastCGI) ═════════════════════════════════════
@@ -391,18 +408,22 @@ try:
     p = php_params("nginx-path, session", a)
     assert p.get("HTTP_REMOTE_USER") == "anna" and p.get("HTTP_REMOTE_GROUPS") == "editors", p
     assert p.get("HTTP_REMOTE_ID") == str(uid) and p.get("HTTP_REMOTE_AUTH") == "session", p
+    assert p.get("HTTP_REMOTE_KIND") == "user", ("the client's Remote-Kind reaches PHP", p.get("HTTP_REMOTE_KIND"))
     assert p.get("HTTP_REMOTE_NAME") == "Anna Example" and p.get("HTTP_REMOTE_EMAIL", "") == "", p
     assert p.get("HTTP_X_ORIGINAL_URL", "") == "" and p.get("HTTP_X_FORWARDED_HOST", "") != "evil.example", p
     assert "tinysesam" not in p.get("HTTP_COOKIE", ""), p
     st, h, a = request(NGP, "/intern/page.php", "example.com", {**FORGED, "Authorization": f"Bearer {API_KEY}"})
     p = php_params("nginx-path, API key", a)
     assert p.get("HTTP_REMOTE_AUTH") == "apikey" and p.get("HTTP_AUTHORIZATION", "") == "", p
+    p = php_params("nginx-path, service key", request(NGP, "/intern/page.php", "example.com", SERVICE_FORGED)[2])
+    assert p.get("HTTP_REMOTE_KIND") == "service" and p.get("HTTP_REMOTE_USER") == "backup-bot", p
     auth.cfg.forward_headers = {"user": "Remote-User", "groups": "Remote-Groups"}
     try:
         p = php_params("nginx-path, reduced", request(NGP, "/intern/page.php", "example.com", FORGED, SESSION)[2])
         leaked = {k: v for k, v in p.items() if k in ("HTTP_REMOTE_EMAIL", "HTTP_REMOTE_NAME", "HTTP_REMOTE_ID",
                                                       "HTTP_REMOTE_AUTH") and v}
         assert not leaked and p.get("HTTP_REMOTE_USER") == "anna", leaked
+        assert p.get("HTTP_REMOTE_KIND") == "user", p.get("HTTP_REMOTE_KIND")
     finally:
         auth.cfg.forward_headers = {}
     # The open remainder: no gate, and every identity header the client sends is emptied.
@@ -415,7 +436,7 @@ try:
     log = logs_of(ngp)
     assert API_KEY not in log and API_KEY[:12] not in log, "a credential in nginx's log"
     ok("nginx + PHP (FastCGI): anonymous → redirect; session and API key → $_SERVER carries TinySesam's Remote-* incl. "
-       "Remote-Id and Remote-Auth once each, no forgery (also where TinySesam sends no value), no Authorization; the "
+       "Remote-Id, Remote-Auth and Remote-Kind once each, no forgery (also where TinySesam sends no value), no Authorization; the "
        "open part empties every Remote-* the client sends")
 
     # ══ Traefik (forwardAuth middleware, file provider) ══════════════════════════════════════════════════════════
@@ -435,6 +456,9 @@ try:
         st, h, a = request(TR, "/key", "app.example.com", {**FORGED, **head, "Remote-Auth": "session"})
         assert st == 200 and a and a.get("app"), (st, a)
         app_header_checks(f"Traefik, {list(head)[0]}", lower(a["header"]), auth_kind="apikey")
+    st, h, a = request(TR, "/service", "app.example.com", SERVICE_FORGED)
+    assert st == 200 and a and a.get("app"), (st, a)
+    service_checks("Traefik, service key", lower(a["header"]))
     auth.cfg.forward_headers = {"user": "Remote-User", "groups": "Remote-Groups"}
     try:
         st, h, a = request(TR, "/reduced", "app.example.com", FORGED, SESSION)
@@ -449,7 +473,7 @@ try:
     log = logs_of(tr)
     assert API_KEY not in log and API_KEY[:12] not in log and TOKEN[:12] not in log, "a credential in Traefik's log"
     ok("Traefik: anonymous → 401 with X-TinySesam-Location; session and API key → TinySesam's Remote-* incl. "
-       "Remote-Auth, no forgery (also where TinySesam sends no value), no credential at the application or in the "
+       "Remote-Auth and Remote-Kind (a service key → service), no forgery (also where TinySesam sends no value), no credential at the application or in the "
        "access log; /.tinysesam/* reaches TinySesam")
 finally:
     for c in CONTAINERS:

@@ -1,9 +1,12 @@
-// Guards: signed in, a role, a browser session — answering 401 or 403 and never why (spec section 6).
+// Guards: signed in, a role, a browser session, an account kind — answering 401 or 403 and never why (spec section 6).
 
-import type { Identity } from './identity.ts';
+import type { AccountKind, Identity } from './identity.ts';
 
-/** What a route requires: any identity, a role (compared exactly), or a browser session. */
-export type Requirement = 'signed-in' | 'session' | { readonly role: string };
+/**
+ * What a route requires: any identity, a role (compared exactly), a browser session, or an account kind (`user` for a
+ * route only people may use, `service` for one only service accounts may use).
+ */
+export type Requirement = 'signed-in' | 'session' | { readonly role: string } | { readonly accountKind: AccountKind };
 
 /** The outcome of a guard: allowed, 401 (not authenticated) or 403 (authenticated, requirement not met). */
 export type Decision = 'allow' | 401 | 403;
@@ -26,8 +29,14 @@ export function authorize(identity: Identity | null | undefined, requirements: r
       }
       continue;
     }
-    if (typeof r === 'object' && r !== null && typeof r.role === 'string') {
+    if (typeof r === 'object' && r !== null && 'role' in r && typeof r.role === 'string') {
       if (!identity.hasRole(r.role)) {
+        return 403;
+      }
+      continue;
+    }
+    if (typeof r === 'object' && r !== null && 'accountKind' in r && typeof r.accountKind === 'string') {
+      if (identity.accountKind !== r.accountKind) {
         return 403;
       }
       continue;

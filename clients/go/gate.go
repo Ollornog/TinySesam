@@ -301,7 +301,8 @@ func FromContext(ctx context.Context) (*Identity, bool) {
 }
 
 // Middleware identifies every request and stores the identity in its context (read it with [FromContext]). It
-// lets every request through; guard handlers with [RequireAuth], [RequireRole] or [RequireSession].
+// lets every request through; guard handlers with [RequireAuth], [RequireRole], [RequireSession] or
+// [RequireAccountKind].
 func (g *Gate) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := g.Identify(r)
@@ -366,6 +367,23 @@ func RequireSession(next http.Handler) http.Handler {
 			return
 		}
 		if !id.IsSession() {
+			deny(w, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireAccountKind answers 401 without an identity and 403 unless the account is of the given kind — e.g.
+// RequireAccountKind(AccountUser, h) for a route only people may use.
+func RequireAccountKind(kind AccountKind, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := FromContext(r.Context())
+		if !ok {
+			deny(w, http.StatusUnauthorized)
+			return
+		}
+		if id.AccountKind != kind {
 			deny(w, http.StatusForbidden)
 			return
 		}
