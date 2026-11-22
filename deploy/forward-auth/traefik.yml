@@ -12,7 +12,7 @@
 # The Remote-* headers are passed on to the app via authResponseHeaders. Traefik first deletes every listed header
 # from the request and then copies TinySesam's value — so a Remote-* the browser sends never reaches the app, as
 # long as its name is listed, also when TinySesam sends no value for it (measured with Traefik 3.7 in
-# tests/test_proxies.py). List every header of TinySesam.FORWARD_HEADERS_DEFAULT (Remote-Auth since T-75).
+# tests/test_proxies.py). List every header of TinySesam.FORWARD_HEADERS_DEFAULT (Remote-Auth since T-75, Remote-Kind since spec v2).
 #
 # REQUIRED in the STATIC configuration (traefik.yml / command line), not here: delete headers whose name ALIASES
 # another one. A browser sending `Remote_User: admin` or `Remote.User: admin` gets past authResponseHeaders (another
@@ -68,6 +68,7 @@ http:
           - "Remote-Name"
           - "Remote-Id"
           - "Remote-Auth"
+          - "Remote-Kind"
 
     # The same check, but with a role requirement: a second middleware that carries the query
     # parameter (one of the listed roles is enough). TinySesam answers 403 instead of 200 if
@@ -86,6 +87,7 @@ http:
           - "Remote-Name"
           - "Remote-Id"
           - "Remote-Auth"
+          - "Remote-Kind"
 
     # HSTS (ASVS 3.4.1) on both routers: one year, also for subdomains OF THE HOST — never for its siblings or
     # the parent domain. No preload: the browsers' preload list is hard to leave again. Traefik sets no HSTS

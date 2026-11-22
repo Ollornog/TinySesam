@@ -89,14 +89,16 @@ func FuzzParseGroups(f *testing.F) {
 	})
 }
 
-// FuzzHeaders: an accepted identity never holds a control character or invalid UTF-8, and its ID is ASCII digits.
+// FuzzHeaders: an accepted identity never holds a control character or invalid UTF-8, its ID is ASCII digits, and its
+// account kind is exactly the Remote-Kind sent — user or service, never service with a session.
 func FuzzHeaders(f *testing.F) {
-	f.Add("anna", "Anna Berg", "editors,admin", "1", "session")
-	f.Add("boss\x01", "", "", "", "")
-	f.Add("a\xc0\xafb", "x", "y", "١", "Session")
-	f.Fuzz(func(t *testing.T, user, name, groups, id, auth string) {
+	f.Add("anna", "Anna Berg", "editors,admin", "1", "session", "user")
+	f.Add("boss\x01", "", "", "", "", "")
+	f.Add("a\xc0\xafb", "x", "y", "١", "Session", "User")
+	f.Add("bot", "", "editors", "7", "session", "service")
+	f.Fuzz(func(t *testing.T, user, name, groups, id, auth, kind string) {
 		h := http.Header{"Remote-User": {user}, "Remote-Name": {name}, "Remote-Groups": {groups},
-			"Remote-Id": {id}, "Remote-Auth": {auth}}
+			"Remote-Id": {id}, "Remote-Auth": {auth}, "Remote-Kind": {kind}}
 		ident, err := IdentityFromHeaders(h)
 		if err != nil {
 			return
@@ -111,6 +113,10 @@ func FuzzHeaders(f *testing.F) {
 		}
 		if ident.IsSession() != (auth == "session") {
 			t.Fatalf("Remote-Auth %q gave kind %q", auth, ident.Kind)
+		}
+		if string(ident.AccountKind) != kind || (kind != "user" && kind != "service") ||
+			(ident.IsService() && ident.IsSession()) {
+			t.Fatalf("Remote-Kind %q (auth %q) gave account kind %q", kind, auth, ident.AccountKind)
 		}
 	})
 }

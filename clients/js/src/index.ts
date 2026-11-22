@@ -21,6 +21,7 @@ export {
 } from './gate.ts';
 export { authorize, type Decision, type Requirement } from './guards.ts';
 export {
+  type AccountKind,
   type Auth,
   DEFAULT_HEADER_NAMES,
   type HeaderNames,

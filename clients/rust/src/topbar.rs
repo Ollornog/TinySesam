@@ -26,12 +26,31 @@ pub struct TopBar {
     pub name: Option<String>,
     /// The links with a safe target.
     pub links: Vec<Link>,
+    /// The links of the account menu with a safe target (spec version 2); empty when the answer has none.
+    pub menu_links: Vec<Link>,
     /// The account page.
     pub account: Option<String>,
     /// The admin panel.
     pub admin_panel: Option<String>,
     /// The sign-out address.
     pub logout: Option<String>,
+}
+
+/// The safe `{title, href}` entries of a link list; anything that is no list counts as none.
+fn links(raw: Option<&Value>) -> Vec<Link> {
+    let mut out = Vec::new();
+    for link in raw.and_then(Value::as_array).into_iter().flatten() {
+        if let (Some(title), Some(href)) = (
+            link.get("title").and_then(Value::as_str),
+            safe_href(link.get("href")),
+        ) {
+            out.push(Link {
+                title: title.to_owned(),
+                href,
+            });
+        }
+    }
+    out
 }
 
 /// Normalizes the answer from bytes (strict JSON); anything unreadable is signed out.
@@ -46,6 +65,7 @@ pub fn normalize(data: &Value) -> TopBar {
         signed_in: false,
         name: None,
         links: Vec::new(),
+        menu_links: Vec::new(),
         account: None,
         admin_panel: None,
         logout: None,
@@ -63,22 +83,8 @@ pub fn normalize(data: &Value) -> TopBar {
     };
     out.signed_in = true;
     out.name = Some(name.clone());
-    for link in data
-        .get("links")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        if let (Some(title), Some(href)) = (
-            link.get("title").and_then(Value::as_str),
-            safe_href(link.get("href")),
-        ) {
-            out.links.push(Link {
-                title: title.to_owned(),
-                href,
-            });
-        }
-    }
+    out.links = links(data.get("links"));
+    out.menu_links = links(data.get("menu_links"));
     let shown = |slot: &str| {
         let entry = data.get(slot)?;
         if entry.get("shown") == Some(&Value::Bool(true)) {

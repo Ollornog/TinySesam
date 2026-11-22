@@ -58,6 +58,47 @@ impl Kind {
     }
 }
 
+/// What the account is (spec version 2): the value of `Remote-Kind` or the claim `ts_kind`. Independent of [`Kind`]:
+/// a paired service acting as a person is [`Kind::Token`] and [`AccountKind::User`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AccountKind {
+    /// A person's account.
+    User,
+    /// A service account.
+    Service,
+}
+
+impl AccountKind {
+    /// Reads the value exactly (case-sensitive, no trimming); anything but `user` or `service` is `None`.
+    pub fn parse(value: &str) -> Option<AccountKind> {
+        match value {
+            "user" => Some(AccountKind::User),
+            "service" => Some(AccountKind::Service),
+            _ => None,
+        }
+    }
+
+    /// `user` or `service`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AccountKind::User => "user",
+            AccountKind::Service => "service",
+        }
+    }
+}
+
+/// The account-kind rules of spec version 2 (§2.2 rules 6–8, §4.4 step 9): `kind` is the value of `Remote-Kind` or
+/// `ts_kind` (empty when missing), `auth` that of `Remote-Auth` or `ts_auth`. `None` means refuse — a missing or
+/// unknown kind is never taken as `user`, and a service account has no session.
+pub(crate) fn check_account_kind(kind: &str, auth: &str) -> Option<AccountKind> {
+    let account = AccountKind::parse(kind)?;
+    if account == AccountKind::Service && auth == "session" {
+        return None;
+    }
+    Some(account)
+}
+
 /// Who made the request. Names may contain any character except C0 controls and DEL — bidirectional overrides and
 /// zero-width characters included: escape them in HTML and isolate bidi text when rendering (spec §3.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +117,8 @@ pub struct Identity {
     pub auth: Auth,
     /// `Session` or `Token`, derived from `auth`.
     pub kind: Kind,
+    /// `User` or `Service` (spec version 2); a request without it is refused.
+    pub account_kind: AccountKind,
 }
 
 impl Identity {
@@ -86,6 +129,7 @@ impl Identity {
         groups: &str,
         id: String,
         auth: &str,
+        account_kind: AccountKind,
     ) -> Identity {
         let auth = Auth::parse(auth);
         let kind = if auth == Auth::Session {
@@ -101,6 +145,7 @@ impl Identity {
             id,
             auth,
             kind,
+            account_kind,
         }
     }
 
@@ -112,6 +157,11 @@ impl Identity {
     /// True only for a browser session (`auth` exactly `session`).
     pub fn is_session(&self) -> bool {
         self.kind == Kind::Session
+    }
+
+    /// True only for a service account (`Remote-Kind` / `ts_kind` exactly `service`).
+    pub fn is_service(&self) -> bool {
+        self.account_kind == AccountKind::Service
     }
 }
 
@@ -156,6 +206,7 @@ mod tests {
                 "",
                 "1".into(),
                 auth,
+                AccountKind::User,
             )
         };
         assert!(id("session").is_session());
@@ -163,5 +214,37 @@ mod tests {
         assert!(!id("").is_session());
         assert_eq!(id("oauth").auth, Auth::OAuth);
         assert_eq!(id("superuser").auth.as_str(), "");
+    }
+
+    #[test]
+    fn account_kinds() {
+        assert_eq!(
+            check_account_kind("user", "session"),
+            Some(AccountKind::User)
+        );
+        assert_eq!(
+            check_account_kind("service", "apikey"),
+            Some(AccountKind::Service)
+        );
+        assert_eq!(
+            check_account_kind("service", "oauth"),
+            Some(AccountKind::Service)
+        );
+        for (kind, auth) in [
+            ("", "session"),
+            ("User", "session"),
+            ("SERVICE", "apikey"),
+            ("admin", "apikey"),
+            ("us er", "session"),
+            (" user", "session"),
+            ("service", "session"),
+        ] {
+            assert_eq!(
+                check_account_kind(kind, auth),
+                None,
+                "{kind:?} with {auth:?}"
+            );
+        }
+        assert_eq!(AccountKind::Service.as_str(), "service");
     }
 }

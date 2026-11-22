@@ -55,7 +55,7 @@ def private(label):
 
 
 def mint(label="A", now=NOW, **claims):
-    base = {"user": "anna", "name": "Anna Berg", "groups": "editors", "id": "1", "auth": "session"}
+    base = {"user": "anna", "name": "Anna Berg", "groups": "editors", "id": "1", "auth": "session", "kind": "user"}
     base.update(claims)
     return gate.issue(private(label), iss=ISSUER, aud=AUDIENCE, sub=base["id"], claims=base, ttl=300, now=now)
 
@@ -101,7 +101,7 @@ blocker = (
     "            raise ImportError('blocked ' + name)\n"
     "sys.meta_path.insert(0, Block())\n"
     "from tinysesam import gate_client as gc\n"
-    "i = gc.GateClient(mode='header').identify({'Remote-User': 'anna', 'Remote-Auth': 'session'})\n"
+    "i = gc.GateClient(mode='header').identify({'Remote-User': 'anna', 'Remote-Auth': 'session', 'Remote-Kind': 'user'})\n"
     "assert i.user == 'anna' and i.is_session()\n"
     "assert not any(m.split('.')[0] in ('fastapi', 'starlette') for m in sys.modules), sorted(sys.modules)\n"
     "import tinysesam\n"
@@ -158,7 +158,8 @@ ok("configuration errors: no or unknown mode, mixed settings, missing issuer/aud
 
 # ---------- header mode ----------
 hm = gc.GateClient(mode="header", trusted_proxies=["127.0.0.1", "198.51.100.0/24", "::1"])
-heads = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Id": "1"}
+heads = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Id": "1",
+         "Remote-Kind": "user"}
 assert hm.identify(heads, peer="127.0.0.1").user == "anna"
 assert hm.identify(heads, peer="198.51.100.3").id == "1"
 assert hm.identify(heads, peer="::ffff:127.0.0.1").is_session()
@@ -166,17 +167,41 @@ assert hm.identify(list(heads.items()), peer="::1").has_role("editors")
 for peer in (None, "", "192.0.2.1", "2001:db8::1", "garbage"):
     refused(lambda: hm.identify(heads, peer=peer), "untrusted_peer")
 renamed = gc.GateClient(mode="header", header_names={"user": "X-Auth-User", "auth": "X-Auth-Kind"})
-got = renamed.identify({"X-Auth-User": "anna", "X-Auth-Kind": "session", "Remote-User": "admin"})
+got = renamed.identify({"X-Auth-User": "anna", "X-Auth-Kind": "session", "Remote-User": "admin", "Remote-Kind": "user"})
 assert got.user == "anna" and got.is_session(), got
 refused(lambda: renamed.identify({"Remote-User": "admin"}), "unauthenticated")
 refused(lambda: gc.GateClient(mode="header").identify([("Remote-User", "anna"), ("REMOTE-USER", "admin")]), "header")
 refused(lambda: gc.GateClient(mode="header").identify([(b"remote-user", b"anna"), (b"Remote-User", b"anna")]),
         "header")
-assert gc.GateClient(mode="header").identify([(b"remote-user", "Jürgen".encode())]).user == "Jürgen"
+assert gc.GateClient(mode="header").identify([(b"remote-user", "Jürgen".encode()),
+                                              (b"remote-kind", b"user")]).user == "Jürgen"
 refused(lambda: gc.GateClient(mode="header").identify({"Remote-User": "Jürgen€"}), "header")   # not octets
-assert gc.GateClient(mode="header").identify({"Remote-User": "anna", "X-Forwarded-User": "admin"}).user == "anna"
+assert gc.GateClient(mode="header").identify({"Remote-User": "anna", "X-Forwarded-User": "admin",
+                                              "Remote-Kind": "user"}).user == "anna"
 ok("header mode: trusted proxies (IPv4, networks, IPv6, mapped), renamed headers ignore the defaults, repeats in any "
    "spelling refused, bytes and octet strings, no other identity header read")
+
+# ---------- account kind (spec v2) ----------
+kinded = gc.GateClient(mode="header", header_names={"kind": "X-Account-Kind"})
+got = kinded.identify({"Remote-User": "bot", "Remote-Auth": "apikey", "X-Account-Kind": "service",
+                       "Remote-Kind": "user"})
+assert got.account_kind == "service" and got.is_service() and got.kind == "token", got
+refused(lambda: kinded.identify({"Remote-User": "anna", "Remote-Kind": "user"}), "header")
+refused(lambda: gc.GateClient(mode="header").identify({"Remote-User": "anna"}), "header")
+refused(lambda: gc.GateClient(mode="header").identify({"Remote-Groups": "admin"}), "unauthenticated")
+try:
+    gc.GateClient(mode="header").identify({"Remote-User": "anna"})
+except gc.HeaderError as e:
+    assert "older than spec v2" in str(e) and "anna" not in str(e), str(e)
+person = gc.GateClient(mode="header").identify({"Remote-User": "anna", "Remote-Kind": "user", "Remote-Auth": "oauth"})
+assert person.account_kind == "user" and not person.is_service() and not person.is_session(), person
+assert raises(ConfigError, lambda: gc.require_account_kind("admin")) and raises(ConfigError,
+                                                                               lambda: gc.require_account_kind("User"))
+for identity, want, status in ((got, "user", 403), (got, "service", None), (person, "user", None),
+                               (person, "service", 403), (None, "user", 401)):
+    assert gc.guard_status(identity, account_kind=want) == status, (identity, want)
+ok("account kind: Remote-Kind renamed through header_names; missing → header (the log says why, no value), "
+   "unauthenticated first; is_service(); guard_status/require_account_kind")
 
 # ---------- token sources ----------
 tc = token_client()
@@ -424,8 +449,9 @@ def call_wsgi(app, headers, peer="127.0.0.1"):
     return seen["status"], seen["headers"], body
 
 
-session = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session"}
-api_key = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "apikey"}
+session = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Kind": "user"}
+api_key = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "apikey", "Remote-Kind": "user"}
+service_key = {"Remote-User": "bot", "Remote-Groups": "editors", "Remote-Auth": "apikey", "Remote-Kind": "service"}
 hgate = gc.GateClient(mode="header", trusted_proxies=["127.0.0.1"])
 mw = gc.WSGIMiddleware(wsgi_app, hgate)
 assert call_wsgi(mw, session)[2] == b"anna"
@@ -436,7 +462,9 @@ for guard, headers, want in (
         (gc.require_auth, {}, "401"), (gc.require_auth, session, "200"),
         (gc.require_role("editors"), api_key, "200"), (gc.require_role("admin"), session, "403"),
         (gc.require_role("Editors"), session, "403"), (gc.require_session, api_key, "403"),
-        (gc.require_session, session, "200"), (gc.require_session, {}, "401")):
+        (gc.require_session, session, "200"), (gc.require_session, {}, "401"),
+        (gc.require_account_kind("user"), service_key, "403"), (gc.require_account_kind("user"), api_key, "200"),
+        (gc.require_account_kind("service"), service_key, "200"), (gc.require_account_kind("service"), {}, "401")):
     status, hdrs, body = call_wsgi(gc.WSGIMiddleware(guard(wsgi_app), hgate), headers)
     assert status.startswith(want), (guard, headers, status)
     if want != "200":
@@ -509,7 +537,9 @@ assert asgi_result(amw, list(session.items()))[2] == b"anna"
 assert asgi_result(amw, [("Remote-User", "anna"), ("remote-user", "admin")])[2] == b"-"     # repeat refused
 assert asgi_result(amw, list(session.items()), client=None)[2] == b"-"                      # no peer: untrusted
 for guard, headers, want in ((gc.require_auth, [], 401), (gc.require_role("editors"), list(session.items()), 200),
-                             (gc.require_session, list(api_key.items()), 403)):
+                             (gc.require_session, list(api_key.items()), 403),
+                             (gc.require_account_kind("user"), list(service_key.items()), 403),
+                             (gc.require_account_kind("service"), list(service_key.items()), 200)):
     status, hdrs, body = asgi_result(gc.ASGIMiddleware(guard(asgi_app), hgate), headers)
     assert status == want, (guard, status)
     if want != 200:
@@ -549,7 +579,7 @@ else:
     star = Starlette(routes=[Route("/", home)])
     star.add_middleware(gc.ASGIMiddleware, gate=gc.GateClient(mode="header"))
     with TestClient(star) as tc_client:
-        assert tc_client.get("/", headers={"Remote-User": "anna"}).text == "anna"
+        assert tc_client.get("/", headers={"Remote-User": "anna", "Remote-Kind": "user"}).text == "anna"
         assert tc_client.get("/").text == "-"
     ok("Starlette: app.add_middleware(ASGIMiddleware, gate=…) and current_identity(request)")
 
@@ -649,7 +679,8 @@ def call(path, headers, peer="127.0.0.1", method="GET"):
     out = {}
     body = b"".join(app(env, lambda s, h, e=None: out.setdefault("s", s)))
     return int(out["s"][:3]), body
-editor = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Name": "<Anna>"}
+editor = {"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Name": "<Anna>",
+          "Remote-Kind": "user"}
 assert call("/", editor) == (200, "Signed in as <bdi>&lt;Anna&gt;</bdi> (account ).".encode()), call("/", editor)
 assert call("/reports", editor)[0] == 200
 assert call("/reports", {})[0] == 401

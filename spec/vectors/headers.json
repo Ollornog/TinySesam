@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "headers",
   "spec": "spec/gate-client.md",
   "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
@@ -20,7 +20,8 @@
           "Remote-Email": "anna@example.com",
           "Remote-Groups": "editors",
           "Remote-Id": "1",
-          "Remote-Auth": "session"
+          "Remote-Auth": "session",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -34,7 +35,8 @@
           ],
           "id": "1",
           "auth": "session",
-          "kind": "session"
+          "kind": "session",
+          "account_kind": "user"
         },
         "has_role": {
           "editors": true,
@@ -53,7 +55,8 @@
           "Remote-Email": "admin@example.com",
           "Remote-Groups": "admin",
           "Remote-Id": "2",
-          "Remote-Auth": "session"
+          "Remote-Auth": "session",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -67,7 +70,8 @@
           ],
           "id": "2",
           "auth": "session",
-          "kind": "session"
+          "kind": "session",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": true
@@ -85,7 +89,8 @@
           "Remote-Email": "juergen@example.com",
           "Remote-Groups": "editors,reviewers",
           "Remote-Id": "3",
-          "Remote-Auth": "session"
+          "Remote-Auth": "session",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -100,7 +105,8 @@
           ],
           "id": "3",
           "auth": "session",
-          "kind": "session"
+          "kind": "session",
+          "account_kind": "user"
         }
       }
     },
@@ -115,7 +121,8 @@
           "Remote-Email": "",
           "Remote-Groups": "readers",
           "Remote-Id": "4",
-          "Remote-Auth": "session"
+          "Remote-Auth": "session",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -129,7 +136,8 @@
           ],
           "id": "4",
           "auth": "session",
-          "kind": "session"
+          "kind": "session",
+          "account_kind": "user"
         }
       }
     },
@@ -144,7 +152,8 @@
           "Remote-Email": "",
           "Remote-Groups": "Ð°dmin",
           "Remote-Id": "5",
-          "Remote-Auth": "session"
+          "Remote-Auth": "session",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -158,7 +167,8 @@
           ],
           "id": "5",
           "auth": "session",
-          "kind": "session"
+          "kind": "session",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -176,7 +186,8 @@
           "Remote-Email": "anna@example.com",
           "Remote-Groups": "editors",
           "Remote-Id": "1",
-          "Remote-Auth": "oauth"
+          "Remote-Auth": "oauth",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -190,7 +201,8 @@
           ],
           "id": "1",
           "auth": "oauth",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         }
       }
     },
@@ -205,7 +217,8 @@
           "Remote-Email": "anna@example.com",
           "Remote-Groups": "editors",
           "Remote-Id": "1",
-          "Remote-Auth": "apikey"
+          "Remote-Auth": "apikey",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -219,7 +232,8 @@
           ],
           "id": "1",
           "auth": "apikey",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         }
       }
     },
@@ -234,7 +248,8 @@
           "Remote-Email": "anna@example.com",
           "Remote-Groups": "editors",
           "Remote-Id": "1",
-          "Remote-Auth": "app-password"
+          "Remote-Auth": "app-password",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -248,7 +263,8 @@
           ],
           "id": "1",
           "auth": "app-password",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         }
       }
     },
@@ -259,7 +275,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "editors"
+          "Remote-Groups": "editors",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -273,7 +290,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         }
       }
     },
@@ -285,7 +303,8 @@
         "headers": {
           "Remote-User": "anna",
           "Remote-Groups": "editors",
-          "Remote-Auth": ""
+          "Remote-Auth": "",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -299,7 +318,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         }
       }
     },
@@ -311,7 +331,8 @@
         "headers": {
           "Remote-User": "anna",
           "Remote-Groups": "editors",
-          "Remote-Auth": "superuser"
+          "Remote-Auth": "superuser",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -325,7 +346,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         }
       }
     },
@@ -337,7 +359,8 @@
         "headers": {
           "Remote-User": "anna",
           "Remote-Groups": "editors",
-          "Remote-Auth": "Session"
+          "Remote-Auth": "Session",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -351,7 +374,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         }
       }
     },
@@ -362,7 +386,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "editors,admin"
+          "Remote-Groups": "editors,admin",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -377,7 +402,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": true
@@ -391,7 +417,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "editors, admin"
+          "Remote-Groups": "editors, admin",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -406,7 +433,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": true
@@ -420,7 +448,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": ",,editors,,"
+          "Remote-Groups": ",,editors,,",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -434,7 +463,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -448,7 +478,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "editors,editors"
+          "Remote-Groups": "editors,editors",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -462,7 +493,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -476,7 +508,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": ""
+          "Remote-Groups": "",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -488,7 +521,8 @@
           "groups": [],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -502,7 +536,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "Admin"
+          "Remote-Groups": "Admin",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -516,7 +551,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -530,7 +566,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "team a"
+          "Remote-Groups": "team a",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -544,7 +581,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -558,7 +596,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "a\\,b"
+          "Remote-Groups": "a\\,b",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -573,7 +612,8 @@
           ],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -586,7 +626,8 @@
       "reason": "No Remote-Groups at all: no groups.",
       "input": {
         "headers": {
-          "Remote-User": "anna"
+          "Remote-User": "anna",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -598,7 +639,8 @@
           "groups": [],
           "id": "",
           "auth": "",
-          "kind": "token"
+          "kind": "token",
+          "account_kind": "user"
         },
         "has_role": {
           "admin": false
@@ -611,7 +653,8 @@
       "reason": "No Remote-User: not signed in.",
       "input": {
         "headers": {
-          "Remote-Groups": "admin"
+          "Remote-Groups": "admin",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -626,7 +669,8 @@
       "input": {
         "headers": {
           "Remote-User": "",
-          "Remote-Groups": "admin"
+          "Remote-Groups": "admin",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -643,7 +687,8 @@
           "Remote-User": [
             "anna",
             "admin"
-          ]
+          ],
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -661,7 +706,8 @@
           "Remote-Groups": [
             "editors",
             "admin"
-          ]
+          ],
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -676,7 +722,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "remote-user": "admin"
+          "remote-user": "admin",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -690,7 +737,8 @@
       "reason": "A control character in Remote-User: refused, not stripped (`boss\\x01` must not become `boss`).",
       "input": {
         "headers": {
-          "Remote-User": "boss\u0001"
+          "Remote-User": "boss\u0001",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -705,7 +753,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Name": "Anna\tBerg"
+          "Remote-Name": "Anna\tBerg",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -720,7 +769,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Groups": "editors\t,admin"
+          "Remote-Groups": "editors\t,admin",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -735,7 +785,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Name": "Anna ÿ"
+          "Remote-Name": "Anna ÿ",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -749,7 +800,8 @@
       "reason": "An overlong UTF-8 encoding of `/`.",
       "input": {
         "headers": {
-          "Remote-User": "aÀ¯b"
+          "Remote-User": "aÀ¯b",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -764,7 +816,8 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Id": "1 OR 1=1"
+          "Remote-Id": "1 OR 1=1",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
@@ -779,12 +832,328 @@
       "input": {
         "headers": {
           "Remote-User": "anna",
-          "Remote-Id": "Ù¡"
+          "Remote-Id": "Ù¡",
+          "Remote-Kind": "user"
         }
       },
       "expected": {
         "ok": false,
         "error": "header"
+      }
+    },
+    {
+      "id": "valid-kind-user",
+      "attack": "remote-kind",
+      "reason": "Remote-Kind `user` with a browser session: a person.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [],
+          "id": "",
+          "auth": "session",
+          "kind": "session",
+          "account_kind": "user"
+        }
+      }
+    },
+    {
+      "id": "valid-kind-service",
+      "attack": "remote-kind",
+      "reason": "The headers /auth/forward sends for a service account's API key: Remote-Kind `service`, a token request.",
+      "input": {
+        "headers": {
+          "Remote-User": "backup-bot",
+          "Remote-Name": "Backup Bot",
+          "Remote-Email": "",
+          "Remote-Groups": "editors",
+          "Remote-Id": "6",
+          "Remote-Auth": "apikey",
+          "Remote-Kind": "service"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "backup-bot",
+          "name": "Backup Bot",
+          "email": "",
+          "groups": [
+            "editors"
+          ],
+          "id": "6",
+          "auth": "apikey",
+          "kind": "token",
+          "account_kind": "service"
+        }
+      }
+    },
+    {
+      "id": "valid-kind-service-oauth",
+      "attack": "remote-kind",
+      "reason": "A paired service that acts as a service account: `oauth` with `service`.",
+      "input": {
+        "headers": {
+          "Remote-User": "backup-bot",
+          "Remote-Auth": "oauth",
+          "Remote-Kind": "service"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "backup-bot",
+          "name": "",
+          "email": "",
+          "groups": [],
+          "id": "",
+          "auth": "oauth",
+          "kind": "token",
+          "account_kind": "service"
+        }
+      }
+    },
+    {
+      "id": "valid-kind-user-oauth",
+      "attack": "remote-kind",
+      "reason": "A paired service that acts as a person: the request comes from a machine (Remote-Auth `oauth`), the account is a person (`user`).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "oauth",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "identity": {
+          "user": "anna",
+          "name": "",
+          "email": "",
+          "groups": [],
+          "id": "",
+          "auth": "oauth",
+          "kind": "token",
+          "account_kind": "user"
+        }
+      }
+    },
+    {
+      "id": "kind-missing",
+      "attack": "remote-kind",
+      "reason": "No Remote-Kind: an older TinySesam or proxy template. Refused, never taken as `user` (the log may say: TinySesam/proxy older than spec v2?).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-empty",
+      "attack": "remote-kind",
+      "reason": "An empty Remote-Kind is no kind.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": ""
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-upper-user",
+      "attack": "remote-kind",
+      "reason": "`User` is not `user`: compared exactly.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "User"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-upper-service",
+      "attack": "remote-kind",
+      "reason": "`SERVICE` is not `service`.",
+      "input": {
+        "headers": {
+          "Remote-User": "backup-bot",
+          "Remote-Auth": "apikey",
+          "Remote-Kind": "SERVICE"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-unknown-admin",
+      "attack": "remote-kind",
+      "reason": "`admin` is no account kind: only `user` and `service` exist.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "admin"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-unknown-machine",
+      "attack": "remote-kind",
+      "reason": "`machine` is no account kind: only `user` and `service` exist.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "machine"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-unknown-human",
+      "attack": "remote-kind",
+      "reason": "`human` is no account kind: only `user` and `service` exist.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "human"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-inner-space",
+      "attack": "remote-kind",
+      "reason": "`us er` is no kind (no trimming inside a value).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "us er"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-twice",
+      "attack": "remote-kind",
+      "reason": "Remote-Kind twice (a proxy that appends the client's value to TinySesam's).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": [
+            "user",
+            "service"
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-twice-spelling",
+      "attack": "remote-kind",
+      "reason": "Remote-Kind twice under two spellings.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "user",
+          "remote-kind": "service"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-control",
+      "attack": "header-injection",
+      "reason": "A NUL after `user`: refused, not stripped.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "user\u0000"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-service-session",
+      "attack": "remote-kind",
+      "reason": "`service` with Remote-Auth `session`: TinySesam never sends this (a service account has no session).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Auth": "session",
+          "Remote-Kind": "service"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "kind-missing-no-user",
+      "attack": "remote-kind",
+      "reason": "Neither Remote-User nor Remote-Kind (an anonymous request on a public share path): not signed in — `unauthenticated` comes first, never `header`.",
+      "input": {
+        "headers": {
+          "Remote-Groups": "editors"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "unauthenticated"
       }
     }
   ]

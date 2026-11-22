@@ -15,6 +15,16 @@ const (
 	KindToken   Kind = "token"
 )
 
+// AccountKind says what the account is (spec version 2): a person or a service account. It is independent of
+// Kind — a paired service acting as a person is KindToken and AccountUser.
+type AccountKind string
+
+// Account kinds (Remote-Kind, ts_kind).
+const (
+	AccountUser    AccountKind = "user"
+	AccountService AccountKind = "service"
+)
+
 // Identity is who made the request, the same in both modes (spec section 1). Key your own records by ID: it is the
 // only value that survives a rename. Name, User and Email may hold any character except controls — bidirectional
 // overrides and zero-width characters included — so escape them for HTML and isolate them as bidi text.
@@ -26,6 +36,8 @@ type Identity struct {
 	ID     string   `json:"id"`     // the account ID, decimal digits
 	Auth   string   `json:"auth"`   // session, oauth, apikey, app-password, or empty
 	Kind   Kind     `json:"kind"`   // KindSession only when Auth is exactly "session"
+	// AccountKind is AccountUser or AccountService, never empty: a request without it is refused (spec v2).
+	AccountKind AccountKind `json:"account_kind"`
 }
 
 // HasRole reports whether role is one of the groups, compared exactly: no case folding, no normalization, and no
@@ -46,6 +58,27 @@ func (i *Identity) HasRole(role string) bool {
 // on purpose (a token never carries admin): never conclude from a missing group that the account lacks it.
 func (i *Identity) IsSession() bool {
 	return i != nil && i.Kind == KindSession
+}
+
+// IsService reports whether the account is a service account (Remote-Kind or ts_kind exactly "service").
+func (i *Identity) IsService() bool {
+	return i != nil && i.AccountKind == AccountService
+}
+
+// checkAccountKind applies the account-kind rules of spec version 2 (section 2.2 rules 6–8, section 4.4 step 9) to the
+// value of Remote-Kind or ts_kind ("" when missing) and of Remote-Auth or ts_auth. It returns the kind, or the reason
+// for the refusal — never a value, and never a guessed "user".
+func checkAccountKind(kind, auth string) (AccountKind, string) {
+	if kind == "" {
+		return "", "Remote-Kind/ts_kind missing (TinySesam or proxy older than spec v2?)"
+	}
+	if kind != string(AccountUser) && kind != string(AccountService) {
+		return "", "Remote-Kind/ts_kind is not exactly user or service"
+	}
+	if kind == string(AccountService) && auth == "session" {
+		return "", "a service account has no session"
+	}
+	return AccountKind(kind), ""
 }
 
 var authKinds = map[string]bool{"session": true, "oauth": true, "apikey": true, "app-password": true}
@@ -78,16 +111,16 @@ func ParseGroups(s string) []string {
 	return out
 }
 
-// HeaderNames are the six headers of header mode. TinySesam's forward_headers can rename them; an empty field keeps
+// HeaderNames are the seven headers of header mode. TinySesam's forward_headers can rename them; an empty field keeps
 // the default name.
 type HeaderNames struct {
-	User, Name, Email, Groups, ID, Auth string
+	User, Name, Email, Groups, ID, Auth, Kind string
 }
 
 // DefaultHeaderNames are the names TinySesam sends unless forward_headers renames them.
 var DefaultHeaderNames = HeaderNames{
 	User: "Remote-User", Name: "Remote-Name", Email: "Remote-Email",
-	Groups: "Remote-Groups", ID: "Remote-Id", Auth: "Remote-Auth",
+	Groups: "Remote-Groups", ID: "Remote-Id", Auth: "Remote-Auth", Kind: "Remote-Kind",
 }
 
 func (n HeaderNames) withDefaults() HeaderNames {
@@ -101,11 +134,12 @@ func (n HeaderNames) withDefaults() HeaderNames {
 	return HeaderNames{
 		User: pick(n.User, d.User), Name: pick(n.Name, d.Name), Email: pick(n.Email, d.Email),
 		Groups: pick(n.Groups, d.Groups), ID: pick(n.ID, d.ID), Auth: pick(n.Auth, d.Auth),
+		Kind: pick(n.Kind, d.Kind),
 	}
 }
 
 func (n HeaderNames) list() []string {
-	return []string{n.User, n.Name, n.Email, n.Groups, n.ID, n.Auth}
+	return []string{n.User, n.Name, n.Email, n.Groups, n.ID, n.Auth, n.Kind}
 }
 
 // IdentityFromHeaders reads the identity from the Remote-* headers with the default names (spec section 2.2). It
@@ -141,15 +175,21 @@ func identityFromHeaders(h http.Header, names HeaderNames) (*Identity, error) {
 		}
 		values[i] = v
 	}
-	user, name, email, groups, id, auth := values[0], values[1], values[2], values[3], values[4], values[5]
+	user, name, email, groups, id, auth, kind := values[0], values[1], values[2], values[3], values[4], values[5],
+		values[6]
 	if user == "" {
 		return nil, refuse(ClassUnauthenticated, "no user header")
 	}
 	if id != "" && !allASCIIDigits(id) {
 		return nil, refuse(ClassHeader, "the id header is not a number")
 	}
+	ak, why := checkAccountKind(kind, auth)
+	if why != "" {
+		return nil, refuse(ClassHeader, why)
+	}
 	a, k := kindOf(auth)
-	return &Identity{User: user, Name: name, Email: email, Groups: ParseGroups(groups), ID: id, Auth: a, Kind: k}, nil
+	return &Identity{User: user, Name: name, Email: email, Groups: ParseGroups(groups), ID: id, Auth: a, Kind: k,
+		AccountKind: ak}, nil
 }
 
 func allASCIIDigits(s string) bool {

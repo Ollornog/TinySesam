@@ -9,6 +9,8 @@ vector in [`spec/vectors/`](../../spec/vectors/), read from this repository.
   pre-checks of the specification. No third-party module.
 - Go 1.26 or newer (the two supported Go releases).
 - `net/http` middleware and guards; the identity travels in the request context.
+- **Spec version 2:** it requires `Remote-Kind` / `ts_kind` and refuses a request without it. Use it with TinySesam and
+  the proxy templates of the release that brought spec v2 or later (CHANGELOG), and update those first.
 
 ## Installation
 
@@ -29,7 +31,7 @@ import tinysesam "github.com/Ollornog/TinySesam/clients/go"
 ## Header mode (the default)
 
 The proxy asks TinySesam (`/auth/forward`, or caddy-jwt with the gate token) and passes the identity as
-`Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id` and `Remote-Auth`. This is the mode the
+`Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id`, `Remote-Auth` and `Remote-Kind`. This is the mode the
 bundled proxy templates (`deploy/forward-auth/`) support today.
 
 ```go
@@ -45,6 +47,7 @@ mux := http.NewServeMux()
 mux.Handle("/", tinysesam.RequireAuth(home))
 mux.Handle("/reports", tinysesam.RequireRole("editors", reports))
 mux.Handle("/settings", tinysesam.RequireSession(settings))
+mux.Handle("/profile", tinysesam.RequireAccountKind(tinysesam.AccountUser, profile)) // people only
 http.ListenAndServe("127.0.0.1:8080", gate.Middleware(mux))
 ```
 
@@ -55,8 +58,9 @@ A complete program is in [`examples/basic`](examples/basic/main.go).
 The client cannot verify where a header came from. Header mode is only safe when the deployment guarantees all of
 this (spec §2.1):
 
-1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id` and
-   `Remote-Auth` the client sent, on **every** path — public share paths included, where it then sets none.
+1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id`,
+   `Remote-Auth` and `Remote-Kind` the client sent, on **every** path — public share paths included, where it then
+   sets none. A proxy template older than spec v2 passes a client's `Remote-Kind` through: update the proxy first.
 2. The proxy sets each header only from TinySesam's answer or from the claims of a gate token it verified itself, and
    only when the value is not empty.
 3. The application is reachable **only** through that proxy: bound to a loopback or private address, or protected by
@@ -105,7 +109,7 @@ gate, err := tinysesam.New(tinysesam.Config{
 
 ## The identity
 
-`Identity` holds `User`, `Name`, `Email`, `Groups`, `ID`, `Auth` and `Kind`.
+`Identity` holds `User`, `Name`, `Email`, `Groups`, `ID`, `Auth`, `Kind` and `AccountKind`.
 
 - Key your own records by `ID` — the only value that survives a rename.
 - `HasRole(role)` compares exactly: no case folding, no Unicode normalization, and `admin` implies no other role.
@@ -114,14 +118,20 @@ gate, err := tinysesam.New(tinysesam.Config{
   value counts as a token. The groups of a token request are incomplete on purpose (a token never carries `admin`):
   never revoke or sync away a role because a token request lacks it. `RequireSession` guards actions a token must
   never perform.
+- `AccountKind` is `AccountUser` or `AccountService` (from `Remote-Kind` or `ts_kind`), never empty: a missing value,
+  another spelling (`User`), an unknown one, or `service` with `Remote-Auth: session` is the error `header` (token mode:
+  `claims`), never a guessed `user` — the detail says `Remote-Kind/ts_kind missing (TinySesam or proxy older than spec
+  v2?)` when it is missing. `IsService()` reports a service account; `Kind` (session or token) says how the request
+  came in, `AccountKind` what the account is — a paired service acting as a person is `KindToken` with `AccountUser`.
+  `HeaderNames.Kind` follows a renamed `forward_headers["kind"]`.
 - Names may contain any character except controls, bidirectional overrides and zero-width characters included.
   Escape them for HTML and isolate them as bidi text (`<bdi>`).
 
 ## Guards and errors
 
 `Gate.Middleware` identifies every request and stores the identity in the context (`FromContext`); it lets every
-request through. `RequireAuth`, `RequireRole` and `RequireSession` answer 401 without an identity and 403 when the
-role or the session is missing, with `Cache-Control: no-store` and without the token, the claims or the reason. A
+request through. `RequireAuth`, `RequireRole`, `RequireSession` and `RequireAccountKind` answer 401 without an
+identity and 403 when the role, the session or the account kind is missing, with `Cache-Control: no-store` and without the token, the claims or the reason. A
 guard without the middleware in front always answers 401.
 
 `Gate.Identify` returns an `*Error` with a `Class` (`unauthenticated`, `header`, `malformed`, `kid`, `signature`,
@@ -141,7 +151,7 @@ standard Base64; a `JWKSURL` that is not `https` (plain `http` only to a loopbac
 
 `ParseTopbar(body)` normalizes TinySesam's `/.tinysesam/topbar.json` (spec §8): anything but `signed_in: true` with a
 string name is signed out, and links that are not absolute `http(s)` URLs or single-slash paths (`javascript:`,
-`data:`, `//host`) are dropped. `FetchTopbar` fetches it server-side with only TinySesam's cookies of the request, a
+`data:`, `//host`) are dropped — in `Links` and in `MenuLinks` (the account menu) alike. `FetchTopbar` fetches it server-side with only TinySesam's cookies of the request, a
 5-second deadline and a 64 KiB limit. Do not cache the result across sessions.
 
 ## Development

@@ -51,7 +51,7 @@ impl Minter {
         )
         .into_bytes();
         out.extend_from_slice(name);
-        out.extend_from_slice(br#"","ts_auth":"session"}"#);
+        out.extend_from_slice(br#"","ts_auth":"session","ts_kind":"user"}"#);
         out
     }
 

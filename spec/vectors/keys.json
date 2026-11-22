@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "kind": "keys",
   "spec": "spec/gate-client.md",
   "generated_by": "scripts/_gate_vectors.py — do not edit by hand",

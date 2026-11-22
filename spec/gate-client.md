@@ -1,6 +1,13 @@
 # Gate client specification
 
-Version 1 (format 1 of the vectors). Status: draft for the first clients ([T-28](../backlog/T-28-go-variant-small-gate-client.md)).
+Version 2 (format 2 of the vectors). Status: draft for the first clients ([T-28](../backlog/T-28-go-variant-small-gate-client.md)).
+
+**Changes from version 1:** the identity carries `account_kind` (`user` or `service`), from the header `Remote-Kind`
+or the claim `ts_kind`; both are mandatory, and a request or token without them is refused (§2.2 rules 6–8, §4.4 step
+9). The top bar data carries `menu_links` (§8). There is no transition rule: a version 2 client against an older
+TinySesam or an older proxy template refuses every request, which is intended — update TinySesam and the proxy first,
+then the applications (`SECURITY.md`). A version 1 client keeps working against a version 2 TinySesam: it reads six
+headers and ignores unknown claims.
 
 A **gate client** is a small library inside an application that runs behind TinySesam's gate
 ([ADR-9](../backlog/ADR-9-gate-token-at-the-proxy.md)). It answers one question per request: *who is this, and may
@@ -10,7 +17,7 @@ application and the issuing of gate tokens stay in TinySesam.
 This document is normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as described in
 RFC 2119 and RFC 8174 when, and only when, they appear in capitals. The test vectors in [`vectors/`](vectors/) are part
 of the specification: a client conforms when it passes every vector of the parts it implements. Clients live under
-[`clients/`](../clients/README.md) (Go, Rust; JS/TS and PHP planned), the Python client is the module
+[`clients/`](../clients/README.md) (Go, Rust, JS/TS; PHP planned), the Python client is the module
 `tinysesam.gate_client` in the package itself (WSGI/ASGI, no FastAPI dependency).
 
 ## 1. Two operating modes
@@ -20,7 +27,7 @@ of the specification: a client conforms when it passes every vector of the parts
 | The application trusts | the `Remote-*` headers the proxy sets | the signature of the gate token |
 | Who checks the token | the proxy (Caddy with caddy-jwt, `deploy/forward-auth/Caddyfile.gate`) or `/auth/forward` | the client |
 | Needs | a proxy that fulfils §2.1, and no other way to the application | the public gate key(s), §4 |
-| Identity from | `Remote-User`, `-Name`, `-Email`, `-Groups`, `-Id`, `-Auth` | the claims `sub`, `ts_user`, `ts_name`, `ts_email`, `ts_groups`, `ts_id`, `ts_auth` |
+| Identity from | `Remote-User`, `-Name`, `-Email`, `-Groups`, `-Id`, `-Auth`, `-Kind` | the claims `sub`, `ts_user`, `ts_name`, `ts_email`, `ts_groups`, `ts_id`, `ts_auth`, `ts_kind` |
 
 A client MUST implement at least one mode and SHOULD implement both. The mode MUST be chosen explicitly by
 configuration; a client MUST NOT fall back from token mode to header mode, nor guess the mode from the request. In token
@@ -37,8 +44,13 @@ Both modes produce the same **identity**:
 | `id` | string | the account ID, decimal digits; the only value that survives a rename |
 | `auth` | string | how the request signed in: `session`, `oauth`, `apikey`, `app-password`, or empty |
 | `kind` | `session` or `token` | `session` only when `auth` is exactly `session`, otherwise `token` |
+| `account_kind` | `user` or `service` | what the account is: `service` for a service account, otherwise `user`; never empty |
 
 An application SHOULD key its own records by `id`, never by `user`, `name` or `email`.
+
+`kind` says how the request signed in, `account_kind` what the account is: a paired service acting as a person is
+`kind = token` and `account_kind = user`. The field is called `account_kind` because `kind` was taken in version 1;
+the header, the claim and TinySesam's `forward_headers` slot are still `Remote-Kind`, `ts_kind` and `kind`.
 
 ## 2. Header mode
 
@@ -47,8 +59,10 @@ An application SHOULD key its own records by `id`, never by `user`, `name` or `e
 The client cannot verify where a header came from. Header mode is only safe when the deployment guarantees all of
 the following, and a client's documentation MUST state them:
 
-1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id` and
-   `Remote-Auth` the client sent, on **every** path — including public share paths, where it then sets none.
+1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id`,
+   `Remote-Auth` and `Remote-Kind` the client sent, on **every** path — including public share paths, where it then
+   sets none. (A proxy template older than version 2 passes a client's `Remote-Kind` through unchanged; the client
+   cannot tell. Hence the order: proxy first, then the applications.)
 2. The proxy sets each header only from TinySesam's answer (`/auth/forward`) or from the claims of a gate token it has
    verified itself, and sets a header only when the value is not empty.
 3. The application is reachable **only** through that proxy (bound to a loopback or private address, or protected by
@@ -62,7 +76,7 @@ header names be configured, because TinySesam's `forward_headers` can rename the
 
 ### 2.2 Reading the headers
 
-Header field names are case-insensitive. For each of the six headers:
+Header field names are case-insensitive. For each of the seven headers:
 
 1. A field that occurs more than once (also under different spellings) is an error `header`. The client MUST NOT
    join the values or pick one.
@@ -74,6 +88,15 @@ Header field names are case-insensitive. For each of the six headers:
 4. A missing or empty `Remote-User` is the error `unauthenticated`.
 5. A non-empty `Remote-Id` that is not one or more ASCII digits `0`–`9` is an error `header` (Unicode digits such as
    U+0661 are not digits here).
+6. A missing or empty `Remote-Kind` is an error `header` — never taken as `user`. A client SHOULD log it as
+   `header: Remote-Kind missing (TinySesam/proxy older than spec v2?)`, without values.
+7. A `Remote-Kind` that is not exactly `user` or `service` (case-sensitive, no folding, no trimming inside) is an
+   error `header`.
+8. `Remote-Kind: service` together with `Remote-Auth: session` is an error `header`: a service account has no session,
+   and TinySesam never sends this pair.
+
+The rules apply in this order. Rule 4 comes before rules 5–8: a request without `Remote-User` is `unauthenticated` even
+when `Remote-Kind` is missing too — an anonymous request on a public share path must not appear as `header`.
 
 Leading and trailing whitespace of a field value is not part of the value (RFC 9110 §5.5); HTTP libraries remove it.
 
@@ -102,7 +125,7 @@ subset). Therefore:
 | Class | When |
 |---|---|
 | `unauthenticated` | no or empty `Remote-User` |
-| `header` | a repeated field, invalid UTF-8, a control character, a malformed `Remote-Id` |
+| `header` | a repeated field, invalid UTF-8, a control character, a malformed `Remote-Id`, a missing or malformed `Remote-Kind`, `service` with `session` |
 
 ## 3. Identity rules shared by both modes
 
@@ -161,11 +184,14 @@ session with `gate_token_enabled`.
 | `exp` | integer | expiry: `nbf + gate_token_ttl_sec` (30–3600 s, default 300) |
 | `jti` | string | a random identifier |
 | `ts_user`, `ts_name`, `ts_email`, `ts_groups`, `ts_id`, `ts_auth` | string | the identity; each only when the installation's `forward_headers` include that slot |
+| `ts_kind` | string | **mandatory since version 2:** `user` or `service`, in every token whatever `forward_headers` lists. A gate token is issued only for a session, so in practice it is always `user` |
 
 Unknown claims MUST be ignored. `ts_auth` of a gate token is always `session`; a token without `ts_auth` counts as kind
 `token` (§2.3). The identity of a valid token is: `user` = `ts_user`, `name` = `ts_name`, `email` = `ts_email`,
-`groups` = §3.3 over `ts_groups`, `id` = `sub`, `auth`/`kind` from `ts_auth` as in §2.3; a missing claim gives an empty
-value.
+`groups` = §3.3 over `ts_groups`, `id` = `sub`, `auth`/`kind` from `ts_auth` as in §2.3, `account_kind` = `ts_kind`; any
+other missing claim gives an empty value. A token issued before the update has no `ts_kind` and is refused until it
+expires (at most `gate_token_ttl_sec`); the proxy then takes the way back through `/auth/forward`, and the browser gets a
+fresh token.
 
 ### 4.2 Where the token comes from
 
@@ -225,7 +251,8 @@ class.
    `exp` are integers (JSON numbers without fraction; not booleans, not strings) from 0 to 2^53 − 1; `jti`, if present,
    is a string; every `ts_*` identity claim that is present is a string; no identity claim and not `sub` contains a C0
    control character or DEL (§2.2 — refused, not stripped); `ts_id`, if present, equals `sub`; `iat` is not later than
-   `nbf`.
+   `nbf`; `ts_kind` is present and exactly `user` or `service`; `ts_kind` is not `service` while `ts_auth` is
+   `session`.
 10. **Values**, in this order:
     `iss` ≠ the configured issuer → `issuer`;
     the configured audience is not `aud` (string) or not an element of `aud` (array) → `audience`;
@@ -251,7 +278,7 @@ per vector.
 | `kid` | 4, 6 | `kid` missing or malformed, or not in the key set |
 | `signature` | 5, 7 | wrong length or verification failed |
 | `key_unavailable` | 6 | no key set could be obtained (§5) |
-| `claims` | 9 | wrong type, control character, inconsistency |
+| `claims` | 9 | wrong type, control character, inconsistency, a missing or malformed `ts_kind` |
 | `issuer` | 10 | wrong `iss` |
 | `audience` | 10 | wrong `aud` |
 | `lifetime` | 10 | `exp − nbf` not in (0, 3600] |
@@ -324,14 +351,18 @@ host (the proxy passes `/.tinysesam/*` to TinySesam) or server-side at `/auth/to
 - treat every title and name as text, never as markup;
 - not cache the answer across sessions (TinySesam sends `no-store`).
 
-The normalized result has the members `brand`, `signed_in`, `name`, `links` (`title`, `href`), `account`,
-`admin_panel` and `logout` (each an `href` or `null`); `vectors/topbar.json` shows it.
+The normalized result has the members `brand`, `signed_in`, `name`, `links` and `menu_links` (each a list of
+`title`, `href`; `menu_links` are the entries of the account menu, `[]` when the answer has none or no list),
+`account`, `admin_panel` and `logout` (each an `href` or `null`); `vectors/topbar.json` shows it. The same `href` rule
+applies to both link lists.
 
 ## 9. Test vectors
 
 Generated by `scripts/_gate_vectors.py` from TinySesam's own issuing path with fixed test keys and a fixed clock;
 never edit them by hand. `tests/test_gate_vectors.py` checks that they are current, that every attack class below has
-a vector, and that the Python gate client (`tinysesam.gate_client`) passes all of them.
+a vector, and that the Python gate client (`tinysesam.gate_client`) passes all of them. Every file carries `"format": 2`;
+a client MUST check that number in its tests, so that vectors of another version cannot pass it unseen. Since every
+request TinySesam answers carries `Remote-Kind`, the header vectors about other defects carry `Remote-Kind: user`.
 
 | File | Content |
 |---|---|
@@ -372,7 +403,7 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `jws-json-serialization` | flattened and general JWS JSON |
 | `duplicate-members` | a claim or a header member twice |
 | `json-encoding` | invalid UTF-8, a byte order mark, `NaN`, an array instead of an object |
-| `claim-types` | a claim of the wrong type, out of range, missing, or inconsistent (`ts_id`, `iat`) |
+| `claim-types` | a claim of the wrong type, out of range, missing, or inconsistent (`ts_id`, `iat`, `ts_kind`) |
 | `unicode-control` | CR/LF (header injection), NUL, DEL, tab in a claim |
 | `unicode-homoglyph` | a Cyrillic `а`, a zero-width joiner, a bidi override — valid, but never `admin` |
 | `expired` | at `exp`, long after, at the edge of the leeway |
@@ -381,6 +412,7 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `issuer` | another issuer, a trailing slash, a prefix |
 | `audience` | another host, upper case, missing or different roles, an array without a match |
 | `remote-auth` | the kinds of `Remote-Auth`, empty, missing, unknown, wrong case |
+| `remote-kind` | `Remote-Kind` missing, empty, in another case, unknown, twice, `service` with `session`; the four valid pairs with `Remote-Auth` |
 | `groups-parsing` | commas, spaces, empty and repeated entries, case, no escapes |
 | `header-missing-user` | no or empty `Remote-User` |
 | `header-duplicate` | a `Remote-*` field twice, also in two spellings |

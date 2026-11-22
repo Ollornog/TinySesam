@@ -862,7 +862,11 @@
     },
     "FORWARD_HEADERS_DEFAULT": {
       "tier": "A",
-      "value": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth'}"
+      "value": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth', 'kind': 'Remote-Kind'}"
+    },
+    "FORWARD_HEADERS_MANDATORY": {
+      "value": "('kind',)",
+      "tier": "A"
     },
     "IDENTIFYING": {
       "since": "0.22.0",
@@ -1205,6 +1209,10 @@
     "brand_icon": {
       "field": "str = ''",
       "tier": "A"
+    },
+    "brand_icon_title": {
+      "field": "str = ''",
+      "tier": "B"
     },
     "c22_stylesheet": {
       "field": "str = ''",
@@ -1886,6 +1894,10 @@
       "field": "list = []",
       "tier": "B"
     },
+    "topbar_menu_links": {
+      "field": "list = []",
+      "tier": "B"
+    },
     "totp_enabled": {
       "field": "bool = True",
       "tier": "A"
@@ -2031,11 +2043,15 @@
       "tier": "B"
     },
     "Identity": {
-      "sig": "class (user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str') -> None",
+      "sig": "class (user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str', account_kind: 'str') -> None",
       "tier": "B"
     },
     "Identity.has_role": {
       "sig": "(role: 'str') -> 'bool'",
+      "tier": "B"
+    },
+    "Identity.is_service": {
+      "sig": "() -> 'bool'",
       "tier": "B"
     },
     "Identity.is_session": {
@@ -2111,7 +2127,7 @@
       "tier": "B"
     },
     "Topbar": {
-      "sig": "class (brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None",
+      "sig": "class (brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None",
       "tier": "B"
     },
     "Topbar.to_dict": {
@@ -2151,11 +2167,15 @@
       "tier": "B"
     },
     "guard_status": {
-      "sig": "(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False) -> 'Optional[int]'",
+      "sig": "(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False, account_kind: 'Optional[str]' = None) -> 'Optional[int]'",
       "tier": "B"
     },
     "parse_topbar": {
       "sig": "(data: 'Any') -> 'Topbar'",
+      "tier": "B"
+    },
+    "require_account_kind": {
+      "sig": "(kind: 'str') -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'",
       "tier": "B"
     },
     "require_auth": {
@@ -2268,7 +2288,7 @@
   },
   "http.forward": {
     "forward: API key": {
-      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User",
       "tier": "A"
     },
     "forward: not signed in": {
@@ -2284,11 +2304,11 @@
       "tier": "A"
     },
     "forward: role present (?roles=)": {
-      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     },
     "forward: signed in": {
-      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     },
     "forward: signed out of this application": {
@@ -2328,7 +2348,7 @@
       "tier": "A"
     },
     "gateway forward: signed in via the connection": {
-      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     },
     "gateway logged-out page: host not protected": {
@@ -2348,7 +2368,7 @@
       "tier": "A"
     },
     "verify alias: signed in": {
-      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
+      "response": "200 | headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie",
       "tier": "A"
     }
   },

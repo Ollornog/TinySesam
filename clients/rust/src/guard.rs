@@ -1,6 +1,6 @@
-//! Guards (spec §6): signed in, a role, session only. They answer 401 or 403 and never say why.
+//! Guards (spec §6): signed in, a role, session only, an account kind. They answer 401 or 403 and never say why.
 
-use crate::identity::Identity;
+use crate::identity::{AccountKind, Identity};
 use http::StatusCode;
 
 /// What a route requires.
@@ -12,6 +12,8 @@ pub enum Requirement<'a> {
     Role(&'a str),
     /// A browser session (`auth` exactly `session`): the groups of a token request are incomplete on purpose.
     Session,
+    /// The account is of this kind (spec version 2), e.g. `AccountKind::User` for a route only people may use.
+    AccountKind(AccountKind),
 }
 
 /// The answer of a guard.
@@ -46,6 +48,7 @@ pub fn authorize(identity: Option<&Identity>, requirements: &[Requirement<'_>]) 
         Requirement::SignedIn => true,
         Requirement::Role(role) => identity.has_role(role),
         Requirement::Session => identity.is_session(),
+        Requirement::AccountKind(kind) => identity.account_kind == *kind,
     });
     if met {
         Decision::Allow
@@ -67,6 +70,7 @@ mod tests {
             "editors",
             "1".into(),
             "apikey",
+            AccountKind::User,
         );
         let session = Identity::new(
             "anna".into(),
@@ -75,6 +79,38 @@ mod tests {
             "editors",
             "1".into(),
             "session",
+            AccountKind::User,
+        );
+        let service = Identity::new(
+            "bot".into(),
+            String::new(),
+            String::new(),
+            "editors",
+            "2".into(),
+            "apikey",
+            AccountKind::Service,
+        );
+        assert_eq!(
+            authorize(Some(&token), &[Requirement::AccountKind(AccountKind::User)]),
+            Decision::Allow
+        );
+        assert_eq!(
+            authorize(
+                Some(&service),
+                &[Requirement::AccountKind(AccountKind::User)]
+            ),
+            Decision::Forbidden
+        );
+        assert_eq!(
+            authorize(
+                Some(&service),
+                &[Requirement::AccountKind(AccountKind::Service)]
+            ),
+            Decision::Allow
+        );
+        assert_eq!(
+            authorize(None, &[Requirement::AccountKind(AccountKind::Service)]),
+            Decision::Unauthorized
         );
         assert_eq!(authorize(None, &[]), Decision::Unauthorized);
         assert_eq!(

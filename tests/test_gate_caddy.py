@@ -74,6 +74,7 @@ auth = TinySesam(TinySesamConfig(
 auth.ensure_admin("admin", "dummy123")
 uid = auth.create_user("anna", "dummy123", roles=["editors"])
 auth.store._exec("UPDATE users SET display_name=? WHERE id=?", ("Anna Ärger", uid))
+bot = auth.create_service("backup-bot", roles=["editors"])
 
 FORWARD = {"n": 0}
 ts_app = FastAPI()
@@ -268,7 +269,7 @@ try:
     # handle_response). Result: an EMPTY value from TinySesam (Anna has no address) overwrites the browser's
     # value with "" — closed. Pinned here for both the plain template and the gate template's way back.
     forged = {"Remote-User": "admin", "Remote-Groups": "admin", "Remote-Email": "chef@example.com",
-              "Remote-Name": "Chef", "Remote-Id": "1", "Remote-Auth": "oauth"}
+              "Remote-Name": "Chef", "Remote-Id": "1", "Remote-Auth": "oauth", "Remote-Kind": "service"}
     # F1 towards the application: a target the browser made up never reaches it (measured for every template below).
     target_forged = {"X-Original-URL": "https://evil.example/", "X-Original-URI": "/evil"}
     for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
@@ -279,14 +280,15 @@ try:
         assert hd.get("Remote-Email", "") == "" and hd.get("Remote-Id") == str(uid), (was, hd)
         assert utf8(hd.get("Remote-Name")) == "Anna Ärger", (was, hd.get("Remote-Name"))
         assert hd.get("Remote-Auth") == "session", (was, hd.get("Remote-Auth"))       # T-75, the browser said oauth
+        assert hd.get("Remote-Kind") == "user", (was, hd.get("Remote-Kind"))          # spec v2, the browser said service
         st, h, a = request("/h1-target", session, target_forged, port=port)
         assert st == 200 and not {"x-original-url", "x-original-uri"} & {k.lower() for k in a["header"]}, (was, a)
         # HSTS (H1): the application's responses and the redirect to the sign-in carry it.
         assert h.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains", (was, dict(h))
         st, h, _ = request("/h1", None, forged, port=port)
         assert st == 302 and h.get("Strict-Transport-Security") == "max-age=31536000; includeSubDomains", (was, st)
-    ok("H1: Remote-* sent by the browser (also Remote-Email against an empty value) → TinySesam's values reach "
-       "the application — plain, quickstart and gate way back; HSTS on 200 and on the redirect")
+    ok("H1: Remote-* sent by the browser (also Remote-Email against an empty value, Remote-Kind: service) → "
+       "TinySesam's values reach the application — plain, quickstart and gate way back; HSTS on 200 and on the redirect")
 
     # ---------- A-3: the client's credentials never reach the application ----------
     # Attack round 2026-11-21: every template passed `Authorization` on, and an API key (valid at every host and at
@@ -312,8 +314,25 @@ try:
             if path.startswith("/a3-key"):
                 assert hd.get("remote-user") == "anna", (was, path, hd)      # the key DID sign in at the check
                 assert hd.get("remote-auth") == "apikey", (was, path, hd.get("remote-auth"))
+                assert hd.get("remote-kind") == "user", (was, path, hd.get("remote-kind"))
     ok("A-3: Authorization and X-Api-Key never reach the application — session, an API key alone (it still signs in "
        "at the check), share path; plain, quickstart and gate way back")
+
+    # ---------- Remote-Kind (spec v2): a service account's key says `service`, a forged value never arrives ----------
+    bot_key = auth.create_api_key(bot, name="kind", expires_days=1)["key"]
+    for port, was in ((PORT, "gate template, way back"), (PORT_PLAIN, "plain template"),
+                      (PORT_QUICK, "quickstart template")):
+        st, h, a = request("/kind-bot", None, {"X-Api-Key": bot_key, "Remote-Kind": "user"}, port=port)
+        hd = {k.lower(): v for k, v in (a["header"] if a else {}).items()}
+        assert st == 200 and hd.get("remote-user") == "backup-bot" and hd.get("remote-kind") == "service", (was, st, hd)
+        st, h, a = request("/kind-person", session, {"Remote-Kind": "service"}, port=port)
+        hd = a["header"] if a else {}
+        assert st == 200 and [v for k, v in hd.items() if k.lower() == "remote-kind"] == ["user"], (was, st, hd)
+        if port != PORT_QUICK:
+            st, h, a = request("/s/kind-share", None, {"Remote-Kind": "service", "Remote-User": "admin"}, port=port)
+            assert st == 200 and not {"remote-kind", "remote-user"} & {k.lower() for k in a["header"]}, (was, a)
+    ok("Remote-Kind: a service account's API key → service (the client said user); a person's session → user, never "
+       "the client's service; nothing on the share path — plain, quickstart and gate way back")
 
     # ---------- T-58: a header MISSING from the answer reaches the application as nothing ----------
     # Before 2026-11-20 the templates set every Remote-* from `{rp.header.…}` unconditionally; when TinySesam's answer
@@ -329,6 +348,9 @@ try:
             assert st == 200 and hd.get("Remote-User") == "anna" and hd.get("Remote-Groups") == "editors", (was, st, hd)
             leaked = {k: v for k, v in hd.items() if k in ("Remote-Email", "Remote-Name", "Remote-Id", "Remote-Auth")}
             assert not leaked, (was, leaked)
+            # The mandatory slot: Remote-Kind is sent whatever forward_headers lists — TinySesam's `user`, not the
+            # browser's `service`.
+            assert hd.get("Remote-Kind") == "user", (was, hd.get("Remote-Kind"))
     finally:
         auth.cfg.forward_headers = {}
     ok("T-58: forward_headers without email/name/id → the application gets no such header — neither placeholder text "
@@ -388,7 +410,8 @@ try:
     before = FORWARD["n"]
     for i in range(10):
         st, h, a = request(f"/asset-{i}.js", with_gate, {"Remote-User": "admin", "Remote-Groups": "admin",
-                                                         "Remote-Email": "chef@example.com", "Remote-Auth": "apikey"})
+                                                         "Remote-Email": "chef@example.com", "Remote-Auth": "apikey",
+                                                         "Remote-Kind": "service"})
         assert st == 200 and a["path"] == f"/asset-{i}.js", (st, a)
     assert FORWARD["n"] == before, f"{FORWARD['n'] - before} calls to TinySesam despite a valid gate cookie"
     hd = a["header"]
@@ -397,6 +420,8 @@ try:
     assert hd.get("Remote-Id") == str(uid), hd
     # T-75 (A5): the signed claim ts_auth — the same value the way back set above, never the browser's `apikey`.
     assert hd.get("Remote-Auth") == "session", hd.get("Remote-Auth")
+    # Spec v2: the signed claim ts_kind, never the browser's `service`.
+    assert hd.get("Remote-Kind") == "user", hd.get("Remote-Kind")
     # Anna has no address — the claim is empty. The address from the browser must still not
     # get through: for that the template removes every Remote-* of the request before it sets it.
     assert hd.get("Remote-Email", "") == "", hd.get("Remote-Email")
@@ -482,6 +507,26 @@ try:
                                claims=own, ttl=ttl, now=now if now_ is None else now_)
 
     assert request("/x", {"__Host-tinysesam_gate": signed()})[0] == 200, "control: freshly signed"
+
+    # ---------- measured: a gate token WITHOUT ts_kind (issued before the update) on the fast path ----------
+    # caddy-jwt passes a missing meta claim on as an EMPTY placeholder (measured 2026-11-22 with Caddy 2.11.9,
+    # caddy-jwt 1.4.0): `header_up Remote-Kind {http.auth.user.ts_kind}` then sends `Remote-Kind` with an empty value —
+    # never the literal `{http.auth.user.ts_kind}` (the old placeholder fault of the way back, T-58). A gate client after spec v2
+    # refuses such a request (`header`: Remote-Kind missing) until the token expires; the next one carries ts_kind.
+    # The client's own Remote-Kind is stripped up front, so it cannot fill the gap.
+    legacy = gate.issue(auth._gate_key_name, iss=ISS, aud="app.example.com", sub=str(uid),
+                        claims={k: v for k, v in own.items() if k != "kind"}, ttl=300, now=now)
+    assert "ts_kind" not in gate.check(base64.b64decode(auth.gate_public_key()), legacy, aud="app.example.com",
+                                       iss=ISS, now=now)
+    before = FORWARD["n"]
+    st, h, a = request("/legacy-token", {"__Host-tinysesam_gate": legacy}, {"Remote-Kind": "service"})
+    assert st == 200 and FORWARD["n"] == before, (st, FORWARD["n"] - before)
+    kinds = [v for k, v in a["header"].items() if k.lower() == "remote-kind"]
+    assert kinds in ([], [""]), f"a missing ts_kind reached the application as {kinds!r}"
+    assert not [v for v in a["header"].values() if "{http." in v], a["header"]
+    assert a["header"].get("Remote-User") == "anna" and a["header"].get("Remote-Auth") == "session", a["header"]
+    ok(f"measured: a gate token without ts_kind takes the fast path, the application gets Remote-Kind as {kinds!r} "
+       "(empty, never placeholder text, never the client's `service`) — a spec v2 client refuses it")
     k, i, s = tok.split(".")
     cases = {
         # Flip a BYTE of the signature, do not replace the last characters: the last base64 characters
@@ -670,11 +715,12 @@ try:
     script = ROOT / "deploy/forward-auth/acceptance.sh"
     env_a = {**os.environ, "APP": f"http://app.example.com:{PORT}", "SHARE": "/s/abc123",
              "SESSION": "; ".join(f"{k}={v}" for k, v in session.items()),
-             "CURL_EXTRA": f"--resolve app.example.com:{PORT}:127.0.0.1"}
+             "CURL_EXTRA": f"--resolve app.example.com:{PORT}:127.0.0.1", "ECHO": "1"}
     a = subprocess.run(["bash", str(script)], env=env_a, capture_output=True, text=True, timeout=120)
     assert a.returncode == 0 and "passed" in a.stdout and "FAIL" not in a.stdout, a.stdout + a.stderr
     lines = [z for z in a.stdout.splitlines() if z.startswith("  ok")]
-    assert len(lines) >= 16 and any("HSTS" in z for z in lines), a.stdout
+    assert len(lines) >= 19 and any("HSTS" in z for z in lines), a.stdout
+    assert sum("Remote-Kind" in z for z in lines) == 3, a.stdout
     ok(f"acceptance.sh against this setup: {len(lines)} checks passed")
     # Counter-check: the script must turn red when an expectation is wrong — here a path that is
     # closed but is given as a share. Otherwise “passed” would also be the answer of a script that
@@ -683,6 +729,14 @@ try:
                        capture_output=True, text=True, timeout=120)
     assert a.returncode == 1 and "FAIL Share path /admin/x.js is open" in a.stdout, a.stdout
     ok("counter-check: a path that is closed, given as share → acceptance.sh red (exit 1)")
+    # Counter-check of the Remote-Kind probe: straight at the application, without a proxy that strips, the forged
+    # value arrives — the script must say so on both paths.
+    a = subprocess.run(["bash", str(script)], env={**env_a, "APP": f"http://{APP}", "CURL_EXTRA": ""},
+                       capture_output=True, text=True, timeout=120)
+    assert a.returncode == 1, a.stdout
+    assert "FAIL a forged Remote-Kind does not reach the application on the share path" in a.stdout, a.stdout
+    assert "FAIL with session: the application gets TinySesam's Remote-Kind, never a forged one" in a.stdout, a.stdout
+    ok("counter-check: without a stripping proxy acceptance.sh sees the forged Remote-Kind (share path and session)")
     tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/"}, follow_redirects=False)
 
     # ---------- the price: revocation only takes effect on expiry ----------

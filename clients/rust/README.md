@@ -7,6 +7,9 @@ the issuing of gate tokens stay in TinySesam.
 The contract is the [gate client specification](../../spec/gate-client.md); the proof is that this crate passes every
 vector in [`spec/vectors/`](../../spec/vectors/) (token, header, key set, cache scenarios, top bar).
 
+**Spec version 2:** the crate requires `Remote-Kind` / `ts_kind` and refuses a request without it — use it with
+TinySesam and the proxy templates of the release that brought spec v2 or later (CHANGELOG), and update those first.
+
 Version 0.1.0, independent of TinySesam's version. **Not published** to the Rust crate registry (that needs a
 decision of the product owner, see [`clients/README.md`](../README.md#publishing)); use it from this repository.
 
@@ -59,16 +62,19 @@ fn handle(headers: &http::HeaderMap, peer: std::net::IpAddr) -> http::StatusCode
 ```
 
 `identify` refuses — never repairs — a header that occurs twice (also in two spellings), invalid UTF-8, a control
-character (`boss\x01` stripped would be another account's name), and a `Remote-Id` that is not ASCII digits. A missing
-or empty `Remote-User` is `unauthenticated`. Renamed headers (TinySesam's `forward_headers`) go through
+character (`boss\x01` stripped would be another account's name), a `Remote-Id` that is not ASCII digits, and a
+`Remote-Kind` that is missing, empty, not exactly `user` or `service`, or `service` with `Remote-Auth: session` (all
+`header`: a missing one means TinySesam or the proxy is older than spec v2 — never guessed as `user`). A missing or
+empty `Remote-User` is `unauthenticated` (checked first). Renamed headers (TinySesam's `forward_headers`) go through
 `with_names(HeaderNames { … })`. No other header (`X-Forwarded-User`, `X-Remote-User`, …) is ever read.
 
 ### Duties of the proxy (spec §2.1)
 
 The client cannot verify where a header came from. Header mode is only safe when **all** of these hold:
 
-1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id` and
-   `Remote-Auth` the client sent, on **every** path — including public share paths, where it then sets none.
+1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id`,
+   `Remote-Auth` and `Remote-Kind` the client sent, on **every** path — including public share paths, where it then
+   sets none. A proxy template older than spec v2 passes a client's `Remote-Kind` through: update the proxy first.
 2. The proxy sets each header only from TinySesam's answer (`/auth/forward`) or from the claims of a gate token it has
    verified itself, and only when the value is not empty.
 3. The application is reachable **only** through that proxy: bound to a loopback or private address, or protected by
@@ -129,7 +135,9 @@ a jumping wall clock cannot stall or flood it. A custom transport implements `Fe
 ## Identity and guards
 
 Both modes produce the same `Identity`: `user`, `name`, `email`, `groups`, `id`, `auth` (`Session`, `OAuth`, `ApiKey`,
-`AppPassword`, `Unspecified`) and `kind` (`Session` only when `Remote-Auth`/`ts_auth` is exactly `session`).
+`AppPassword`, `Unspecified`), `kind` (`Session` only when `Remote-Auth`/`ts_auth` is exactly `session`) and
+`account_kind` (`AccountKind::User` or `AccountKind::Service`, from `Remote-Kind`/`ts_kind`; `is_service()`). `kind` says
+how the request came in, `account_kind` what the account is: a paired service acting as a person is `Token` + `User`.
 
 - Key your own records by `id`, never by `user`, `name` or `email`.
 - `has_role` compares exactly: no case folding, no Unicode normalization; `admin` implies no other role.
@@ -137,7 +145,7 @@ Both modes produce the same `Identity`: `user`, `name`, `email`, `groups`, `id`,
   a token request lacks it. `Requirement::Session` guards routes that need the full picture.
 - Names may contain bidi overrides and zero-width characters: escape them in HTML and isolate bidi text.
 
-`authorize(identity, &[Requirement::SignedIn | Role(..) | Session])` answers `Allow`, `Unauthorized` (401) or
+`authorize(identity, &[Requirement::SignedIn | Role(..) | Session | AccountKind(..)])` answers `Allow`, `Unauthorized` (401) or
 `Forbidden` (403). A response must not contain the token, the claims or the error detail. Log the error class
 (`error.class()`) and at most the format-checked `kid` (`Unverified::kid`), never the token or a claim value.
 
@@ -164,7 +172,8 @@ Every class means the same to the application: not authenticated.
 ## Top bar data
 
 `topbar::normalize_json` reduces TinySesam's `topbar.json` to what an application may render (spec §8): signed out on
-any doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/`. Titles and names are
+any doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/` (in `links` and in
+`menu_links`, the account menu). Titles and names are
 text, never markup; do not cache the answer across sessions.
 
 ## Libraries

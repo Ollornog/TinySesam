@@ -7,6 +7,8 @@ vector in [`spec/vectors/`](../../spec/vectors/) (token, header, key set, cache 
 repository.
 
 - TypeScript, ESM, typed. Version 0.1.0, independent of TinySesam's version.
+- **Spec version 2:** it requires `Remote-Kind` / `ts_kind` and refuses a request without it. Use it with TinySesam and
+  the proxy templates of the release that brought spec v2 or later (CHANGELOG), and update those first.
 - **No runtime dependency.** The core uses web standards only — WebCrypto `Ed25519` for the signature, `fetch`,
   `TextDecoder`, `JSON.parse`, `atob` — so it runs on Node, Deno, Bun and edge runtimes. The Node/Express adapter is
   the separate entry point `@tinysesam/gate/node`; it imports Node's types only.
@@ -94,8 +96,9 @@ raw field lines and refuses a repetition.
 
 The client cannot verify where a header came from. Header mode is only safe when **all** of these hold:
 
-1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id` and
-   `Remote-Auth` the client sent, on **every** path — including public share paths, where it then sets none.
+1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id`,
+   `Remote-Auth` and `Remote-Kind` the client sent, on **every** path — including public share paths, where it then
+   sets none. A proxy template older than spec v2 passes a client's `Remote-Kind` through: update the proxy first.
 2. The proxy sets each header only from TinySesam's answer (`/auth/forward`) or from the claims of a gate token it has
    verified itself, and only when the value is not empty.
 3. The application is reachable **only** through that proxy: bound to a loopback or private address, or protected by
@@ -161,7 +164,11 @@ Example: [`examples/fetch-handler.ts`](examples/fetch-handler.ts).
 ## Identity and guards
 
 Both modes produce the same `Identity`: `user`, `name`, `email`, `groups`, `id`, `auth` (`session`, `oauth`, `apikey`,
-`app-password` or empty) and `kind` (`session` only when `Remote-Auth`/`ts_auth` is exactly `session`).
+`app-password` or empty), `kind` (`session` only when `Remote-Auth`/`ts_auth` is exactly `session`) and `accountKind`
+(`user` or `service`, from `Remote-Kind`/`ts_kind`; `isService()`; `account_kind` in `toJSON()`). A missing value,
+another spelling, an unknown one or `service` with `Remote-Auth: session` is the error `header` (token mode: `claims`),
+never a guessed `user`. `kind` says how the request came in, `accountKind` what the account is: a paired service acting
+as a person is `token` + `user`. `headerNames.kind` follows a renamed `forward_headers["kind"]`.
 
 - Key your own records by `id`, never by `user`, `name` or `email`.
 - `identity.hasRole(role)` compares exactly: no case folding, no Unicode normalization; `admin` implies no other role.
@@ -169,7 +176,7 @@ Both modes produce the same `Identity`: `user`, `name`, `email`, `groups`, `id`,
   role because a token request lacks it. `requireSession()` / `'session'` guards routes that need the full picture.
 - Names may contain bidi overrides and zero-width characters: escape them in HTML and isolate bidi text.
 
-`authorize(identity, ['signed-in' | 'session' | { role }])` answers `'allow'`, `401` or `403`; the Node guards
+`authorize(identity, ['signed-in' | 'session' | { role } | { accountKind }])` answers `'allow'`, `401` or `403`; the Node guards
 (`requireAuth`, `requireRole`, `requireSession`) and the Fetch helpers (`guardResponse`, `withGate`) answer with the
 status text and `Cache-Control: no-store` only — never the token, the claims or the reason.
 
@@ -199,8 +206,8 @@ Every class means the same to the application: not authenticated.
 ## Top bar data
 
 `parseTopbar(body)` reduces TinySesam's `topbar.json` to what an application may render (spec §8): signed out on any
-doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/`. Titles and names are
-text, never markup — set them with `textContent`. `fetchTopbar(url, cookieHeader)` fetches it server-side with only
+doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/` (in `links` and in
+`menu_links`, the account menu). Titles and names are text, never markup — set them with `textContent`. `fetchTopbar(url, cookieHeader)` fetches it server-side with only
 TinySesam's cookies, a 5-second deadline and a 64 KiB limit; do not cache the answer across sessions.
 
 ## Libraries

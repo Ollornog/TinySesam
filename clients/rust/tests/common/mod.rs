@@ -14,7 +14,8 @@ pub fn load(name: &str) -> Value {
     let path = vector_dir().join(name);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let doc: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(doc["format"], 1, "{name}: unknown vector format");
+    // Spec version 2 (Remote-Kind, ts_kind, menu_links): vectors of another version must not pass unseen.
+    assert_eq!(doc["format"], 2, "{name}: unknown vector format");
     doc
 }
 
@@ -27,7 +28,7 @@ pub fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
 pub fn identity_json(id: &Identity) -> Value {
     json!({
         "user": id.user, "name": id.name, "email": id.email, "groups": id.groups, "id": id.id,
-        "auth": id.auth.as_str(), "kind": id.kind.as_str(),
+        "auth": id.auth.as_str(), "kind": id.kind.as_str(), "account_kind": id.account_kind.as_str(),
     })
 }
 

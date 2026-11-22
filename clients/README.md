@@ -28,10 +28,12 @@ TinySesam itself stays Python; a client never issues tokens and never signs anyo
 
 - **Both modes** of the specification (header mode, token mode with fixed keys and with JWKS), chosen explicitly by
   configuration; the optional top bar helper of §8 only when someone needs it.
-- **Guards** in the idiom of the language (middleware, extractor, attribute): signed in, `has_role`, session only.
-  They answer 401/403 and never reveal why (spec §6).
+- **Guards** in the idiom of the language (middleware, extractor, attribute): signed in, `has_role`, session only,
+  account kind (`user`/`service`, spec v2). They answer 401/403 and never reveal why (spec §6).
+- **Spec version 2:** the identity carries `account_kind` from `Remote-Kind`/`ts_kind`, and a request or token without
+  it is refused — no switch that takes a missing value as `user`. The README names the TinySesam release it needs.
 - **A vector runner in its own test suite** that loads `spec/vectors/*.json` **from this repository** (relative path
-  `../../spec/vectors/`, never a copy) and checks every vector:
+  `../../spec/vectors/`, never a copy), checks that every file says `"format": 2`, and checks every vector:
   - `token.json` — `ok`, `error` class, `claims`, `identity`, `has_role`;
   - `headers.json` — convert each header value to bytes with Latin-1, a list means a repeated field;
   - `jwks.json` — `sets` against the key set parser, `scenarios` against the cache with a fake fetcher and a fake

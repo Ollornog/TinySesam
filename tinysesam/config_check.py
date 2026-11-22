@@ -107,6 +107,57 @@ def _urlsplit_host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
+def _topbar_link_findings(config, f: str, links, hosts: set, roles_known: set, error: list, warnings: list) -> None:
+    """The checks of one top bar link field (`topbar_links`, `topbar_menu_links`, named by `f` in the findings):
+    shape, visibility, target."""
+    links = links or []
+    if not isinstance(links, (list, tuple)):
+        links = [links]
+    for link in links:
+        if (not isinstance(link, (list, tuple)) or len(link) not in (2, 3) or not isinstance(link[0], str)
+                or not 1 <= len(link[0].strip()) <= 60 or not isinstance(link[1], str)
+                or any(z < " " or z == "\x7f" for z in link[0])):
+            error.append(_t(
+                config,
+                "{f}: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters",
+                f=f, v=link))
+            continue
+        # Visibility (T-76): a third element {"admin": True} or {"role": "…"} — exactly one of them. Anything else
+        # would hide the link from everyone (topbar.link_visible is fail-closed) without saying why.
+        if len(link) == 3:
+            rule = link[2]
+            admin_rule = isinstance(rule, dict) and set(rule) == {"admin"} and rule["admin"] is True
+            role_rule = (isinstance(rule, dict) and set(rule) == {"role"} and isinstance(rule["role"], str)
+                         and bool(rule["role"].strip()))
+            if not (admin_rule or role_rule):
+                error.append(_t(
+                    config,
+                    "{f}: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}",
+                    f=f, v=link))
+                continue
+            if role_rule and rule["role"] not in roles_known:
+                warnings.append(_t(
+                    config,
+                    "{f}: the link {title!r} is shown only to the role {role!r}, which is not in "
+                    "available_roles — a typo hides it from everyone. List the role in available_roles.",
+                    f=f, title=link[0], role=rule["role"]))
+        href = link[1]
+        bad = not href or any(z in href for z in "'\"<>\\ \t\n")
+        if href.startswith("/") and not href.startswith("//"):
+            ok = not bad
+        elif href.startswith("https://") and not bad:
+            ok = _urlsplit_host(href) in hosts
+        else:
+            ok = False
+        if not ok:
+            error.append(_t(
+                config,
+                "{f}: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on "
+                "the host of base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, "
+                "backslash and spaces",
+                f=f, h=href))
+
+
 def _t(config, template: str, **values) -> str:
     """Finding text in the language of `config.lang`: English (default) or German.
 
@@ -239,58 +290,38 @@ def check_config(config) -> tuple[list[str], list[str]]:
             "c22_stylesheet: {s!r} — a path on the app's own origin (\"/static/c22.css\"), "
             "without quotation marks, angle brackets, backslash and spaces",
             s=_sheet))
-    # Top bar links (T-64): a link of the operator's own pages — a path on the own origin, or an https address on a
-    # host a `next=` may reach (base_url, trusted_redirect_hosts). Never an arbitrary foreign origin, nothing that
-    # could leave the href attribute, no javascript:/data: target.
-    _links = getattr(config, "topbar_links", None) or []
-    if not isinstance(_links, (list, tuple)):
-        _links = [_links]
+    # Top bar links (T-64) and account menu links: a link of the operator's own pages — a path on the own origin, or
+    # an https address on a host a `next=` may reach (base_url, trusted_redirect_hosts). Never an arbitrary foreign
+    # origin, nothing that could leave the href attribute, no javascript:/data: target. One check for both fields.
     _hosts = {str(h).lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])}
     if getattr(config, "base_url", ""):
         _hosts.add(_urlsplit_host(config.base_url))
     _roles_known = set(getattr(config, "available_roles", None) or [])
-    for _link in _links:
-        if (not isinstance(_link, (list, tuple)) or len(_link) not in (2, 3) or not isinstance(_link[0], str)
-                or not 1 <= len(_link[0].strip()) <= 60 or not isinstance(_link[1], str)):
+    _topbar_link_findings(config, "topbar_links", getattr(config, "topbar_links", None), _hosts, _roles_known, error,
+                          warnings)
+    _topbar_link_findings(config, "topbar_menu_links", getattr(config, "topbar_menu_links", None), _hosts, _roles_known,
+                          error, warnings)
+    _menu = getattr(config, "topbar_menu_links", None) or []
+    if isinstance(_menu, (list, tuple)) and len(_menu) > 10:
+        warnings.append(_t(
+            config,
+            "topbar_menu_links: {n} entries — more than 10 run off the screen of the account menu",
+            n=len(_menu)))
+    # The logo's tooltip: text in an attribute (escaped on output), bounded, without control characters.
+    _icon_title = getattr(config, "brand_icon_title", "")
+    if _icon_title:
+        if (not isinstance(_icon_title, str) or len(_icon_title) > 200
+                or any(z < " " or z == "\x7f" for z in _icon_title)):
             error.append(_t(
                 config,
-                "topbar_links: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters",
-                v=_link))
-            continue
-        # Visibility (T-76): a third element {"admin": True} or {"role": "…"} — exactly one of them. Anything else
-        # would hide the link from everyone (topbar.link_visible is fail-closed) without saying why.
-        if len(_link) == 3:
-            _rule = _link[2]
-            _admin_rule = isinstance(_rule, dict) and set(_rule) == {"admin"} and _rule["admin"] is True
-            _role_rule = (isinstance(_rule, dict) and set(_rule) == {"role"} and isinstance(_rule["role"], str)
-                          and bool(_rule["role"].strip()))
-            if not (_admin_rule or _role_rule):
-                error.append(_t(
-                    config,
-                    "topbar_links: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}",
-                    v=_link))
-                continue
-            if _role_rule and _rule["role"] not in _roles_known:
+                "brand_icon_title: at most 200 characters of text without control characters"))
+        else:
+            _icon = getattr(config, "brand_icon", "") or ""
+            if not ((_icon.startswith("/") and not _icon.startswith("//")) or _icon.startswith("data:image/")):
                 warnings.append(_t(
                     config,
-                    "topbar_links: the link {title!r} is shown only to the role {role!r}, which is not in "
-                    "available_roles — a typo hides it from everyone. List the role in available_roles.",
-                    title=_link[0], role=_rule["role"]))
-        _href = _link[1]
-        _bad = not _href or any(z in _href for z in "'\"<>\\ \t\n")
-        if _href.startswith("/") and not _href.startswith("//"):
-            _ok = not _bad
-        elif _href.startswith("https://") and not _bad:
-            _ok = _urlsplit_host(_href) in _hosts
-        else:
-            _ok = False
-        if not _ok:
-            error.append(_t(
-                config,
-                "topbar_links: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on "
-                "the host of base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, "
-                "backslash and spaces",
-                h=_href))
+                    "brand_icon_title works only with an image in brand_icon (a path or data:image/…) — the "
+                    "built-in mark and \"none\" carry no title"))
     _destination = getattr(config, "brand_background_credit_url", "")
     if _destination and not str(_destination).startswith(("https://", "http://")):
         error.append(_t(
@@ -2569,19 +2600,27 @@ _DE: dict[str, str] = {
      "without quotation marks, angle brackets, backslash and spaces"):
         ("c22_stylesheet: {s!r} — ein Pfad auf dem eigenen Ursprung der App (\"/static/c22.css\"), "
          "ohne Anführungszeichen, spitze Klammern, Backslash und Leerzeichen"),
-    "topbar_links: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters":
-        "topbar_links: {v!r} — jeder Eintrag ist ein Paar (Titel, Ziel) mit einem Titel aus 1–60 Zeichen",
-    "topbar_links: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}":
-        "topbar_links: {v!r} — die Sichtbarkeit ist {{\"admin\": True}} oder {{\"role\": \"name\"}}",
-    ("topbar_links: the link {title!r} is shown only to the role {role!r}, which is not in "
+    "{f}: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters":
+        "{f}: {v!r} — jeder Eintrag ist ein Paar (Titel, Ziel) mit einem Titel aus 1–60 Zeichen",
+    "{f}: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}":
+        "{f}: {v!r} — die Sichtbarkeit ist {{\"admin\": True}} oder {{\"role\": \"name\"}}",
+    ("{f}: the link {title!r} is shown only to the role {role!r}, which is not in "
      "available_roles — a typo hides it from everyone. List the role in available_roles."):
-        ("topbar_links: Der Link {title!r} erscheint nur für die Rolle {role!r}, die nicht in available_roles "
+        ("{f}: Der Link {title!r} erscheint nur für die Rolle {role!r}, die nicht in available_roles "
          "steht — ein Tippfehler versteckt ihn vor allen. Die Rolle in available_roles eintragen."),
-    ("topbar_links: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on the host of "
+    ("{f}: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on the host of "
      "base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, backslash and spaces"):
-        ("topbar_links: {h!r} — ein Ziel ist ein Pfad auf dem eigenen Ursprung (\"/wiki\") oder eine "
+        ("{f}: {h!r} — ein Ziel ist ein Pfad auf dem eigenen Ursprung (\"/wiki\") oder eine "
          "https-Adresse auf dem Host von base_url oder von trusted_redirect_hosts, ohne Anführungszeichen, "
          "spitze Klammern, Backslash und Leerzeichen"),
+    "topbar_menu_links: {n} entries — more than 10 run off the screen of the account menu":
+        "topbar_menu_links: {n} Einträge — mehr als 10 laufen über den Rand des Kontomenüs",
+    "brand_icon_title: at most 200 characters of text without control characters":
+        "brand_icon_title: höchstens 200 Zeichen Text ohne Steuerzeichen",
+    ("brand_icon_title works only with an image in brand_icon (a path or data:image/…) — the "
+     "built-in mark and \"none\" carry no title"):
+        ("brand_icon_title wirkt nur mit einem Bild in brand_icon (ein Pfad oder data:image/…) — das "
+         "eingebaute Zeichen und \"none\" tragen keinen Titel"),
     "brand_background_credit_url: only http(s) addresses":
         "brand_background_credit_url: nur http(s)-Adressen",
     "brand_backgrounds: {b!r} — allowed are /path, data:image/… and https://…":

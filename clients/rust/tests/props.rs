@@ -100,11 +100,12 @@ proptest! {
         value.extend_from_slice(suffix.as_bytes());
         let mode = HeaderMode::trust_proxy();
         for slot in tinysesam_gate::REMOTE_HEADERS {
-            let mut fields = vec![("Remote-User", b"anna".as_slice())];
-            if slot == "Remote-User" {
-                fields[0].1 = value.as_slice();
-            } else {
-                fields.push((slot, value.as_slice()));
+            // Every other slot well-formed (Remote-Kind included), so the control character is the only defect.
+            let mut fields = vec![("Remote-User", b"anna".as_slice()), ("Remote-Kind", b"user".as_slice())];
+            match slot {
+                "Remote-User" => fields[0].1 = value.as_slice(),
+                "Remote-Kind" => fields[1].1 = value.as_slice(),
+                _ => fields.push((slot, value.as_slice())),
             }
             prop_assert_eq!(mode.identify_fields(fields, None), Err(HeaderError::Header));
         }
@@ -113,7 +114,8 @@ proptest! {
     #[test]
     fn remote_id_is_ascii_digits_only(id in "\\PC{1,6}") {
         let mode = HeaderMode::trust_proxy();
-        let r = mode.identify_fields([("Remote-User", b"anna".as_slice()), ("Remote-Id", id.as_bytes())], None);
+        let r = mode.identify_fields([("Remote-User", b"anna".as_slice()), ("Remote-Id", id.as_bytes()),
+                                      ("Remote-Kind", b"user".as_slice())], None);
         let digits = id.bytes().all(|b| b.is_ascii_digit());
         let control = id.chars().any(|c| c < ' ' || c == '\u{7f}');
         prop_assert_eq!(r.is_ok(), digits && !control);

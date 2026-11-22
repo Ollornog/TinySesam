@@ -167,6 +167,17 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   and accept that whatever it logs then holds the credential. The quickstart's `webdav` profile does not need it
   (the WebDAV server there has no sign-in of its own). `tests/test_attack_round_a.py` checks every template under
   `deploy/` for this, a new one included; `tests/test_gate_caddy.py` measures it through a real Caddy.
+- **`Remote-Kind` fails closed — update the proxy before the applications.** `/auth/forward` always sends
+  `Remote-Kind: user|service` (from `users.is_service`; a value of the column that is neither 0 nor 1 is refused with
+  403, never guessed as `user`), and every gate token carries `ts_kind`. Gate clients after spec version 2
+  (`spec/gate-client.md`) refuse a request without it, with an unknown value, or with `service` together with
+  `Remote-Auth: session`. The client cannot see where a header came from: a proxy template **older** than this release
+  does not strip `Remote-Kind` and passes a value the browser sent straight to the application. **Order:** first
+  TinySesam and the proxy templates (or your own proxy rules: strip `Remote-Kind` on every path, set it only from
+  TinySesam's answer or the claim `ts_kind`), then wait `gate_token_ttl_sec` (default 300 s, so no gate token without
+  `ts_kind` is left), then the applications on clients after spec v2. `deploy/forward-auth/acceptance.sh` checks a
+  forged `Remote-Kind` from outside (with `ECHO=1` also that it never arrives); `tests/test_gate_caddy.py` and
+  `tests/test_proxies.py` measure every template through the real proxy.
 - **Credentials do not reach the proxy log either.** The gate plugin caddy-jwt (v1.4.0) takes `Authorization` as a
   token candidate whatever its configuration says, and logs a candidate that is no JWT at level error with a third of
   its beginning and end. Up to 0.26.0 `deploy/forward-auth/Caddyfile.gate` therefore wrote half an API key, OAuth token

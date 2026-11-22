@@ -122,6 +122,12 @@ def _nothing(*_args, **_kwargs):
     return None
 
 
+def _kind_casefold(kind, error):
+    if isinstance(kind, str) and kind.lower() in gc._ACCOUNT_KINDS:
+        return kind.lower()
+    raise error("kind")
+
+
 #: name -> {attribute of gate_client: replacement, or a function of the original returning the replacement}
 RELAXATIONS = {
     "alg_from_header": {"_check_alg": _nothing, "_check_signature_length": _alg_length,
@@ -154,6 +160,10 @@ RELAXATIONS = {
     "header_lenient_utf8": {"_decode_header": lambda raw: raw.decode("utf-8", "replace")},
     "header_any_id": {"_check_remote_id": _nothing},
     "remote_auth_empty_is_session": {"_kind_of": lambda auth: "session" if auth in ("session", "") else "token"},
+    "kind_missing_is_user": {"_check_kind_present": lambda kind, error: "user" if kind in (None, "") else kind},
+    "kind_casefold": {"_check_kind_value": _kind_casefold},
+    "kind_any_value": {"_check_kind_value": lambda kind, error: kind},
+    "kind_no_consistency": {"_check_kind_consistent": _nothing},
     "groups_no_trim": {"_trim_group": lambda part: part},
     "topbar_any_href": {"_safe_href": lambda href: isinstance(href, str)},
 }

@@ -18,7 +18,7 @@ const (
 	tokenType      = "tinysesam-gate+jwt"
 )
 
-var identityClaims = []string{"ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth"}
+var identityClaims = []string{"ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth", "ts_kind"}
 
 // Claims of a valid gate token. Raw holds every claim as decoded (numbers as json.Number); unknown claims are
 // ignored by the checks but kept there.
@@ -194,6 +194,12 @@ func checkClaims(m map[string]any, rules tokenRules, now int64) (*Claims, *Error
 	if iat > nbf {
 		return bad("iat later than nbf")
 	}
+	// Spec v2: ts_kind is mandatory (the type was checked with the identity claims above).
+	kind, _ := m["ts_kind"].(string)
+	auth, _ := m["ts_auth"].(string)
+	if _, why := checkAccountKind(kind, auth); why != "" {
+		return bad(why)
+	}
 	if iss != rules.issuer {
 		return nil, refuse(ClassIssuer, "")
 	}
@@ -238,7 +244,7 @@ func intClaim(v any) (int64, bool) {
 }
 
 // identityFromClaims maps the claims of a valid token to the identity (spec section 4.1); a missing claim gives an
-// empty value.
+// empty value (ts_kind cannot be missing here: checkClaims refused that).
 func identityFromClaims(c *Claims) *Identity {
 	str := func(name string) string {
 		s, _ := c.Raw[name].(string)
@@ -246,5 +252,5 @@ func identityFromClaims(c *Claims) *Identity {
 	}
 	a, k := kindOf(str("ts_auth"))
 	return &Identity{User: str("ts_user"), Name: str("ts_name"), Email: str("ts_email"),
-		Groups: ParseGroups(str("ts_groups")), ID: c.Subject, Auth: a, Kind: k}
+		Groups: ParseGroups(str("ts_groups")), ID: c.Subject, Auth: a, Kind: k, AccountKind: AccountKind(str("ts_kind"))}
 }

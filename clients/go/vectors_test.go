@@ -31,7 +31,8 @@ func loadVectors(t testing.TB, name string) map[string]any {
 	if err := dec.Decode(&doc); err != nil {
 		t.Fatalf("parse %s: %v", name, err)
 	}
-	if doc["format"] != json.Number("1") {
+	// Spec version 2 (Remote-Kind, ts_kind, menu_links): vectors of another version must not pass unseen.
+	if doc["format"] != json.Number("2") {
 		t.Fatalf("%s: unknown vector format %v", name, doc["format"])
 	}
 	return doc

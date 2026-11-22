@@ -69,7 +69,7 @@ ATTACK_CLASSES = {
     "base64-alphabet", "base64-noncanonical", "segments", "oversize", "jws-json-serialization", "duplicate-members",
     "json-encoding", "claim-types", "unicode-control", "unicode-homoglyph", "expired", "not-yet-valid", "lifetime",
     "issuer", "audience",
-    "remote-auth", "groups-parsing", "header-missing-user", "header-duplicate", "header-injection", "header-encoding",
+    "remote-auth", "remote-kind", "groups-parsing", "header-missing-user", "header-duplicate", "header-injection", "header-encoding",
     "id-format",
     "jwks-entry", "jwks-shape", "jwks-cache",
     "topbar-href", "topbar-types",
@@ -84,7 +84,10 @@ assert sorted(fresh) == sorted(FILES), sorted(fresh)
 stale = [n for n in FILES if generator._read(os.path.join(VECTORS, n)) != fresh[n]]
 assert not stale, f"stale vectors {stale} — run: python scripts/_gate_vectors.py"
 assert generator.build() == fresh, "the generator is not deterministic"
-ok(f"spec/vectors: {len(FILES)} files current to the generator, two builds identical")
+# Spec version 2: a client checks the format of its vectors, so that a newer file cannot pass an older client unseen.
+assert generator.FORMAT == 2 and all(load(n)["format"] == 2 for n in FILES), [load(n)["format"] for n in FILES]
+assert "Version 2 (format 2 of the vectors)" in generator._read(os.path.join(ROOT, "spec", "gate-client.md"))
+ok(f"spec/vectors: {len(FILES)} files current to the generator, two builds identical, format 2 = spec version 2")
 
 # The generator restores what it patched: gate.issue draws a random jti again afterwards.
 _k = generator._private("A")
@@ -287,9 +290,12 @@ try:
         u = probe.auth.get_user(probe.users[name])
         assert got.user == u["username"] and got.id == str(u["id"]) and got.is_session(), got
         assert list(got.groups) == probe.auth.user_roles(u), (got, probe.auth.user_roles(u))
+        assert got.account_kind == "user" and not got.is_service(), got
+    got = gc.GateClient(mode="header").identify(probe.headers("service", "apikey"))
+    assert got.account_kind == "service" and got.is_service() and not got.is_session(), got
 finally:
     probe.close()
-ok("header mode: the client reads back what _forward_response_headers sends (UTF-8, groups, id, kind)")
+ok("header mode: the client reads back what _forward_response_headers sends (UTF-8, groups, id, kind, account kind)")
 
 # ---------- 5. self-probes: every rule is measured by at least one vector ----------
 before = relax_mod.snapshot()
@@ -328,11 +334,11 @@ INHERENT = {
     # A missing claim has no value a repair could assume; a boolean or a huge exp turns into a wrong lifetime.
     **{f"token/attack-claim-{s}": "claim" for s in ("nbf-missing", "iat-missing", "sub-missing", "iss-missing",
                                                     "exp-bool", "exp-huge", "aud-number",
-                                                    "aud-empty-array")},
+                                                    "aud-empty-array", "kind-type")},
     # exp before nbf: no instant at which the token is valid, the lifetime repaired leaves it expired.
     "token/attack-lifetime-negative": "time",
     # Without Remote-User there is nobody to repair.
-    "headers/user-missing": "nobody", "headers/user-empty": "nobody",
+    "headers/user-missing": "nobody", "headers/user-empty": "nobody", "headers/kind-missing-no-user": "nobody",
 }
 
 

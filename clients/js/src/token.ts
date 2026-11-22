@@ -1,7 +1,7 @@
 // Token mode: the checking order of spec section 4.4, step by step.
 
 import { GateError } from './errors.ts';
-import { Identity } from './identity.ts';
+import { accountKindProblem, Identity } from './identity.ts';
 import { isValidKid } from './keys.ts';
 import { asciiEqualFold, decodeSegment, hasControl, isObject, own, parseStrictJson } from './strict.ts';
 
@@ -15,7 +15,7 @@ export const MAX_LIFETIME = 3600;
 const TOKEN_ALGORITHM = 'EdDSA';
 const TOKEN_TYPE = 'tinysesam-gate+jwt';
 const ALLOWED_HEADER_MEMBERS: ReadonlySet<string> = new Set(['alg', 'typ', 'kid']);
-const IDENTITY_CLAIMS = ['ts_user', 'ts_name', 'ts_email', 'ts_groups', 'ts_id', 'ts_auth'] as const;
+const IDENTITY_CLAIMS = ['ts_user', 'ts_name', 'ts_email', 'ts_groups', 'ts_id', 'ts_auth', 'ts_kind'] as const;
 const SIGNATURE_BYTES = 64;
 const MAX_SAFE = 2n ** 53n - 1n;
 const INTEGER_TEXT = /^-?[0-9]+$/;
@@ -195,6 +195,11 @@ function checkClaims(
   if (iat > nbf) {
     bad('iat later than nbf');
   }
+  // Spec v2: ts_kind present and exactly user or service, never service with a session (its type was checked above).
+  const kindProblem = accountKindProblem(own(m, 'ts_kind'), own(m, 'ts_auth'));
+  if (kindProblem !== null) {
+    bad(kindProblem);
+  }
   if (iss !== rules.issuer) {
     throw new GateError('issuer');
   }
@@ -222,7 +227,10 @@ function checkClaims(
   });
 }
 
-/** Maps the claims of a valid token to the identity (spec section 4.1); a missing claim gives an empty value. */
+/**
+ * Maps the claims of a valid token to the identity (spec section 4.1); a missing claim gives an empty value — except
+ * ts_kind, which checkClaims has required (the Identity constructor refuses an invalid one again).
+ */
 export function identityFromClaims(c: Claims): Identity {
   const str = (name: string): string => {
     const v = own(c.raw as Record<string, unknown>, name);
@@ -235,5 +243,6 @@ export function identityFromClaims(c: Claims): Identity {
     groups: str('ts_groups'),
     id: c.sub,
     auth: str('ts_auth'),
+    accountKind: str('ts_kind'),
   });
 }

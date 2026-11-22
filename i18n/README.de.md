@@ -571,10 +571,13 @@ der Kaskadenebene `tinysesam`, dein `brand_css` gewinnt also immer: ein schlicht
 **Kopfleiste.** Kontoseite, Admin-Panel sowie Einrichtungs-, Reauth- und Zustimmungsseiten tragen eine Leiste: links
 das Anwendungslogo (`brand_icon`, wenn es ein Pfad auf dem eigenen Ursprung oder eine `data:image/…`-Adresse ist,
 sonst ein eingebautes Zeichen in `--ts-accent`), der Name (`gate_brand` oder `rp_name`) und deine Links; rechts das
-Kontomenü — Kontoname, *Konto*, *Admin-Panel* (nur für Admins), *Hell / Dunkel / System* und *Abmelden* (ein POST mit
-CSRF-Feld). Anmelde- und Fehlerseiten zeigen nur Logo und Name. Auf dem Handy (unter 640 px) wandern die Links ins
-Menü; jede Tippfläche ist mindestens 44 px hoch; das Menü folgt der Tastatur (Escape schließt und gibt den Fokus
-zurück, `aria-expanded`).
+Kontomenü — Kontoname, deine Menü-Links, *Konto*, *Admin-Panel* (nur für Admins), *Hell / Dunkel / System* und
+*Abmelden* (ein POST mit CSRF-Feld). Anmelde- und Fehlerseiten zeigen nur Logo und Name. Auf dem Handy (unter 640 px)
+wandern die Links ins Menü (vor die Menü-Links); jede Tippfläche ist mindestens 44 px hoch; das Menü folgt der Tastatur
+(Escape schließt und gibt den Fokus zurück, `aria-expanded`). `brand_icon_title` gibt dem Logo-Bild einen Tooltip
+(`title`, maskiert, höchstens 200 Zeichen) — etwa eine Nennung `"Logo: Example Icons, CC BY 4.0"`; das wirkt nur mit
+einem Bild in `brand_icon`. Ein Tooltip ist keine sichtbare Namensnennung: Verlangt eine Lizenz eine, gehört sie auf
+eine Seite deiner Anwendung.
 
 ```python
 TinySesamConfig(topbar_links=[("Wiki", "/wiki"), ("Dateien", "https://files.example.com/")],
@@ -618,19 +621,36 @@ Rolle, die nicht in `available_roles` steht, ist beim Start eine Warnung (ein Ti
 allen), jedes andere dritte Element ein `ConfigError`. Sichtbarkeit ist Komfort, kein Schutz: Das Ziel prüft den
 Zugang selbst.
 
+**Links im Kontomenü.** `topbar_menu_links` hat dieselbe Form, dieselben Ziele und dieselben Sichtbarkeitsregeln (eine
+Prüfung, ein Filter) und setzt seine Einträge ins Kontomenü — nach *Angemeldet als …*, vor *Konto*, mit eigenem
+Trenner:
+
+```python
+TinySesamConfig(topbar_menu_links=[("Meine Sammlungen", "/collections"),
+                                   ("Moderation", "/mod", {"role": "moderators"}),
+                                   ("App-Verwaltung", "https://app.example.com/admin", {"admin": True})],
+                trusted_redirect_hosts=["app.example.com"], available_roles=["moderators"])
+```
+
+Ohne angemeldetes Konto gibt es kein Menü und damit keinen Menü-Link. Mehr als 10 Einträge sind beim Start eine
+Warnung (das Menü liefe über den Rand); das Gateway liest sie aus `TINYSESAM_TOPBAR_MENU_LINKS` (dieselbe JSON-Form wie
+`TINYSESAM_TOPBAR_LINKS`).
+
 **Die Leiste als Daten.** Eine Anwendung, die ihre Leiste selbst zeichnet (nicht Python oder eigenes Design), fragt
 `GET /auth/topbar.json` mit dem Sitzungs-Cookie der Anfrage und bekommt, was die Leiste diesem Konto zeigen würde:
 
 ```json
 {"brand": "Example", "signed_in": true, "name": "Tara Lead",
  "links": [{"title": "Doku", "href": "/"}, {"title": "Team", "href": "/team"}],
+ "menu_links": [{"title": "Meine Sammlungen", "href": "/collections"}],
  "account": {"shown": true, "href": "https://auth.example.com/auth/account"},
  "admin_panel": {"shown": false, "href": null},
  "logout": {"href": "https://auth.example.com/auth/logout"}}
 ```
 
 TinySesams eigene Pfade sind absolut auf `base_url` (ohne sie relativ zum Mount-Präfix). Ohne Sitzung — auch mit
-einem API-Schlüssel, der kein Kontomenü bekommt — ist `signed_in` false und es gibt keine Links. Die Antwort trägt
+einem API-Schlüssel, der kein Kontomenü bekommt — ist `signed_in` false und es gibt keine Links (`menu_links` steht
+immer da, dann `[]`). Die Antwort trägt
 `Cache-Control: no-store` und `Vary: Cookie` und keinen CORS-Header: Die Seite eines anderen Ursprungs kann sie nicht
 lesen. Hinter dem Gate entfernen die Proxy-Vorlagen TinySesams Cookies vor der Anwendung; eine Anwendung dort holt die
 Daten deshalb vom eigenen Host, `GET /.tinysesam/topbar.json` (jede Proxy-Vorlage reicht `/.tinysesam/*` mit den
@@ -1510,8 +1530,9 @@ httpx.get("https://app.example.com/api/things", auth=sc.httpx_auth())
 requests.get("https://app.example.com/api/things", auth=sc.requests_auth())
 ```
 
-Am Proxy ändert sich nichts: Forward-Auth nimmt das Token an und gibt `Remote-User` (das Dienstkonto) und
-`Remote-Groups` (seine Rollen) weiter — die Anwendung sieht ein gewöhnliches angemeldetes Konto.
+Am Proxy ändert sich nichts: Forward-Auth nimmt das Token an und gibt `Remote-User` (das Dienstkonto),
+`Remote-Groups` (seine Rollen) und `Remote-Kind: service` weiter — die Anwendung sieht ein angemeldetes Konto und
+erkennt, dass es ein Dienst ist.
 
 Was passiert und was es schützt:
 
@@ -1869,7 +1890,7 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   ihrer eigenen Funktion, nicht am Magic-Link — `magiclink_enabled=False` nimmt Bestätigung und
   Einladung nicht mehr mit.
 - **Konto-Seite:** eingebaut unter `/auth/account` (`account_enabled`) — Passwort/PIN/2FA/Passkeys/Keys.
-- **Forward-Auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` bzw.
+- **Forward-Auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email/…/Kind` bzw.
   401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](../deploy/forward-auth/) (Caddy/nginx/Traefik;
   `nginx-path.conf` deckt den anderen häufigen Zuschnitt ab — ein Host, nur einzelne Pfade geschützt,
   dahinter statische Dateien und PHP).
@@ -1892,7 +1913,11 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   `Remote-Auth` nicht `session` ist, fehlen `admin` und alle Delegiertenrollen. Eine App, die ein Profil aus
   `Remote-Groups` pflegt, aktualisiert es nur bei einer `session`-Anfrage und stuft es bei einer Token-Anfrage nie
   herab — sonst kippt das Konto mit jedem API-Aufruf zwischen Admin und Nicht-Admin. Ein leeres oder fehlendes
-  `Remote-Auth` gilt wie ein Token. **Rechte nie an `Remote-User` oder `Remote-Email`
+  `Remote-Auth` gilt wie ein Token. `Remote-Kind` sagt, was das Konto ist — `service` für ein Dienstkonto, sonst
+  `user` — und geht **immer** mit (ein Gate-Token trägt es als Claim `ts_kind`): `Remote-Auth` sagt, wie eine Anfrage
+  hereinkam, `Remote-Kind`, ob ein Mensch oder ein Dienst dahintersteht (ein gepaarter Dienst, der als Mensch handelt,
+  ist `oauth` + `user`). Ein Konto, dessen `is_service` weder 0 noch 1 ist, bekommt 403, nie ein geratenes `user`.
+  **Rechte nie an `Remote-User` oder `Remote-Email`
   binden:** Ein Name oder eine Adresse, die frei wird (Konto gelöscht oder umbenannt), kann ein
   anderes Konto übernehmen und trägt sie dann in die App. Der Proxy muss jeden dieser Header selbst setzen (die
   Beispiele unter `deploy/forward-auth/` tun das), sonst reicht er einen gefälschten durch. Eine Zuordnung benennt sie um oder lässt sie weg: `{"user": "X-WEBAUTH-USER"}`
@@ -1901,7 +1926,11 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   nicht mehr zu geben. Die Vorgabe-Zuordnung ist `TinySesam.FORWARD_HEADERS_DEFAULT`; wer einen Header
   ändern und die übrigen behalten will, geht von einer Kopie aus:
   `forward_headers={**TinySesam.FORWARD_HEADERS_DEFAULT, "user": ["Remote-User", "X-WEBAUTH-USER"]}`.
-  Beim Umbenennen den neuen Namen in der Proxy-Konfiguration mitziehen.
+  Beim Umbenennen den neuen Namen in der Proxy-Konfiguration mitziehen. **Eine Ausnahme von „vollständig“:** Die Felder
+  in `TinySesam.FORWARD_HEADERS_MANDATORY` (`kind`) gehen auch dann mit, wenn die Zuordnung sie weglässt — unter ihrem
+  Vorgabenamen; `{"kind": "X-Account-Kind"}` benennt um, `{"kind": []}` ist ein `ConfigError`. Gate-Clients nach
+  Spezifikation v2 weisen eine Anfrage ohne es ab, also erst TinySesam und die Proxy-Vorlage aktualisieren, dann die
+  Anwendungen (`SECURITY.md`).
 - **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
   `trusted_redirect_hosts`; der Host der eigenen `base_url` zählt immer mit und muss dort nicht
   wiederholt werden). **`cookie_domain` für SSO über Subdomains** — und ohne das Feld gilt: Das
@@ -2132,9 +2161,9 @@ nur die Standardbibliothek und `cryptography`, das `pip install tinysesam` ohneh
 from tinysesam import gate_client
 
 gate = gate_client.GateClient(mode="header", trusted_proxies=["127.0.0.1"])
-who = gate.identify({"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Id": "7"},
-                    peer="127.0.0.1")
-assert who.id == "7" and who.has_role("editors") and who.is_session()
+who = gate.identify({"Remote-User": "anna", "Remote-Groups": "editors", "Remote-Auth": "session", "Remote-Id": "7",
+                     "Remote-Kind": "user"}, peer="127.0.0.1")
+assert who.id == "7" and who.has_role("editors") and who.is_session() and not who.is_service()
 
 try:
     gate.identify({"Remote-User": "anna"}, peer="192.0.2.10")        # nicht vom Proxy
@@ -2143,8 +2172,10 @@ except gate_client.UntrustedPeer:
 ```
 
 - **Header-Modus** (`GateClient(mode="header")`, den die Proxy-Vorlagen heute tragen) liest `Remote-User`, `-Name`, `-Email`,
-  `-Groups`, `-Id` und `-Auth` streng: ein doppeltes Feld, ungültiges UTF-8, ein Steuerzeichen oder eine `Remote-Id`
-  aus anderem als ASCII-Ziffern wird abgewiesen, nie bereinigt. Sicher ist das nur, wenn der Proxy diese Header aus
+  `-Groups`, `-Id`, `-Auth` und `-Kind` streng: ein doppeltes Feld, ungültiges UTF-8, ein Steuerzeichen, eine
+  `Remote-Id` aus anderem als ASCII-Ziffern oder ein `Remote-Kind`, das fehlt, nicht genau `user`/`service` ist oder
+  `service` zusammen mit `Remote-Auth: session`, wird abgewiesen, nie bereinigt oder geraten (Spezifikation Version 2 —
+  sie braucht TinySesam und die Proxy-Vorlagen desselben Release). Sicher ist das nur, wenn der Proxy diese Header aus
   jeder Client-Anfrage entfernt, auf jedem Pfad, und der einzige Weg zur Anwendung ist (Spezifikation §2.1);
   `trusted_proxies` weist Anfragen von jeder anderen Gegenstelle ab. `header_names` folgt umbenannten
   `forward_headers`.
@@ -2157,10 +2188,11 @@ except gate_client.UntrustedPeer:
   Gate-Cookie (`DEFAULT_GATE_COOKIE` oder `cookie_name`) oder `token_header`. Mit dem heutigen `Caddyfile.gate` sieht die Anwendung das Token nie (T-84); der
   Modus wartet auf einen Zustellweg.
 - `gate.verify(jws)` prüft ein Token ohne Anfrage und liefert Identität und Claims.
-- **Die Identität**: `Identity` mit `user`, `name`, `email`, `groups`, `id`, `auth`, `kind`. Eigene Datensätze an `id`
-  hängen. `has_role` vergleicht exakt (`admin` schließt nichts ein). `is_session()` ist nur bei
+- **Die Identität**: `Identity` mit `user`, `name`, `email`, `groups`, `id`, `auth`, `kind`, `account_kind`. Eigene
+  Datensätze an `id` hängen. `has_role` vergleicht exakt (`admin` schließt nichts ein). `is_session()` ist nur bei
   `Remote-Auth: session` wahr; ein leerer oder unbekannter Wert ist ein Token, dessen Gruppen absichtlich unvollständig
-  sind. Namen dürfen jedes Zeichen außer Steuerzeichen enthalten: maskieren.
+  sind. `is_service()` ist nur für ein Dienstkonto wahr (`account_kind == "service"`, aus `Remote-Kind` oder
+  `ts_kind`). Namen dürfen jedes Zeichen außer Steuerzeichen enthalten: maskieren.
 - **Fehler**: `gate.identify` wirft einen `GateError`, dessen `kind` die Klasse der Spezifikation ist —
   `Unauthenticated`, `UntrustedPeer`, `HeaderError`, `InternalError` und unter `TokenError`: `MalformedToken`,
   `KidError`, `SignatureError`, `KeyUnavailable`, `ClaimsError`, `IssuerError`, `AudienceError`, `LifetimeError`,
@@ -2174,11 +2206,13 @@ except gate_client.UntrustedPeer:
   `tinysesam.gate_client` mit Klasse und `kid` protokolliert, nie mit Token oder Header-Wert. Mit `jwks_url` prüft die
   ASGI-Middleware in einem Worker-Thread, ein Schlüsselabruf blockiert die Ereignisschleife also nie. WSGI-Server
   fügen doppelte Header-Felder zusammen, bevor die Anwendung sie sieht; die ASGI-Middleware weist sie ab.
-- **Wächter**: `require_auth(app)`, `require_role("editors")(app)` und `require_session(app)` umhüllen eine WSGI- oder
-  ASGI-Anwendung und antworten 401/403 mit `Cache-Control: no-store` und ohne Grund. Für View-Dekoratoren in jedem
-  Framework liefert `guard_status(identity, role=…, session=…)` `None`, 401 oder 403.
+- **Wächter**: `require_auth(app)`, `require_role("editors")(app)`, `require_session(app)` und
+  `require_account_kind("user")(app)` umhüllen eine WSGI- oder ASGI-Anwendung und antworten 401/403 mit
+  `Cache-Control: no-store` und ohne Grund. Für View-Dekoratoren in jedem Framework liefert
+  `guard_status(identity, role=…, session=…, account_kind=…)` `None`, 401 oder 403.
 - **Kopfleiste** (optional): `parse_topbar(data)` reduziert TinySesams `/.tinysesam/topbar.json` auf das, was
-  angezeigt werden darf (`Topbar`, `TopbarLink`; unsichere Links fallen weg, im Zweifel abgemeldet);
+  angezeigt werden darf (`Topbar`, `TopbarLink`, mit `links` und `menu_links`; unsichere Links fallen weg, im Zweifel
+  abgemeldet);
   `fetch_topbar(url, cookie_header)` holt sie serverseitig nur mit TinySesams Cookies; `Topbar.to_dict()` liefert die
   normalisierte Form aus §8.
 
@@ -2484,7 +2518,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**118 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**120 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

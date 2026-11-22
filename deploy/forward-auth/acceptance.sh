@@ -11,9 +11,12 @@
 #             signs the account out of THIS application ("only here") — go back through the
 #             login page, "Continue as …".
 #   CURL_EXTRA Optional. Additional curl arguments (e.g. --resolve for a test setup).
+#   ECHO      Optional. 1 = the application reflects the request headers it receives in its response body (a
+#             whoami/echo application such as traefik/whoami in deploy/quickstart). Then the script also checks that a
+#             Remote-Kind the client forges never arrives — with a session and on the share path.
 #
 # Checks the behaviour that is visible from outside. The headers the application receives INSIDE
-# are not visible to this script — tests/test_gate_caddy.py checks those against the template.
+# are not visible to this script unless ECHO=1 — tests/test_gate_caddy.py checks those against the template.
 # Exit 0 = all passed, 1 = at least one check failed, 2 = called incorrectly.
 set -u
 
@@ -35,6 +38,14 @@ fetch() {  # fetch <path> [curl arguments …] → writes status to $code, heade
     code="$(printf '%s' "$head" | awk 'NR==1 {print $2}')"
 }
 to_sign_in() { [ "$code" = 302 ] || [ "$code" = 303 ] || [ "$code" = 401 ]; }
+# The response body of a request (for ECHO=1): writes it to $body and the status to $code.
+fetch_body() {  # fetch_body <path> [curl arguments …]
+    local path="$1"; shift
+    body="$(curl -s -w '\n%{http_code}' --path-as-is --max-time 15 "${EXTRA[@]}" "$@" "$APP$path")"
+    code="${body##*$'\n'}"; body="${body%$'\n'*}"
+}
+# A value no TinySesam ever sends: if it shows up in the echo, the proxy passed the client's Remote-Kind on.
+FORGED_KIND="tinysesam-forged-kind-probe"
 
 echo "Acceptance: $APP"
 
@@ -52,6 +63,8 @@ else
 fi
 fetch / -H "Remote-User: admin" -H "Remote-Groups: admin"
 to_sign_in; check "a self-sent Remote-User opens nothing ($code)" $?
+fetch / -H "Remote-User: admin" -H "Remote-Kind: service"
+to_sign_in; check "a self-sent Remote-User with Remote-Kind: service opens nothing ($code)" $?
 fetch /.tinysesam/after-logout
 [ "$code" = 200 ]; check "/.tinysesam/* reaches TinySesam past the gate ($code)" $?
 
@@ -64,12 +77,23 @@ if [ -n "$SHARE" ]; then
         fetch "$trick"
         to_sign_in; check "Path trick $trick stays closed ($code)" $?
     done
+    if [ "${ECHO:-}" = 1 ]; then
+        fetch_body "$SHARE" -H "Remote-Kind: $FORGED_KIND" -H "Remote-User: admin"
+        [ "$code" = 200 ] && ! printf '%s' "$body" | grep -q "$FORGED_KIND"
+        check "a forged Remote-Kind does not reach the application on the share path ($code)" $?
+    fi
 fi
 
 # --- with sign-in (test account) ---
 if [ -n "$SESSION" ]; then
     fetch / -H "Cookie: $SESSION"
     [ "$code" = 200 ]; check "with session: / is open ($code)" $?
+    if [ "${ECHO:-}" = 1 ]; then
+        fetch_body / -H "Cookie: $SESSION" -H "Remote-Kind: $FORGED_KIND"
+        [ "$code" = 200 ] && ! printf '%s' "$body" | grep -q "$FORGED_KIND" \
+            && printf '%s' "$body" | grep -qiE 'remote-kind"?: *"?(user|service)'
+        check "with session: the application gets TinySesam's Remote-Kind, never a forged one ($code)" $?
+    fi
     gate="$(printf '%s' "$head" | tr -d '\r' | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-tinysesam_gate=[^;]*\).*/\1/p' | head -1)"
     if [ -n "$gate" ]; then
         echo "  ok   gate token issued"

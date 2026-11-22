@@ -9,7 +9,7 @@ as `Remote-*` headers. It must remove those headers from every client request an
 
 Try it without a proxy:
 
-    curl -H 'Remote-User: anna' -H 'Remote-Groups: editors' -H 'Remote-Auth: session' http://127.0.0.1:8081/reports
+    curl -H 'Remote-User: anna' -H 'Remote-Groups: editors' -H 'Remote-Auth: session' -H 'Remote-Kind: user' http://127.0.0.1:8081/reports
 """
 import functools
 import html

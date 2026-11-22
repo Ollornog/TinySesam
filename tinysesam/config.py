@@ -50,6 +50,17 @@ class TinySesamConfig:
     #: everyone. Visibility is a convenience, not a protection: the target checks access itself. Pages without the
     #: account menu (sign-in, errors) show no links at all. The same filter answers `GET /auth/topbar.json`.
     topbar_links: list = field(default_factory=list)
+    #: Links in the account menu of the top bar, after "Signed in as …" and before "Account", with a separator of
+    #: their own: `[("My collections", "/collections"), ("Moderation", "/mod", {"role": "moderators"})]`. The same
+    #: shape, targets and visibility rules as `topbar_links` (one check, one filter); at most 10 are recommended (a
+    #: warning above, the menu would run off the screen). Without a signed-in account there is no menu and so no
+    #: menu link. `GET /auth/topbar.json` answers them as `menu_links`. Visibility is a convenience, not a protection.
+    topbar_menu_links: list = field(default_factory=list)
+    #: Tooltip of the logo image (`title` on the `<img>` of `brand_icon`), e.g. a credit "Logo: Example Icons,
+    #: CC BY 4.0". At most 200 characters, no control characters; escaped. Empty (default) = no attribute. Works only
+    #: with an image in `brand_icon` (not with the built-in mark or "none"). A tooltip is no visible credit: when a
+    #: licence asks for one, name it on a page of the application.
+    brand_icon_title: str = ""
 
     # --- Roles/groups ---
     # Does an admin satisfy EVERY require_role(...) check? Default True (classic behaviour).
@@ -151,8 +162,11 @@ class TinySesamConfig:
     # Which headers the forward-auth response sets. Empty = the Authelia-style set
     # Remote-User/-Name/-Email/-Groups, Remote-Id (the account ID — stable across renames and
     # mail changes, since 2026-09-25) and Remote-Auth (how the request signed in: `session`, `oauth`, `apikey`
-    # or `app-password`; a valid gate token counts as `session` — T-75). Otherwise **field → header name** (or list
-    # of names); what is not listed here is NOT set. Fields: user · name · email · groups · id · auth.
+    # or `app-password`; a valid gate token counts as `session` — T-75) and Remote-Kind (what the account is: `user`,
+    # or `service` for a service account). Otherwise **field → header name** (or list of names); what is not listed
+    # here is NOT set — except `kind`, which is always sent: left out, it goes under `Remote-Kind`; it can be renamed
+    # (`{"kind": "X-Account-Kind"}`) but not dropped (gate clients after spec v2 refuse a request without it).
+    # Fields: user · name · email · groups · id · auth · kind.
     # The proxy must set EVERY configured header itself (overwrite) — otherwise it passes on one
     # of the same name sent by the browser (deploy/forward-auth/*).
     #   {"user": "X-WEBAUTH-USER"}                     → Grafana style, and nothing else

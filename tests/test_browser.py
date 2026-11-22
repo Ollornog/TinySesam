@@ -97,7 +97,7 @@ _t33_db = os.path.join(tempfile.mkdtemp(), "t33.db")
 t33 = _TinySesam(_TinySesamConfig(
     db_path=_t33_db, cookie_secure=False, cookie_prefix="tst33_", passkey_enabled=False, lang="en",
     magiclink_enabled=True, magiclink_self_request=False, qr_login_enabled=True, base_url=T33,
-    topbar_links=[("Home", "/"), ("Docs", "/docs")],
+    topbar_links=[("Home", "/"), ("Docs", "/docs")], topbar_menu_links=[("My things", "/things")],
     # The accounts here have no second factor; the default refusal for them (T-44) is measured in
     # tests/test_h2_hardening.py — the browser measures the page, the number and the step-up.
     qr_login_require_second_factor=False))
@@ -2043,8 +2043,19 @@ async def _top_bar(p):
         pop = await p.js("JSON.stringify(document.querySelector('.tsbar-pop').getBoundingClientRect())")
         box = json.loads(pop)
         assert box["left"] >= 0 and box["right"] <= 390, f"the menu leaves the screen on {path}: {box}"
-    print("  top bar at 390 px: links in the menu, tap targets ≥ 44 px, menu on screen, no sideways scrolling")
+        # topbar_menu_links: below "Signed in as", after the bar links, before "Account" — in the rendered order.
+        order = await p.js("[...document.querySelectorAll('.tsbar-pop a')].filter(a=>a.offsetHeight)"
+                           ".map(a=>a.textContent.trim()).join()")
+        assert order.startswith("Home,Docs,My things,Account"), f"menu order at 390 px on {path}: {order}"
+    print("  top bar at 390 px: links in the menu (bar links, then menu links, then Account), tap targets ≥ 44 px, "
+          "menu on screen, no sideways scrolling")
     await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=820, deviceScaleFactor=1, mobile=False)
+    await go("/auth/account")
+    await p.js("document.querySelector('.tsbar-btn').click();true")
+    order = await p.js("[...document.querySelectorAll('.tsbar-pop a')].filter(a=>a.offsetHeight)"
+                       ".map(a=>a.textContent.trim()).join()")
+    assert order.startswith("My things,Account"), f"menu order at 1280 px: {order}"
+    print("  top bar at 1280 px: the menu link comes right after “Signed in as”, before Account")
 
     # 6) Sign out through the menu: a POST with the CSRF field, the session is gone.
     await go("/auth/account")

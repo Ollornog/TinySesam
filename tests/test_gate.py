@@ -189,7 +189,8 @@ r = sign_in(app2, "bee").get("/auth/forward", headers=PROXY)
 _, t2 = token_from(r)
 content2 = gate.check(base64.b64decode(auth2.gate_public_key()), t2, aud="app.example.com", iss=ISS,
                     now=int(time.time()))
-assert {k for k in content2 if k.startswith("ts_")} == {"ts_user"}, content2
+# ts_kind is a mandatory slot (spec v2): in every token, whatever forward_headers lists.
+assert {k for k in content2 if k.startswith("ts_")} == {"ts_user", "ts_kind"}, content2
 ok("forward_headers is the complete list — also for the claims (no address if it is missing)")
 
 # Names beyond ASCII and with control characters (come from the foreign IdP with OIDC/SAML). Directly

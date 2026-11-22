@@ -22,6 +22,7 @@ type Topbar struct {
 	SignedIn   bool         `json:"signed_in"`
 	Name       *string      `json:"name"`
 	Links      []TopbarLink `json:"links"`
+	MenuLinks  []TopbarLink `json:"menu_links"` // the entries of the account menu (spec v2); [] when there are none
 	Account    *string      `json:"account"`
 	AdminPanel *string      `json:"admin_panel"`
 	Logout     *string      `json:"logout"`
@@ -30,7 +31,7 @@ type Topbar struct {
 // ParseTopbar normalizes the body of /.tinysesam/topbar.json or /auth/topbar.json. Anything but a JSON object with
 // signed_in true (the boolean) and a string name counts as signed out; unsafe links are dropped.
 func ParseTopbar(body []byte) Topbar {
-	out := Topbar{Links: []TopbarLink{}}
+	out := Topbar{Links: []TopbarLink{}, MenuLinks: []TopbarLink{}}
 	v, err := decodeStrictJSON(body)
 	if err != nil {
 		return out
@@ -47,18 +48,7 @@ func ParseTopbar(body []byte) Topbar {
 		return out
 	}
 	out.SignedIn, out.Name = true, &name
-	links, _ := data["links"].([]any)
-	for _, l := range links {
-		m, ok := l.(map[string]any)
-		if !ok {
-			continue
-		}
-		title, ok1 := m["title"].(string)
-		href, ok2 := m["href"].(string)
-		if ok1 && ok2 && safeHref(href) {
-			out.Links = append(out.Links, TopbarLink{Title: title, Href: href})
-		}
-	}
+	out.Links, out.MenuLinks = topbarLinks(data["links"]), topbarLinks(data["menu_links"])
 	shown := func(slot string) *string {
 		m, ok := data[slot].(map[string]any)
 		if !ok {
@@ -76,6 +66,24 @@ func ParseTopbar(body []byte) Topbar {
 	if m, ok := data["logout"].(map[string]any); ok {
 		if href, ok := m["href"].(string); ok && safeHref(href) {
 			out.Logout = &href
+		}
+	}
+	return out
+}
+
+// topbarLinks keeps the safe {title, href} entries of a link list; anything that is no list counts as none.
+func topbarLinks(raw any) []TopbarLink {
+	out := []TopbarLink{}
+	list, _ := raw.([]any)
+	for _, l := range list {
+		m, ok := l.(map[string]any)
+		if !ok {
+			continue
+		}
+		title, ok1 := m["title"].(string)
+		href, ok2 := m["href"].(string)
+		if ok1 && ok2 && safeHref(href) {
+			out = append(out, TopbarLink{Title: title, Href: href})
 		}
 	}
 	return out
@@ -104,7 +112,7 @@ var errTopbarStatus = errors.New("tinysesam: top bar answered with a status othe
 // with a deadline of FetchTimeout and a body limit of 64 KiB. On any failure it returns the signed-out top bar and
 // the error. Do not cache the result across sessions.
 func FetchTopbar(ctx context.Context, client *http.Client, topbarURL string, r *http.Request) (Topbar, error) {
-	signedOut := Topbar{Links: []TopbarLink{}}
+	signedOut := Topbar{Links: []TopbarLink{}, MenuLinks: []TopbarLink{}}
 	if client == nil {
 		client = http.DefaultClient
 	}

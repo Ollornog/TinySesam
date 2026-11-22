@@ -7358,9 +7358,18 @@ class TinySesam:
     #: confuses nobody after a change.
     #: `Remote-Auth` (T-75) says HOW the request signed in — an application whose `Remote-Groups` differ between a
     #: browser session and a token (a token never carries `admin`) can tell why.
+    #: `Remote-Kind` says WHAT the account is: `service` for a service account (`is_service`), otherwise `user`. It is
+    #: always sent (see `FORWARD_HEADERS_MANDATORY`): a gate client after spec v2 refuses a request without it.
     FORWARD_HEADERS_DEFAULT = {"user": "Remote-User", "name": "Remote-Name",
                                "email": "Remote-Email", "groups": "Remote-Groups", "id": "Remote-Id",
-                               "auth": "Remote-Auth"}
+                               "auth": "Remote-Auth", "kind": "Remote-Kind"}
+    #: Slots sent even when an own `forward_headers` mapping leaves them out — under their default name. A slot here
+    #: can be renamed (`{"kind": "X-Account-Kind"}`), never dropped: failing closed at the client works only when the
+    #: server always delivers the value. The account kind is no personal data, so it needs no switch to omit it.
+    FORWARD_HEADERS_MANDATORY = ("kind",)
+    #: The value of `Remote-Kind` per value of `users.is_service` (a `NOT NULL DEFAULT 0` column). Anything else is
+    #: refused, never guessed as `user`.
+    _ACCOUNT_KINDS = {0: "user", 1: "service"}
     #: The value of `Remote-Auth` per way in (`_via` of the account dict). A gate token is issued only for a session
     #: and carries `session` as a signed claim. An unknown way gives an empty value, never a guessed kind (the templates
     #: set nothing for an empty value, T-58).
@@ -7385,10 +7394,32 @@ class TinySesam:
             raise HTTPException(403, self.t("api.name_invalid"))
         values = self._forward_values(user)
         out = {}
-        for slot, names in (self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT).items():
+        for slot, names in self._forward_header_map().items():
             for name in ([names] if isinstance(names, str) else names):
                 out[name] = self._header_value(values[slot])
         return out
+
+    def _forward_header_map(self) -> dict:
+        """slot → header name(s): `config.forward_headers` (or the default), plus every mandatory slot it leaves out
+        under its default name (`FORWARD_HEADERS_MANDATORY`)."""
+        fields = dict(self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT)
+        for slot in self.FORWARD_HEADERS_MANDATORY:
+            fields.setdefault(slot, self.FORWARD_HEADERS_DEFAULT[slot])
+        return fields
+
+    def _account_kind(self, user) -> str:
+        """`service` or `user` from `is_service` — exactly 0 or 1 (an int or a bool). Anything else, or a missing
+        field, is refused with 403 and a security log line: failing closed, never guessed as `user` (like a name with
+        control characters)."""
+        try:
+            raw = user["is_service"]
+        except (KeyError, IndexError, TypeError):
+            raw = None
+        if type(raw) in (int, bool) and raw in self._ACCOUNT_KINDS:
+            return self._ACCOUNT_KINDS[int(raw)]
+        security.seclog.warning("forward-auth rejected: unexpected account kind (user_id=%s)",
+                                user["id"] if isinstance(user, dict) else "?")
+        raise HTTPException(403, self.t("api.kind_invalid"))
 
     def _forward_values(self, user) -> dict:
         """The values behind the forward-auth headers and the claims of the gate token — ONE source,
@@ -7400,6 +7431,7 @@ class TinySesam:
             "email": str(user["email"] or ""),
             "groups": ",".join(self.user_roles(user) + (["admin"] if user["is_admin"] else [])),
             "auth": self._FORWARD_AUTH_KINDS.get(str(user.get("_via") or ""), "") if isinstance(user, dict) else "",
+            "kind": self._account_kind(user),
         }
 
     def gate_public_key(self) -> str:
@@ -7511,7 +7543,12 @@ class TinySesam:
         s = session if session is not None else self._session_from_request(request)
         if not s or not s["mfa_ok"] or s["user_id"] != user["id"]:
             return None
-        fields = self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT
+        # A service account has no session, so this is unreachable today; the bolt keeps it that way should one ever
+        # come by: a gate token says `ts_auth=session`, and `service` with `session` is an error at every client.
+        if user["is_service"]:
+            return None
+        # Every mandatory slot is in the token too, whatever `forward_headers` lists: `ts_kind` is always signed.
+        fields = self._forward_header_map()
         values = self._forward_values(user)
         # The token stands for the session row checked above, whatever way the account dict came in (T-75): signed,
         # so the fast path at the proxy says `Remote-Auth: session` exactly like the way back through /auth/forward.
@@ -7922,8 +7959,9 @@ class TinySesam:
 
     def topbar_data(self, user=None, *, base: Optional[str] = None) -> dict:
         """The top bar as data (T-76) for an account — the same answer `GET /auth/topbar.json` gives its session: the
-        links of `topbar_links` this account may see (`{"title", "href"}`), its display name, whether *Account* and
-        *Admin panel* appear and where they lead, the sign-out address.
+        links of `topbar_links` this account may see (`{"title", "href"}`), those of `topbar_menu_links` as
+        `menu_links` (the account menu, always present, `[]` without an account), its display name, whether *Account*
+        and *Admin panel* appear and where they lead, the sign-out address.
 
         For an application that uses TinySesam as a library but draws its UI elsewhere (a single-page app, a
         template engine of another language): hand it this dict, e.g. for the account behind `Remote-Id` or
@@ -8557,6 +8595,13 @@ class TinySesam:
             if unknown:
                 raise ConfigError(f"forward_headers: unknown field {unknown} — allowed are "
                                  f"{sorted(permitted)}")
+            # A mandatory slot can be renamed, never dropped: an empty list would be a hidden omission.
+            for slot in self.FORWARD_HEADERS_MANDATORY:
+                if slot in config.forward_headers and not config.forward_headers[slot]:
+                    raise ConfigError(
+                        f"forward_headers[{slot!r}] is always sent (gate clients after spec v2 refuse a request "
+                        f"without it) — rename it ({{{slot!r}: \"X-Account-Kind\"}}) or leave it out of the mapping "
+                        f"to keep {self.FORWARD_HEADERS_DEFAULT[slot]!r}; an empty value cannot drop it")
             for slot, names in config.forward_headers.items():
                 for name in ([names] if isinstance(names, str) else names or []):
                     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):

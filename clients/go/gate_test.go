@@ -254,8 +254,8 @@ func TestHeaderMode(t *testing.T) {
 		return r
 	}
 	session := map[string]string{"Remote-User": "anna", "Remote-Id": "1", "Remote-Groups": "editors",
-		"Remote-Auth": "session"}
-	token := map[string]string{"Remote-User": "anna", "Remote-Id": "1", "Remote-Groups": "admin"}
+		"Remote-Auth": "session", "Remote-Kind": "user"}
+	token := map[string]string{"Remote-User": "anna", "Remote-Id": "1", "Remote-Groups": "admin", "Remote-Kind": "user"}
 	cases := []struct {
 		name, remote, path string
 		headers            map[string]string
@@ -284,11 +284,82 @@ func TestHeaderMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id, err := rg.Identify(req("192.0.2.10:1", "/", map[string]string{"X-Ts-User": "anna", "X-Ts-Groups": "a"})); err != nil || id.User != "anna" || !id.HasRole("a") {
+	if id, err := rg.Identify(req("192.0.2.10:1", "/", map[string]string{"X-Ts-User": "anna", "X-Ts-Groups": "a", "Remote-Kind": "user"})); err != nil || id.User != "anna" || !id.HasRole("a") {
 		t.Errorf("renamed headers: %v", err)
 	}
 	if _, err := rg.Identify(req("192.0.2.10:1", "/", map[string]string{"Remote-User": "anna"})); ClassOf(err) != ClassUnauthenticated {
 		t.Errorf("default name after renaming: class %v", ClassOf(err))
+	}
+}
+
+// Spec v2: the account kind — renamed header, missing value, unauthenticated first, guard, token claim.
+func TestAccountKind(t *testing.T) {
+	g, err := New(Config{Mode: HeaderMode, HeaderNames: HeaderNames{Kind: "X-Account-Kind"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := func(headers map[string]string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		for k, v := range headers {
+			r.Header.Set(k, v)
+		}
+		return r
+	}
+	id, err := g.Identify(req(map[string]string{"Remote-User": "bot", "Remote-Auth": "apikey",
+		"X-Account-Kind": "service", "Remote-Kind": "user"}))
+	if err != nil || id.AccountKind != AccountService || !id.IsService() || id.IsSession() {
+		t.Fatalf("renamed kind header: %v %+v", err, id)
+	}
+	_, err = g.Identify(req(map[string]string{"Remote-User": "anna", "Remote-Kind": "user"}))
+	if ClassOf(err) != ClassHeader || !strings.Contains(err.Error(), "older than spec v2") ||
+		strings.Contains(err.Error(), "anna") {
+		t.Errorf("default kind name after renaming: %v", err)
+	}
+	if _, err := IdentityFromHeaders(http.Header{"Remote-Groups": {"admin"}}); ClassOf(err) != ClassUnauthenticated {
+		t.Errorf("no user and no kind: %v, want unauthenticated", err)
+	}
+	person, err := IdentityFromHeaders(http.Header{"Remote-User": {"anna"}, "Remote-Auth": {"oauth"},
+		"Remote-Kind": {"user"}})
+	if err != nil || person.IsService() || person.Kind != KindToken || person.AccountKind != AccountUser {
+		t.Fatalf("a paired service acting as a person: %v %+v", err, person)
+	}
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	for _, c := range []struct {
+		kind AccountKind
+		who  *Identity
+		want int
+	}{{AccountUser, person, 200}, {AccountUser, id, 403}, {AccountService, id, 200}, {AccountService, person, 403},
+		{AccountUser, nil, 401}} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		if c.who != nil {
+			r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, c.who))
+		}
+		if rec := serve(RequireAccountKind(c.kind, ok), r); rec.Code != c.want {
+			t.Errorf("RequireAccountKind(%s) for %+v: %d, want %d", c.kind, c.who, rec.Code, c.want)
+		}
+	}
+	// Token mode: ts_kind is mandatory and exact.
+	ks, err := NewStaticKeySet(testGateKey(t, "A"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg := &Gate{mode: TokenMode, static: ks, rules: tokenRules{issuer: testIssuer, audience: testAudience},
+		now: func() int64 { return testNow }}
+	for name, change := range map[string]any{"missing": nil, "case": "User", "number": 1, "unknown": "admin"} {
+		c := sessionClaims("editors")
+		if change == nil {
+			delete(c, "ts_kind")
+		} else {
+			c["ts_kind"] = change
+		}
+		if _, _, err := tg.Verify(context.Background(), mint(t, "A", c)); ClassOf(err) != ClassClaims {
+			t.Errorf("ts_kind %s: %v, want claims", name, err)
+		}
+	}
+	c := sessionClaims("editors")
+	c["ts_kind"], c["ts_auth"] = "service", "apikey"
+	if id, _, err := tg.Verify(context.Background(), mint(t, "A", c)); err != nil || !id.IsService() {
+		t.Errorf("a service token: %v %+v", err, id)
 	}
 }
 

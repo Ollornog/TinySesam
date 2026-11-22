@@ -195,7 +195,7 @@ Replace a whole built-in page with `auth.set_template(name, fn)`; `fn(auth, ctx)
 
 TinySesam runs as its own service; the proxy asks `GET /auth/forward` for every request (alias `/auth/verify`):
 `200` plus `Remote-User`, `Remote-Groups`, `Remote-Email`, `Remote-Name`, `Remote-Id`, `Remote-Auth` (`session`, `oauth`,
-`apikey`, `app-password`) → pass; `401` plus
+`apikey`, `app-password`) and `Remote-Kind` (`user` or `service`, always sent) → pass; `401` plus
 `X-TinySesam-Location` → redirect to sign-in; `403` with `X-TinySesam-Reason: role` → wrong role.
 
 **Fastest way: the quickstart stack** `deploy/quickstart/` — gateway, Caddy with caddy-jwt (image

@@ -16,6 +16,7 @@ Configuration via environment variables:
                                                the start therefore warns loudly (B3-9)
     TINYSESAM_OIDC_NAME                        label of the sign-in button (default "SSO"), e.g. "PocketID"
     TINYSESAM_BRAND_ICON                       favicon of all pages: path (/…) or data:image/… URI, never a foreign URL
+    TINYSESAM_BRAND_ICON_TITLE                 tooltip of the logo image in the top bar (at most 200 characters)
     TINYSESAM_BRAND_BACKGROUNDS                background images (space-separated), cross-fade; covered very dark
     TINYSESAM_BRAND_BACKGROUNDS_EXTERN         1 = https addresses allowed (fetched from third parties; otherwise startup error)
     TINYSESAM_BRAND_BACKGROUND_SECONDS         display time per image (default 12)
@@ -54,6 +55,7 @@ Configuration via environment variables:
     TINYSESAM_TOPBAR_LINKS                     JSON list of [title, target] pairs for the top bar of the
                                                gateway's pages: [["Wiki", "/wiki"]] — a path on the gateway's
                                                origin or an https address on a protected host
+    TINYSESAM_TOPBAR_MENU_LINKS                the same for the account menu (before "Account"), same rules
     TINYSESAM_FORWARD_LOGIN                    direct (default: page request → provider → back) or
                                                page (first the login page with the name of the application)
     TINYSESAM_FORWARD_LOGOUT                   all (default: session and provider), app (only this
@@ -186,6 +188,7 @@ def config_from_env() -> TinySesamConfig:
         oidc_name=os.environ.get("TINYSESAM_OIDC_NAME", "").strip() or "SSO",
         gate_brand=os.environ.get("TINYSESAM_GATE_BRAND", "").strip(),
         brand_icon=_favicon(),
+        brand_icon_title=os.environ.get("TINYSESAM_BRAND_ICON_TITLE", "").strip(),
         brand_backgrounds=_background(),
         brand_background_seconds=int(os.environ.get("TINYSESAM_BRAND_BACKGROUND_SECONDS", "12") or 12),
         brand_background_credit_text=os.environ.get("TINYSESAM_BRAND_BACKGROUND_CREDIT_TEXT", "").strip(),
@@ -208,28 +211,29 @@ def config_from_env() -> TinySesamConfig:
         oauth_resources=_split("TINYSESAM_OAUTH_RESOURCES"),
         oauth_service_clients=_switch("TINYSESAM_OAUTH_SERVICE_CLIENTS"),
         topbar_links=_topbar_links(),
+        topbar_menu_links=_topbar_links("TINYSESAM_TOPBAR_MENU_LINKS"),
     )
 
 
-def _topbar_links() -> list:
+def _topbar_links(name: str = "TINYSESAM_TOPBAR_LINKS") -> list:
     """TINYSESAM_TOPBAR_LINKS: links in the top bar of the gateway's pages, a JSON list of [title, target] pairs —
     `[["Wiki", "/wiki"], ["Files", "https://files.example.com/"]]` —, each optionally with a visibility as third
-    element (T-76): `["Admin", "/admin", {"admin": true}]`, `["Team", "/team", {"role": "teamadmin"}]`. What a target
-    and a visibility may be is checked by `config_check` (own origin, `base_url` or a protected host; exactly one of
-    admin/role); the shape is checked here, so a broken value ends the start instead of leaving the bar silently
-    empty."""
+    element (T-76): `["Admin", "/admin", {"admin": true}]`, `["Team", "/team", {"role": "teamadmin"}]`. The same for
+    TINYSESAM_TOPBAR_MENU_LINKS (the links of the account menu). What a target and a visibility may be is checked by
+    `config_check` (own origin, `base_url` or a protected host; exactly one of admin/role); the shape is checked here,
+    so a broken value ends the start instead of leaving the bar silently empty."""
     import json
-    raw = os.environ.get("TINYSESAM_TOPBAR_LINKS", "").strip()
+    raw = os.environ.get(name, "").strip()
     if not raw:
         return []
     try:
         value = json.loads(raw)
     except ValueError as e:
-        raise SystemExit(f"TINYSESAM_TOPBAR_LINKS is not valid JSON: {e}")
+        raise SystemExit(f"{name} is not valid JSON: {e}")
     if not isinstance(value, list) or not all(isinstance(z, list) and len(z) in (2, 3)
                                               and all(isinstance(x, str) for x in z[:2])
                                               and (len(z) == 2 or isinstance(z[2], dict)) for z in value):
-        raise SystemExit('TINYSESAM_TOPBAR_LINKS must be a list of [title, target] pairs, each optionally with a '
+        raise SystemExit(f'{name} must be a list of [title, target] pairs, each optionally with a '
                          'visibility: [["Wiki", "/wiki"], ["Admin", "/admin", {"admin": true}]]')
     return [tuple(z) for z in value]
 

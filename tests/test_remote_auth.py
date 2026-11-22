@@ -291,7 +291,7 @@ _c = (ROOT / CADDYFILES[0]).read_text(encoding="utf-8")
 assert caddy_gaps(_c.replace("request_header -Remote-Auth", "", 1)), "Caddy rule blind for the strip"
 assert caddy_gaps(_c.replace("request_header @ts_auth Remote-Auth", "request_header @ts_auth X-Other", 1))
 _g = (ROOT / CADDYFILES[1]).read_text(encoding="utf-8")
-assert gate_fast_path_gaps(_g.replace(" ts_auth\n", "\n", 1)), "gate rule blind for meta_claims"
+assert gate_fast_path_gaps(_g.replace(" ts_auth ts_kind\n", " ts_kind\n", 1)), "gate rule blind for meta_claims"
 assert gate_fast_path_gaps(_g.replace("header_up Remote-Auth {http.auth.user.ts_auth}", "", 1))
 _n = (ROOT / "deploy/forward-auth/nginx.conf").read_text(encoding="utf-8")
 assert nginx_gaps(_n.replace("proxy_set_header Remote-Auth $ts_auth;", "", 1)), "nginx rule blind"
@@ -300,5 +300,14 @@ assert fastcgi_gaps(_p.replace('fastcgi_param HTTP_REMOTE_AUTH   "";', "", 1)), 
 assert fastcgi_gaps(_p.replace("fastcgi_param HTTP_REMOTE_ID     $ts_id;", "", 1)), "FastCGI rule blind (Remote-Id)"
 _t = (ROOT / "deploy/forward-auth/traefik.yml").read_text(encoding="utf-8")
 assert traefik_gaps(_t.replace('          - "Remote-Auth"\n', "", 1)), "Traefik rule blind"
+# Remote-Kind (spec v2) the same way: the strip, the way back, the fast path, meta_claims, nginx, FastCGI, Traefik.
+assert caddy_gaps(_c.replace("request_header -Remote-Kind", "", 1)), "Caddy rule blind for the Remote-Kind strip"
+assert caddy_gaps(_c.replace("request_header @ts_kind Remote-Kind", "request_header @ts_kind X-Other", 1))
+assert gate_fast_path_gaps(_g.replace(" ts_kind\n", "\n", 1)), "gate rule blind for ts_kind in meta_claims"
+assert gate_fast_path_gaps(_g.replace("header_up Remote-Kind {http.auth.user.ts_kind}", "", 1))
+assert nginx_gaps(_n.replace("proxy_set_header Remote-Kind $ts_kind;", "", 1))
+assert fastcgi_gaps(_p.replace('fastcgi_param HTTP_REMOTE_KIND   "";', "", 1))
+assert fastcgi_gaps(_p.replace("fastcgi_param HTTP_REMOTE_KIND   $ts_kind;", "", 1))
+assert traefik_gaps(_t.replace('          - "Remote-Kind"\n', "", 1))
 ok(f"A6 (templates): {len(CHECKS)} checks over Caddy ×4, the gate fast path, nginx, nginx/FastCGI and Traefik — "
    "every Remote-* incl. Remote-Auth stripped and set from TinySesam; self-probes see a missing line")

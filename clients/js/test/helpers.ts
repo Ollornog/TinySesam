@@ -22,7 +22,8 @@ export function vectorFiles(): string[] {
 
 export function loadVectors(name: string): Json {
   const doc = JSON.parse(readFileSync(new URL(name, VECTOR_DIR), 'utf8'));
-  if (doc.format !== 1) {
+  // Spec version 2 (Remote-Kind, ts_kind, menu_links): vectors of another version must not pass unseen.
+  if (doc.format !== 2) {
     throw new Error(`${name}: unknown vector format ${doc.format}`);
   }
   return doc;
@@ -112,5 +113,6 @@ export function sessionClaims(groups = 'editors', now = DEFAULTS.now): Record<st
     ts_groups: groups,
     ts_id: '1',
     ts_auth: 'session',
+    ts_kind: 'user',
   };
 }
