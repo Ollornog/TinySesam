@@ -329,7 +329,7 @@ jobs:
           persist-credentials: false
       - name: Build the image, start it, check HEALTHCHECK and /healthz
         run: scripts/_image_probe.sh
-      # CVE scan of the image just built (H1, ASVS 15.2.1): pip-audit (audit.yml) sees the Python packages, not the
+      # CVE scan of the image just built (H1, ASVS 15.2.1): the Python audit (audit.yml) sees the Python packages, not the
       # OS packages of the base (distroless since T-59, plus the libraries the Dockerfile copies with their dpkg record).
       # Red on every finding of severity high or above that has a fix;
       # exceptions only in .grype.yaml with an end date (SECURITY.md, "Vulnerable dependencies"), checked first.
@@ -639,11 +639,60 @@ jobs:
           path: .
       - name: "Dress rehearsal: sample file"
         run: echo "TinySesam dress rehearsal ${GITHUB_SHA} — no artifact" > rehearsal.txt
-      - name: "Dress rehearsal: attest provenance"
+      # Up to three attempts per attestation (2026-11-22, three red runs in one day): Sigstore's client retries a
+      # timed-out tlog write, gets "409 entry exists" for its own first write, fetches that entry and the transparency
+      # log answers 404 ("error fetching tlog entry"). A 404 is not retryable in sigstore-js (every release up to
+      # @sigstore/sign 5.1.0), and the attest actions offer no retry input. A new attempt signs with a fresh key, so it
+      # never meets the old entry. Attempts 1 and 2 may fail softly, each pause and attempt runs only after a failure,
+      # attempt 3 has no continue-on-error: three failures keep the job red, and the verify step below checks what was
+      # attested — nothing red is swallowed. tests/test_repo.py pins that shape.
+      - name: "Dress rehearsal: attest provenance (attempt 1)"
+        id: provenance-1
+        continue-on-error: true
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: rehearsal.txt
-      - name: "Dress rehearsal: attest SBOM"
+      - name: "Dress rehearsal: pause before attempt 2 (provenance)"
+        if: steps.provenance-1.outcome == 'failure'
+        run: sleep 20
+      - name: "Dress rehearsal: attest provenance (attempt 2)"
+        id: provenance-2
+        if: steps.provenance-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: rehearsal.txt
+      - name: "Dress rehearsal: pause before attempt 3 (provenance)"
+        if: steps.provenance-2.outcome == 'failure'
+        run: sleep 60
+      - name: "Dress rehearsal: attest provenance (attempt 3)"
+        if: steps.provenance-2.outcome == 'failure'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: rehearsal.txt
+      - name: "Dress rehearsal: attest SBOM (attempt 1)"
+        id: sbom-1
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: rehearsal.txt
+          sbom-path: sbom.spdx.json
+      - name: "Dress rehearsal: pause before attempt 2 (SBOM)"
+        if: steps.sbom-1.outcome == 'failure'
+        run: sleep 20
+      - name: "Dress rehearsal: attest SBOM (attempt 2)"
+        id: sbom-2
+        if: steps.sbom-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: rehearsal.txt
+          sbom-path: sbom.spdx.json
+      - name: "Dress rehearsal: pause before attempt 3 (SBOM)"
+        if: steps.sbom-2.outcome == 'failure'
+        run: sleep 60
+      - name: "Dress rehearsal: attest SBOM (attempt 3)"
+        if: steps.sbom-2.outcome == 'failure'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-path: rehearsal.txt

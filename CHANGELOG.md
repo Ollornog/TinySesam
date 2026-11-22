@@ -4,6 +4,22 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — the dress rehearsal tries each attestation up to three times (Sigstore tlog 404)
+
+- `release.yml`, job `rehearsal-attest`: the required check went red three times on 2026-11-22 with
+  `InternalError: error fetching tlog entry - (404) Not Found`. Cause outside the repo: Sigstore's client retries a
+  timed-out transparency-log write, gets "409 entry exists" for its own first write, fetches that entry and the log
+  answers 404; sigstore-js does not retry a 404 (up to `@sigstore/sign` 5.1.0) and `actions/attest-build-provenance` /
+  `actions/attest` v4.2.2 — the newest releases — offer no retry input. Provenance and SBOM attestation now run up to
+  three attempts each: attempts 1 and 2 with `continue-on-error`, a pause of 20 s and 60 s only after a failure,
+  attempt 3 without — three failures keep the job red, and the verify step (`gh attestation verify`, signer pinned)
+  runs unconditionally afterwards. The tag jobs are unchanged. `tests/test_repo.py` pins the shape (soft attempt only
+  with exactly one later attempt of the same action and inputs, the chain ends hard, pauses only `sleep` after a
+  failure, verify last and unconditional, no `continue-on-error` in any other job of `release.yml`); 9 mutations, each
+  red. `sleep` joins the commands allowed in a job with an identity. A comment in `release.yml` no longer names the
+  Python audit tool by name: the kit's audit-gate check reads comments as calls (false positive, fix pending in the
+  kit; revert after the kit sync).
+
 ### Fixed — two suites that read the clock instead of an event (red under load)
 
 - `tests/test_close.py`: the job in the shutdown race wrote 400 rows; under load (two CPUs, a dozen suites) that took
