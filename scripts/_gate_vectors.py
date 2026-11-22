@@ -139,7 +139,7 @@ class Probe:
         with open(key_file, "w", encoding="ascii") as f:
             f.write(base64.b64encode(_seed("A")).decode("ascii") + "\n")
         os.chmod(key_file, 0o600)
-        with contextlib.redirect_stderr(open(os.devnull, "w")):
+        with open(os.devnull, "w") as quiet, contextlib.redirect_stderr(quiet):
             self.auth = TinySesam(TinySesamConfig(
                 db_path=os.path.join(self.dir, "probe.db"), base_url=ISSUER, forward_auth_enabled=True,
                 gate_token_enabled=True, gate_key_file=key_file, trusted_redirect_hosts=[AUDIENCE],
@@ -810,13 +810,18 @@ def build() -> dict:
         p.close()
 
 
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def main(argv) -> int:
     files = build()
     if "--check" in argv:
         stale = []
         for name, text in files.items():
             path = os.path.join(OUT, name)
-            if not os.path.exists(path) or open(path, encoding="utf-8").read() != text:
+            if not os.path.exists(path) or _read(path) != text:
                 stale.append(name)
         if stale:
             print("stale gate vectors: " + ", ".join(stale) + " — run python scripts/_gate_vectors.py", file=sys.stderr)

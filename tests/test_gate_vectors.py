@@ -70,7 +70,7 @@ generator = importlib.util.module_from_spec(spec_gen)
 spec_gen.loader.exec_module(generator)
 fresh = generator.build()
 assert sorted(fresh) == sorted(FILES), sorted(fresh)
-stale = [n for n in FILES if open(os.path.join(VECTORS, n), encoding="utf-8").read() != fresh[n]]
+stale = [n for n in FILES if generator._read(os.path.join(VECTORS, n)) != fresh[n]]
 assert not stale, f"stale vectors {stale} — run: python scripts/_gate_vectors.py"
 assert generator.build() == fresh, "the generator is not deterministic"
 ok(f"spec/vectors: {len(FILES)} files current to the generator, two builds identical")
@@ -98,7 +98,7 @@ for v in TOKEN["vectors"]:
     e = v["expected"]
     assert e["ok"] or e["error"] in ref.ERRORS, (v["id"], e)
     assert v["id"].startswith("valid-") == e["ok"], f"{v['id']}: the name says the opposite of the verdict"
-spec_text = open(os.path.join(ROOT, "spec", "gate-client.md"), encoding="utf-8").read()
+spec_text = generator._read(os.path.join(ROOT, "spec", "gate-client.md"))
 undocumented = sorted(c for c in ATTACK_CLASSES if f"`{c}`" not in spec_text)
 assert not undocumented, f"attack classes missing from spec/gate-client.md: {undocumented}"
 unknown_errors = sorted(c for c in ref.ERRORS + ref.HEADER_ERRORS + ("jwks_invalid",) if f"`{c}`" not in spec_text)
@@ -201,7 +201,6 @@ def mismatches(relax=frozenset()) -> list:
 failed = mismatches()
 if failed:
     for name in failed[:10]:
-        kind, vid = name.split("/", 1)
         print(f"  ✗ {name}")
     detail = []
     for v in TOKEN["vectors"]:
