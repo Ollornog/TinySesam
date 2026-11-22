@@ -3,3 +3,6 @@
 # first on every run, so the next run inherits nothing. The kit's list of setup folders knows `node_modules/` only at
 # the root of the repository.
 clients/js/node_modules/
+# The dev tools of the PHP gate client: clients/php/ci.sh (run by check.sh) installs them with `composer install` from
+# the lock file, which also removes what the lock file no longer names.
+clients/php/vendor/

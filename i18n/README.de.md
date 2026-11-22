@@ -2147,7 +2147,9 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   Git-Abhängigkeit), der **JS/TS-Client** in [`clients/js/`](../clients/js/) (TypeScript, ESM, ohne
   Laufzeit-Abhängigkeit: WebCrypto `Ed25519` und `fetch`, läuft daher unter Node, Deno, Bun und Edge-Runtimes;
   Node/Express-Middleware und ein Fetch-Adapter für Hono und Edge-Handler; nicht bei npm veröffentlicht, Nutzung aus dem
-  Repository); ein Client für PHP ist unter [`clients/`](../clients/) geplant. Der
+  Repository), der **PHP-Client** in [`clients/php/`](../clients/php/) (Paket `tinysesam/gate`, PHP 8.4+: nur ext-sodium
+  und PSR-Schnittstellen, eine PSR-15-Middleware, `$_SERVER` für PHP-FPM, ein Schlüsselsatz-Cache in einer Datei, den
+  die Prozesse eines Hosts teilen; nicht bei Packagist veröffentlicht, Nutzung aus dem Repository). Der
   **Python-Client** gehört zum Paket: `tinysesam.gate_client` (WSGI/ASGI, ohne FastAPI), nächster Abschnitt.
 
 ### Gate-Client für Flask, Django und andere Python-Apps (T-86)

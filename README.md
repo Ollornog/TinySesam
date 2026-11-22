@@ -2095,9 +2095,11 @@ existing forward auth, so a request and its body are not lost.
   published to the Rust crate registry, use it as a git dependency), the **JS/TS client** in
   [`clients/js/`](https://github.com/Ollornog/TinySesam/tree/main/clients/js) (TypeScript, ESM, no runtime dependency:
   WebCrypto `Ed25519` and `fetch`, so it runs on Node, Deno, Bun and edge runtimes; Node/Express middleware and a Fetch
-  adapter for Hono and edge handlers; not published to npm, use it from the repository); a client for PHP is planned
-  under [`clients/`](https://github.com/Ollornog/TinySesam/tree/main/clients). The **Python client** is part of the
-  package: `tinysesam.gate_client` (WSGI/ASGI, no FastAPI), next section.
+  adapter for Hono and edge handlers; not published to npm, use it from the repository), the **PHP client** in
+  [`clients/php/`](https://github.com/Ollornog/TinySesam/tree/main/clients/php) (package `tinysesam/gate`, PHP 8.4+:
+  ext-sodium and PSR interfaces only, a PSR-15 middleware, `$_SERVER` for PHP-FPM, a file-backed key set cache shared by
+  the processes of one host; not published on Packagist, use it from the repository). The **Python client** is part of
+  the package: `tinysesam.gate_client` (WSGI/ASGI, no FastAPI), next section.
 
 ### Gate client for Flask, Django and other Python apps (T-86)
 

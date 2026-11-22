@@ -2,7 +2,7 @@
 # The gate before every push: functional tests + browser test + hygiene + website build.
 #
 #   scripts/check.sh            # everything
-#   scripts/check.sh --fast     # without the browser test and the Rust and JS clients (only when really in a hurry)
+#   scripts/check.sh --fast     # without the browser test and the Rust, JS and PHP clients (only when in a hurry)
 #
 # The pre-push hook (.githooks/pre-push) calls this script. Once per clone:
 #   git config core.hooksPath .githooks
@@ -128,6 +128,32 @@ if [[ -z "$JS_SKIP" ]]; then
         && node test/dist-smoke.mjs "$JS_DIST") || fail "JS/TS gate client"
 else
     printf '\n\033[33m! JS/TS gate client not tested here (%s) — the CI job client-js runs it\033[0m\n' "$JS_SKIP"
+fi
+
+# The PHP gate client (clients/php, T-83): clients/php/ci.sh holds every check of the CI workflow client-php (Composer
+# validate and audit, PHP_CodeSniffer, PHPStan, PHPUnit with every vector, the installed package) — one list, so nothing
+# reaches the CI first. A local PHP 8.4+ with ext-sodium, ext-curl, ext-mbstring and Composer runs it directly; without
+# one, clients/php/ci/in-docker.sh runs it in clients/php/ci/Dockerfile (the newest PHP, by digest). Neither there is a
+# failure, not a skip — except inside ci-local's offline container, which has neither by design: that line says `skip`,
+# and ci-local counts it as a gap. `--fast` leaves it out like the Rust and JS clients.
+php_fits() {
+    command -v php >/dev/null && command -v composer >/dev/null \
+        && php -r 'exit(PHP_VERSION_ID >= 80400 && extension_loaded("sodium") && extension_loaded("curl")
+                         && extension_loaded("mbstring") ? 0 : 1);' 2>/dev/null
+}
+if [[ $FAST -eq 1 ]]; then
+    printf '\n\033[33mskip php-gate-client (--fast) — the CI job client-php runs it\033[0m\n'
+elif php_fits; then
+    step "PHP gate client (clients/php): clients/php/ci.sh with the local PHP"
+    clients/php/ci.sh || fail "PHP gate client"
+elif command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+    step "PHP gate client (clients/php): clients/php/ci.sh in clients/php/ci/Dockerfile (no fitting local PHP)"
+    clients/php/ci/in-docker.sh || fail "PHP gate client (in Docker)"
+elif [[ "${CI_LOCAL_INSIDE:-}" == "1" ]]; then
+    printf '\n\033[33mskip php-gate-client (ci-local container: no PHP, no Docker) — CI job client-php runs it\033[0m\n'
+else
+    fail "PHP gate client: no PHP 8.4+ with ext-sodium, ext-curl, ext-mbstring and Composer, and no Docker for
+  clients/php/ci/Dockerfile — install one of them (a skip is not a green)"
 fi
 
 step "Build the website — exactly what the Pages action ships"

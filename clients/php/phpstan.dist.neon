@@ -1,0 +1,15 @@
+# Static analysis of the PHP gate client: the library and the examples at the highest level, plus the official strict
+# rules. The tests run at level 9 in phpstan.tests.neon: they walk the free-form JSON of spec/vectors, and level 10
+# (every implicitly mixed value) would only make them cast each field.
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+
+parameters:
+    level: max
+    phpVersion:
+        min: 80400
+        max: 80699
+    paths:
+        - src
+        - examples
+    tmpDir: /tmp/phpstan-tinysesam-gate

@@ -4,6 +4,32 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — gate client in PHP (T-83)
+
+- `clients/php/`: package `tinysesam/gate` 0.1.0 (namespace `TinySesam\Gate`, not published on Packagist), following
+  spec v2 of `spec/gate-client.md`: header mode (`Gate::headerMode`, trusted proxies, renamed headers) and token mode
+  (`Gate::tokenMode` with fixed gate keys or a key set URL), the identity with `accountKind` (`Remote-Kind`/`ts_kind`
+  required, `service` with a session refused), guards for signed in, role, session and account kind (`Decision`,
+  `Requirement`), a PSR-15 `GateMiddleware` and `RequireMiddleware`, `GateRequest::fromGlobals($_SERVER)` for PHP-FPM
+  and mod_php, the top bar helper of §8 (unknown members ignored).
+- PHP 8.4 or newer. Runtime: ext-sodium (`sodium_crypto_sign_verify_detached`), ext-json, ext-pcre and four PSR
+  interface packages; the key set fetch uses ext-curl (one 5-second deadline over the whole transfer, 64 KiB, no
+  redirects). `json_decode` runs behind a scan that refuses repeated member names; objects stay `\stdClass`, so `{}`
+  and `[]` and integers versus `1.0` stay apart.
+- The key set cache lives in a `Store`: `MemoryStore` for long-running workers, `FileStore` (state file plus `flock`)
+  for PHP-FPM, mod_php and CGI, where nothing survives a request — one process fetches, the others wait for its result
+  at most one deadline.
+- Measured and documented: under PHP's classic SAPIs a repeated header field arrives joined and `Remote-User`/
+  `Remote_User` are one variable; PHP's built-in server also cuts a header value at a NUL byte. The proxy's duty 1
+  (spec §2.1) covers all three; the test suite pins them.
+- CI: `.github/workflows/client-php.yml` on `ubuntu-latest` (actions pinned by SHA, `permissions: contents: read`, no
+  path filter): `test` on PHP 8.4 and 8.5 (setup-php) and `image` on 8.6 inside `clients/php/ci/Dockerfile`, every job
+  running `clients/php/ci.sh` (Composer validate and audit, PHP_CodeSniffer, PHPStan, PHPUnit, the installed package).
+  `scripts/check.sh` runs the same script — natively, or through `clients/php/ci/in-docker.sh` without a local PHP; with
+  neither it fails instead of skipping (inside ci-local's offline container it prints a `skip` line ci-local counts).
+  Dependabot `composer` for `/clients/php` and `docker` for `/clients/php/ci`; the auto-merge counts `client-php.yml`
+  among its mandatory workflows and accepts `composer`.
+
 ### Added — accounts page and role levels in the admin panel (T-87)
 
 - The users tab lists accounts slimly — name, type, roles as chips, status — with a search field; there is no button
