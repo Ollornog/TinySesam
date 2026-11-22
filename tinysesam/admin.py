@@ -40,10 +40,17 @@ class PanelActions:
         self.cfg = auth.cfg
 
     def fits(self, destination, me, roles) -> bool:
-        """Is this account within one delegate scope (T-74)? `config_check.delegate_may_manage` decides."""
+        """Is this account within one delegate scope (T-74)? `config_check.may_manage` decides — the same rule the
+        account API applies to an application's whole-account actions."""
         if destination is None:
             return False
-        return config_check.delegate_may_manage(roles, me["id"], destination, self.auth.user_roles(destination))
+        return config_check.may_manage(roles, me["id"], destination, self.auth.user_roles(destination),
+                                       delegate_roles=self.delegate_roles())
+
+    def delegate_roles(self) -> frozenset:
+        """The delegate roles of the running configuration (keys of `admin_delegates`)."""
+        raw = getattr(self.cfg, "admin_delegates", None) or {}
+        return frozenset(r for r in raw if isinstance(r, str)) if isinstance(raw, dict) else frozenset()
 
     def visible(self, destination, me, scopes) -> bool:
         return any(self.fits(destination, me, roles) for _, roles, _ in scopes)
@@ -207,6 +214,44 @@ class PanelActions:
             raise HTTPException(404, self.auth.t("api.not_found"))
         return {"ok": True}
 
+    # ---------- the account API (`apps`, `tinysesam.provisioning`) ----------
+    # The application's scope is decided by `Provisioning.target` (`config_check.app_visible`, `may_manage`); these two
+    # do what the application may do to an account it manages — with the panel's audit lines and the one lock effect.
+
+    def app_set_roles(self, uid: int, allowlist, wanted) -> tuple:
+        """Set the roles of an account an application manages: the roles of its `allowlist` become `wanted`, every
+        other role stays — `(current − allowlist) ∪ wanted` in ONE transaction (`Store.merge_roles`), so a change
+        from the panel at the same moment is not lost. Audit `user_roles` with before → after, like the panel.
+        Returns `(before, after)`; 404 if the account vanished."""
+        merged = self.auth.store.merge_roles(uid, list(allowlist), list(wanted))
+        if merged is None:
+            raise HTTPException(404, self.auth.t("api.not_found"))
+        before, after = merged
+        self.auth.audit("user_roles", None, None, f"uid={uid} roles={','.join(sorted(before)) or '-'}"
+                                                  f"->{','.join(sorted(after)) or '-'}")
+        return before, after
+
+    def app_lock(self, uid: int, lock: bool) -> str:
+        """Lock or unlock an account an application manages. Locking sets `disabled=3` only on an active account
+        (`Store.lock_by_app`: a lock of the operator or of a pending confirmation is never downgraded) with the same
+        effect as every lock (`auth._lock_effects`: sessions, keys, devices, app passwords, open links). Unlocking
+        lifts only 3. Returns `locked`, `unlocked`, `unchanged` (nothing to do) or `operator` (unlocking refused:
+        the lock is not the application's)."""
+        store = self.auth.store
+        u = store.get_user(uid)
+        if u is None:
+            raise HTTPException(404, self.auth.t("api.not_found"))
+        if lock:
+            if not store.lock_by_app(uid):
+                return "unchanged"
+            self.auth._lock_audit(u, True, self.auth._lock_effects(uid))
+            return "locked"
+        if store.unlock_by_app(uid):
+            self.auth._lock_audit(u, False, 0)
+            return "unlocked"
+        now = store.get_user(uid)
+        return "operator" if now is not None and now["disabled"] else "unchanged"
+
     def revoke_key(self, me, kid: int) -> dict:
         """Revoke someone's API key as administrator — `POST <admin>/api/keys/{kid}/revoke` and the approval type
         `tinysesam.apikey.revoke` for a key of another account (an own key the holder revokes without the panel)."""
@@ -273,7 +318,8 @@ def build_admin_router(auth) -> APIRouter:
                 # the confirmation link), 2 = the operator (only they lift it). Previously both
                 # looked the same in the panel — and anyone who took an operator block for a pending
                 # confirmation waited for a link that never releases anything.
-                "disabled_by": {1: "confirmation", 2: "operator"}.get(int(u["disabled"] or 0)),
+                # 3 = the application that manages the account (account API, schema 23).
+                "disabled_by": {1: "confirmation", 2: "operator", 3: "app"}.get(int(u["disabled"] or 0)),
                 "created_at": u["created_at"]}
 
     def kview(k):
@@ -801,7 +847,7 @@ _KEYS = (
     "f.key_name f.key_expires "
     "th.user th.email th.type th.roles th.status th.actions th.method th.ip th.since th.mfa "
     "th.time th.event th.detail "
-    "active disabled disabled_confirmation revoked enable disable "
+    "active disabled disabled_confirmation disabled_app revoked enable disable "
     "btn.pw btn.rename btn.roles btn.keys btn.passkeys btn.delete btn.owner_on btn.owner_off "
     "passkeys no_passkeys confirm.delete confirm.pk_delete confirm.owner_on confirm.owner_off "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
@@ -1077,7 +1123,7 @@ const OTHERS=ROLES.filter(r=>!COVERED.has(r));
 function stateOf(e,held){const f=e.own.map(r=>held.has(r)),top=f.lastIndexOf(true);
   return {level:top,complete:f.every((x,i)=>x===(i<=top))}}
 const badges=u=>`${u.is_owner?'<span class="badge grn">owner</span> ':''}${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}`;
-const state=u=>u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`;
+const state=u=>u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:u.disabled_by==="app"?L.disabled_app:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`;
 // Roles as chips: one per ladder entry ("a · write"), an incomplete one marked in words, then the other roles.
 function chips(u,max){const held=new Set(u.roles||[]),out=[];
   for(const l of LADDERS)for(const e of l.entries){const s=stateOf(e,held);if(s.level<0)continue;

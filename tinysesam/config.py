@@ -494,6 +494,22 @@ class TinySesamConfig:
     # (1–20). The answer to a token that keeps asking for something the person keeps refusing.
     approval_reject_limit: int = 3
 
+    # --- Applications: the account API (provisioning, stage A) ---
+    # The register of applications that speak to TinySesam through a service account — one entry per product:
+    # `{"example": {"account": "svc-example", "name": {"en": "Example"}, "provisioning": {…}}}`. The id (lower-case
+    # letters, digits, `_`, at most 32) is what `users.managed_by` stores. `account` names the service account
+    # (`is_service`) whose automation keys speak for the application — a key of any other account, a `human` key or
+    # a session is refused. With `provisioning` the application manages the accounts it creates itself through
+    # `/auth/api/users`: create (with a one-time link until the first sign-in), read, change the display name and the
+    # roles of its allowlist, lock and unlock. Members of `provisioning`: `roles` (the allowlist — listed in
+    # `available_roles`, never `admin`, a delegate role or a role a group map assigns), `scopes` (`users:read`,
+    # `users:invite`, `users:update`, `users:disable`), `link_ttl_min` (default 60, at most `signin_link_max_ttl_min`),
+    # `max_accounts` (default 1000) and `limits` (per hour: `create_per_hour` 60, `disable_per_hour` 60,
+    # `link_per_hour` 30, `taken_per_hour` 30). It never touches passwords, passkeys, TOTP, the address after creation,
+    # an account it did not create, an administrator or a delegate. Empty = no account API. See README "Accounts for
+    # applications" and SECURITY.md "Account API".
+    apps: dict = field(default_factory=dict)
+
     # --- Sessions (server-side, revocable) ---
     session_cookie: str = "tinysesam_session" # name of the session cookie (tell them apart when several apps share a domain)
     session_ttl_hours: int = 24 * 7       # TTL with "stay signed in" (persistent cookie)

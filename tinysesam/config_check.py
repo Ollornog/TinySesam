@@ -958,6 +958,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _oauth(config, error, warnings)
     _oauth_services_without_oauth(config, error)
     _approvals(config, error)
+    _apps(config, error, warnings)
     _keys(config, warnings)
     _forward_apps(config, error, warnings)
 
@@ -1336,19 +1337,51 @@ def delegate_scopes(graph: dict, roles) -> list:
     return [(r, frozenset(graph[r]["eff"] - barred), graph[r]["can"]) for r in held]
 
 
-def delegate_may_manage(managed, actor_id, target, target_roles) -> bool:
-    """May a delegate scope with the roles `managed` act on `target` (an account row or dict) whose roles are
-    `target_roles` (T-74)? Only when ALL its roles stand in `managed` (at least one) — never an admin, owner or service
-    account, never the actor's own. A delegate account is in scope only when its delegate role is below (`managed`
-    holds exactly the delegate roles below). Strict on purpose: locking or a sign-in link acts on the whole account,
-    also on the parts of another team. Pure, like `delegate_scopes`."""
+def may_manage(managed, actor_id, target, target_roles, *, delegate_roles=frozenset(),
+               without_roles: bool = False) -> bool:
+    """May a scope with the roles `managed` act on the whole of `target` (an account row or dict) whose roles are
+    `target_roles`? Only when ALL its roles stand in `managed` — never an admin, owner or service account, never the
+    actor's own (`actor_id`; None for an application, which has no account of its own among the targets), never an
+    account holding a delegate role (`delegate_roles`, the keys of `admin_delegates`) that `managed` does not hold.
+    Strict on purpose: locking or a sign-in link acts on the whole account, also on the parts of another team.
+
+    The ONE rule of two entrances: a delegate in the panel (T-74, `managed` = the delegate scope, which holds exactly
+    the delegate roles below it) and an application through the account API (`managed` = its allowlist,
+    `actor_id=None`). `without_roles=True` lets an account without roles pass — only for the account API, whose
+    accounts belong to the application by `users.managed_by`, not by their roles; for a delegate an account without
+    roles stays outside (the empty set would be "inside" every scope). Pure, like `delegate_scopes`."""
     if target is None or target["is_admin"] or target["is_owner"] or target["is_service"]:
         return False
-    if target["id"] == actor_id:
+    if actor_id is not None and target["id"] == actor_id:
         return False
-    if not target_roles or not all(isinstance(r, str) for r in target_roles):
+    if not all(isinstance(r, str) for r in target_roles or []):
         return False
-    return set(target_roles) <= managed
+    if not target_roles and not without_roles:
+        return False
+    if any(r in delegate_roles and r not in managed for r in target_roles or []):
+        return False
+    return set(target_roles or []) <= managed
+
+
+def delegate_may_manage(managed, actor_id, target, target_roles) -> bool:
+    """`may_manage` for a delegate scope (T-74) — the name the panel used before the account API shared the rule."""
+    return may_manage(managed, actor_id, target, target_roles)
+
+
+def app_visible(app_id: str, target, target_roles, delegate_roles=frozenset()) -> bool:
+    """Does an application see `target` through the account API? Only an account it created (`users.managed_by` =
+    `app_id`) that is no admin, owner or service account and holds no delegate role. Everything else answers like
+    an account that does not exist (404). Whole-account actions additionally need `may_manage` (all roles in the
+    allowlist). Pure."""
+    if target is None or target["is_admin"] or target["is_owner"] or target["is_service"]:
+        return False
+    try:
+        owner = target["managed_by"]
+    except (KeyError, IndexError):
+        return False
+    if not owner or owner != app_id:
+        return False
+    return not any(isinstance(r, str) and r in delegate_roles for r in target_roles or [])
 
 
 def _admin_delegates(config, error: list, warnings: list) -> None:
@@ -1787,6 +1820,154 @@ def _approvals(config, error: list) -> None:
             config,
             "approvals_enabled=True without base_url: the link handed to the requester is built from base_url "
             "— never from the Host header of a request."))
+
+
+#: The id of an application in `apps` — the same rule as the first segment of an approval type.
+APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+#: The members of one `apps` entry (stage A of the account API; the approvals of applications add theirs later).
+APP_KEYS = ("account", "name", "provisioning")
+#: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stage A).
+PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits")
+PROVISIONING_SCOPES = ("users:read", "users:invite", "users:update", "users:disable")
+#: Default and upper bound of the per-application limits (per hour); `taken` counts answers "name/address taken".
+PROVISIONING_LIMITS = {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30}
+PROVISIONING_LIMIT_MAX = 100000
+PROVISIONING_DEFAULTS = {"link_ttl_min": 60, "max_accounts": 1000}
+PROVISIONING_MAX_ACCOUNTS = 100000
+
+
+def _plain_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _apps(config, error: list, warnings: list) -> None:
+    """The application register `apps` (account API for applications, stage A): id, service account, name and the
+    `provisioning` block — allowlist, scopes, link lifetime, quota, limits.
+
+    The allowlist is the boundary of what a leaked application key can grant: never `admin` (forward auth reads it as
+    the admin flag), never a delegate role (a key would appoint delegates, rule E4), never a role a group map assigns
+    (the next sign-in would overwrite it — two sources of one truth), only listed roles, no comma or control
+    character (T-85)."""
+    raw = getattr(config, "apps", None)
+    if not raw:
+        return
+    if not isinstance(raw, dict):
+        error.append(_t(config, "apps: {v!r} — a mapping of application id → {{\"account\": service account, "
+                                "\"name\": …, \"provisioning\": {{…}}}}", v=raw))
+        return
+    known = set(getattr(config, "available_roles", None) or [])
+    delegates = set((getattr(config, "admin_delegates", None) or {}) if isinstance(
+        getattr(config, "admin_delegates", None), dict) else {})
+    mapped = set(_mapped_roles(config))
+    accounts: dict = {}
+    role_owner: dict = {}
+    provisioning = False
+    max_ttl = _integer(config, "signin_link_max_ttl_min", 24 * 60) or 24 * 60
+    for app_id, entry in raw.items():
+        if not isinstance(app_id, str) or not APP_ID.match(app_id):
+            error.append(_t(config, "apps: the id {app!r} — lower-case letters, digits and _ , starting with a letter, "
+                                    "at most 32 characters", app=app_id))
+            continue
+        if not isinstance(entry, dict) or set(entry) - set(APP_KEYS):
+            error.append(_t(config, "apps[{app!r}]: {v!r} — allowed members are {keys}",
+                            app=app_id, v=entry, keys=", ".join(APP_KEYS)))
+            continue
+        account = entry.get("account")
+        if (not isinstance(account, str) or not account.strip() or account != account.strip()
+                or any(ord(z) < 32 or ord(z) == 127 for z in account)):
+            error.append(_t(config, "apps[{app!r}]: \"account\" must name the service account (is_service) whose "
+                                    "automation keys speak for the application", app=app_id))
+        else:
+            other = accounts.get(account.lower())
+            if other is not None:
+                error.append(_t(config, "apps: {a!r} and {b!r} name the same service account {account!r} — it would "
+                                        "be unclear for which application a key speaks",
+                                a=other, b=app_id, account=account))
+            accounts.setdefault(account.lower(), app_id)
+        name = entry.get("name")
+        if name is not None and not (
+                (isinstance(name, str) and name.strip())
+                or (isinstance(name, dict) and name and all(isinstance(k, str) and isinstance(v, str) and v.strip()
+                                                             for k, v in name.items()))):
+            error.append(_t(config, "apps[{app!r}]: \"name\" is a text or a mapping language → text "
+                                    "({{\"en\": \"Example\", \"de\": \"Example\"}})", app=app_id))
+        block = entry.get("provisioning")
+        if block is None:
+            continue
+        provisioning = True
+        if not isinstance(block, dict) or set(block) - set(PROVISIONING_KEYS):
+            error.append(_t(config, "apps[{app!r}].provisioning: {v!r} — allowed members are {keys}",
+                            app=app_id, v=block, keys=", ".join(PROVISIONING_KEYS)))
+            continue
+        roles = block.get("roles")
+        if not isinstance(roles, list) or not roles or not all(isinstance(r, str) and r.strip() for r in roles):
+            error.append(_t(config, "apps[{app!r}].provisioning.roles: a non-empty list of roles the application "
+                                    "may grant (its allowlist)", app=app_id))
+            roles = []
+        for role in roles:
+            if role == "admin":
+                error.append(_t(config, "apps[{app!r}].provisioning.roles: \"admin\" is never grantable by an "
+                                        "application — forward auth reads it as the admin flag", app=app_id))
+            elif role in delegates:
+                error.append(_t(config, "apps[{app!r}].provisioning.roles: {role!r} is a delegate role "
+                                        "(admin_delegates) — an application key never appoints delegates",
+                                app=app_id, role=role))
+            elif role in mapped:
+                error.append(_t(config, "apps[{app!r}].provisioning.roles: {role!r} is assigned by a group map — the "
+                                        "next sign-in would overwrite what the application set (two sources of one "
+                                        "truth)", app=app_id, role=role))
+            elif "," in role or any(ord(z) < 32 or ord(z) == 127 for z in role) or role != role.strip():
+                error.append(_t(config, "apps[{app!r}].provisioning.roles: {role!r} contains a comma, a control "
+                                        "character or surrounding spaces — Remote-Groups would read it as other "
+                                        "roles", app=app_id, role=role))
+            elif role not in known:
+                error.append(_t(config, "apps[{app!r}].provisioning.roles: {role!r} is not in available_roles",
+                                app=app_id, role=role))
+            else:
+                if not role.startswith(app_id + "-"):
+                    warnings.append(_t(config, "apps[{app!r}].provisioning.roles: {role!r} does not begin with "
+                                               "{prefix!r} — such a role may also open something else, e.g. a gate "
+                                               "rule of another application", app=app_id, role=role,
+                                       prefix=app_id + "-"))
+                if role in role_owner and role_owner[role] != app_id:
+                    warnings.append(_t(config, "apps: {a!r} and {b!r} share the role {role!r} — each application "
+                                               "grants what opens the other", a=role_owner[role], b=app_id,
+                                       role=role))
+                role_owner.setdefault(role, app_id)
+        scopes = block.get("scopes")
+        if (not isinstance(scopes, list) or not scopes
+                or not all(isinstance(s, str) and s in PROVISIONING_SCOPES for s in scopes)):
+            error.append(_t(config, "apps[{app!r}].provisioning.scopes: a non-empty list of {scopes}",
+                            app=app_id, scopes=", ".join(PROVISIONING_SCOPES)))
+            scopes = []
+        if "users:invite" in scopes:
+            if not _an(config, "magiclink_enabled"):
+                error.append(_t(config, "apps[{app!r}]: the scope users:invite needs magiclink_enabled=True — "
+                                        "otherwise no route redeems the one-time link", app=app_id))
+            if not security.normalize_base(str(getattr(config, "base_url", "") or "").strip()):
+                error.append(_t(config, "apps[{app!r}]: the scope users:invite needs base_url — the one-time link "
+                                        "is built from it, never from the Host header", app=app_id))
+        ttl = block.get("link_ttl_min", PROVISIONING_DEFAULTS["link_ttl_min"])
+        if not _plain_int(ttl) or not 1 <= ttl <= max_ttl:
+            error.append(_t(config, "apps[{app!r}].provisioning.link_ttl_min={v!r} — 1 to signin_link_max_ttl_min "
+                                    "({max})", app=app_id, v=ttl, max=max_ttl))
+        quota = block.get("max_accounts", PROVISIONING_DEFAULTS["max_accounts"])
+        if not _plain_int(quota) or not 1 <= quota <= PROVISIONING_MAX_ACCOUNTS:
+            error.append(_t(config, "apps[{app!r}].provisioning.max_accounts={v!r} — 1 to {max}",
+                            app=app_id, v=quota, max=PROVISIONING_MAX_ACCOUNTS))
+        limits = block.get("limits", {})
+        if not isinstance(limits, dict) or set(limits) - set(PROVISIONING_LIMITS) or not all(
+                _plain_int(v) and 1 <= v <= PROVISIONING_LIMIT_MAX for v in limits.values()):
+            error.append(_t(config, "apps[{app!r}].provisioning.limits: {v!r} — numbers from 1 to {max} for {keys}",
+                            app=app_id, v=limits, max=PROVISIONING_LIMIT_MAX, keys=", ".join(PROVISIONING_LIMITS)))
+    if not provisioning:
+        return
+    if not _an(config, "apikey_enabled"):
+        error.append(_t(config, "apps with provisioning and apikey_enabled=False: an application calls the account "
+                                "API with an automation key of its service account"))
+    if str(getattr(config, "admin_path", "") or "").rstrip("/") == "/auth":
+        error.append(_t(config, "admin_path='/auth' with apps: /auth/api/ is reserved for the machine APIs — the "
+                                "panel's JSON would lie under /auth/api/users, the path of the account API"))
 
 
 def _oauth(config, error: list, warnings: list) -> None:
@@ -2812,4 +2993,89 @@ _DE: dict[str, str] = {
      "every role below — it cannot grant that level of {key!r}"):
         ("role_levels: Die Delegiertenrolle {delegate!r} verwaltet {held}, aber nicht "
          "jede Rolle darunter — sie kann diese Stufe von {key!r} nicht vergeben"),
+    ("apps: {v!r} — a mapping of application id → {{\"account\": service account, "
+     "\"name\": …, \"provisioning\": {{…}}}}"):
+        ("apps: {v!r} — eine Zuordnung Anwendungskennung → {{\"account\": Dienstkonto, "
+         "\"name\": …, \"provisioning\": {{…}}}}"),
+    ("apps: the id {app!r} — lower-case letters, digits and _ , starting with a letter, "
+     "at most 32 characters"):
+        ("apps: Die Kennung {app!r} — Kleinbuchstaben, Ziffern und _ , beginnend mit einem Buchstaben, "
+         "höchstens 32 Zeichen"),
+    "apps[{app!r}]: {v!r} — allowed members are {keys}":
+        "apps[{app!r}]: {v!r} — erlaubt sind {keys}",
+    ("apps[{app!r}]: \"account\" must name the service account (is_service) whose "
+     "automation keys speak for the application"):
+        ("apps[{app!r}]: \"account\" muss das Dienstkonto (is_service) nennen, dessen "
+         "Automation-Keys für die Anwendung sprechen"),
+    ("apps: {a!r} and {b!r} name the same service account {account!r} — it would "
+     "be unclear for which application a key speaks"):
+        ("apps: {a!r} und {b!r} nennen dasselbe Dienstkonto {account!r} — es wäre "
+         "unklar, für welche Anwendung ein Key spricht"),
+    ("apps[{app!r}]: \"name\" is a text or a mapping language → text "
+     "({{\"en\": \"Example\", \"de\": \"Example\"}})"):
+        ("apps[{app!r}]: \"name\" ist ein Text oder eine Zuordnung Sprache → Text "
+         "({{\"en\": \"Example\", \"de\": \"Example\"}})"),
+    "apps[{app!r}].provisioning: {v!r} — allowed members are {keys}":
+        "apps[{app!r}].provisioning: {v!r} — erlaubt sind {keys}",
+    ("apps[{app!r}].provisioning.roles: a non-empty list of roles the application "
+     "may grant (its allowlist)"):
+        ("apps[{app!r}].provisioning.roles: eine nicht leere Liste der Rollen, die die Anwendung "
+         "vergeben darf (ihre Allowlist)"),
+    ("apps[{app!r}].provisioning.roles: \"admin\" is never grantable by an "
+     "application — forward auth reads it as the admin flag"):
+        ("apps[{app!r}].provisioning.roles: \"admin\" vergibt eine Anwendung nie — "
+         "Forward-Auth liest es als Admin-Flag"),
+    ("apps[{app!r}].provisioning.roles: {role!r} is a delegate role "
+     "(admin_delegates) — an application key never appoints delegates"):
+        ("apps[{app!r}].provisioning.roles: {role!r} ist eine Delegiertenrolle "
+         "(admin_delegates) — ein Anwendungs-Key ernennt nie Delegierte"),
+    ("apps[{app!r}].provisioning.roles: {role!r} is assigned by a group map — the "
+     "next sign-in would overwrite what the application set (two sources of one "
+     "truth)"):
+        ("apps[{app!r}].provisioning.roles: {role!r} vergibt eine Gruppen-Abbildung — die "
+         "nächste Anmeldung überschriebe, was die Anwendung gesetzt hat (zwei Quellen einer "
+         "Wahrheit)"),
+    ("apps[{app!r}].provisioning.roles: {role!r} contains a comma, a control "
+     "character or surrounding spaces — Remote-Groups would read it as other "
+     "roles"):
+        ("apps[{app!r}].provisioning.roles: {role!r} enthält ein Komma, ein Steuerzeichen "
+         "oder Leerzeichen am Rand — Remote-Groups läse sie als andere Rollen"),
+    "apps[{app!r}].provisioning.roles: {role!r} is not in available_roles":
+        "apps[{app!r}].provisioning.roles: {role!r} steht nicht in available_roles",
+    ("apps[{app!r}].provisioning.roles: {role!r} does not begin with "
+     "{prefix!r} — such a role may also open something else, e.g. a gate "
+     "rule of another application"):
+        ("apps[{app!r}].provisioning.roles: {role!r} beginnt nicht mit "
+         "{prefix!r} — eine solche Rolle öffnet vielleicht auch anderes, etwa eine Gate-"
+         "Regel einer anderen Anwendung"),
+    ("apps: {a!r} and {b!r} share the role {role!r} — each application "
+     "grants what opens the other"):
+        ("apps: {a!r} und {b!r} teilen sich die Rolle {role!r} — jede Anwendung "
+         "vergibt, was die andere öffnet"),
+    "apps[{app!r}].provisioning.scopes: a non-empty list of {scopes}":
+        "apps[{app!r}].provisioning.scopes: eine nicht leere Liste aus {scopes}",
+    ("apps[{app!r}]: the scope users:invite needs magiclink_enabled=True — "
+     "otherwise no route redeems the one-time link"):
+        ("apps[{app!r}]: Der Scope users:invite braucht magiclink_enabled=True — "
+         "sonst löst keine Route den Einmal-Link ein"),
+    ("apps[{app!r}]: the scope users:invite needs base_url — the one-time link "
+     "is built from it, never from the Host header"):
+        ("apps[{app!r}]: Der Scope users:invite braucht base_url — der Einmal-Link "
+         "wird daraus gebaut, nie aus dem Host-Header"),
+    ("apps[{app!r}].provisioning.link_ttl_min={v!r} — 1 to signin_link_max_ttl_min "
+     "({max})"):
+        ("apps[{app!r}].provisioning.link_ttl_min={v!r} — 1 bis signin_link_max_ttl_min "
+         "({max})"),
+    "apps[{app!r}].provisioning.max_accounts={v!r} — 1 to {max}":
+        "apps[{app!r}].provisioning.max_accounts={v!r} — 1 bis {max}",
+    "apps[{app!r}].provisioning.limits: {v!r} — numbers from 1 to {max} for {keys}":
+        "apps[{app!r}].provisioning.limits: {v!r} — Zahlen von 1 bis {max} für {keys}",
+    ("apps with provisioning and apikey_enabled=False: an application calls the account "
+     "API with an automation key of its service account"):
+        ("apps mit provisioning und apikey_enabled=False: Eine Anwendung ruft die Konten-API "
+         "mit einem Automation-Key ihres Dienstkontos auf"),
+    ("admin_path='/auth' with apps: /auth/api/ is reserved for the machine APIs — the "
+     "panel's JSON would lie under /auth/api/users, the path of the account API"):
+        ("admin_path='/auth' mit apps: /auth/api/ ist für die Maschinen-APIs reserviert — das "
+         "JSON des Panels läge unter /auth/api/users, dem Pfad der Konten-API"),
 }

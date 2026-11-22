@@ -1827,6 +1827,75 @@ X-Api-Key: tsk_…
 Why this keeps "admin and delegate rights never through tokens": [`SECURITY.md`, "Approvals"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#approvals-stage-a-a-token-proposes-the-person-confirms).
 Approvals for an application's own actions (signed one-time confirmations) are stage B.
 
+## Accounts for applications: the account API
+
+An application behind TinySesam often needs its own accounts — a team admin in the application invites a colleague. With
+the account API the application creates and manages **the accounts it creates itself**, through its service account,
+inside narrow limits: no password, passkey or TOTP, no address change, no account it did not create, never an admin.
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    base_url="https://auth.example.com", magiclink_enabled=True,
+    available_roles=["example-member", "example-editor", "staff"],
+    apps={"example": {
+        "account": "svc-example",                    # service account (is_service); its automation keys speak for the app
+        "name": {"en": "Example", "de": "Example"},
+        "provisioning": {
+            "roles": ["example-member", "example-editor"],                       # allowlist
+            "scopes": ["users:read", "users:invite", "users:update", "users:disable"],
+            "link_ttl_min": 60, "max_accounts": 1000,
+            "limits": {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30},
+        },
+    }},
+)
+```
+
+```http
+POST /auth/api/users
+X-Api-Key: tsk_…  (an automation key of svc-example)
+TinySesam-On-Behalf-Of: 17
+
+{"username": "lena", "display_name": "Lena M.", "email": "lena@example.org", "roles": ["example-member"]}
+```
+
+```json
+{"id": 42, "username": "lena", "signin_url": "https://auth.example.com/auth/magic/…", "expires_at": 1767229800,
+ "qr": "data:image/png;base64,…", "user": {"id": 42, "state": "active", "roles": ["example-member"], "…": "…"}}
+```
+
+| Route | Scope | What |
+|---|---|---|
+| `POST /auth/api/users` | `users:invite` | create a person with allowlist roles (at least one); the one-time link is only in this answer |
+| `GET /auth/api/users/{id}`, `GET /auth/api/users` | `users:read` | one account, or a page (`?limit=` ≤ 200, `&after=<id>`, `?role=`, `?state=`) → `{"users": […], "next": <id>\|null}` |
+| `PATCH /auth/api/users/{id}` | `users:update` | `display_name` and `roles` (the whole wanted set within the allowlist; other roles stay) |
+| `POST /auth/api/users/{id}/disable`, `/enable` | `users:disable` | the application's own lock; `enable` lifts only that one |
+| `POST /auth/api/users/{id}/signin-link` | `users:invite` | a new one-time link, only before the first sign-in; older links die |
+| `GET /auth/api/provisioning` | — | what the key may do: app, scopes, roles, quota, limits and what is left |
+
+- **Calls go to TinySesam directly**, with an automation key of the service account (`X-Api-Key` or
+  `Authorization: Bearer tsk_…`). A session cookie does not count. Writes carry `TinySesam-On-Behalf-Of`: the id of the
+  person the application acts for, or `-` for a job — the audit keeps it as a claim beside the service account.
+- **An account is the application's** when it created it (`managed_by`). Every other account — and an administrator,
+  owner, service account or delegate — answers `404`, like one that does not exist. If the operator gave an
+  application account a role outside the allowlist, the application still reads it (`"other_roles": true`), but
+  display name, lock and link answer `409 account_shared`.
+- **What the application reads of an account:** `id`, `username`, `display_name`, `email`, `email_verified`, `roles`
+  (only from the allowlist), `other_roles`, `state`, `created_at`, `first_login_at`, `last_login_at`, `delete_after`;
+  `state` is `active`, `disabled` (by the application), `disabled_operator` (only the operator lifts it) or `deleting`.
+- **Errors** are `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
+  `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
+  email_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
+  disabled_by_operator`, `429 limit` with `Retry-After`. Write routes may answer `202` later (approvals); treat it as
+  "not done yet".
+- The first sign-in through the link leads an account without factors through the setup pass (`/auth/setup`). After
+  that the person helps themselves (sign-in link to their address, password reset) or the operator does.
+
+What a leaked application key can do at most, and what not:
+[`SECURITY.md`, "Account API"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#account-api-for-applications-stage-a).
+Deleting with a grace period, adopting existing accounts and the panel's marks come with stage B.
+
 ## New in 0.5 — quick reference
 
 All optional (on/off by config), usable individually and combined, front end replaceable everywhere.
@@ -2500,7 +2569,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**121 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**122 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

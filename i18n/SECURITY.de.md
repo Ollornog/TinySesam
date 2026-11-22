@@ -284,6 +284,61 @@ Restrisiko: ein Mensch, der bestätigt, ohne zu lesen. Prüfcode, Step-up je Fre
 verhindern es aber nicht — die Seite ist bewusst schlicht: wer fragt (Key-Name und Datum), was (ein Satz und die
 Werte), der Code, die Restzeit. Den anfragenden Key zu widerrufen beendet eine Flut von Anfragen.
 
+## Konten-API für Anwendungen (Etappe A)
+
+Mit einer Anwendung in `apps`, die einen `provisioning`-Block hat, verwaltet die Anwendung die Konten, **die sie selbst
+anlegt**, über `/auth/api/users`: anlegen (mit einem Einmal-Link bis zur ersten Anmeldung), lesen, Anzeigename und die
+Rollen ihrer Allowlist ändern, sperren und entsperren. Sie ruft TinySesam direkt mit einem Automation-Key ihres
+Dienstkontos auf.
+
+**Was ein geleakter Anwendungs-Key höchstens kann:** Konten mit den Rollen der Allowlist anlegen (`create_per_hour`,
+`max_accounts`) und deren Einmal-Links bekommen — also eigene Zugänge mit den Rollen der Anwendung; darum sollten diese
+Rollen nur der Anwendung gehören (`config_check` warnt bei einer Rolle ohne Präfix `<app>-`); Allowlist-Rollen auf den
+Konten der Anwendung ändern; sie sperren und entsperren (nur die eigene Sperre, `disable_per_hour`); Namen, Adressen,
+Allowlist-Rollen und Anmeldezeitpunkte der Konten der Anwendung lesen.
+
+**Was er nicht kann:** Administrator oder Delegierter werden, ein anderes Konto sehen oder ändern, ein benutztes Konto
+übernehmen (kein Link nach der ersten Anmeldung, keine Adressänderung, kein Passwort, kein Faktor), Keys oder
+App-Passwörter ausstellen, Dienstkonten anlegen, eine Sperre des Betreibers aufheben. Die Regeln dahinter:
+
+- **Nur der Key zählt.** Der Aufrufer wird allein über `verify_api_key` aufgelöst, nie über `current_user()` — ein
+  Sitzungs-Cookie meldet weder an noch ändert es etwas (401 ohne Key). Verlangt: ein Automation-Key, ein Konto mit
+  `is_service == 1`, als `account` einer Anwendung mit `provisioning` genannt (sonst 403 `not_a_provisioning_app`).
+  Regel E4 bleibt: Der Key trägt weder Admin-Flag noch Delegiertenrolle; die Konten-API ist eine eigene, enge Tür und
+  öffnet keine Panel-Route.
+- **Eigentum nur über `users.managed_by`** — gesetzt, wenn die Anwendung das Konto anlegt, nie aus Rollen abgeleitet.
+  Ein Konto, das die Anwendung nicht angelegt hat, ein Administrator, Eigentümer, Dienstkonto oder Delegierter antwortet
+  mit **404** wie ein Konto, das es nicht gibt, auf jeder Route, entschieden vor jedem Feld der Anfrage.
+  Ganzkonto-Aktionen (Anzeigename, Sperre, Link) verlangen zusätzlich alle Rollen des Kontos in der Allowlist (sonst
+  `409 account_shared` — die Anwendung sieht das Konto, das ist also kein Orakel); die Regel ist
+  `config_check.may_manage`, dieselbe wie für die Delegierten des Panels.
+- **Rollen nur aus der Allowlist,** nie `admin`, eine Delegiertenrolle oder eine Rolle, die eine Gruppen-Abbildung
+  vergibt (`config_check`-Fehler). Eine Rolle außerhalb wird abgewiesen (400 `role_not_allowed`), nie still verworfen.
+  `PATCH` schreibt `(aktuell − Allowlist) ∪ gewünscht` in einer Transaktion, Rollen des Betreibers bleiben also.
+  `is_admin`, `is_service` und `password` werden abgewiesen; ein Name oder eine Adresse aus `admin_identifiers`
+  antwortet wie eine vergebene.
+- **Kein Zugriff auf Anmeldemethoden.** Kein Passwort, Passkey oder TOTP wird gesetzt oder zurückgesetzt; die Adresse
+  nimmt die API nur beim Anlegen an (`email_verified=0`), nie per `PATCH` — sonst setzte ein Key die eigene Adresse und
+  übernähme das Konto über „Passwort vergessen“.
+- **Der Einmal-Link nur vor der ersten Anmeldung** (danach `409 already_signed_in` — dann wäre ein Link vom Key eine
+  Übernahme). Ein neuer Link verwirft die offenen. Den Link gibt es nur in der Antwort: Die Datenbank speichert den
+  Hash, das Audit nennt `ttl_min`, keine Logzeile enthält ihn. Der Inhaber erfährt davon (`signin_link_issued`).
+- **Die eigene Sperre der Anwendung** (`disabled=3`): Sie stuft keine andere Sperre herab (`UPDATE … WHERE
+  disabled=0`), und `enable` hebt nur `3` auf (sonst `409 disabled_by_operator`). Jede Prüfung liest `disabled <> 0`,
+  `3` meldet also nirgends an — nicht per Passwort, Passkey, Anmeldelink, OIDC, SAML, LDAP oder Key. Das Sperren beendet
+  Sitzungen, Keys, Geräte, App-Passwörter und offene Links wie jede Sperre.
+- **Der Mensch hinter dem Aufruf ist behauptet, nicht belegt.** Schreibaufrufe tragen `TinySesam-On-Behalf-Of` (die ID
+  einer aktiven Person oder `-` für einen Job; ohne 400). Das Audit nennt das Dienstkonto als Akteur und die Behauptung
+  als `actor_claimed=<name>#<id>`. Antworten `actor_invalid` zählen gegen `taken_per_hour` wie Antworten „vergeben“:
+  sonst ließen sich Konten aufzählen.
+- **Grenzen je Anwendung** in der Datenbank (von allen Workern geteilt): Anlagen, Sperren, Links und Antworten
+  „vergeben“ je Stunde (`429` mit `Retry-After`, einer Warnung im Sicherheitslog und `provision_throttled`);
+  `max_accounts`.
+
+Restrisiko: Wer den Key hat, kann Konten mit den Rollen der Anwendung anlegen, bis eine Grenze greift, und die Konten
+der Anwendung sperren. Den Key des Dienstkontos im Panel zu widerrufen schließt die API sofort; das Audit
+(`provision_*`, `apikey_use`) zeigt, was geschah.
+
 ## Verwundbare Abhängigkeiten
 
 Fristen, in denen eine bekannte Schwachstelle in einer Abhängigkeit des Pakets oder des

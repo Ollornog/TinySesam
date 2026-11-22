@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS users (
     -- 0 = active. 1 = locked because confirmation of the address is pending (registration, or
     -- `set_disabled(uid, True)` of an embedding app) — the confirmation link lifts that.
     -- 2 = locked by the operator (admin panel) — NO link lifts that, only the operator.
+    -- 3 = locked by the application that manages the account (account API, schema 23) — it lifts only this
+    -- value, never 1 or 2; the operator lifts every lock. Every check reads `disabled <> 0`.
     disabled      INTEGER NOT NULL DEFAULT 0,
     -- When was this account fully signed in for the FIRST time? NULL = never (R3-1).
     -- Self-enrollment hangs on it: if the chain requires a second factor, an
@@ -74,6 +76,15 @@ CREATE TABLE IF NOT EXISTS users (
     -- secret only (T-46, ASVS 6.4.1): the next password sign-in stays half until the holder chose an
     -- own one. Any password the holder sets clears it (`TinySesam.set_password`).
     password_must_change INTEGER NOT NULL DEFAULT 0,
+    -- Which application created the account through the account API (`apps`, schema 23)? Its id; NULL = the
+    -- operator or the person. Set only on creation by the application (later: by the operator, adopt/release).
+    -- Ownership hangs on this column alone, never on the roles (draft "account API", section 3).
+    managed_by      TEXT,
+    -- The last complete sign-in (schema 23), set at the same place as `first_login_at`, on every one.
+    last_login_at   INTEGER,
+    -- Deletion with a grace period (schema 23; stage B of the account API): from this time the account is removed.
+    -- NULL = not scheduled.
+    delete_after    INTEGER,
     -- From which federated source does the name originate ('oidc', 'saml', 'ldap')? Set when the
     -- source creates the account; NULL = assigned by the operator, chosen by the person or data from before
     -- this column. A name from one source says nothing about who is called that in ANOTHER:
@@ -1019,7 +1030,13 @@ class Store:
     #:      (`gc_oauth`) does remove a service without a live token after a day — then it is paired again.
     #: 22 — `approval` (approvals, stage A): requests to confirm one sensitive action with a step-up. Additive; an
     #:      older version leaves the table in place and has no approval routes — open requests simply expire.
-    SCHEMA_VERSION = 22
+    #: 23 — the account API for applications (`apps`, stage A): `users.managed_by` (with an index),
+    #:      `users.last_login_at`, `users.delete_after`, and the value `users.disabled = 3` (locked by the application).
+    #:      The columns are additive; an older version ignores them (accounts created by an application stay, only
+    #:      without their owner mark while it runs, and `last_login_at` is not kept up meanwhile). The value 3 is
+    #:      fail-closed there too: every version reads `disabled <> 0` as locked, and an older one never lifts it by a
+    #:      confirmation link (which lifts only 1) — the operator's unlock lifts it as it lifts every lock.
+    SCHEMA_VERSION = 23
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -1215,7 +1232,10 @@ class Store:
                       # (`NAME_SOURCE_BACKFILLED`, attack round 2026-09-26).
                       ("name_source", "TEXT"),
                       # 0 for existing data: no password counts as a start secret after the update (T-46).
-                      ("password_must_change", "INTEGER NOT NULL DEFAULT 0")],
+                      ("password_must_change", "INTEGER NOT NULL DEFAULT 0"),
+                      # NULL for existing data (schema 23): no account belongs to an application, none was signed
+                      # in since the column exists, none is scheduled for deletion.
+                      ("managed_by", "TEXT"), ("last_login_at", "INTEGER"), ("delete_after", "INTEGER")],
             # NULL: never logged in under a different name yet (G5); arises at the next login.
             "federated_identity": [("directory_name_folded", "TEXT")],
             # 0 for existing data: every present row is a completed attempt (G9).
@@ -1420,7 +1440,9 @@ class Store:
                         "CREATE INDEX IF NOT EXISTS ix_users_folded_mail ON users(folded_mail)",
                         "CREATE INDEX IF NOT EXISTS ix_fed_directory_name_folded ON federated_identity(directory_name_folded)",
                         "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)"):
+                        "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)",
+                        # Schema 23: the accounts of an application (account API: list, quota).
+                        "CREATE INDEX IF NOT EXISTS ix_users_managed_by ON users(managed_by)"):
                 self.db.execute(sql)
             # The triggers over the buckets (recompute and identifier space, see `_trigger_sql`). A
             # file on which they cannot be created (read-only) must not prevent the start:
@@ -2063,7 +2085,7 @@ class Store:
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
                     is_service=False, email_verified=True, name_itself_chosen=False,
-                    name_source=None) -> int:
+                    name_source=None, managed_by=None) -> int:
         """Create an account (raw building block; the checks are done by `TinySesam.create_user`).
 
         Raises `sqlite3.IntegrityError` if the name or address is already the identifier of another account
@@ -2079,13 +2101,13 @@ class Store:
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
             "is_service, created_at, folded_name, folded_mail, name_attempt_from, mail_attempt_from, "
-            "name_audit_from, mail_audit_from, name_self_chosen, name_source) VALUES (?,?,?,?,?,?,?,?,?,?,"
-            f"{self.WL_ATTEMPT},{self.WL_ATTEMPT},{self.WL_AUDIT},{self.WL_AUDIT},?,?)",
+            "name_audit_from, mail_audit_from, name_self_chosen, name_source, managed_by) VALUES (?,?,?,?,?,?,?,?,?,?,"
+            f"{self.WL_ATTEMPT},{self.WL_ATTEMPT},{self.WL_AUDIT},{self.WL_AUDIT},?,?,?)",
             (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now(),
              norm_identifier(username), norm_identifier(mail), 1 if name_itself_chosen else 0,
-             name_source or None))
+             name_source or None, managed_by or None))
         return cur.lastrowid
 
     def _set_identifier(self, user_id, column: str, value, bucket: str, proof=None) -> list:
@@ -2654,6 +2676,79 @@ class Store:
     #: afterwards set `disabled` unconditionally to 0.
     LOCKED_CONFIRMATION = 1
     LOCKED_OPERATOR = 2
+    #: The lock of the application that manages the account (account API, schema 23). The application lifts only
+    #: this value (`unlock_by_app`), never 1 or 2, and it never downgrades another lock (`lock_by_app`).
+    LOCKED_APP = 3
+
+    def lock_by_app(self, user_id) -> bool:
+        """Set the application's lock — only on an active account: `UPDATE … WHERE disabled=0`. A lock of the
+        operator or of a pending confirmation stays what it is. True if this call locked."""
+        return self._exec("UPDATE users SET disabled=? WHERE id=? AND disabled=0",
+                          (self.LOCKED_APP, user_id)).rowcount == 1
+
+    def unlock_by_app(self, user_id) -> bool:
+        """Lift the application's lock — and only that one: `UPDATE … WHERE disabled=3`. True if this call
+        unlocked."""
+        return self._exec("UPDATE users SET disabled=0 WHERE id=? AND disabled=?",
+                          (user_id, self.LOCKED_APP)).rowcount == 1
+
+    def merge_roles(self, user_id, allowlist, wanted) -> Optional[tuple]:
+        """Replace the roles of `allowlist` on an account with `wanted` and keep every other role:
+        `(current − allowlist) ∪ wanted`, read and written in ONE transaction (`BEGIN IMMEDIATE`, also across
+        processes) — a change from the panel between reading and writing is not lost. Returns
+        `(before, after)` as lists, or None if the account does not exist."""
+        allowed = set(allowlist)
+        with self._writing():
+            self._begin_immediate()
+            row = self.db.execute("SELECT roles FROM users WHERE id=?", (user_id,)).fetchone()
+            if row is None:
+                self.db.rollback()
+                return None
+            try:
+                before = [str(r) for r in json.loads(row["roles"] or "[]")]
+            except (ValueError, TypeError):
+                before = []
+            after = list(dict.fromkeys([r for r in before if r not in allowed] + list(wanted)))
+            self.db.execute("UPDATE users SET roles=? WHERE id=?", (json.dumps(after), user_id))
+            self.db.commit()
+        return before, after
+
+    def set_display_name(self, user_id, display_name: str) -> bool:
+        """Replace the display name (the caller checks the value). True if the account exists."""
+        return self._exec("UPDATE users SET display_name=? WHERE id=?", (display_name, user_id)).rowcount == 1
+
+    def count_managed(self, app_id: str) -> int:
+        """How many accounts an application manages (`users.managed_by`)."""
+        row = self._one("SELECT COUNT(*) AS n FROM users WHERE managed_by=?", (app_id,))
+        return int(row["n"]) if row else 0
+
+    def list_managed(self, app_id: str, after: int = 0, limit: int = 100) -> list:
+        """The accounts of an application in id order, from `after` on (exclusive) — the account API filters what
+        the application may see."""
+        return self._all("SELECT * FROM users WHERE managed_by=? AND id>? ORDER BY id LIMIT ?",
+                         (app_id, int(after), int(limit)))
+
+    def count_up(self, key: str, limit: int, ttl: int) -> bool:
+        """Count one use under `key` in the `flow` table, but never beyond `limit` — atomic, also across processes
+        (one conditional `UPDATE` in a `BEGIN IMMEDIATE` transaction). True if the use was counted (still within the
+        limit). The row expires after `ttl` seconds and the flow cleanup removes it; the window is part of the key."""
+        with self._writing():
+            self._begin_immediate()
+            self.db.execute("INSERT OR IGNORE INTO flow(key, data, expires_at) VALUES (?, '0', ?)",
+                            (key, _now() + int(ttl)))
+            counted = self.db.execute(
+                "UPDATE flow SET data = CAST(CAST(data AS INTEGER) + 1 AS TEXT) "
+                "WHERE key=? AND CAST(data AS INTEGER) < ?", (key, int(limit))).rowcount == 1
+            self.db.commit()
+        return counted
+
+    def counter(self, key: str) -> int:
+        """The current count under `key` (`count_up`), 0 if there is none."""
+        row = self._one("SELECT data FROM flow WHERE key=?", (key,))
+        try:
+            return int(row["data"]) if row else 0
+        except (ValueError, TypeError):
+            return 0
 
     def set_disabled(self, user_id, disabled: bool, through_operator: bool = False):
         """Lock or unlock an account.
@@ -3040,6 +3135,18 @@ class Store:
         would otherwise both read, both write, and the time would be the later one."""
         return self._exec("UPDATE users SET first_login_at=? WHERE id=? AND first_login_at IS NULL",
                           (now, user_id)).rowcount > 0
+
+    def mark_login(self, user_id: int, now: int) -> bool:
+        """Record a complete sign-in: `last_login_at` every time, `first_login_at` only the first time (schema 23).
+
+        One transaction, the condition for the first time in the SQL (see `mark_first_login`). Returns True if this
+        call set `first_login_at`."""
+        with self._writing():
+            first = self.db.execute("UPDATE users SET first_login_at=? WHERE id=? AND first_login_at IS NULL",
+                                    (now, user_id)).rowcount > 0
+            self.db.execute("UPDATE users SET last_login_at=? WHERE id=?", (now, user_id))
+            self.db.commit()
+        return first
 
     def set_password_must_change(self, user_id: int, value: bool) -> None:
         """Mark the password as a start secret set by an administrator (T-46) — or clear the mark."""
