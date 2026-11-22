@@ -62,14 +62,46 @@ else
     "$PY" tests/run_all.py || fail "test suite"
 fi
 
-# The Go gate client (clients/go): vet and the tests with every vector of spec/vectors. Without a Go toolchain this
-# step skips with its reason — a skip is not a green: the CI workflow client-go runs it in any case, with staticcheck,
-# govulncheck, the race detector and a fuzz run on top.
+# The Go gate client (clients/go): the same steps as the CI workflow client-go, except the fuzz run and the second Go
+# release (those stay CI): gofmt (must list nothing), go vet, staticcheck and govulncheck from the tools pinned in
+# .github/audit/go.mod, and the tests with the race detector. Without a Go toolchain this step prints a `skip` line —
+# ci-local counts exactly that shape (`skip <name> (<reason>)`) as a gap: a skip is not a green. The same holds for the
+# parts that need something this machine lacks (a C compiler for -race; the module cache or the network for the tools).
 if command -v go >/dev/null; then
-    step "Go gate client (clients/go): go vet + go test"
-    (cd clients/go && go vet ./... && go test -count=1 ./...) || fail "Go gate client"
+    step "Go gate client (clients/go): gofmt, go vet, staticcheck, govulncheck, go test -race"
+    GO_UNFORMATTED="$(cd clients/go && gofmt -l .)"
+    [[ -z "$GO_UNFORMATTED" ]] || fail "Go gate client: not gofmt-formatted:
+$GO_UNFORMATTED"
+    (cd clients/go && go vet ./...) || fail "Go gate client: go vet"
+    GO_TOOLS="${XDG_CACHE_HOME:-$HOME/.cache}/tinysesam-client-go/tools"
+    mkdir -p "$GO_TOOLS"
+    if [[ $FAST -eq 1 ]]; then
+        # --fast: format, vet and the plain tests only; staticcheck, govulncheck and -race belong to the full gate.
+        (cd clients/go && go test -count=1 ./...) || fail "Go gate client: go test"
+    elif (cd .github/audit && go build -o "$GO_TOOLS/" tool) >/dev/null 2>&1; then
+        (cd clients/go && "$GO_TOOLS/staticcheck" ./...) || fail "Go gate client: staticcheck"
+        # govulncheck fetches its vulnerability database: offline (ci-local's container) that is a gap, not a finding.
+        if GO_VULN="$(cd clients/go && "$GO_TOOLS/govulncheck" ./... 2>&1)"; then
+            :
+        elif grep -qiE 'dial tcp|no such host|network is unreachable|i/o timeout|connection refused' <<<"$GO_VULN"; then
+            printf '\n\033[33mskip go-govulncheck (the vulnerability database is not reachable) — the CI job client-go runs it\033[0m\n'
+        else
+            printf '%s\n' "$GO_VULN" >&2
+            fail "Go gate client: govulncheck"
+        fi
+    else
+        printf '\n\033[33mskip go-staticcheck (the pinned tools in .github/audit do not build here: no module cache or network) — the CI job client-go runs staticcheck and govulncheck\033[0m\n'
+    fi
+    if [[ $FAST -eq 1 ]]; then
+        :
+    elif [[ "$(cd clients/go && go env CGO_ENABLED)" == "1" ]] && command -v gcc >/dev/null; then
+        (cd clients/go && go test -race -count=1 ./...) || fail "Go gate client: go test -race"
+    else
+        (cd clients/go && go test -count=1 ./...) || fail "Go gate client: go test"
+        printf '\n\033[33mskip go-race (no C compiler here: the race detector needs cgo) — the CI job client-go runs it\033[0m\n'
+    fi
 else
-    step "Go gate client SKIPPED — no Go toolchain here (the CI workflow client-go runs it)"
+    printf '\n\033[33mskip go-gate-client (no Go toolchain here) — the CI job client-go runs it\033[0m\n'
 fi
 
 # The Rust gate client (clients/rust, T-81): its own toolchain, its own CI workflow (client-rust.yml, mandatory there).
@@ -80,6 +112,31 @@ fi
 # must not write into it) and survives between runs — one per checkout: cargo keys a workspace member's build by its
 # sources' modification times, not by its path, so a shared directory handed one working tree the test binaries of
 # another (built later, `CARGO_MANIFEST_DIR` baked in) — red with the other tree's path, or green against its code.
+# Build directories of Rust checkouts that are gone (about 1 GB each): every one carries a `.checkout` file with the
+# path of the checkout it belongs to. A directory whose path no longer exists is removed; one without the file (left by
+# an older check.sh) is only reported — nothing here guesses what it belonged to. Only names of 16 hex digits count.
+RUST_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/tinysesam-client-rust"
+rust_cache_sweep() {
+    local dir name path legacy=0
+    [[ -d "$RUST_CACHE" ]] || return 0
+    for dir in "$RUST_CACHE"/*/; do
+        dir="${dir%/}"; name="${dir##*/}"
+        [[ "$name" =~ ^[0-9a-f]{16}$ ]] || continue
+        if [[ -f "$dir/.checkout" ]]; then
+            path="$(head -n1 "$dir/.checkout")"
+            if [[ -n "$path" && ! -e "$path" ]]; then
+                printf '  removing the Rust build directory of a vanished checkout: %s\n' "$path"
+                rm -rf "$RUST_CACHE/$name"
+            fi
+        else
+            legacy=$((legacy + 1))
+        fi
+    done
+    [[ $legacy -eq 0 ]] || printf '  note: %d Rust build director%s in %s without a .checkout file (older check.sh) — not removed\n' \
+        "$legacy" "$([[ $legacy -eq 1 ]] && echo y || echo ies)" "$RUST_CACHE"
+}
+
+rust_cache_sweep
 CARGO="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
 if [[ $FAST -eq 1 ]]; then
     RUST_SKIP="--fast"
@@ -89,12 +146,19 @@ else
     RUST_SKIP=""
 fi
 if [[ -z "$RUST_SKIP" ]]; then
-    step "Rust gate client (clients/rust)"
-    RUST_TARGET="${XDG_CACHE_HOME:-$HOME/.cache}/tinysesam-client-rust/$(pwd -P | sha256sum | cut -c1-16)"
-    (cd clients/rust && CARGO_TARGET_DIR="$RUST_TARGET" \
-        "$CARGO" test --locked --all-features --quiet) || fail "Rust gate client"
+    step "Rust gate client (clients/rust): fmt, clippy, tests without and with all features"
+    RUST_TARGET="$RUST_CACHE/$(pwd -P | sha256sum | cut -c1-16)"
+    mkdir -p "$RUST_TARGET"
+    pwd -P >"$RUST_TARGET/.checkout"   # lets the next run find out that this checkout is gone (see rust_cache_sweep)
+    # The flags of client-rust.yml; `cargo doc` and `cargo audit` stay in the CI.
+    (cd clients/rust && export CARGO_TARGET_DIR="$RUST_TARGET" \
+        && "$CARGO" fmt --check \
+        && "$CARGO" clippy --locked --all-features --all-targets --quiet -- -D warnings \
+        && "$CARGO" test --locked --quiet \
+        && "$CARGO" test --locked --all-features --quiet) || fail "Rust gate client"
 else
-    printf '\n\033[33m! Rust gate client not tested here (%s) — the CI job client-rust runs it\033[0m\n' "$RUST_SKIP"
+    # `skip <name> (<reason>)`: the shape ci-local counts as a gap (a "! … not tested" line it never saw).
+    printf '\n\033[33mskip rust-gate-client (%s) — the CI job client-rust runs it\033[0m\n' "$RUST_SKIP"
 fi
 
 # The JS/TS gate client (clients/js, T-82): its own CI workflow (client-js.yml, mandatory there, on two Node LTS
@@ -127,7 +191,7 @@ if [[ -z "$JS_SKIP" ]]; then
         && npx --no-install tsc -p tsconfig.build.json --outDir "$JS_DIST" \
         && node test/dist-smoke.mjs "$JS_DIST") || fail "JS/TS gate client"
 else
-    printf '\n\033[33m! JS/TS gate client not tested here (%s) — the CI job client-js runs it\033[0m\n' "$JS_SKIP"
+    printf '\n\033[33mskip js-gate-client (%s) — the CI job client-js runs it\033[0m\n' "$JS_SKIP"
 fi
 
 # The PHP gate client (clients/php, T-83): clients/php/ci.sh holds every check of the CI workflow client-php (Composer

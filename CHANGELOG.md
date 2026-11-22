@@ -10,6 +10,19 @@ Patch release cut by the release automation after Dependabot merges:
 
 - chore(deps): bump the all group in /deploy/gateway with 2 updates (#315)
 
+### Changed — local gate (`scripts/check.sh`) finds what the CI finds
+
+- Go gate client: `gofmt -l` (must list nothing), `go vet`, `staticcheck` and `govulncheck` (built from the tools pinned
+  in `.github/audit/go.mod`) and `go test -race`, the flags of `client-go.yml` (the fuzz run and the second Go release
+  stay in the CI). `--fast` keeps format, vet and the plain tests.
+- Rust gate client: `cargo fmt --check`, `cargo clippy --locked --all-features --all-targets -- -D warnings` and
+  `cargo test --locked` without features, besides the run with all features (`client-rust.yml`; `cargo doc` and
+  `cargo audit` stay in the CI).
+- A step that cannot run (no toolchain, `--fast`, no network) now prints `skip <name> (<reason>)` — the shape
+  `ci-local` counts as a gap. The old `! … not tested here` lines were never counted, so these gaps passed unnoticed.
+- Rust build directories (about 1 GB per checkout) record their checkout in `.checkout`; the next run removes the
+  directories whose checkout is gone and only reports older ones without the record.
+
 ### Added — gate client in PHP (T-83)
 
 - `clients/php/`: package `tinysesam/gate` 0.1.0 (namespace `TinySesam\Gate`, not published on Packagist), following
