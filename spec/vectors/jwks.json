@@ -1354,7 +1354,7 @@
     {
       "id": "invalid-kid-no-fetch",
       "attack": "jwks-cache",
-      "reason": "A kid of the wrong form is refused before the key set is consulted — even with an empty cache.",
+      "reason": "A kid of the wrong form (a path, upper case, 15 or 17 hex digits) is refused before the key set is consulted and never triggers a fetch — with an empty cache, a fresh one or a stale one. With fixed keys such a kid looks like an unknown one (both `kid`); only the fetch tells them apart. A well-formed unknown kid does fetch, at most every 10 s.",
       "steps": [
         {
           "now": 1767225600,
@@ -1366,8 +1366,129 @@
           }
         },
         {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IkEwMzM1MDdDQTYxQUQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.BlvDDE15tjrcau3B9fePpmtb4OCLW8Gm8HyIrZQ7gcwu9484MvtGBSk1oCly817DFRrMvGdQ7JscAPoITwfTAA",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NyJ9.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.DZkGeuIenCJ7HiXF-8VTzlMV97FGHrofKIfJXM-s6XqelvDo2yiiaDrpLZMr1f-syEPTxkp-w6uxZA2eWZsXAA",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225600,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkwIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicy1BLTE3NjcyMjU2MDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.lkkBz1iBTv2Jlbgru9BK-9zIdHauEd5jA4b7s16CxJsHMUoYCXxVo5U3-pUZ11GJ-xEhBnPM9LaEmxYyMkpoAw",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
           "now": 1767225601,
           "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAxLCJuYmYiOjE3NjcyMjU2MDEsImV4cCI6MTc2NzIyNTkwMSwianRpIjoicy1BLTE3NjcyMjU2MDEtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.apBF-Bx66XMNIgL_lDP7W8dw12QnZCWowOLuk1K1z5hLxKqEl2MRmOk_7ujj8sJbrcTU4hK9zgPMbv2X1X-GAA",
+          "expect": {
+            "fetched": true,
+            "ok": true
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225602,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IkEwMzM1MDdDQTYxQUQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAyLCJuYmYiOjE3NjcyMjU2MDIsImV4cCI6MTc2NzIyNTkwMiwianRpIjoicy1BLTE3NjcyMjU2MDItMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.Tc9GLrhkz1lwgJ9s9cu3GgKPPzwOIrvm5l8aEsIOBnOkUNxFBNvXBu04vBN1altwpaKISOfKUGRncWhmqBHnBw",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225611,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NyJ9.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjExLCJuYmYiOjE3NjcyMjU2MTEsImV4cCI6MTc2NzIyNTkxMSwianRpIjoicy1BLTE3NjcyMjU2MTEtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.rDHP3EdPl-b8YOv8S0ie6i9lgQtCwftnJDfOYdCpjOAAPHrUdKbu4cGk0BxnDHEk0rZNYBkSKJkZd3xMM4KACA",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767225612,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjFkNTQ0YjQxMjFkMDg1ZjgifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjEyLCJuYmYiOjE3NjcyMjU2MTIsImV4cCI6MTc2NzIyNTkxMiwianRpIjoicy1YLTE3NjcyMjU2MTItMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.fuvRbZO0whR6nOs_9mFBTJKgfrOEKRkYW1c4qZL7LmCcNCNTihNUDGm5bz-jpgh8w7krYjvrMTEAZRI97cXsAg",
+          "expect": {
+            "fetched": true,
+            "ok": false,
+            "error": "kid"
+          },
+          "fetch": {
+            "status": 200,
+            "body": {
+              "keys": [
+                {
+                  "kty": "OKP",
+                  "crv": "Ed25519",
+                  "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+                  "kid": "a033507ca61ad979",
+                  "alg": "EdDSA",
+                  "use": "sig"
+                }
+              ]
+            },
+            "cache_control": "max-age=300"
+          }
+        },
+        {
+          "now": 1767225613,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IjFkNTQ0YjQxMjFkMDg1ZjgifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjEzLCJuYmYiOjE3NjcyMjU2MTMsImV4cCI6MTc2NzIyNTkxMywianRpIjoicy1YLTE3NjcyMjU2MTMtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.zaYMIZObIZKv0RMs_4gum-tmXaeXJ1GTloCcBrddRmitlyP4Sw-5ryzQIrBxXr8GnXMQp3NYA_O8H71dWOujBA",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767226000,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkwIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI2MDAwLCJuYmYiOjE3NjcyMjYwMDAsImV4cCI6MTc2NzIyNjMwMCwianRpIjoicy1BLTE3NjcyMjYwMDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.cwLSa9D6_T1SK6-ndSRilk72mYMZhBRdixsCVYNg10mBgYwdrCsJhPU69M7iDSJp-dUSxMF3zrZfbTSXIcFZDw",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767226000,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6IkEwMzM1MDdDQTYxQUQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI2MDAwLCJuYmYiOjE3NjcyMjYwMDAsImV4cCI6MTc2NzIyNjMwMCwianRpIjoicy1BLTE3NjcyMjYwMDAtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.wE4CPW0lpuGkU6YnlFks7O9_Xmy3bCoWyf39Imfw5jpKW--z3bLRHaqhUzmeC6l8MKKJ20NI2n64LILdXTe5BA",
+          "expect": {
+            "fetched": false,
+            "ok": false,
+            "error": "kid"
+          }
+        },
+        {
+          "now": 1767226001,
+          "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI2MDAxLCJuYmYiOjE3NjcyMjYwMDEsImV4cCI6MTc2NzIyNjMwMSwianRpIjoicy1BLTE3NjcyMjYwMDEtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfbmFtZSI6IkFubmEgQmVyZyIsInRzX2VtYWlsIjoiYW5uYUBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.Bp08ZJOQjsHYgPD433hoT4pdJHOAGptOG61DWUpo1IRPvjDli0934oPZmTPwBur9HSVl-Wz3_TiyuIv5i8nlBA",
           "expect": {
             "fetched": true,
             "ok": true

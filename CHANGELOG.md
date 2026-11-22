@@ -10,6 +10,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   still answered `malformed` through its duplicate check; the invalid bytes now sit in an unknown claim. `attack-jku` and
   `attack-x5u` were signed with the attacker's key under its own `kid`, so a client that ignores unknown header members
   still refused them as `kid`; they are now otherwise valid tokens of the active key. Same ids and expected classes.
+- `spec/vectors/jwks.json`, scenario `invalid-kid-no-fetch`: a `kid` in upper case or with 15 or 17 hex digits never
+  triggers a key set fetch — with an empty, a fresh and a stale cache —, while a well-formed unknown `kid` does, at
+  most every 10 s. With fixed keys both answer `kid`, so only the fetch tells a client that checks the form loosely
+  (case-insensitive, by length) from one that checks it exactly; the token vectors could not.
 - `tests/test_gate_vectors.py` guards the rule for every token and header attack vector: switching off exactly one check
   of the reference (or adding the missing key, or configuring the issuer or audience the token names) must make it
   accepted; the vectors whose defect cannot occur alone are listed with a reason, and the list is measured both ways.

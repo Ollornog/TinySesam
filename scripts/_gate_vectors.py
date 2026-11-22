@@ -716,10 +716,23 @@ def jwks_scenarios() -> list:
         step(t0 + 19, "X", error="kid"),
         step(t0 + 19, "A"),
         step(t0 + 20, "X", fetch=ok_resp("A"), fetched=True, error="kid")])
-    add("invalid-kid-no-fetch", "A kid of the wrong form is refused before the key set is consulted — even with an "
-        "empty cache.", [
+    ka = kid("A")
+    add("invalid-kid-no-fetch", "A kid of the wrong form (a path, upper case, 15 or 17 hex digits) is refused before "
+        "the key set is consulted and never triggers a fetch — with an empty cache, a fresh one or a stale one. With fixed "
+        "keys such a kid looks like an unknown one (both `kid`); only the fetch tells them apart. A well-formed unknown "
+        "kid does fetch, at most every 10 s.", [
             step(t0, kid_override="../keys", error="kid"),
-            step(t0 + 1, fetch=ok_resp("A"), fetched=True)])
+            step(t0, kid_override=ka.upper(), error="kid"),
+            step(t0, kid_override=ka[:15], error="kid"),
+            step(t0, kid_override=ka + "0", error="kid"),
+            step(t0 + 1, fetch=ok_resp("A"), fetched=True),
+            step(t0 + 2, kid_override=ka.upper(), error="kid"),
+            step(t0 + 11, kid_override=ka[:15], error="kid"),
+            step(t0 + 12, "X", fetch=ok_resp("A"), fetched=True, error="kid"),
+            step(t0 + 13, "X", error="kid"),
+            step(t0 + 400, kid_override=ka + "0", error="kid"),
+            step(t0 + 400, kid_override=ka.upper(), error="kid"),
+            step(t0 + 401, fetch=ok_resp("A"), fetched=True)])
     add("stale-if-error", "A failed refresh keeps the last good set for up to 3600 s past its freshness, then the client "
         "fails closed.", [
             step(t0, fetch=ok_resp("A"), fetched=True),
