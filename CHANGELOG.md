@@ -36,6 +36,51 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   "Not in the configuration" and are kept unless an administrator unticks them (`tests/test_role_levels.py`,
   `tests/test_browser.py`).
 
+### Fixed — the dress rehearsal tries each attestation up to three times (Sigstore tlog 404)
+
+- `release.yml`, job `rehearsal-attest`: the required check went red three times on 2026-11-22 with
+  `InternalError: error fetching tlog entry - (404) Not Found`. Cause outside the repo: Sigstore's client retries a
+  timed-out transparency-log write, gets "409 entry exists" for its own first write, fetches that entry and the log
+  answers 404; sigstore-js does not retry a 404 (up to `@sigstore/sign` 5.1.0) and `actions/attest-build-provenance` /
+  `actions/attest` v4.2.2 — the newest releases — offer no retry input. Provenance and SBOM attestation now run up to
+  three attempts each: attempts 1 and 2 with `continue-on-error`, a pause of 20 s and 60 s only after a failure,
+  attempt 3 without — three failures keep the job red, and the verify step (`gh attestation verify`, signer pinned)
+  runs unconditionally afterwards. The tag jobs are unchanged. `tests/test_repo.py` pins the shape (soft attempt only
+  with exactly one later attempt of the same action and inputs, the chain ends hard, pauses only `sleep` after a
+  failure, verify last and unconditional, no `continue-on-error` in any other job of `release.yml`); 9 mutations, each
+  red. `sleep` joins the commands allowed in a job with an identity. A comment in `release.yml` no longer names the
+  Python audit tool by name: the kit's audit-gate check reads comments as calls (false positive, fix pending in the
+  kit; revert after the kit sync).
+
+### Fixed — two suites that read the clock instead of an event (red under load)
+
+- `tests/test_close.py`: the job in the shutdown race wrote 400 rows; under load (two CPUs, a dozen suites) that took
+  longer than `close()`'s 10 s deadline, and `close()` correctly kept the database open (`False`) — the test read that
+  as a failure (12 of 12 runs red under `taskset -c 0,1`). The job now writes until `close()` has begun to wait and
+  then ends: 0 of 12 red under the same load. No product gap: past its deadline `close()` leaves the database open and
+  the job finishes.
+- `tests/test_browser.py`: after the demo sign-in it waited a fixed 2 s and then read the page ("not signed in: ''"
+  when the answer came later); it now waits for the signed-in page (`until`, up to 20 s). With 4 s network latency
+  injected before the sign-in: the old version 3 of 3 red, the new one 0 of 3.
+
+### Security — the image scan shows the findings of both images in every run
+
+- `release.yml`, job `image-probe`: the Caddy image (`tinysesam-caddy-gate`) is now built and scanned also when a step
+  about the gateway image is red (`if: ${{ !cancelled() }}`; the scan needs its own build). Until now a red gateway
+  scan skipped both Caddy steps, and the report step said only `no report from ['(empty)']` — the Caddy findings stayed
+  unseen until the gateway was fixed. The job stays red through the failed step itself. `tests/test_security_doc.py`
+  guards it (mutation: either condition removed → red).
+- **Exception until 2026-11-28 (PO decision):** the gateway image carries `libc6 2.41-12+deb13u4` with CVE-2026-19499
+  and CVE-2026-5435 (high; fixed in Debian's `2.41-12+deb13u5`). Neither base has a rebuilt image yet:
+  `python:3.15-slim` and `gcr.io/distroless/base-debian13:nonroot` still point to the pinned digests (checked against
+  the registry on 2026-11-22), both with `deb13u4`. `.grype.yaml` excepts exactly these two CVEs for the deb package
+  `libc6` in that version; from 2026-11-29 the check before the scan is red again, and once Dependabot bumps a rebuilt
+  base the rules match nothing and the check after the scans is red until they are removed. Python 3.15.2 carries
+  medium findings only (fix in 3.16), below the gate. Measured locally with Grype against both built images: no fixable
+  high finding left, both rules matched.
+- `tests/test_security_doc.py` now drives the deadline through the command the CI runs (`--today`): green on the last
+  valid day of every shipped rule, red the day after (mutation: the expiry check removed → red).
+
 ### Added — the gate client for Python (T-86)
 
 - **Who needs it:** a Flask, Django, Starlette or any other WSGI/ASGI application behind TinySesam's gate that is not

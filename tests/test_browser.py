@@ -612,7 +612,11 @@ async def run():
         await p.click(".demofill[data-u=demoadmin]")
         assert await p.js("document.querySelector('[name=username]').value") == "demoadmin"
         await p.js("document.querySelector('form').submit()")
-        await asyncio.sleep(2.0)
+        # Wait for the signed-in page, not for a fixed time: until 2026-11-22 a pause of 2 s, and under load (the pre-push
+        # container next to a dozen suites) the response to the sign-in came later — the check read the still empty
+        # page ("not signed in: ''"). `until` polls up to 20 s and names the address it ended on.
+        await p.until("(document.querySelector('.dd.r summary')||{textContent:''}).textContent.trim()==='demoadmin'",
+                      "not signed in after the demo sign-in")
         who = (await p.js("(document.querySelector('.dd.r summary')||{textContent:''}).textContent")).strip()
         assert who == "demoadmin", f"not signed in: {who!r}"
         await p.go("/app")

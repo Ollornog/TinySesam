@@ -238,6 +238,12 @@ Dependabot proposes the updates. A finding that cannot be fixed in time (for exa
 OS package is not yet in the pinned base image) may be excepted only in `.grype.yaml`, with a
 reason and an `until` date within these deadlines — the scan fails again once that date has passed.
 
+**Current exceptions (2026-11-22):** CVE-2026-19499 and CVE-2026-5435 (high) in `libc6 2.41-12+deb13u4`, only for that
+package and version, until 2026-11-28 (red from 2026-11-29). Debian fixed both in `2.41-12+deb13u5`, but neither
+`python:3.15-slim` nor `gcr.io/distroless/base-debian13:nonroot` has been rebuilt with it; the pinned digests are the
+current ones of their tags (checked 2026-11-22). Once Dependabot bumps a rebuilt base, the rules match nothing and the
+check after the scans turns red until they are removed.
+
 ## Supported versions
 
 Security fixes land on the latest released minor version — see the top of

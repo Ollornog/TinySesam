@@ -736,7 +736,8 @@ def _permissions_job(lines: list[str], inherited: set[str]) -> set[str]:
 # `gh pr` wholesale: `gh pr checkout` would fetch PR code into a job with write permission.
 PERMITTED_WITH_RIGHT = {"echo", "printf", "gh release", "gh attestation", "git log",
                      "gh pr merge", "gh pr comment", "gh workflow run",
-                     "gh pr update-branch"}  # auto-merge with app: stale branches via rebase (Kit 0.33)
+                     "gh pr update-branch",  # auto-merge with app: stale branches via rebase (Kit 0.33)
+                     "sleep"}  # pause between attest attempts in `rehearsal-attest` (2026-11-22); runs no code
 
 
 def _commands(line: str) -> list[str]:
@@ -1100,6 +1101,78 @@ _verify = [z.strip() for z in _rel_jobs.get("rehearsal-attest", []) if "gh attes
 assert len(_verify) == 2 and all('--signer-workflow "$SIGNER"' in z for z in _verify) \
     and sum("--predicate-type https://spdx.dev/Document" in z for z in _verify) == 1, \
     f"release.yml: `rehearsal-attest` does not verify provenance and SBOM: {_verify}"
+# Up to three attempts per attestation in the dress rehearsal (2026-11-22, Sigstore "error fetching tlog entry - (404)",
+# three red runs in one day). Each attest step starts or continues a chain: a soft attempt (`continue-on-error: true`,
+# with an `id`) is followed by exactly ONE later attempt of the same action with the same inputs under
+# `if: steps.<id>.outcome == 'failure'`; the chain ends in a hard attempt without continue-on-error — so failures of
+# every attempt stay red. A pause is only `sleep N` and runs only after a failed soft attempt, before its follower. The
+# verify step comes after every attempt and runs unconditionally, so it checks what was attested. Nowhere else in
+# release.yml may a step or job fail softly. (Mutation probes: drop the third provenance attempt; give it
+# `continue-on-error: true`; give the verify step an `if:`; set continue-on-error in the `image-probe` scan → each red.)
+
+
+def _steps(lines: list[str]) -> list[list[str]]:
+    """The steps of a job (lines without comments), each as its lines relative to the step's keys."""
+    steps: list[list[str]] = []
+    for z in lines:
+        if z.startswith("      - "):
+            steps.append([z[8:].rstrip()])
+        elif steps and z.startswith("        "):
+            steps[-1].append(z[8:].rstrip())
+    return steps
+
+
+def _step_key(step: list[str], key: str) -> str | None:
+    return next((z.split(":", 1)[1].strip() for z in step if z.startswith(key + ":")), None)
+
+
+def _step_inputs(step: list[str]) -> list[str]:
+    return [z.strip() for z in step if z.startswith("  ")]
+
+
+_ra = _steps(_rel_jobs.get("rehearsal-attest", []))
+_attempts = [i for i, s in enumerate(_ra) if (_step_key(s, "uses") or "").startswith("actions/attest")]
+_ids = {_step_key(_ra[i], "id"): i for i in _attempts if _step_key(_ra[i], "id")}
+_soft = [i for i, s in enumerate(_ra) if _step_key(s, "continue-on-error") is not None]
+assert set(_soft) <= set(_attempts), "release.yml: `rehearsal-attest` lets a step other than an attest attempt fail softly"
+_in_chain, _chains = set(), 0
+for _head in (i for i in _attempts if _step_key(_ra[i], "if") is None):
+    _chains += 1
+    _i, _n = _head, 1
+    while True:
+        _s = _ra[_i]
+        assert _i not in _in_chain, f"release.yml: `rehearsal-attest` step {_s[0]!r} belongs to two chains"
+        _in_chain.add(_i)
+        _coe = _step_key(_s, "continue-on-error")
+        if _coe is None:
+            break                                   # the hard attempt ends the chain
+        _id = _step_key(_s, "id")
+        assert _coe == "true" and _id, f"release.yml: `rehearsal-attest` step {_s[0]!r} fails softly without an id"
+        _cond = f"steps.{_id}.outcome == 'failure'"
+        _next = [j for j in _attempts if j > _i and _step_key(_ra[j], "if") == _cond]
+        assert len(_next) == 1 and _step_key(_ra[_next[0]], "uses") == _step_key(_s, "uses") \
+            and _step_inputs(_ra[_next[0]]) == _step_inputs(_s), \
+            f"release.yml: `rehearsal-attest` step {_s[0]!r} fails softly without exactly one next attempt (same action " \
+            "and inputs, `if: steps.<id>.outcome == 'failure'`)"
+        for _k in range(_i + 1, _next[0]):           # between them only the pause after this failure
+            assert _step_key(_ra[_k], "if") != _cond or re.fullmatch(r"sleep \d+", _step_key(_ra[_k], "run") or ""), \
+                f"release.yml: `rehearsal-attest` runs {_ra[_k][0]!r} after the failure of {_s[0]!r}"
+        _i, _n = _next[0], _n + 1
+    assert _n <= 3, f"release.yml: `rehearsal-attest` tries {_ra[_head][0]!r} {_n} times — at most three"
+assert _chains == 2 and _in_chain == set(_attempts), \
+    "release.yml: `rehearsal-attest` attests outside the chains of soft and final hard attempts (provenance, SBOM)"
+for _k, _s in enumerate(_ra):
+    if _step_key(_s, "run") and _step_key(_s, "run").startswith("sleep"):
+        _m = re.fullmatch(r"steps\.([\w-]+)\.outcome == 'failure'", _step_key(_s, "if") or "")
+        assert _m and _ids.get(_m.group(1)) in _soft and _ids[_m.group(1)] < _k, f"release.yml: `rehearsal-attest` pauses {_s[0]!r} not only after a failure"
+_ra_verify = [i for i, s in enumerate(_ra) if any("gh attestation verify" in z for z in s)]
+assert len(_ra_verify) == 1 and _ra_verify[0] > max(_attempts) and _step_key(_ra[_ra_verify[0]], "if") is None \
+    and _step_key(_ra[_ra_verify[0]], "continue-on-error") is None, \
+    "release.yml: `rehearsal-attest` does not verify unconditionally after every attest attempt"
+for _j, _lines in _rel_jobs.items():
+    if _j != "rehearsal-attest":
+        assert not any(re.match(r"\s*continue-on-error:", z) for z in _lines), \
+            f"release.yml: job `{_j}` fails softly (continue-on-error) — only the dress rehearsal's attempts may"
 _image = "\n".join(_rel_jobs.get("image", []))
 assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _image, \
     "release.yml: the image is also pushed without a tag"
