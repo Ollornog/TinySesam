@@ -1690,6 +1690,10 @@
       "field": "int = 12",
       "tier": "A"
     },
+    "role_levels": {
+      "field": "list = []",
+      "tier": "B"
+    },
     "rp_id": {
       "field": "str = 'localhost'",
       "tier": "A"

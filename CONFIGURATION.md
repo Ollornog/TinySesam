@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `role_levels` (no tier), `topbar_enabled` (B), `topbar_links` (B), `totp_required` (B).
 
 ## Store
 
@@ -50,6 +50,7 @@ individual ones can be overridden via `**overrides`.
 | `admin_implies_roles` | `bool` | `True` | Does an admin satisfy EVERY require_role(...) check? Default True (classic behaviour). CAUTION: if an app's permissions hang solely on an IdP group, this is a silent privilege escalation — set False then, or use `require_role(..., admin_implies=False)` per guard. |
 | `group_match` | `str` | `"exact"` | How are IdP groups compared with the keys of *_group_role_map? "exact" (default, safe) or "substring" (the old substring comparison, on request only). With "exact", LDAP compares a memberOf DN by its parts: the whole DN, "cn=staff" or "staff". |
 | `available_roles` | `list[str]` | `list` | Known roles/groups: the admin panel offers them as checkboxes (empty = free-text fallback). |
+| `role_levels` | `list` | `list` | **Tier ?.** Role levels: ladders the admin panel offers as ONE choice per entry instead of single checkboxes, e.g. `[{"name": "collections", "label": {"en": "Collections", "de": "Sammlungen"}, "levels": [ {"name": "read", "role": "coll:{1}-read"}, {"name": "write", "role": "coll:{1}"}]}]`. Levels lowest first, each adds one role template with `{1}`; a level stores its role and every role below it. The entries (`{1}`) come from `available_roles`. A way to pick roles, not a role hierarchy: headers, gate token and key scopes carry exactly the stored roles. See README, "Role levels". |
 | `oidc_group_role_map` | `dict` | `dict` | IdP group → local role (set on OIDC/SAML/LDAP login). Target "__admin__" = admin flag (grant only). Compared according to `group_match` (default exact). Managed roles are synchronised on each login. |
 | `saml_group_role_map` | `dict` | `dict` | SAML group → local role, e.g. `{"staff": "editors"}` |
 | `ldap_group_role_map` | `dict` | `dict` | LDAP group (DN or name) → local role |
@@ -355,4 +356,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-204 fields, generated from `tinysesam/config.py`.
+205 fields, generated from `tinysesam/config.py`.

@@ -567,7 +567,11 @@ _node = pflicht_werkzeug("node", "finding 10: runtime probe of the panel actions
 if _node:
     _probe = ("const A=[];let REPLY=null;const E={};\n"
               "const document={cookie:'',addEventListener(){},querySelectorAll:()=>[],"
-              "getElementById:i=>E[i]||(E[i]={value:'0',checked:false,textContent:'',innerHTML:''})};\n"
+              "getElementById:i=>E[i]||(E[i]={value:'0',checked:false,textContent:'',innerHTML:'',"
+              "querySelector:()=>null,querySelectorAll:()=>[]})};\n"
+              # The address (`#user/<id>`) steers the users tab; node has no window.
+              "const window={addEventListener(){}},location={hash:'',pathname:'',search:''},"
+              "history={replaceState(){}};\n"
               # The panel's own dialogs (T-35) — what they show is what the person reads.
               "const tsAlert=async m=>{A.push(String(m))};const tsConfirm=async()=>true;"
               "const tsPrompt=async()=>'new-und-long';const tsSecret=async()=>{};\n"
@@ -576,7 +580,8 @@ if _node:
               "const fetch=async()=>({ok:REPLY[0]<400,status:REPLY[0],"
               "json:async()=>{if(REPLY[1]===null)throw new Error('no JSON');return REPLY[1]}});\n"
               + _js.replace("tabs();users();", "")
-              + "\nusers=async()=>{};keys=async()=>{};pks=async()=>{};sessions=async()=>{};\n"
+              + "\nusers=async()=>{};refresh=async()=>{};route=()=>{};keys=async()=>{};pks=async()=>{};"
+              "sessions=async()=>{};\n"
               "const CASES=[['savesec',[['rate_limit_max']]],['saveroles',[1]],['pw',[1]],['dis',[1,true]],"
               "['delpk',[1,2,'x']],['revk',[1,1,'x']],['mkkey',[1]],['deluser',[1]]];\n"
               "(async()=>{const E2={};for(const [name,args] of CASES){\n"

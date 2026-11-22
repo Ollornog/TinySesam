@@ -1655,7 +1655,13 @@ WebDAV-Client hinter einem echten Caddy ist `tests/e2e_app_passwords.py` (von Ha
 Eingebautes Panel unter **`/auth/admin`** (Administratoren; Delegierte sehen ihren Teil — siehe
 [Delegierte Verwaltung](#delegierte-verwaltung)), einbindbar ohne Extra-Setup:
 
-- **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz; im Code: `auth.set_disabled`), Passwort-Reset, Rollen/Admin setzen.
+- **Benutzer & Service-Accounts:** eine schlanke Liste (Name, Typ, Rollen, Status) mit Suche; ein Klick öffnet die
+  eigene Seite des Kontos (Adresse `#user/<id>`) mit den Abschnitten *Profil*, *Zugriff* (Rollen,
+  [Rollenstufen](#rollenstufen), Admin), *Anmeldung* (Passwort, Passkeys, API-Keys, Anmeldelink) und *Gefahrenzone*
+  (sperren/entsperren — das Konto bleibt, Login blockiert, Sitzungen enden sofort; im Code: `auth.set_disabled` —,
+  Owner, löschen). Die Rollen aus `available_roles` stehen nach Präfix gruppiert (`app:`, `ops:` …) mit Filter; eine
+  Rolle, die ein Konto hat, die aber nicht konfiguriert ist, bleibt unter eigener Überschrift angehakt, statt beim
+  Speichern zu verschwinden.
 - **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
 - **Anmeldelink** je User (mit `magiclink_enabled`): Einmal-Link plus QR-Code, einmal angezeigt,
   ohne Mailer — siehe [Anmeldung per Link und per QR-Code](#anmeldung-per-link-und-per-qr-code).
@@ -1671,6 +1677,45 @@ Eingebautes Panel unter **`/auth/admin`** (Administratoren; Delegierte sehen ihr
 - **Audit-Log** einsehen.
 
 JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automation).
+
+### Rollenstufen
+
+Manche Rollen haben Stufen: `coll:photos-read` lässt ein Konto eine Sammlung lesen, `coll:photos` schreiben. Je
+Sammlung zwei Kästchen anzuhaken ist fehleranfällig; `role_levels` macht aus solchen Rollen im Panel **eine Wahl je
+Eintrag** — „— / lesen / schreiben“:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    available_roles=["coll:photos", "coll:photos-read", "coll:recipes", "coll:recipes-read", "editor"],
+    role_levels=[{
+        "name": "collections",
+        "label": {"en": "Collections", "de": "Sammlungen"},
+        "levels": [  # niedrigste zuerst
+            {"name": "read", "label": {"en": "read", "de": "lesen"}, "role": "coll:{1}-read"},
+            {"name": "write", "label": {"en": "write", "de": "schreiben"}, "role": "coll:{1}"},
+        ],
+    }],
+)
+```
+
+- **Jede Stufe fügt eine Rollenvorlage** mit `{1}` hinzu; eine Stufe steht für ihre Rolle und alle Rollen darunter.
+  *schreiben* für `photos` speichert `coll:photos-read` **und** `coll:photos`; *—* speichert keine.
+- **Die Einträge** (`photos`, `recipes`) kommen aus `available_roles`. Passt eine Rolle auf mehrere Vorlagen, gewinnt
+  die spezifischste: `coll:photos-read` ist die Leserolle von `photos`.
+- **Eine Auswahlhilfe, keine Hierarchie.** Ein Konto hat weiter einfache Rollen: `Remote-Groups`, das Gate-Token,
+  Key-Scopes und `has_role` tragen genau die gespeicherten Rollen — `coll:photos` allein schließt
+  `coll:photos-read` nicht ein.
+- **Bestehende Konten werden nie still erweitert.** Ein Konto mit `coll:photos` ohne `coll:photos-read` erscheint als
+  *unvollständig*; nichts ist vorausgewählt, und Speichern behält diese Rollen, bis ein Administrator eine Stufe wählt.
+- **Eine Stufe wird nur angeboten, wenn alle ihre Rollen bekannt sind**: in `available_roles` für Administratoren
+  (sonst durchgestrichen, die fehlende Rolle genannt), im Bereich für [Delegierte](#delegierte-verwaltung) (sonst
+  ausgeblendet; ein Eintrag ohne vergebbare Stufe entfällt). Der Server prüft den Bereich wie bisher.
+- **Beim Start geprüft:** mindestens zwei Stufen, jede Vorlage mit genau einem `{1}` und einem festen Teil, keine
+  Vorlage doppelt, kein Komma, keine zwei Leitern, deren Vorlagen dieselbe Rolle treffen können, keine gleich
+  spezifische Überschneidung in einer — Fehler; eine Leiter ohne Eintrag, ein Eintrag ohne die Rolle einer Stufe,
+  ein Delegierter mit nur einem Teil einer Stufe — Warnungen.
 
 **Montieren / einbetten / HTTPS:**
 - **Standard:** automatisch unter `config.admin_path` (Default `/auth/admin`) — frei änderbar.
