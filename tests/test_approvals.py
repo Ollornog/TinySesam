@@ -155,8 +155,9 @@ r = c_boss.post("/auth/api/approvals", json={"type": "tinysesam.account.disable"
                 headers={"X-CSRF-Token": CSRF})
 assert r.status_code == 401, "a session alone requested an approval"
 carol_key = auth.create_api_key(carol, name="carol")["key"]
-assert machine(app).get(f"/auth/api/approvals/{a1['id']}", headers={"X-Api-Key": carol_key}).status_code == 404
-assert machine(app).delete(f"/auth/api/approvals/{a1['id']}", headers={"X-Api-Key": carol_key}).status_code == 404
+foreign_get = machine(app).get(f"/auth/api/approvals/{a1['id']}", headers={"X-Api-Key": carol_key})
+foreign_delete = machine(app).delete(f"/auth/api/approvals/{a1['id']}", headers={"X-Api-Key": carol_key})
+assert foreign_get.status_code == 404 and foreign_delete.status_code == 404
 ok("request: unknown type/field, wrong type, control character, comma, subject → 400; no key 401; "
    "OAuth token 403; a session alone 401; another key's id → 404")
 
@@ -317,8 +318,8 @@ r = machine(app8).post("/auth/api/approvals", headers={"X-Api-Key": k8},
                        json={"type": "tinysesam.account.disable", "fields": {"account": t8}})
 assert r.status_code == 429 and r.json()["error_description"] == "rejections", r.text
 other_type = request(auth8, app8, k8, "tinysesam.apikey.revoke", key="1")     # the lock is per type
-assert machine(app8).delete(f"/auth/api/approvals/{other_type['id']}", headers={"X-Api-Key": k8}).json()["state"] \
-    == "withdrawn"
+withdrawn = machine(app8).delete(f"/auth/api/approvals/{other_type['id']}", headers={"X-Api-Key": k8})
+assert withdrawn.json()["state"] == "withdrawn"
 auth8.store._exec("UPDATE approval SET decided_at=decided_at-4000 WHERE state='rejected'")
 request(auth8, app8, k8, "tinysesam.account.disable", account=t8)           # the lock ends after the hour
 auth8_ph, app8_ph = build(approval_requests_per_hour=2, approval_open_per_account=10, approval_open_per_token=10)
@@ -503,7 +504,7 @@ if all(importlib.util.find_spec(m) is not None for m in ("authlib", "httpx")):
     assert query.get("max_age") == ["0"] and query.get("prompt") == ["login"], query
     assert r.status_code == 303 and r.headers["location"].endswith(f"/auth/approvals/{xo['id']}?stepup=stale")
     assert decide(co, xo["id"], method="oidc").status_code == 401 and state(ao, xo["id"]) == "pending"
-    query, r = provider_round(None, f"&approval={xo['id']}")
+    provider_round(None, f"&approval={xo['id']}")
     assert decide(co, xo["id"], method="oidc").status_code == 401, "an answer without auth_time confirmed"
     query, r = provider_round(int(time.time()), f"&approval={xo['id']}")
     assert r.status_code == 303 and "id=apvoidcok" in co.get(f"/auth/approvals/{xo['id']}").text
