@@ -19,6 +19,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - The roles outside a ladder are grouped by prefix (`app:`, `ops:` …) with a filter once there are many; the
   new-account form uses the same picker instead of the free-text field (which stays when `available_roles` is empty).
 
+### Fixed — `scripts/check.sh` ran another working tree's Rust test binaries
+
+- The Rust gate client was built in one shared directory in the cache directory. Cargo keys a workspace member's build by
+  the modification times of its sources, not by its path, so a checkout with older files reused the test binaries
+  another checkout had built later — with that tree's `CARGO_MANIFEST_DIR` baked in: red with "No such file" once the
+  other tree was gone, or green against code that is not in this tree. The build directory is now one per checkout
+  (a hash of its path); `tests/test_repo.py` pins it (mutation: the key removed → red).
+
 ### Fixed — `tests/test_prebooking_pending.py` red on a loaded machine
 
 - Section (a) assumed that all fifteen parallel sign-ins reach the hanging directory within its 1.5 s of wall clock.

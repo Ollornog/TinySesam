@@ -77,7 +77,9 @@ fi
 # job is the gate that never skips. `--fast` leaves it out like the browser test (a cold build takes minutes, and
 # tests/test_runner.py runs this script with `--fast` under a two-minute limit). "Working" is measured, not assumed:
 # a GitHub runner has rustup's `cargo` without a default toolchain. The build directory lies outside the tree (a suite
-# must not write into it) and survives between runs.
+# must not write into it) and survives between runs — one per checkout: cargo keys a workspace member's build by its
+# sources' modification times, not by its path, so a shared directory handed one working tree the test binaries of
+# another (built later, `CARGO_MANIFEST_DIR` baked in) — red with the other tree's path, or green against its code.
 CARGO="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
 if [[ $FAST -eq 1 ]]; then
     RUST_SKIP="--fast"
@@ -88,7 +90,8 @@ else
 fi
 if [[ -z "$RUST_SKIP" ]]; then
     step "Rust gate client (clients/rust)"
-    (cd clients/rust && CARGO_TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/tinysesam-client-rust" \
+    RUST_TARGET="${XDG_CACHE_HOME:-$HOME/.cache}/tinysesam-client-rust/$(pwd -P | sha256sum | cut -c1-16)"
+    (cd clients/rust && CARGO_TARGET_DIR="$RUST_TARGET" \
         "$CARGO" test --locked --all-features --quiet) || fail "Rust gate client"
 else
     printf '\n\033[33m! Rust gate client not tested here (%s) — the CI job client-rust runs it\033[0m\n' "$RUST_SKIP"
