@@ -3148,6 +3148,24 @@ class Store:
             self.db.commit()
         return first
 
+    def clear_sign_in_factors(self, user_id: int) -> dict:
+        """Delete every sign-in factor TinySesam keeps for an account — password, PIN, TOTP with its recovery codes,
+        passkeys — in ONE transaction (approval type `tinysesam.account.reset_access`): either all are gone or none.
+        Federated sign-ins (OIDC, SAML, LDAP) live at the provider and stay. Returns the counts per kind."""
+        uid = int(user_id)
+        # Literal statements, no table name from a variable: the deletion-path guard (N-8, test_audit_round2) reads
+        # them and admits this method as a building block that deletes passkeys.
+        statements = (("password", "DELETE FROM password_cred WHERE user_id=?"),
+                      ("pin", "DELETE FROM pin_cred WHERE user_id=?"),
+                      ("totp", "DELETE FROM totp_cred WHERE user_id=?"),
+                      ("recovery_codes", "DELETE FROM recovery_code WHERE user_id=?"),
+                      ("passkeys", "DELETE FROM webauthn_cred WHERE user_id=?"))
+        with self._writing():
+            counts = {kind: self.db.execute(sql, (uid,)).rowcount for kind, sql in statements}
+            self.db.execute("UPDATE users SET password_must_change=0 WHERE id=?", (uid,))
+            self.db.commit()
+        return counts
+
     def set_password_must_change(self, user_id: int, value: bool) -> None:
         """Mark the password as a start secret set by an administrator (T-46) — or clear the mark."""
         self._exec("UPDATE users SET password_must_change=? WHERE id=?", (1 if value else 0, user_id))

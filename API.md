@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 214
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 407 · B 282 · C 38 names.
+**Status:** A 408 · B 282 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -318,7 +318,7 @@ Value: `('kind',)`
 
 The events for which `on_security_event` is called — everything that creates, changes, removes or consumes a sign-in factor of the account.
 
-Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`, `app_password_created`, `app_password_revoked`, `app_passwords_revoked`, `oauth_service_paired`, `oauth_service_revoked`, `signed_in_after_failures`, `approval_approved`
+Values: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`, `oauth_device_connected`, `oauth_device_revoked`, `oauth_token_reuse`, `signin_link_issued`, `device_signed_in`, `app_password_created`, `app_password_revoked`, `app_passwords_revoked`, `oauth_service_paired`, `oauth_service_revoked`, `signed_in_after_failures`, `approval_approved`, `access_reset`
 
 ## A · `TinySesamConfig`
 
@@ -983,6 +983,7 @@ The keys of the `details` dict per event, read from the call sites. A key that g
 
 | Event | Keys in `details` |
 |---|---|
+| `access_reset` | `api_keys`, `app`, `approved_by`, `passkeys`, `password`, `pin`, `recovery_codes`, `totp` |
 | `api_key_created` | `key_id`, `name` |
 | `api_key_revoked` | `key_id` |
 | `api_keys_revoked` | `count`, `reason` |

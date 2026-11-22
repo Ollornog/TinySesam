@@ -1939,7 +1939,44 @@ TinySesam-On-Behalf-Of: 17
   disabled_by_operator`, `429 limit` mit `Retry-After`. Schreibrouten dürfen später `202` antworten (Freigaben); das
   heißt „noch nicht ausgeführt“.
 - Die erste Anmeldung über den Link führt ein Konto ohne Faktoren durch den Einrichtungsgang (`/auth/setup`). Danach
-  hilft sich die Person selbst (Anmeldelink an ihre Adresse, Passwort zurücksetzen) oder der Betreiber.
+  hilft sich die Person selbst (Anmeldelink an ihre Adresse, Passwort zurücksetzen), der Betreiber hilft — oder der
+  Teamadmin der Anwendung setzt den Zugang zurück (unten).
+
+### Zugang eines Kontos zurücksetzen: neues Handy, Passwort vergessen
+
+Nach der ersten Anmeldung setzt ein Key allein nie etwas zurück (das wäre eine Übernahme). Die Anwendung fragt
+stattdessen an, und ein Mensch bestätigt: ihr Teamadmin mit der Rolle `approver_role`, die nur der Betreiber (oder ein
+dazu berechtigter Delegierter) vergibt. Konfiguration — `approvals_enabled=True`, der Scope `users:reset` und die Rolle:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    base_url="https://auth.example.com", magiclink_enabled=True, approvals_enabled=True,
+    available_roles=["example-member", "example-editor", "teamadmin"],
+    apps={"example": {"account": "svc-example", "name": "Example", "provisioning": {
+        "roles": ["example-member", "example-editor"],
+        "scopes": ["users:read", "users:invite", "users:reset"],
+        "approver_role": "teamadmin",               # nie in der Allowlist einer Anwendung (config_check lehnt das ab)
+    }}},
+)
+```
+
+```http
+POST /auth/api/approvals
+X-Api-Key: tsk_…  (ein Automation-Key von svc-example)
+
+{"type": "tinysesam.account.reset_access", "subject": "17", "fields": {"account": "42"}}
+```
+
+`subject` ist die Konto-ID des Teamadmins, `account` das zurückzusetzende Konto (beide als Zeichenkette). Die Antwort
+enthält `approve_url` und einen `match_code`; der Teamadmin öffnet den Link, vergleicht den Code und bestätigt mit einem
+Step-up. Dann werden Passwort, PIN, TOTP und Passkeys von Konto 42 gelöscht, seine Sitzungen, Keys und App-Passwörter
+enden — und die Anwendung holt den neuen Einmal-Link **einmal** ab: `GET /auth/api/approvals/{id}?wait=25` antwortet
+`{"state": "consumed", "result": "ok", "output": {"signin_url": …, "expires_at": …, "qr": …}}`, jeder spätere Abruf
+ohne `output`. Wer die Rolle beim Bestätigen nicht hat, bekommt `result: "forbidden"`, und nichts ändert sich.
+Einzelheiten und Fehlercodes: [`spec/provisioning-api.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/provisioning-api.md) §5; warum die Rolle nie von der
+Anwendung kommt: `SECURITY.de.md`.
 
 Was ein geleakter Anwendungs-Key höchstens kann und was nicht:
 [`SECURITY.de.md`, „Konten-API“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
@@ -2639,7 +2676,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**122 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**123 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

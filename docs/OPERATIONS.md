@@ -1131,6 +1131,17 @@ account. Existing rows get `NULL` and keep their lock values.
   flow cleanup): `create_per_hour` 60, `disable_per_hour` 60 (lock and unlock), `link_per_hour` 30, `taken_per_hour` 30
   (answers "taken" and `actor_invalid`; beyond it even a free name answers 429). `max_accounts` (1000) caps the accounts
   with `managed_by` = the application.
+- **Access reset (approval `tinysesam.account.reset_access`):** no schema change — it uses the `approval` table of
+  schema 22 (`requester_kind='app'`, `requester_ref` = the service account's id, `app_id` = the application). Switch:
+  the scope `users:reset` plus `provisioning.approver_role` plus `approvals_enabled=True`; `config_check` refuses an
+  approver role that any application may grant. Grant the role in the panel only to the people who may reset accounts
+  of the application (their team admins). Audit: `approval_requested` (`account=<id>`, under the subject, with
+  `actor=` the service account), `approval_approved`, `approval_executed` (`result=`), `account_access_reset` (under
+  the account: `app=`, `approved_by=<name>#<id>`, the counts `password= pin= totp= recovery_codes= passkeys=
+  api_keys=` and `approval=`), then `signin_link_issue` when the application picks the link up (with it a setup window
+  for the link's lifetime plus an hour). Never the link. **Rollback:** an older version has no `users:reset` (its `config_check` refuses the unknown
+  scope and member, so take them out first); open requests of this type expire there, and a request left in `approved`
+  (executed, not picked up) is cleaned up as `expired` — the factors stay deleted, the person asks the operator.
 
 ## Sign-in methods and their strength
 

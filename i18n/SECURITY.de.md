@@ -98,8 +98,8 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   `api_key_revoked` (`details={"key_id": n}`), `email_changed` und `username_changed`
   (`details={"old": …, "new": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
   (`details={"count": n, "reason": …}`, `reason` eines von `password_reset`, `account_disabled`,
-  `admin_password_reset`, `sessions_revoked` — gesammelt beim Reset, bei der Sperre, beim
-  Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Verbundene Programme (OAuth, T-36):
+  `admin_password_reset`, `sessions_revoked`, `access_reset` — gesammelt beim Reset, bei der Sperre, beim
+  Admin-Passwort, bei `sessions/revoke` mit `scope=all` und beim Zurücksetzen durch den Freigeber einer Anwendung). Verbundene Programme (OAuth, T-36):
   `oauth_device_connected` (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — ein
   Programm hat nach der Zustimmung seine ersten Tokens bekommen), `oauth_device_revoked`
   (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`
@@ -121,7 +121,10 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   Anmeldeversuch unter den Namen des Kontos seit der letzten vollständigen Anmeldung, über alle Verfahren; dazu das
   Audit-Ereignis `login_after_failures`). Freigaben (Etappe A): `approval_approved` (`details={"approval_id": …,
   "type": …, "result": …}` — die Inhaberin hat eine Aktion bestätigt, die ein Token angefragt hatte, und TinySesam hat
-  sie ausgeführt; TinySesam selbst verschickt dazu keine Mail). Die vollständige Liste der Ereignisnamen ist
+  sie ausgeführt; TinySesam selbst verschickt dazu keine Mail) und `access_reset` (`details={"app": …,
+  "approved_by": …, "password": n, "pin": n, "totp": n, "recovery_codes": n, "passkeys": n, "api_keys": n}` — der
+  Freigeber einer Anwendung hat den Zugang des Kontos zurückgesetzt; Mail mit `notify_new_access`). Die vollständige
+  Liste der Ereignisnamen ist
   `TinySesam.SECURITY_EVENTS`. Die Schlüssel in `details` und die
   Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
   deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
@@ -338,6 +341,51 @@ App-Passwörter ausstellen, Dienstkonten anlegen, eine Sperre des Betreibers auf
 Restrisiko: Wer den Key hat, kann Konten mit den Rollen der Anwendung anlegen, bis eine Grenze greift, und die Konten
 der Anwendung sperren. Den Key des Dienstkontos im Panel zu widerrufen schließt die API sofort; das Audit
 (`provision_*`, `apikey_use`) zeigt, was geschah.
+
+### Zugang eines Kontos zurücksetzen: eine Freigabe, nie der Key allein
+
+Nach der ersten Anmeldung kann der Key nichts zurücksetzen — das wäre eine Übernahme. Mit dem Scope `users:reset` und
+`provisioning.approver_role` darf die Anwendung die Freigabe `tinysesam.account.reset_access` **anfragen**: `subject`
+ist das TinySesam-Konto des Teamadmins der Anwendung, das Feld `account` eines der eigenen Konten der Anwendung. Was sie
+nach der Bestätigung bewirkt: Jeder Anmeldefaktor des Kontos wird in einer Transaktion gelöscht (Passwort, PIN, TOTP
+mit seinen Wiederherstellungscodes, Passkeys), seine Sitzungen enden, seine API-Keys, App-Passwörter, Dienste und
+verbundenen Programme werden widerrufen (Grund `access_reset`), offene Links verfallen, und die Anwendung holt **einen**
+neuen Einmal-Link ab. Föderierte Anmeldungen (OIDC, SAML, LDAP) bleiben — sie leben beim Anbieter. Die
+Freigabe-Seite sagt das alles in Worten, bevor der Freigeber bestätigt: Die Zusammenfassung nennt jede Art, die
+wegfällt, die Zeile „Meldet sich jetzt an mit“ zählt die Faktoren des Kontos auf, die Zeile „Endet außerdem“ zählt
+seine Sitzungen, API-Keys, App-Passwörter, Dienste und verbundenen Programme — auch die API-Keys und App-Passwörter,
+die ein Gerät der Inhaberin noch nutzt, funktionieren danach nicht mehr.
+
+- **Die Freigeber-Rolle gehört nie der Anwendung.** Bestätigen braucht `approver_role` im Moment der Bestätigung —
+  geprüft in der bestätigenden Sitzung, nicht bei der Anfrage; auch ein Admin ohne die Rolle ist kein Freigeber. Die
+  Rolle ist frei wählbar (auch eine vorhandene wie `teamadmin`), aber `config_check` lehnt sie ab, wenn sie in der
+  Allowlist **irgendeiner** Anwendung mit Provisioning steht: Sonst legt ein geleakter Key ein Strohkonto an, gibt ihm
+  alle Allowlist-Rollen, meldet sich über dessen Einmal-Link an, bestätigt die eigene Anfrage und übernimmt jedes Konto
+  der Anwendung. Zur Laufzeit zählt eine solche Rolle als keine, und `users:reset` mit ihr. Die Rolle vergibt nur der
+  Betreiber — oder ein Delegierter, dessen `roles` sie enthält; das nennt `config_check` als Warnung: Dann ernennen die
+  Delegierten die Freigeber.
+- **Das Ziel wird zweimal geprüft,** bei der Anfrage und wieder bei der Bestätigung: ein Konto, das die Anwendung
+  angelegt hat (`managed_by`), kein Admin, Owner, Dienstkonto oder Delegierter (`404 not_found`), alle Rollen in der
+  Allowlist (`409 account_shared`), nicht gesperrt (`409 account_disabled`) und nie das eigene Konto des Freigebers
+  (`403 forbidden`). Eine Änderung dazwischen ergibt das Ergebnis `not_found`, `conflict` oder `forbidden` und ändert
+  nichts.
+- **Alles andere ist eine Freigabe der Etappe A:** Nur eine Browser-Sitzung von `subject` entscheidet, mit einem
+  Step-up GENAU dieser Freigabe, dem Abgleich-Code, einem atomaren Übergang und den Grenzen
+  (`approval_open_per_token` zählt die offenen Anfragen der Anwendung, die Ablehnungssperre sperrt die Anwendung für
+  diesen Typ). Ob `subject` die Rolle hat, erfährt der Key nicht; wer sie nicht hat, sieht auf der Seite „Dein Recht:
+  fehlt“.
+- **Den Link gibt es genau einmal.** Bestätigt und ausgeführt wartet die Zeile in `approved` (für
+  `approval_pending_sec`); der erste Statusabruf setzt sie atomar auf `consumed` und stellt erst dann den Link aus —
+  zwei gleichzeitige Abrufe bekommen einen Link. Er steht nur in dieser Antwort: nie im Audit (`account_access_reset`
+  nennt Anwendung, Freigeber, die Anzahlen und die Freigabe-Kennung), nie in einem Log, nie in einer URL; die Datenbank
+  hält seinen Hash. Ein Einrichtungsfenster öffnet sich für die Lebensdauer des Links plus eine Stunde, damit die Person
+  einrichten kann, was die Kette verlangt, obwohl `first_login_at` bleibt.
+- **Die Inhaberin erfährt es:** das Sicherheitsereignis `access_reset` (`app`, `approved_by`, die Anzahlen) — per Mail
+  mit `notify_new_access`. Ein Zurücksetzen, um das niemand gebeten hat, zeigt ein missbrauchtes Freigeber-Recht.
+
+Restrisiko: Ein Freigeber, der für die falsche Person bestätigt, oder ein Freigeber im Bund mit dem Key-Inhaber. Den
+Freigeber hat der Betreiber gewählt, er bestätigt jedes Zurücksetzen mit einem Step-up und steht im Audit; die
+Inhaberin wird benachrichtigt.
 
 ## Verwundbare Abhängigkeiten
 

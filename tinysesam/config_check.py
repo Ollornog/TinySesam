@@ -1827,8 +1827,10 @@ APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 #: The members of one `apps` entry (stage A of the account API; the approvals of applications add theirs later).
 APP_KEYS = ("account", "name", "provisioning")
 #: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stage A).
-PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits")
-PROVISIONING_SCOPES = ("users:read", "users:invite", "users:update", "users:disable")
+PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role")
+#: `users:reset` asks for the approval type `tinysesam.account.reset_access` — a person holding `approver_role`
+#: confirms it; the scope alone resets nothing.
+PROVISIONING_SCOPES = ("users:read", "users:invite", "users:update", "users:disable", "users:reset")
 #: Default and upper bound of the per-application limits (per hour); `taken` counts answers "name/address taken".
 PROVISIONING_LIMITS = {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30}
 PROVISIONING_LIMIT_MAX = 100000
@@ -1960,6 +1962,7 @@ def _apps(config, error: list, warnings: list) -> None:
                 _plain_int(v) and 1 <= v <= PROVISIONING_LIMIT_MAX for v in limits.values()):
             error.append(_t(config, "apps[{app!r}].provisioning.limits: {v!r} — numbers from 1 to {max} for {keys}",
                             app=app_id, v=limits, max=PROVISIONING_LIMIT_MAX, keys=", ".join(PROVISIONING_LIMITS)))
+    _approver_roles(config, raw, known, error, warnings)
     if not provisioning:
         return
     if not _an(config, "apikey_enabled"):
@@ -1969,6 +1972,83 @@ def _apps(config, error: list, warnings: list) -> None:
         error.append(_t(config, "admin_path='/auth' with apps: /auth/api/ is reserved for the machine APIs — the "
                                 "panel's JSON would lie under /auth/api/users, the path of the account API"))
 
+
+
+def _approver_roles(config, raw: dict, known: set, error: list, warnings: list) -> None:
+    """`apps[…].provisioning.approver_role` and the scope `users:reset` (approval type
+    `tinysesam.account.reset_access`): who may confirm that an application resets the access of one of its accounts.
+
+    The role is the whole protection against a leaked application key: the key may create accounts and give them
+    every role of the allowlist, sign in through their one-time link — so a role an application can grant must never
+    be the one that confirms (straw-account attack). Hence an error when it stands in the allowlist of ANY application
+    with provisioning, and only a warning (a hint) when a delegate may grant it: then the operator has chosen that
+    delegates appoint approvers."""
+    allowlists: dict = {}
+    for app_id, entry in raw.items():
+        block = entry.get("provisioning") if isinstance(entry, dict) else None
+        if isinstance(block, dict) and isinstance(block.get("roles"), list):
+            allowlists[app_id] = [r for r in block["roles"] if isinstance(r, str)]
+    raw_delegates = getattr(config, "admin_delegates", None)
+    granted_by_delegates: dict = {}
+    if isinstance(raw_delegates, dict):
+        for d_role, d_entry in raw_delegates.items():
+            roles = d_entry.get("roles") if isinstance(d_entry, dict) else None
+            for r in roles if isinstance(roles, list) else []:
+                if isinstance(r, str):
+                    granted_by_delegates.setdefault(r, d_role)
+    for app_id, entry in raw.items():
+        block = entry.get("provisioning") if isinstance(entry, dict) else None
+        if not isinstance(app_id, str) or not APP_ID.match(app_id) or not isinstance(block, dict):
+            continue
+        raw_scopes = block.get("scopes")
+        scopes: list = raw_scopes if isinstance(raw_scopes, list) else []
+        role = block.get("approver_role")
+        if role is None:
+            if "users:reset" in scopes:
+                error.append(_t(config, "apps[{app!r}]: the scope users:reset needs provisioning.approver_role — the "
+                                        "role of the people who may confirm a reset", app=app_id))
+            continue
+        if (not isinstance(role, str) or not role.strip() or role != role.strip() or "," in role
+                or any(ord(z) < 32 or ord(z) == 127 for z in role)):
+            error.append(_t(config, "apps[{app!r}].provisioning.approver_role={v!r} — one role name without comma, "
+                                    "control character or surrounding spaces", app=app_id, v=role))
+            continue
+        if role == "admin":
+            error.append(_t(config, "apps[{app!r}].provisioning.approver_role: \"admin\" is the admin flag, not a "
+                                    "role — name the role of the people who confirm a reset", app=app_id))
+            continue
+        if role not in known:
+            error.append(_t(config, "apps[{app!r}].provisioning.approver_role: {role!r} is not in available_roles",
+                            app=app_id, role=role))
+        for other, allow in sorted(allowlists.items(), key=lambda kv: str(kv[0])):
+            if role in allow:
+                error.append(_t(config, "apps[{app!r}].provisioning.approver_role: {role!r} stands in the allowlist "
+                                        "of {other!r} — an application key could give it to an account it created, "
+                                        "sign in with that account's one-time link and confirm the reset itself",
+                                app=app_id, role=role, other=other))
+        if role in granted_by_delegates:
+            warnings.append(_t(config, "apps[{app!r}].provisioning.approver_role: {role!r} may be granted by the "
+                                       "delegates of {delegate!r} (admin_delegates) — they appoint who confirms a "
+                                       "reset of the application's accounts", app=app_id, role=role,
+                               delegate=granted_by_delegates[role]))
+        if "users:reset" not in scopes:
+            warnings.append(_t(config, "apps[{app!r}].provisioning.approver_role is set, but the scope users:reset "
+                                       "is missing — nobody can ask for a reset, the role has no effect here",
+                               app=app_id))
+            continue
+        if not _an(config, "approvals_enabled"):
+            error.append(_t(config, "apps[{app!r}]: the scope users:reset needs approvals_enabled=True — the reset is "
+                                    "an approval the approver confirms in the browser", app=app_id))
+        if not _an(config, "magiclink_enabled"):
+            error.append(_t(config, "apps[{app!r}]: the scope users:reset needs magiclink_enabled=True — the new "
+                                    "one-time link is the only way back into the account", app=app_id))
+        elif _an(config, "magiclink_first_login_only") and not list(getattr(config, "login_chain", None) or []):
+            error.append(_t(config, "apps[{app!r}]: the scope users:reset with magiclink_first_login_only=True and "
+                                    "no login_chain — the door would refuse the new link of an account that has "
+                                    "signed in before", app=app_id))
+        if not security.normalize_base(str(getattr(config, "base_url", "") or "").strip()):
+            error.append(_t(config, "apps[{app!r}]: the scope users:reset needs base_url — the one-time link is "
+                                    "built from it, never from the Host header", app=app_id))
 
 def _oauth(config, error: list, warnings: list) -> None:
     """OAuth 2.1 authorization server (T-36, ADR-11): the resource side is forward auth, the issuer is base_url."""
@@ -3074,6 +3154,54 @@ _DE: dict[str, str] = {
      "API with an automation key of its service account"):
         ("apps mit provisioning und apikey_enabled=False: Eine Anwendung ruft die Konten-API "
          "mit einem Automation-Key ihres Dienstkontos auf"),
+    ("apps[{app!r}]: the scope users:reset needs provisioning.approver_role — the "
+     "role of the people who may confirm a reset"):
+        ("apps[{app!r}]: Der Scope users:reset braucht provisioning.approver_role — die "
+         "Rolle der Personen, die ein Zurücksetzen bestätigen dürfen"),
+    ("apps[{app!r}].provisioning.approver_role={v!r} — one role name without comma, "
+     "control character or surrounding spaces"):
+        ("apps[{app!r}].provisioning.approver_role={v!r} — ein Rollenname ohne Komma, "
+         "Steuerzeichen oder Leerzeichen am Rand"),
+    ("apps[{app!r}].provisioning.approver_role: \"admin\" is the admin flag, not a "
+     "role — name the role of the people who confirm a reset"):
+        ("apps[{app!r}].provisioning.approver_role: \"admin\" ist das Admin-Flag, keine "
+         "Rolle — nenne die Rolle der Personen, die ein Zurücksetzen bestätigen"),
+    "apps[{app!r}].provisioning.approver_role: {role!r} is not in available_roles":
+        "apps[{app!r}].provisioning.approver_role: {role!r} steht nicht in available_roles",
+    ("apps[{app!r}].provisioning.approver_role: {role!r} stands in the allowlist "
+     "of {other!r} — an application key could give it to an account it created, "
+     "sign in with that account's one-time link and confirm the reset itself"):
+        ("apps[{app!r}].provisioning.approver_role: {role!r} steht in der Allowlist "
+         "von {other!r} — ein Anwendungs-Key könnte sie einem selbst angelegten Konto geben, "
+         "sich über dessen Einmal-Link anmelden und das Zurücksetzen selbst bestätigen"),
+    ("apps[{app!r}].provisioning.approver_role: {role!r} may be granted by the "
+     "delegates of {delegate!r} (admin_delegates) — they appoint who confirms a "
+     "reset of the application's accounts"):
+        ("apps[{app!r}].provisioning.approver_role: {role!r} dürfen die Delegierten "
+         "von {delegate!r} vergeben (admin_delegates) — sie ernennen, wer ein Zurücksetzen "
+         "der Konten der Anwendung bestätigt"),
+    ("apps[{app!r}].provisioning.approver_role is set, but the scope users:reset "
+     "is missing — nobody can ask for a reset, the role has no effect here"):
+        ("apps[{app!r}].provisioning.approver_role ist gesetzt, aber der Scope users:reset "
+         "fehlt — niemand kann ein Zurücksetzen anfragen, die Rolle wirkt hier nicht"),
+    ("apps[{app!r}]: the scope users:reset needs approvals_enabled=True — the reset is "
+     "an approval the approver confirms in the browser"):
+        ("apps[{app!r}]: Der Scope users:reset braucht approvals_enabled=True — das Zurücksetzen "
+         "ist eine Freigabe, die der Freigeber im Browser bestätigt"),
+    ("apps[{app!r}]: the scope users:reset needs magiclink_enabled=True — the new "
+     "one-time link is the only way back into the account"):
+        ("apps[{app!r}]: Der Scope users:reset braucht magiclink_enabled=True — der neue "
+         "Einmal-Link ist der einzige Weg zurück ins Konto"),
+    ("apps[{app!r}]: the scope users:reset with magiclink_first_login_only=True and "
+     "no login_chain — the door would refuse the new link of an account that has "
+     "signed in before"):
+        ("apps[{app!r}]: Der Scope users:reset mit magiclink_first_login_only=True und "
+         "ohne login_chain — die Tür wiese den neuen Link eines Kontos ab, das schon "
+         "angemeldet war"),
+    ("apps[{app!r}]: the scope users:reset needs base_url — the one-time link is "
+     "built from it, never from the Host header"):
+        ("apps[{app!r}]: Der Scope users:reset braucht base_url — der Einmal-Link wird "
+         "daraus gebaut, nie aus dem Host-Header"),
     ("admin_path='/auth' with apps: /auth/api/ is reserved for the machine APIs — the "
      "panel's JSON would lie under /auth/api/users, the path of the account API"):
         ("admin_path='/auth' mit apps: /auth/api/ ist für die Maschinen-APIs reserviert — das "
