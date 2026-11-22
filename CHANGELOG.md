@@ -45,9 +45,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   mode is the default: token mode passes every vector but cannot get the token with today's proxy template (T-84). Not
   published to npm; used from the repository (pnpm Git dependency with a path, or a vendored copy).
 - Tests (`node --test`, TypeScript run directly): every vector of `spec/vectors/*.json`, read from the repository
-  (token 114, headers 33 — also through `Gate.identify` and through a real Node HTTP server with the middleware —, key
-  sets 19, cache scenarios 10, top bar 6, the test keys); against a real HTTP server a JWKS endpoint that never answers
-  (the request returns after the 5 s deadline, the next one at once), one that stalls the body, a body above 64 KiB
+  (token 115, headers 33 — also through `Gate.identify` and through a real Node HTTP server with the middleware —, key
+  sets 19, cache scenarios 10 with 48 steps, top bar 6, the test keys; rebased onto the one-defect vectors of #304);
+  against a real HTTP server a JWKS endpoint that never answers (the request returns after the 5 s deadline, the next
+  one at once), one that stalls the body, a body above 64 KiB
   (exactly 64 KiB as its counterpart), 32 concurrent requests sharing one fetch, no redirects; tokens signed with test
   key A that carry exactly one defect each (invalid UTF-8, BOM, repeated claim — also spelled with an escape —, `NaN`,
   lone surrogate, `1.0` or `1e3` as a time, a control character); fast-check properties (no input throws past the API,

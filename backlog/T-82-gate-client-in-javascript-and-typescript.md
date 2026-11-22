@@ -48,7 +48,7 @@ WebCrypto Ed25519 or `jose` pinned to `EdDSA`; `JSON.parse` keeps the last dupli
   request (the rate limit stops it), the wait deadline and the fetch deadline (each holds the 5 s alone).
 - Findings for the vectors (not changed here; the generator belongs to the vector work): the first mutation run left
   ten rules green that no vector isolates — a signature of the wrong length together with an unknown `kid` (step 5
-  must come before step 6), an empty `sub` and a control character in `sub` without `ts_id`, a fetch answer with a
+  must come before step 6), a control character in `sub` without `ts_id` (an empty `sub` has a vector since #304), a fetch answer with a
   status other than 200 but a valid key set body, a fetch body above 64 KiB in a cache scenario, a group padded with
   non-space whitespace (U+00A0), a gate cookie name in another case, a top bar slot with `shown: false` and a safe
   `href`. The client pins each with a test of its own; vectors for them would close the gap for every client.
