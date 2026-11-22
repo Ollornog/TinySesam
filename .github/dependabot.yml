@@ -195,6 +195,24 @@ updates:
         patterns: ["*"]
         update-types: ["patch", "minor"]
 
+  # The PHP gate client (clients/php, T-83): its composer.lock. The library needs only ext-sodium, ext-json and four PSR
+  # interface packages at runtime; the lock file adds the dev tools (PHPUnit, PHPStan with its strict rules,
+  # PHP_CodeSniffer, nyholm/psr7 for the middleware tests). The workflow client-php.yml accepts a bump (composer validate
+  # and audit, PHP_CodeSniffer, PHPStan, every test on three PHP releases, the installed package). Patch and minor
+  # bundled, majors singly, as for the other clients.
+  - package-ecosystem: composer
+    directory: /clients/php
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "client-php"
+    groups:
+      all:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+
   # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
   # if the registry or the package server does not start, `rehearsal` is red.
   # NOT under .github/ (2026-11-13): there Dependabot may not open a PR for docker files — the job of 2026-11-12 ended
@@ -216,7 +234,8 @@ updates:
   # fails open there: a moved digest comes the next day.
   # Plus the two images of tinysesam-caddy-gate (Go builder, Caddy base); Caddy and caddy-jwt themselves are in the
   # `gomod` entry above. The CI job gate-caddy checks the result. And nginx and Traefik of tests/proxies (the real
-  # proxies tests/test_proxies.py runs the templates with, in the same job).
+  # proxies tests/test_proxies.py runs the templates with, in the same job). And the image of the PHP gate client
+  # (clients/php/ci: the newest PHP and Composer, by digest), which the `image` job of client-php.yml builds and runs.
   #
   # DAILY, not monthly (2026-11-12): the cooldown of the docker ecosystem is measured against Docker Hub's
   # `tag_last_pushed` of the candidate tag (dependabot-core docker/update_checker.rb, apply_cooldown). Official images
@@ -227,7 +246,7 @@ updates:
   # days — the cooldown stays, only the chance to miss it goes. Also: as long as a newer minor exists (3.15 while the pin
   # says 3.14), Dependabot offers only the minor, never a digest refresh of the old one — stay on the newest line.
   - package-ecosystem: docker
-    directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies"]
+    directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies", "/clients/php/ci"]
     # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3

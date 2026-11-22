@@ -1,0 +1,12 @@
+# Static analysis of the test suite (see phpstan.dist.neon for why it is level 9, not 10).
+includes:
+    - phpstan.dist.neon
+
+parameters:
+    level: 9
+    paths:
+        - tests
+    excludePaths:
+        analyse:
+            - src
+            - examples

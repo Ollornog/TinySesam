@@ -1,0 +1,102 @@
+name: client-php
+
+# The PHP gate client (clients/php, T-83). Every job runs the same script, clients/php/ci.sh — Composer validate and
+# audit, PHP_CodeSniffer, PHPStan, PHPUnit with every vector of spec/vectors, and the installed package — which
+# scripts/check.sh runs too, so no check of this workflow reaches the CI first. `test` runs it on the oldest supported
+# PHP release and the one before the newest (setup-php); `image` runs it inside clients/php/ci/Dockerfile on the newest
+# stable release, the image check.sh uses on a machine without PHP. Conventions: clients/README.md ("CI per client").
+#
+# No path filter on the triggers: a required check that is skipped blocks the merge forever. Instead the first step
+# looks at what the pull request changes and ends the job early and green when nothing of the client, the
+# specification or this workflow is touched. On main, by hand and on the schedule it always runs in full — the
+# schedule because advisories appear without a code change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # GitHub cron only knows UTC: 03:45 UTC = 05:45 Europe/Berlin (CEST) or 04:45 (CET).
+    - cron: "45 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (php ${{ matrix.php }})
+    runs-on: ubuntu-latest  # public repository: GitHub-hosted runners only
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 8.4: the oldest release the client supports (composer.json; PHPUnit 13 needs it). 8.5: the previous one.
+        # 8.6, the newest, runs in the `image` job.
+        php: ["8.4", "8.5"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit of a pull request and its first parent (the base): enough to see what the PR changes.
+          fetch-depth: 2
+
+      - name: Changes that concern the client
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "not a pull request: full run"; exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if printf '%s\n' "$changed" | grep -qE '^(clients/php/|spec/|\.github/workflows/client-php\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "the client, the specification or this workflow changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing of the PHP client changed: green without a run"
+          fi
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962  # 2.40.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: sodium, curl, mbstring
+          tools: composer:v2
+          coverage: none
+          # setup-php ships a production php.ini (assertions off); the tests narrow types with assert(), as in the
+          # image, which has no php.ini. zend.assertions can only be set here, not at runtime.
+          ini-values: zend.assertions=1
+
+      - name: Every check of the client (clients/php/ci.sh)
+        if: steps.scope.outputs.run == 'true'
+        run: clients/php/ci.sh
+
+  image:
+    name: image (newest php, clients/php/ci/Dockerfile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Changes that concern the client
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "not a pull request: full run"; exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if printf '%s\n' "$changed" | grep -qE '^(clients/php/|spec/|\.github/workflows/client-php\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; echo "the client, the specification or this workflow changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing of the PHP client changed: green without a run"
+          fi
+
+      - name: Every check of the client inside the image (clients/php/ci/in-docker.sh)
+        if: steps.scope.outputs.run == 'true'
+        run: clients/php/ci/in-docker.sh

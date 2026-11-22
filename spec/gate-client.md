@@ -17,7 +17,7 @@ application and the issuing of gate tokens stay in TinySesam.
 This document is normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be read as described in
 RFC 2119 and RFC 8174 when, and only when, they appear in capitals. The test vectors in [`vectors/`](vectors/) are part
 of the specification: a client conforms when it passes every vector of the parts it implements. Clients live under
-[`clients/`](../clients/README.md) (Go, Rust, JS/TS; PHP planned), the Python client is the module
+[`clients/`](../clients/README.md) (Go, Rust, JS/TS, PHP), the Python client is the module
 `tinysesam.gate_client` in the package itself (WSGI/ASGI, no FastAPI dependency).
 
 ## 1. Two operating modes

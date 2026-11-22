@@ -1,0 +1,56 @@
+{
+    "name": "tinysesam/gate",
+    "description": "Gate client for PHP applications behind TinySesam: header mode and gate token checks (Ed25519, ext-sodium), PSR-15 middleware.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["authentication", "forward-auth", "jws", "ed25519", "psr-15"],
+    "homepage": "https://github.com/ollornog/TinySesam/tree/main/clients/php",
+    "support": {
+        "issues": "https://github.com/ollornog/TinySesam/issues",
+        "source": "https://github.com/ollornog/TinySesam"
+    },
+    "require": {
+        "php": ">=8.4",
+        "ext-json": "*",
+        "ext-pcre": "*",
+        "ext-sodium": "*",
+        "psr/http-factory": "^1.1",
+        "psr/http-message": "^1.1 || ^2.0",
+        "psr/http-server-handler": "^1.0.2",
+        "psr/http-server-middleware": "^1.0.2",
+        "psr/log": "^2.0 || ^3.0"
+    },
+    "suggest": {
+        "ext-curl": "Token mode with a key set URL (jwksUrl) fetches the key set with curl, unless you pass a Fetcher of your own."
+    },
+    "autoload": {
+        "psr-4": {
+            "TinySesam\\Gate\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "TinySesam\\Gate\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "optimize-autoloader": true,
+        "allow-plugins": false,
+        "audit": {
+            "abandoned": "fail"
+        }
+    },
+    "scripts": {
+        "lint": "php-cs-fixer check --diff --using-cache=no",
+        "analyse": "phpstan analyse --no-progress --memory-limit=1G",
+        "test": "phpunit"
+    },
+    "require-dev": {
+        "nyholm/psr7": "^1.8",
+        "phpstan/phpstan": "^2.3",
+        "phpstan/phpstan-strict-rules": "^2.1",
+        "phpunit/phpunit": "^13.4",
+        "squizlabs/php_codesniffer": "^4.0"
+    }
+}
