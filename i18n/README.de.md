@@ -1873,6 +1873,78 @@ Warum das „Admin- und Delegiertenrechte nie über Tokens“ nicht aufweicht:
 [`SECURITY.de.md`, „Freigaben“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md). Freigaben für eigene Aktionen einer Anwendung (signierte
 Einmal-Bestätigungen) kommen mit Etappe B.
 
+## Konten für Anwendungen: die Konten-API
+
+Eine Anwendung hinter TinySesam braucht oft eigene Konten — ein Teamadmin in der Anwendung lädt eine Kollegin ein. Mit
+der Konten-API legt die Anwendung **die Konten, die sie selbst anlegt**, über ihr Dienstkonto an und verwaltet sie, in
+engen Grenzen: kein Passwort, Passkey oder TOTP, keine Adressänderung, kein Konto, das sie nicht angelegt hat, nie ein
+Admin.
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    base_url="https://auth.example.com", magiclink_enabled=True,
+    available_roles=["example-member", "example-editor", "staff"],
+    apps={"example": {
+        "account": "svc-example",                    # Dienstkonto (is_service); seine Automation-Keys sprechen für die App
+        "name": {"en": "Example", "de": "Example"},
+        "provisioning": {
+            "roles": ["example-member", "example-editor"],                       # Allowlist
+            "scopes": ["users:read", "users:invite", "users:update", "users:disable"],
+            "link_ttl_min": 60, "max_accounts": 1000,
+            "limits": {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30},
+        },
+    }},
+)
+```
+
+```http
+POST /auth/api/users
+X-Api-Key: tsk_…  (ein Automation-Key von svc-example)
+TinySesam-On-Behalf-Of: 17
+
+{"username": "lena", "display_name": "Lena M.", "email": "lena@example.org", "roles": ["example-member"]}
+```
+
+```json
+{"id": 42, "username": "lena", "signin_url": "https://auth.example.com/auth/magic/…", "expires_at": 1767229800,
+ "qr": "data:image/png;base64,…", "user": {"id": 42, "state": "active", "roles": ["example-member"], "…": "…"}}
+```
+
+| Route | Scope | Was |
+|---|---|---|
+| `POST /auth/api/users` | `users:invite` | eine Person mit Allowlist-Rollen anlegen (mindestens eine); den Einmal-Link gibt es nur in dieser Antwort |
+| `GET /auth/api/users/{id}`, `GET /auth/api/users` | `users:read` | ein Konto oder eine Seite (`?limit=` ≤ 200, `&after=<id>`, `?role=`, `?state=`) → `{"users": […], "next": <id>\|null}` |
+| `PATCH /auth/api/users/{id}` | `users:update` | `display_name` und `roles` (die ganze gewünschte Menge innerhalb der Allowlist; andere Rollen bleiben) |
+| `POST /auth/api/users/{id}/disable`, `/enable` | `users:disable` | die eigene Sperre der Anwendung; `enable` hebt nur diese auf |
+| `POST /auth/api/users/{id}/signin-link` | `users:invite` | ein neuer Einmal-Link, nur vor der ersten Anmeldung; ältere Links verfallen |
+| `GET /auth/api/provisioning` | — | was der Key darf: App, Scopes, Rollen, Kontingent, Grenzen und was davon übrig ist |
+
+- **Aufrufe gehen direkt an TinySesam**, mit einem Automation-Key des Dienstkontos (`X-Api-Key` oder
+  `Authorization: Bearer tsk_…`). Ein Sitzungs-Cookie zählt nicht. Schreibaufrufe tragen `TinySesam-On-Behalf-Of`: die
+  ID der Person, für die die Anwendung handelt, oder `-` für einen Job — das Audit hält sie als Behauptung neben dem
+  Dienstkonto fest.
+- **Ein Konto gehört der Anwendung,** wenn sie es angelegt hat (`managed_by`). Jedes andere Konto — und ein
+  Administrator, Eigentümer, Dienstkonto oder Delegierter — antwortet mit `404` wie eines, das es nicht gibt. Hat der
+  Betreiber einem Konto der Anwendung eine Rolle außerhalb der Allowlist gegeben, liest die Anwendung es weiter
+  (`"other_roles": true`), aber Anzeigename, Sperre und Link antworten `409 account_shared`.
+- **Was die Anwendung von einem Konto liest:** `id`, `username`, `display_name`, `email`, `email_verified`, `roles`
+  (nur aus der Allowlist), `other_roles`, `state`, `created_at`, `first_login_at`, `last_login_at`, `delete_after`;
+  `state` ist `active`, `disabled` (durch die Anwendung), `disabled_operator` (hebt nur der Betreiber auf) oder
+  `deleting`.
+- **Fehler** sind `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
+  `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
+  email_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
+  disabled_by_operator`, `429 limit` mit `Retry-After`. Schreibrouten dürfen später `202` antworten (Freigaben); das
+  heißt „noch nicht ausgeführt“.
+- Die erste Anmeldung über den Link führt ein Konto ohne Faktoren durch den Einrichtungsgang (`/auth/setup`). Danach
+  hilft sich die Person selbst (Anmeldelink an ihre Adresse, Passwort zurücksetzen) oder der Betreiber.
+
+Was ein geleakter Anwendungs-Key höchstens kann und was nicht:
+[`SECURITY.de.md`, „Konten-API“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
+Löschen mit Frist, die Übernahme bestehender Konten und die Kennzeichen im Panel kommen mit Etappe B.
+
 ## Neu in 0.5 — Kurzreferenz
 
 Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend überall ersetzbar.
@@ -2567,7 +2639,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**121 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**122 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

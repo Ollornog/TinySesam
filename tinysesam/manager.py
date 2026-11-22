@@ -545,6 +545,9 @@ class TinySesam:
                     "Accounts carry the roles %s, but available_roles is empty: the admin panel offers a free-text "
                     "field instead of checkboxes. List the roles in available_roles.",
                     security.for_log(", ".join(stored)))
+        # The account API (`apps`): an application whose service account is missing or is a person stays shut — the
+        # API checks the key's account on every request (fail-closed); here it is said once, at start.
+        self._check_app_accounts()
         # Collisions in the identifier space from existing data: the database has prevented new ones
         # since 2026-09-26 (trigger over the counting buckets, `Store._trigger_sql`), but one from an
         # older version, from a raw UPDATE or from a row of a foreign writer
@@ -737,7 +740,8 @@ class TinySesam:
 
     def _create_account(self, username, password=None, is_admin=False, roles=None, display_name=None,
                        email=None, is_service=False, email_verified: bool = True, *,
-                       name_itself_chosen: bool = False, name_source: Optional[str] = None) -> int:
+                       name_itself_chosen: bool = False, name_source: Optional[str] = None,
+                       managed_by: Optional[str] = None) -> int:
         """`create_user` including the origin of the name (`users.name_source`, attack round 2026-09-26):
         creation from OIDC, SAML and LDAP. A name that a source brings along never binds the account
         via the name to ANOTHER one (`_rebinding_reason`) — `preferred_username`, NameID and
@@ -776,7 +780,7 @@ class TinySesam:
             uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
                                          email_verified=email_verified,
                                          name_itself_chosen=name_itself_chosen,
-                                         name_source=name_source)
+                                         name_source=name_source, managed_by=managed_by)
         except sqlite3.IntegrityError as error_db:
             # Race (G12c): between the check above and the INSERT a concurrent
             # request claimed the identifier, and the database rejects (identifier trigger, UNIQUE on
@@ -1854,25 +1858,34 @@ class TinySesam:
         uid = int(u["id"])
         # The marker first: with an owner the store raises before anything has happened.
         self.store.set_disabled(uid, bool(disabled), through_operator=True)
-        keys = 0
-        if disabled:
-            self.store.delete_user_sessions(uid)
-            # `verify_api_key` already rejects keys of locked accounts. Revoke anyway: if
-            # the account is released again later, a key nobody knows about any more would
-            # otherwise come back to life.
-            # Connected devices (OAuth, T-36), app passwords and services end with them — forward auth refuses a
-            # locked account anyway, but on unlocking a device nobody remembers would otherwise come back.
-            keys = self._keys_revoked(uid, "account_disabled")
-            # The same for open one-time tokens: a confirmation link from registration otherwise lifted the
-            # lock again (H-18, "a disabled account via no path").
-            self.store.revoke_user_magic_tokens(uid)
-        # From a request with a signed-in account (panel, own admin route) `audit()` names the
-        # actor as the account — the same line the panel itself wrote up to 0.21.x.
+        keys = self._lock_effects(uid) if disabled else 0
+        self._lock_audit(u, bool(disabled), keys)
+        return True
+
+    def _lock_effects(self, uid: int) -> int:
+        """What every lock does besides the marker — the operator's (`set_disabled`) and the application's (account
+        API, `disabled=3`): sessions end, standing credentials are revoked, open one-time tokens discarded. Returns
+        the number of revoked keys. One place, so a new kind of access ends with every kind of lock."""
+        self.store.delete_user_sessions(uid)
+        # `verify_api_key` already rejects keys of locked accounts. Revoke anyway: if
+        # the account is released again later, a key nobody knows about any more would
+        # otherwise come back to life.
+        # Connected devices (OAuth, T-36), app passwords and services end with them — forward auth refuses a
+        # locked account anyway, but on unlocking a device nobody remembers would otherwise come back.
+        keys = self._keys_revoked(uid, "account_disabled")
+        # The same for open one-time tokens: a confirmation link from registration otherwise lifted the
+        # lock again (H-18, "a disabled account via no path").
+        self.store.revoke_user_magic_tokens(uid)
+        return keys
+
+    def _lock_audit(self, u, disabled: bool, keys: int) -> None:
+        """The audit line of a lock or unlock: `user_disable`/`user_enable` with `uid=` (and `api_keys_revoked=`).
+        From a request with a signed-in account (panel, own admin route) `audit()` names the actor as the account —
+        the same line the panel itself wrote up to 0.21.x."""
         request = _REQUEST.get() or {}
         self.audit("user_disable" if disabled else "user_enable",
                    None if request.get("actor") else str(u["username"]),
-                   detail=f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
-        return True
+                   detail=f"uid={int(u['id'])}" + (f" api_keys_revoked={keys}" if keys else ""))
 
     #: How the account page names an event when it is not its own name (G12b). The
     #: request for a taken or an allowlist address appears like any request — otherwise
@@ -4216,7 +4229,7 @@ class TinySesam:
         """The half session of a finished pass becomes a full one under a new token."""
         uid = s["user_id"]
         self._sign_in_complete(uid, s["ip"], factor)
-        self._note_first_login(uid)
+        self._note_login(uid)
         self._lift_after_sign_in(uid, s["ip"])
         new_token = self._create_session(uid, self._ttl(bool(s["remember"])), True, s["method"],
                                          s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
@@ -5270,7 +5283,7 @@ class TinySesam:
                                       factors=done)
         if mfa_ok:   # full login completed → audit
             self._sign_in_complete(user_id, ip, method)
-            self._note_first_login(user_id)
+            self._note_login(user_id)
             self._lift_after_sign_in(user_id, ip)
         return token, mfa_ok
 
@@ -5309,15 +5322,16 @@ class TinySesam:
                 return True
         return False
 
-    def _note_first_login(self, user_id: int) -> None:
-        """Record the first complete login (R3-1).
+    def _note_login(self, user_id: int) -> None:
+        """Record a complete login: `last_login_at` every time (schema 23, read by the account API), and the FIRST
+        one (R3-1).
 
         The self-enrollment in the default operating mode hangs on this: an account may set up the factor required
         by the chain itself as long as it has never been used. The note
         closes this window — at the FIRST complete login, no matter by which
         route it came about. An open setup window is closed in the process: it was meant for
         exactly this one process."""
-        if not self.store.mark_first_login(user_id, _now()):
+        if not self.store.mark_login(user_id, _now()):
             return
         u = self.store.get_user(user_id)
         try:
@@ -5371,7 +5385,7 @@ class TinySesam:
                                       factor=factor)
             if ok and not was_ok:
                 self._sign_in_complete(user_id, s["ip"], factor)
-                self._note_first_login(user_id)
+                self._note_login(user_id)
                 self._lift_after_sign_in(user_id, s["ip"])
                 # **New token on privilege change.** Here the session turns from a half login
                 # into a fully valid one — OWASP Session Management Cheat Sheet: "The session ID must
@@ -5512,7 +5526,7 @@ class TinySesam:
             # Up to T-34 only `start_session` and `apply_factor` noted it: an account whose chain
             # ended with the TOTP step (mandatory setup, or the setup pass) stayed "never signed in",
             # and `mfa_enrollment="first_login"` and `magiclink_first_login_only` kept treating it so.
-            self._note_first_login(s["user_id"])
+            self._note_login(s["user_id"])
             self._lift_after_sign_in(s["user_id"], s["ip"])
             # Privilege change → new token (OWASP Session Management). Returns it so that the
             # caller can set the cookie — the old token belongs to a deleted row.
@@ -6214,7 +6228,7 @@ class TinySesam:
         if not self._session_ok(u["id"], done, setup=self._setup_session(s)):
             return PasswordChangeResult(ok=True, reason="ok", status=200), None
         self._sign_in_complete(u["id"], s["ip"], "password")
-        self._note_first_login(u["id"])
+        self._note_login(u["id"])
         self._lift_after_sign_in(u["id"], s["ip"])
         new_token = self._create_session(u["id"], self._ttl(bool(s["remember"])), True, s["method"],
                                          s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
@@ -7308,6 +7322,11 @@ class TinySesam:
                     username = actor
                 elif str(username).lower() != str(actor).lower():
                     detail = f"{detail} actor={actor}" if detail else f"actor={actor}"
+            # The account API (`apps`): every line of the request names the application and the person it CLAIMS to
+            # act for (`app=… actor_claimed=…`) — beside `actor=`, the service account, which is what is proven.
+            claimed = a.get("claimed")
+            if claimed:
+                detail = f"{detail} {claimed}" if detail else claimed
         self.store.audit_log(event, username, ip, detail)
 
     def _account_name(self, user_id) -> Optional[str]:
@@ -7363,6 +7382,47 @@ class TinySesam:
         if days > 0:
             numbers["audit"] = self.store.gc_audit(_now() - days * 86400)
         return numbers
+
+    def _check_app_accounts(self) -> list:
+        """The applications of `apps` with `provisioning` whose service account is missing or is no service account —
+        one security-log line each; their account API stays shut (every request checks the key's account anyway).
+        Returns their ids."""
+        shut: list = []
+        apps = getattr(self.cfg, "apps", None) or {}
+        if not isinstance(apps, dict):
+            return shut
+        for app_id, entry in sorted(apps.items(), key=lambda kv: str(kv[0])):
+            if not isinstance(entry, dict) or not isinstance(entry.get("provisioning"), dict):
+                continue
+            name = entry.get("account")
+            row = self.store.get_user_by_name(name) if isinstance(name, str) and name else None
+            if row is None or row["is_service"] != 1:
+                shut.append(app_id)
+                security.seclog.warning(
+                    "Account API for application %s is shut: its service account %s %s. Create it as a service "
+                    "account (is_service) and issue an automation key for it.", security.for_log(str(app_id)),
+                    security.for_log(str(name)), "does not exist" if row is None else "is not a service account")
+        return shut
+
+    def _panel_actions(self):
+        """The panel's account actions (`admin.PanelActions`) for the entrances that are not the panel routes — the
+        account API asks here, so it imports neither the panel nor the router."""
+        from .admin import PanelActions
+        return PanelActions(self)
+
+    def _claim_for_audit(self, claimed: str) -> None:
+        """Add `claimed` (the account API: `app=… actor_claimed=…`) to every audit line of the running request."""
+        state = dict(_REQUEST.get() or {})
+        state["claimed"] = claimed
+        _REQUEST.set(state)
+
+    def _provisioning(self):
+        """The account API of this instance (`tinysesam.provisioning.Provisioning`), created on first use."""
+        svc = getattr(self, "_provisioning_service", None)
+        if svc is None:
+            from .provisioning import Provisioning
+            svc = self._provisioning_service = Provisioning(self)
+        return svc
 
     def _approvals(self):
         """The approvals of this instance (`tinysesam.approvals.Approvals`), created on first use."""

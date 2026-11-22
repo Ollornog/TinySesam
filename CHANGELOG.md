@@ -4,6 +4,34 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — account API for applications
+
+- `apps` (empty by default; without it nothing changes): a register of applications, each with its service account
+  (`account`), a `name` and a `provisioning` block — allowlist `roles`, `scopes` (`users:read`, `users:invite`,
+  `users:update`, `users:disable`), `link_ttl_min`, `max_accounts` and hourly `limits` (T-90, stage A).
+- `/auth/api/users`: the application creates persons with allowlist roles and gets a one-time sign-in link (only in
+  that answer, only until the first sign-in — `POST …/{id}/signin-link` issues a new one before that and discards the
+  old), reads one account or a page of its accounts (`limit`, `after`, `role`, `state`), changes `display_name` and the
+  roles of its allowlist (`PATCH`, other roles stay — one transaction), locks and unlocks with its own mark
+  (`disabled=3`; it never lifts or downgrades a lock of the operator). `GET /auth/api/provisioning` tells the key what it
+  may do and how much of the limits is left.
+- Only an automation key of the configured service account (`is_service`) counts, resolved without `current_user()`; an
+  account the application did not create, an administrator, owner, service account or delegate answers 404 before any
+  field is read; whole-account actions on an account with roles outside the allowlist answer `409 account_shared`
+  (`config_check.may_manage`, now shared with the panel's delegates). No password, passkey, TOTP or address change; a
+  name or address from `admin_identifiers` answers like a taken one.
+- Writes carry `TinySesam-On-Behalf-Of` (the person the application claims to act for, or `-`); the audit keeps the
+  panel's event names with `app=… actor_claimed=…` beside the service account. Limits per application and hour in the
+  database (shared by workers) answer `429` with `Retry-After`.
+- `config_check`: allowlist never `admin`, a delegate role or a group-mapped role, only listed roles; one service
+  account per application; `users:invite` needs `magiclink_enabled` and `base_url`; API keys on; `admin_path='/auth'`
+  refused (`/auth/api/` is reserved for the machine APIs); a role without the `<app>-` prefix warns. The start writes a
+  security-log line when an application's service account is missing or is a person — the API stays shut for it.
+- `users.last_login_at` is written on every complete sign-in (`first_login_at` only the first time).
+- The admin panel names the application's lock ("disabled (by the application)").
+- Schema 23: `users.managed_by` (indexed), `users.last_login_at`, `users.delete_after` and the lock value 3 (additive,
+  fail-closed for older versions; rollback note in `docs/OPERATIONS.md`).
+
 ### Added — approvals (TinySesam actions)
 
 - `approvals_enabled` (off by default; without it nothing changes): an API key of an account can ask for one of three

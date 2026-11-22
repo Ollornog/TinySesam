@@ -1190,6 +1190,10 @@
       "field": "bool = False",
       "tier": "B"
     },
+    "apps": {
+      "field": "dict = {}",
+      "tier": "B"
+    },
     "audit_ip_pseudonymize": {
       "field": "bool = False",
       "tier": "A"
