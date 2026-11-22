@@ -11,11 +11,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   scan skipped both Caddy steps, and the report step said only `no report from ['(empty)']` — the Caddy findings stayed
   unseen until the gateway was fixed. The job stays red through the failed step itself. `tests/test_security_doc.py`
   guards it (mutation: either condition removed → red).
-- Known, not fixed here: the gateway image carries `libc6 2.41-12+deb13u4` with CVE-2026-19499 and CVE-2026-5435 (high;
-  fixed in Debian's `2.41-12+deb13u5`) and Python 3.15.2 with medium findings. Neither base has a rebuilt image yet:
-  `python:3.15-slim` and `gcr.io/distroless/base-debian13:nonroot` still point to the pinned digests (2026-11-22), both
-  with `deb13u4`, and there is no Python 3.15.3. No exception in `.grype.yaml`; the digest bump follows when upstream
-  rebuilds (Dependabot, daily).
+- **Exception until 2026-11-28 (PO decision):** the gateway image carries `libc6 2.41-12+deb13u4` with CVE-2026-19499
+  and CVE-2026-5435 (high; fixed in Debian's `2.41-12+deb13u5`). Neither base has a rebuilt image yet:
+  `python:3.15-slim` and `gcr.io/distroless/base-debian13:nonroot` still point to the pinned digests (checked against
+  the registry on 2026-11-22), both with `deb13u4`. `.grype.yaml` excepts exactly these two CVEs for the deb package
+  `libc6` in that version; from 2026-11-29 the check before the scan is red again, and once Dependabot bumps a rebuilt
+  base the rules match nothing and the check after the scans is red until they are removed. Python 3.15.2 carries
+  medium findings only (fix in 3.16), below the gate. Measured locally with Grype against both built images: no fixable
+  high finding left, both rules matched.
+- `tests/test_security_doc.py` now drives the deadline through the command the CI runs (`--today`): green on the last
+  valid day of every shipped rule, red the day after (mutation: the expiry check removed → red).
 
 ### Added — the gate client for Python (T-86)
 

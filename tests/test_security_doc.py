@@ -101,7 +101,16 @@ until = [dt.date.fromisoformat(d) for d in re.findall(r'reason:\s*"until (\d{4}-
 assert len(until) == n_rules, "a rule in .grype.yaml without 'until YYYY-MM-DD:'"
 # Form only: the date itself is the CI's business (a suite that turns red by the calendar would block unrelated work).
 assert all(not ge.problems(shipped, d) for d in until), "a shipped exception is malformed or reaches too far"
-ok(f"_grype_exceptions: no end / expired / > 31 days each refused; .grype.yaml well-formed ({n_rules} rule(s))")
+# The deadline works through the command the CI runs (`--today` feeds the clock): the last valid day is green, the
+# next one red — for every shipped rule, measured on the file itself.
+if until:
+    with contextlib.redirect_stdout(io.StringIO()) as _cli:
+        assert ge.main(["--today", min(until).isoformat()]) == 0, "a shipped exception is refused on its last day"
+        assert ge.main(["--today", (max(until) + dt.timedelta(days=1)).isoformat()]) == 1, \
+            "an expired exception does not turn the check red"
+    assert "expired" in _cli.getvalue()
+ok(f"_grype_exceptions: no end / expired / > 31 days each refused; .grype.yaml well-formed ({n_rules} rule(s)); "
+   "the CLI is red the day after the deadline")
 
 # ---------- (d) no exception that matches nothing (T-59) ----------
 # After the scans: a rule that no ignored match in any report names has outlived its reason. The zlib rule for

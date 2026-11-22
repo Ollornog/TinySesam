@@ -9,7 +9,27 @@
 # Every rule: `reason` begins with "until YYYY-MM-DD:" (at most 31 days ahead), then why it is acceptable meanwhile.
 # scripts/_grype_exceptions.py enforces both before the scan; after the date the scan is red again.
 # Remove a rule as soon as Dependabot's digest bump carries the fix.
-# The list is empty since T-59 (2026-11-20): the runtime base moved from python:3.15-slim to distroless, which already
+# The list was empty from T-59 (2026-11-20): the runtime base moved from python:3.15-slim to distroless, which already
 # carries the fixed zlib — the zlib1g rule (CVE-2026-85091) matched nothing any more and went. After the scans,
 # `scripts/_grype_exceptions.py --report …` fails on a rule that matches nothing, so the next one goes with its reason.
-ignore: []
+#
+# 2026-11-22 (PO decision): the two high findings in glibc. Debian fixed them in libc6 2.41-12+deb13u5, but neither
+# base has been rebuilt with it yet — python:3.15-slim (build stage, the libraries copied from it) and
+# gcr.io/distroless/base-debian13:nonroot (runtime) both still point to the pinned digests with 2.41-12+deb13u4 (checked
+# against the registry on 2026-11-22). The rules are as narrow as Grype allows: one CVE each, only the deb package libc6
+# in exactly that version. Valid through 2026-11-28; from 2026-11-29 the check before the scan is red again
+# (`until` is the last valid day). Wanted on purpose: once upstream rebuilds and Dependabot bumps the digests, these
+# rules match nothing and the check after the scans turns red until they are removed.
+ignore:
+  - vulnerability: CVE-2026-19499
+    package:
+      name: libc6
+      version: 2.41-12+deb13u4
+      type: deb
+    reason: "until 2026-11-28: fixed in Debian libc6 2.41-12+deb13u5; python:3.15-slim and distroless base-debian13 not rebuilt yet, pinned digests checked 2026-11-22"
+  - vulnerability: CVE-2026-5435
+    package:
+      name: libc6
+      version: 2.41-12+deb13u4
+      type: deb
+    reason: "until 2026-11-28: fixed in Debian libc6 2.41-12+deb13u5; python:3.15-slim and distroless base-debian13 not rebuilt yet, pinned digests checked 2026-11-22"
