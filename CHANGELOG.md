@@ -4,6 +4,30 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Fixed — one defect per gate client vector
+
+- `spec/vectors/token.json`: `attack-payload-invalid-utf8` also repeated `ts_name`, so a client without a UTF-8 check
+  still answered `malformed` through its duplicate check; the invalid bytes now sit in an unknown claim. `attack-jku` and
+  `attack-x5u` were signed with the attacker's key under its own `kid`, so a client that ignores unknown header members
+  still refused them as `kid`; they are now otherwise valid tokens of the active key. Same ids and expected classes.
+- `spec/vectors/jwks.json`, scenario `invalid-kid-no-fetch`: a `kid` in upper case or with 15 or 17 hex digits never
+  triggers a key set fetch — with an empty, a fresh and a stale cache —, while a well-formed unknown `kid` does, at
+  most every 10 s. With fixed keys both answer `kid`, so only the fetch tells a client that checks the form loosely
+  (case-insensitive, by length) from one that checks it exactly; the token vectors could not.
+- `client-go` CI: the fuzz step runs each target 300000 times (`-fuzztime=300000x`) instead of 15 s. With a duration,
+  Go's fuzz coordinator can report its own deadline as `context deadline exceeded` without a failing input
+  (golang/go#75804, fixed in Go 1.26.12 and 1.27.5) — it turned this pull request red once on `oldstable`. A real
+  failing input still fails the step (a planted crash in `FuzzVerify` goes red within the count).
+- Two gaps found by hand mutations of the Python gate client (T-86): a new token vector `attack-claim-sub-empty` (an
+  empty `sub` is `claims`; no vector had one), and `skip-x-short` now carries a `kid` computed over its 31 bytes, so
+  only the length check refuses it (before, the `kid` mismatch did too).
+- `tests/test_gate_vectors.py` guards the rule for every token and header attack vector: switching off exactly one check
+  of the reference (or adding the missing key, or configuring the issuer or audience the token names) must make it
+  accepted; the vectors whose defect cannot occur alone are listed with a reason, and the list is measured both ways.
+  Key-set entries that must be skipped differ from a usable entry in exactly one member. The reference gained the
+  relaxations this needs (`lenient_utf8`, `allow_bom`, `allow_nan`, `skip_signature`, `no_ts_id_check`,
+  `header_lenient_utf8`, `header_any_id`), each measured by the self-probes.
+
 ### Added — the gate client in Rust (T-81)
 
 - `clients/rust/`, crate `tinysesam-gate` 0.1.0 (edition 2024, `#![forbid(unsafe_code)]`), following

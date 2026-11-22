@@ -64,6 +64,11 @@ def kid(label: str) -> str:
     return gate.key_name_id(_public(label))
 
 
+def gate_kid(raw: bytes) -> str:
+    """The kid rule of spec §4.1 over arbitrary bytes (for an entry whose only defect is elsewhere)."""
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
 def jwk(label: str) -> dict:
     return {"kty": "OKP", "crv": "Ed25519", "x": b64u(_public(label)), "kid": kid(label), "alg": "EdDSA", "use": "sig"}
 
@@ -330,11 +335,11 @@ def token_vectors(p: Probe) -> list:
         "the configuration.", signed(dict(head("X"), jwk=jwk("X")), base, "X"), error="header", attack="embedded-key")
     add("attack-embedded-jwk-known-kid", "An embedded `jwk` of the attacker under the kid of a trusted key.",
         signed(dict(head("A"), jwk=jwk("X")), base, "X"), error="header", attack="embedded-key")
-    add("attack-jku", "`jku` points to a key set of the attacker.",
-        signed(dict(head("X"), jku="https://evil.example.com/jwks.json"), base, "X"), error="header",
+    add("attack-jku", "`jku` points to a key set of the attacker, in an otherwise valid token: only refusing the member "
+        "stops it.", signed(dict(head(), jku="https://evil.example.com/jwks.json"), base), error="header",
         attack="embedded-key")
-    add("attack-x5u", "`x5u` points to a certificate of the attacker.",
-        signed(dict(head("X"), x5u="https://evil.example.com/cert.pem"), base, "X"), error="header",
+    add("attack-x5u", "`x5u` points to a certificate of the attacker, in an otherwise valid token.",
+        signed(dict(head(), x5u="https://evil.example.com/cert.pem"), base), error="header",
         attack="embedded-key")
     add("attack-x5c", "`x5c` embeds a certificate chain.", signed(dict(head(), x5c=["MIIB"]), base), error="header",
         attack="embedded-key")
@@ -430,8 +435,8 @@ def token_vectors(p: Probe) -> list:
         attack="json-encoding")
     add("attack-payload-array", "The payload is a JSON array.", signed(head(), b"[1,2]"), error="malformed",
         attack="json-encoding")
-    add("attack-payload-invalid-utf8", "Payload bytes that are no UTF-8.", signed(head(), body + b',"ts_name":"\xff"}'),
-        error="malformed", attack="json-encoding")
+    add("attack-payload-invalid-utf8", "Payload bytes that are no UTF-8 (in an unknown claim, so that the token has no "
+        "other defect).", signed(head(), body + b',"note":"\xff"}'), error="malformed", attack="json-encoding")
     add("attack-payload-bom", "A byte order mark before the payload JSON.", signed(head(), b"\xef\xbb\xbf" + enc(base)),
         error="malformed", attack="json-encoding")
     add("attack-payload-nan", "A NaN value in the payload is no JSON.", signed(head(), body + b',"x":NaN}'), error="malformed",
@@ -447,6 +452,7 @@ def token_vectors(p: Probe) -> list:
             ("iat-missing", {"iat": None}, "no iat"),
             ("sub-missing", {"sub": None}, "no sub"),
             ("sub-number", {"sub": 1}, "sub as a number"),
+            ("sub-empty", {"sub": "", "ts_id": None}, "sub empty (and no ts_id, which would differ)"),
             ("iss-missing", {"iss": None}, "no iss"),
             ("aud-number", {"aud": 1}, "aud as a number"),
             ("aud-empty-array", {"aud": []}, "aud as an empty array"),
@@ -630,7 +636,8 @@ def jwks_sets() -> list:
             ("kty-rsa", entry(kty="RSA"), "kty RSA"),
             ("crv-x25519", entry(crv="X25519"), "crv X25519 is a key-agreement curve"),
             ("crv-ed448", entry(crv="Ed448"), "crv Ed448 is not this protocol's curve"),
-            ("x-short", entry(x=b64u(_public("A")[:31])), "x of 31 bytes"),
+            ("x-short", entry(x=b64u(_public("A")[:31]), kid=gate_kid(_public("A")[:31])),
+             "x of 31 bytes (its kid computed over those bytes, so only the length is wrong)"),
             ("x-padded", entry(x=b64u(_public("A")) + "="), "x with padding"),
             ("alg-hs256", entry(alg="HS256"), "alg HS256"),
             ("use-enc", entry(use="enc"), "use enc"),
@@ -716,10 +723,23 @@ def jwks_scenarios() -> list:
         step(t0 + 19, "X", error="kid"),
         step(t0 + 19, "A"),
         step(t0 + 20, "X", fetch=ok_resp("A"), fetched=True, error="kid")])
-    add("invalid-kid-no-fetch", "A kid of the wrong form is refused before the key set is consulted — even with an "
-        "empty cache.", [
+    ka = kid("A")
+    add("invalid-kid-no-fetch", "A kid of the wrong form (a path, upper case, 15 or 17 hex digits) is refused before "
+        "the key set is consulted and never triggers a fetch — with an empty cache, a fresh one or a stale one. With fixed "
+        "keys such a kid looks like an unknown one (both `kid`); only the fetch tells them apart. A well-formed unknown "
+        "kid does fetch, at most every 10 s.", [
             step(t0, kid_override="../keys", error="kid"),
-            step(t0 + 1, fetch=ok_resp("A"), fetched=True)])
+            step(t0, kid_override=ka.upper(), error="kid"),
+            step(t0, kid_override=ka[:15], error="kid"),
+            step(t0, kid_override=ka + "0", error="kid"),
+            step(t0 + 1, fetch=ok_resp("A"), fetched=True),
+            step(t0 + 2, kid_override=ka.upper(), error="kid"),
+            step(t0 + 11, kid_override=ka[:15], error="kid"),
+            step(t0 + 12, "X", fetch=ok_resp("A"), fetched=True, error="kid"),
+            step(t0 + 13, "X", error="kid"),
+            step(t0 + 400, kid_override=ka + "0", error="kid"),
+            step(t0 + 400, kid_override=ka.upper(), error="kid"),
+            step(t0 + 401, fetch=ok_resp("A"), fetched=True)])
     add("stale-if-error", "A failed refresh keeps the last good set for up to 3600 s past its freshness, then the client "
         "fails closed.", [
             step(t0, fetch=ok_resp("A"), fetched=True),

@@ -148,7 +148,7 @@ string name is signed out, and links that are not absolute `http(s)` URLs or sin
 
 ```sh
 go test -race ./...                                   # vectors, unit tests, JWKS server tests
-go test -run='^$' -fuzz='^FuzzVerify$' -fuzztime=30s  # one fuzz target at a time
+go test -run='^$' -fuzz='^FuzzVerify$' -fuzztime=1000000x  # one fuzz target at a time (a count: golang/go#75804)
 BIN="$(mktemp -d)"; go -C ../../.github/audit build -o "$BIN/" tool  # staticcheck, govulncheck
 "$BIN/staticcheck" ./... && "$BIN/govulncheck" ./...
 ```
