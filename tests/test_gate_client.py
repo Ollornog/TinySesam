@@ -9,6 +9,7 @@ bar fetch, the import without FastAPI, and a seeded property test over mutated t
 import asyncio
 import base64
 import http.server
+import importlib
 import io
 import json
 import logging
@@ -111,8 +112,8 @@ blocker = (
 )
 r = subprocess.run([sys.executable, "-c", blocker], cwd=ROOT, capture_output=True, text=True, timeout=60)
 assert r.returncode == 0 and r.stdout.strip() == "lazy", (r.returncode, r.stdout, r.stderr[-2000:])
-import tinysesam  # noqa: E402
-assert tinysesam.TinySesam.__name__ == "TinySesam" and "TinySesam" in dir(tinysesam)
+package = importlib.import_module("tinysesam")
+assert package.TinySesam.__name__ == "TinySesam" and "TinySesam" in dir(package)
 ok("tinysesam.gate_client imports and works without FastAPI; `tinysesam.TinySesam` loads on first use")
 
 # ---------- configuration errors stop the start ----------
@@ -598,7 +599,7 @@ rng = random.Random(4711)
 client = token_client()
 alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.=+/ \n\x00é"
 accepted_changes = 0
-for i in range(3000):
+for _attempt in range(3000):
     chars = list(VALID)
     for _ in range(rng.randint(1, 3)):
         op = rng.random()
@@ -649,7 +650,8 @@ print("ok")
 driven = []
 for name, framework in (("flask_app.py", "flask"), ("django_app.py", "django")):
     path = os.path.join(EXAMPLES, name)
-    compile(open(path, encoding="utf-8").read(), path, "exec")
+    with open(path, encoding="utf-8") as fh:
+        compile(fh.read(), path, "exec")
     interpreter = os.environ.get("TINYSESAM_EXAMPLE_PYTHON", sys.executable)
     has = subprocess.run([interpreter, "-c", f"import {framework}"], capture_output=True).returncode == 0
     if not has:
