@@ -27,6 +27,8 @@ braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").exists(),
 import fnmatch
 import os
 import re
+import subprocess
+import tempfile
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -422,6 +424,41 @@ assert "tests/run_all.py" in check and "web.build" in check
 _rust_target = re.search(r'RUST_TARGET="([^"]+)"', check)
 assert _rust_target and "pwd -P" in _rust_target.group(1) and 'CARGO_TARGET_DIR="$RUST_TARGET"' in check, \
     "check.sh: the Rust build directory must be one per checkout"
+
+# The local gate says what it did not run in the shape ci-local counts as a gap (`skip <name> (<reason>)`; a line
+# "! … not tested here" never counted, pipeline register 2026-11-22). Every client step has such a line, and the checks
+# of the CI workflows that run in seconds (gofmt, vet, staticcheck, race; fmt, clippy, tests without features) are here.
+for _needed in ("skip go-gate-client (", "skip rust-gate-client (", "skip js-gate-client (", "skip php-gate-client (",
+                "gofmt -l .", "go vet ./...", "go test -race", "staticcheck", "govulncheck",
+                '"$CARGO" fmt --check', '"$CARGO" clippy --locked --all-features --all-targets', '-D warnings',
+                '"$CARGO" test --locked --quiet', '"$CARGO" test --locked --all-features --quiet'):
+    assert _needed in check, f"check.sh lacks {_needed!r}"
+assert "not tested here" not in check, "a skip line must have the shape ci-local counts: `skip <name> (<reason>)`"
+
+# Build directories of vanished checkouts are swept (about 1 GB each). Run the function itself against a made-up cache:
+# a directory whose recorded checkout is gone is removed; one whose checkout exists, one without a record (older
+# check.sh) and one with a foreign name stay — the legacy one is reported.
+_sweep = re.search(r'^RUST_CACHE=.*?^}\n', check, re.S | re.M)
+assert _sweep, "check.sh: rust_cache_sweep is missing"
+with tempfile.TemporaryDirectory() as _tmp:
+    _cache = pathlib.Path(_tmp, "tinysesam-client-rust")
+    _live = pathlib.Path(_tmp, "live-checkout")
+    _live.mkdir()
+    for _name, _rec in (("0123456789abcdef", str(pathlib.Path(_tmp, "gone-checkout"))),
+                        ("fedcba9876543210", str(_live)), ("aaaaaaaaaaaaaaaa", None),
+                        ("not-a-cache-key", str(pathlib.Path(_tmp, "gone-checkout")))):
+        (_cache / _name).mkdir(parents=True)
+        (_cache / _name / "artifact").write_text("x")
+        if _rec:
+            (_cache / _name / ".checkout").write_text(_rec + "\n")
+    _run = subprocess.run(["bash", "-c", _sweep.group(0) + "\nrust_cache_sweep"], capture_output=True, text=True,
+                          env={**os.environ, "XDG_CACHE_HOME": _tmp}, timeout=30)
+    assert _run.returncode == 0, _run.stderr
+    assert not (_cache / "0123456789abcdef").exists(), "the build directory of a vanished checkout must be removed"
+    for _kept in ("fedcba9876543210", "aaaaaaaaaaaaaaaa", "not-a-cache-key"):
+        assert (_cache / _kept).exists(), f"{_kept} must stay"
+    assert "without a .checkout file" in _run.stdout and "1 Rust build directory" in _run.stdout, _run.stdout
+    print("  check.sh: skip lines in ci-local's shape; Rust cache sweep removes only recorded, vanished checkouts")
 
 ci = read(".github", "workflows", "ci.yml")
 for needed in ("tests/test_browser.py", "tests/test_repo.py", "tests/test_site.py",
