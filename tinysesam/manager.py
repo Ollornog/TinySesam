@@ -7404,6 +7404,18 @@ class TinySesam:
                     security.for_log(str(name)), "does not exist" if row is None else "is not a service account")
         return shut
 
+    def _panel_actions(self):
+        """The panel's account actions (`admin.PanelActions`) for the entrances that are not the panel routes — the
+        account API asks here, so it imports neither the panel nor the router."""
+        from .admin import PanelActions
+        return PanelActions(self)
+
+    def _claim_for_audit(self, claimed: str) -> None:
+        """Add `claimed` (the account API: `app=… actor_claimed=…`) to every audit line of the running request."""
+        state = dict(_REQUEST.get() or {})
+        state["claimed"] = claimed
+        _REQUEST.set(state)
+
     def _provisioning(self):
         """The account API of this instance (`tinysesam.provisioning.Provisioning`), created on first use."""
         svc = getattr(self, "_provisioning_service", None)

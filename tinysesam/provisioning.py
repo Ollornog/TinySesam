@@ -144,8 +144,7 @@ class Provisioning:
         return frozenset(r for r in raw if isinstance(r, str)) if isinstance(raw, dict) else frozenset()
 
     def _panel(self):
-        from .admin import PanelActions
-        return PanelActions(self.auth)
+        return self.auth._panel_actions()
 
     # ---------- the caller ----------
     def caller(self, request: Request) -> dict:
@@ -199,10 +198,7 @@ class Provisioning:
             claimed += f" actor_claimed={_safe(person['username'])}#{int(person['id'])}"
         elif write:
             raise ProvisioningError("actor_required", 400, "TinySesam-On-Behalf-Of: an account id or - for a job")
-        from .manager import _REQUEST
-        state = dict(_REQUEST.get() or {})
-        state["claimed"] = claimed
-        _REQUEST.set(state)
+        self.auth._claim_for_audit(claimed)
 
     # ---------- limits (per application and hour, in the shared `flow` table) ----------
     def _window(self) -> tuple[int, int]:
@@ -227,8 +223,7 @@ class Provisioning:
         raise ProvisioningError("limit", 429, f"{action}_per_hour", retry_after=self._window()[1])
 
     def _ip(self) -> Optional[str]:
-        from .manager import _REQUEST
-        return (_REQUEST.get() or {}).get("ip")
+        return self.auth._request_ip()
 
     def _oracle_spent(self, app: dict) -> bool:
         return self.store.counter(self._key(app, "taken")) >= app["limits"]["taken_per_hour"]
