@@ -24,6 +24,7 @@ import os
 import re
 
 from . import _chain
+from . import _role_levels
 from . import security
 
 #: Method → which config field switches it on. The same list serves the chain check.
@@ -964,6 +965,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
 
     _roles_without_list(config, warnings)
     _admin_delegates(config, error, warnings)
+    _role_level_ladders(config, error, warnings)
 
     # `audit_retention_days` is checked by NUMBER_LIMITS (below): a negative period would be in `gc()` a
     # point in time in the future — the whole audit log would vanish on the next run. The own
@@ -1378,6 +1380,80 @@ def _admin_delegates(config, error: list, warnings: list) -> None:
     if not _an(config, "admin_enabled"):
         warnings.append(_t(config, "admin_delegates is set, but admin_enabled=False: the panel is not mounted at "
                                    "admin_path. Mount auth.admin_router() yourself, or delegates have no panel."))
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f,]")
+
+
+def _role_level_ladders(config, error: list, warnings: list) -> None:
+    """Role levels (`role_levels`): the shape, every template usable, no ladder with fewer than two levels, no template
+    twice in a ladder, no two templates that could claim the same role ambiguously — and, as warnings, what the panel
+    could not offer: a ladder without an entry, an entry missing the role of a level, a delegate holding only a part
+    of a level.
+
+    The panel skips a malformed ladder (`_role_levels.usable`, fail closed); here it is a start error, so a typo does
+    not silently turn a ladder back into plain checkboxes. Ambiguity is an error and not a warning: the panel would
+    store the roles of one entry for another."""
+    raw = getattr(config, "role_levels", None)
+    if not raw:
+        return
+    def shape(value) -> str:
+        return _t(config, "role_levels: {v!r} — a list of ladders {{\"name\": …, \"label\": …, \"levels\": [{{\"name\": "
+                          "…, \"label\": …, \"role\": \"prefix{{1}}suffix\"}}, …]}}, at least two levels, names and templates unique",
+                  v=value)
+    if not isinstance(raw, list):
+        error.append(shape(raw))
+        return
+    good, names = [], set()
+    for ladder in raw:
+        if not _role_levels.usable([ladder]) or ladder.get("name") in names:
+            error.append(shape(ladder))
+            continue
+        names.add(ladder["name"])
+        for level in ladder["levels"]:
+            if _CONTROL.search(level["role"]):
+                error.append(_t(config, "role_levels: {ladder!r} level {level!r}: the role {role!r} holds a comma or a "
+                                        "control character — Remote-Groups would read it as other roles",
+                                ladder=ladder["name"], level=level["name"], role=level["role"]))
+        good.append(ladder)
+    templates = [(ladder["name"], level["role"]) for ladder in good for level in ladder["levels"]]
+    for i, (la, ta) in enumerate(templates):
+        for lb, tb in templates[i + 1:]:
+            if not _role_levels.overlap(ta, tb):
+                continue
+            if la != lb:
+                error.append(_t(config, "role_levels: the templates {a!r} ({la!r}) and {b!r} ({lb!r}) can match the "
+                                        "same role — every role belongs to one ladder at most",
+                                a=ta, la=la, b=tb, lb=lb))
+            elif len(ta) == len(tb):
+                error.append(_t(config, "role_levels: {ladder!r}: the templates {a!r} and {b!r} can match the same role "
+                                        "and are equally specific — which entry a role belongs to would be a guess",
+                                ladder=la, a=ta, b=tb))
+    known = [r for r in getattr(config, "available_roles", None) or [] if isinstance(r, str)]
+    known_set = set(known)
+    graph = delegation_graph(getattr(config, "admin_delegates", None))
+    for ladder, rows in zip(good, _role_levels.entries(good, known)):
+        if not rows:
+            warnings.append(_t(config, "role_levels: {ladder!r} has no entry in available_roles — the panel shows no "
+                                       "levels for it", ladder=ladder["name"]))
+        for row in rows:
+            for i, role in enumerate(row["own"]):
+                hit = _role_levels.assign(good, role) if role in known_set else None
+                if hit is not None and (good[hit[0]] is not ladder or hit[1] != i or hit[2] != row["key"]):
+                    error.append(_t(config, "role_levels: {ladder!r}: the role {role!r} belongs to the entry {key!r} "
+                                            "and to another one — rename the role or the template",
+                                    ladder=ladder["name"], role=role, key=row["key"]))
+            missing = [r for r in row["own"] if r not in known_set]
+            if missing:
+                warnings.append(_t(config, "role_levels: {ladder!r} entry {key!r}: {roles} not in available_roles — "
+                                           "the levels from there up are not offered",
+                                   ladder=ladder["name"], key=row["key"], roles=", ".join(missing)))
+            for delegate, node in sorted(graph.items()):
+                held = [r for r in row["own"] if r in node["eff"]]
+                if held and any(r not in node["eff"] for r in row["own"][:row["own"].index(held[-1]) + 1]):
+                    warnings.append(_t(config, "role_levels: the delegate role {delegate!r} manages {held} but not "
+                                               "every role below — it cannot grant that level of {key!r}",
+                                       delegate=delegate, held=", ".join(held), key=row["key"]))
 
 
 def _open_gates(config, warnings: list) -> None:
@@ -2624,4 +2700,36 @@ _DE: dict[str, str] = {
      "admin_path. Mount auth.admin_router() yourself, or delegates have no panel."):
         ("admin_delegates ist gesetzt, aber admin_enabled=False: Das Panel hängt nicht unter "
          "admin_path. auth.admin_router() selbst einhängen, sonst haben Delegierte kein Panel."),
+    ("role_levels: {v!r} — a list of ladders {{\"name\": …, \"label\": …, \"levels\": [{{\"name\": "
+     "…, \"label\": …, \"role\": \"prefix{{1}}suffix\"}}, …]}}, at least two levels, names and templates unique"):
+        ("role_levels: {v!r} — eine Liste von Leitern {{\"name\": …, \"label\": …, \"levels\": [{{\"name\": …, "
+         "\"label\": …, \"role\": \"präfix{{1}}suffix\"}}, …]}}, mindestens zwei Stufen, Namen und Vorlagen eindeutig"),
+    ("role_levels: {ladder!r} level {level!r}: the role {role!r} holds a comma or a "
+     "control character — Remote-Groups would read it as other roles"):
+        ("role_levels: {ladder!r} Stufe {level!r}: Die Rolle {role!r} enthält ein Komma oder ein "
+         "Steuerzeichen — Remote-Groups läse sie als andere Rollen"),
+    ("role_levels: the templates {a!r} ({la!r}) and {b!r} ({lb!r}) can match the "
+     "same role — every role belongs to one ladder at most"):
+        ("role_levels: Die Vorlagen {a!r} ({la!r}) und {b!r} ({lb!r}) können dieselbe Rolle "
+         "treffen — jede Rolle gehört höchstens zu einer Leiter"),
+    ("role_levels: {ladder!r}: the templates {a!r} and {b!r} can match the same role "
+     "and are equally specific — which entry a role belongs to would be a guess"):
+        ("role_levels: {ladder!r}: Die Vorlagen {a!r} und {b!r} können dieselbe Rolle treffen "
+         "und sind gleich spezifisch — zu welchem Eintrag eine Rolle gehört, wäre geraten"),
+    ("role_levels: {ladder!r} has no entry in available_roles — the panel shows no "
+     "levels for it"):
+        ("role_levels: {ladder!r} hat keinen Eintrag in available_roles — das Panel zeigt dafür "
+         "keine Stufen"),
+    ("role_levels: {ladder!r}: the role {role!r} belongs to the entry {key!r} "
+     "and to another one — rename the role or the template"):
+        ("role_levels: {ladder!r}: Die Rolle {role!r} gehört zum Eintrag {key!r} "
+         "und zu einem anderen — Rolle oder Vorlage umbenennen"),
+    ("role_levels: {ladder!r} entry {key!r}: {roles} not in available_roles — "
+     "the levels from there up are not offered"):
+        ("role_levels: {ladder!r} Eintrag {key!r}: {roles} nicht in available_roles — "
+         "die Stufen ab dort werden nicht angeboten"),
+    ("role_levels: the delegate role {delegate!r} manages {held} but not "
+     "every role below — it cannot grant that level of {key!r}"):
+        ("role_levels: Die Delegiertenrolle {delegate!r} verwaltet {held}, aber nicht "
+         "jede Rolle darunter — sie kann diese Stufe von {key!r} nicht vergeben"),
 }

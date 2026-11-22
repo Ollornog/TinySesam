@@ -1619,7 +1619,12 @@ behind a real Caddy is `tests/e2e_app_passwords.py` (manual: needs Docker).
 Built-in panel at **`/auth/admin`** (administrators; delegated admins see their part — see
 [Delegated administration](#delegated-administration)), embeddable with no extra setup:
 
-- **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection; in code: `auth.set_disabled`), password reset, set roles/admin.
+- **Users & service accounts:** a slim list (name, type, roles, status) with search; a click opens the account's
+  own page (address `#user/<id>`) with the sections *Profile*, *Access* (roles, [role levels](#role-levels), admin),
+  *Sign-in* (password, passkeys, API keys, sign-in link) and *Danger zone* (lock/unlock — the account stays, login
+  blocked, sessions end immediately; in code: `auth.set_disabled` —, owner, delete). The roles of `available_roles`
+  are offered grouped by prefix (`app:`, `ops:` …) with a filter; a role an account holds that is not configured stays
+  ticked under its own heading instead of being dropped on save.
 - **API keys** per user: generate (shown once) / revoke.
 - **Sign-in link** per user (with `magiclink_enabled`): one-time link plus QR code, shown once,
   works without a mailer — see [Sign-in by link and from another device](#sign-in-by-link-and-from-another-device).
@@ -1635,6 +1640,44 @@ Built-in panel at **`/auth/admin`** (administrators; delegated admins see their 
 - **Audit log** view.
 
 JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation).
+
+### Role levels
+
+Some roles come in steps: `coll:photos-read` lets an account read a collection, `coll:photos` lets it write. Ticking
+both boxes per collection is error-prone; `role_levels` turns such roles into **one choice per entry** —
+"— / read / write" — in the panel:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    available_roles=["coll:photos", "coll:photos-read", "coll:recipes", "coll:recipes-read", "editor"],
+    role_levels=[{
+        "name": "collections",
+        "label": "Collections",            # a text, or one per language: {"en": …, "de": …}
+        "levels": [  # lowest first
+            {"name": "read", "label": "read", "role": "coll:{1}-read"},
+            {"name": "write", "label": "write", "role": "coll:{1}"},
+        ],
+    }],
+)
+```
+
+- **Each level adds one role template** with `{1}`; a level stands for its role and every role below it. Choosing
+  *write* for `photos` stores `coll:photos-read` **and** `coll:photos`; *—* stores neither.
+- **The entries** (`photos`, `recipes`) come from `available_roles`. When a role matches several templates, the most
+  specific one wins: `coll:photos-read` is the read role of `photos`.
+- **A way to pick roles, not a hierarchy.** An account holds plain roles as before: `Remote-Groups`, the gate token,
+  key scopes and `has_role` carry exactly the stored roles — `coll:photos` alone does not imply `coll:photos-read`.
+- **Existing accounts are never widened silently.** An account holding `coll:photos` without `coll:photos-read` is
+  shown as *incomplete*; nothing is preselected, and saving keeps those roles until an administrator picks a level.
+- **A level is offered only when all its roles are known**: in `available_roles` for an administrator (otherwise it
+  is struck through, with the missing role named), in their scope for a [delegated admin](#delegated-administration)
+  (otherwise it is not shown; an entry without a grantable level is left out). The server checks the scope as before.
+- **Checked at start:** at least two levels, every template with exactly one `{1}` and a literal part, no template
+  twice, no comma, no two ladders whose templates can match the same role, no equally specific overlap inside one —
+  errors; a ladder without entry, an entry missing the role of a level, a delegate holding only part of a level —
+  warnings.
 
 **Mount / embed / HTTPS:**
 - **Default:** automatically under `config.admin_path` (default `/auth/admin`) — freely changeable.
@@ -2378,7 +2421,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**117 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**118 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
 from .router import _key_kind, _mail_base, hardened_route
-from . import config_check, security
+from . import _role_levels, config_check, security
 from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, valid_email
 from . import dialog as _dialog
@@ -779,7 +779,10 @@ _KEYS = (
     "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect "
     "tab.app_passwords no_app_passwords th.name th.apps expired confirm.revoke_app_password "
     "services no_services pair_service f.service_name pairing_code pairing_once th.key confirm.revoke_service "
-    "delegate_note"
+    "delegate_note "
+    "search filter_roles level_none incomplete incomplete_hint roles_other roles_unknown all_accounts "
+    "sec.profile sec.access sec.signin sec.danger f.display_name created password set_password pw_hint "
+    "issue_link link_hint disable_hint owner_hint delete_hint no_keys unavailable unavailable_reason"
 ).split()
 
 
@@ -810,6 +813,12 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
     cfg = auth.cfg
     view = None if scope is None else {"roles": sorted({r for _, roles, _ in scope for r in roles}),
                                        "can": sorted({a for _, _, can in scope for a in can})}
+    # The role levels over the roles THIS viewer may grant: a delegate is offered a level only when every role of it
+    # lies in their scope (`_role_levels.entries`) — a view, the roles route checks the scope itself.
+    ladders = _role_levels.view(getattr(cfg, "role_levels", None) or [],
+                                list(cfg.available_roles) if view is None else view["roles"], cfg.lang)
+    seen = dict(viewer) if viewer else {}
+    me = {"id": seen.get("id"), "owner": bool(seen.get("is_owner"))}
     bar = ""
     if getattr(cfg, "topbar_enabled", True):
         bar = (_topbar.render(auth, viewer=viewer, csrf=csrf, current="admin").replace("__TS_P__", prefix)
@@ -831,6 +840,8 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
             .replace("__ROLES__", json.dumps(list(cfg.available_roles) if view is None else view["roles"])
                      .replace("<", "\\u003c"))
             .replace("__SCOPE__", "null" if view is None else json.dumps(view).replace("<", "\\u003c"))
+            .replace("__LADDERS__", json.dumps(ladders, ensure_ascii=False).replace("<", "\\u003c"))
+            .replace("__ME__", json.dumps(me).replace("<", "\\u003c"))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")
             .replace("__LINKS__", "true" if cfg.magiclink_enabled else "false")
@@ -901,6 +912,70 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin .lkcopy{display:flex;gap:8px;align-items:center}
 .tsadmin .lkstate{font-size:12px;color:var(--ts-ok-ink)}
 .tsadmin .lkstate.manual{color:var(--ts-warn-ink)}
+.tsadmin [hidden]{display:none!important}
+/* Accounts: a slim list, one detail page per account (no button bar per row). */
+.tsadmin .bar{justify-content:space-between}
+.tsadmin .grow{flex:1;min-width:180px}
+.tsadmin tr.click{cursor:pointer}
+.tsadmin tr.click:hover td{background:var(--ts-surface)}
+.tsadmin td.roles{white-space:normal}
+.tsadmin .chip{display:inline-block;padding:1px 8px;margin:1px 0;border-radius:20px;font-size:11px;
+  background:var(--ts-chip);color:var(--ts-ink);border:1px solid var(--ts-line-soft)}
+.tsadmin .chip.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink);border-color:var(--ts-warn-line)}
+.tsadmin .chip.more{color:var(--ts-muted)}
+.tsadmin .back{display:inline-block;margin:0 0 8px;font-size:13px}
+.tsadmin .dhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px}
+.tsadmin h2.uname{font-size:20px;text-transform:none;letter-spacing:0;color:var(--ts-ink);margin:0 6px 0 0}
+.tsadmin dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:8px 18px;margin:0;font-size:13px;align-items:center}
+.tsadmin dl.kv dt{color:var(--ts-muted)}
+.tsadmin dl.kv dd{margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tsadmin .line{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;
+  border-top:1px solid var(--ts-line-soft);flex-wrap:wrap}
+.tsadmin .line:first-of-type{border-top:0;padding-top:0}
+.tsadmin .line .what{flex:1;min-width:200px;font-size:13px}
+.tsadmin .line .what .muted{font-size:12px;margin-top:2px}
+.tsadmin .sub{margin-top:8px;width:100%}
+.tsadmin .card.danger{border-color:var(--ts-danger)}
+.tsadmin .card.danger h2{color:var(--ts-err-ink)}
+/* The role picker: per ladder a grid of entries, each a row of level segments (radios); other roles as a grid of
+   checkboxes per prefix. The chosen segment carries a check mark, not only a colour. */
+.tsadmin .picker fieldset{border:1px solid var(--ts-line-soft);border-radius:8px;margin:0 0 10px;padding:6px 10px 10px}
+.tsadmin .picker legend{font-size:12px;font-weight:600;color:var(--ts-muted);padding:0 4px}
+.tsadmin .picker .pfilter{margin:0 0 10px;width:100%;max-width:320px}
+.tsadmin .ents{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:6px 22px;align-items:start}
+.tsadmin .ent{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:3px 0}
+.tsadmin .ent .key{font-weight:600;font-size:13px;overflow-wrap:anywhere;min-width:70px}
+.tsadmin .ent .warnline,.tsadmin .ent .whyline{flex-basis:100%}
+.tsadmin .segs{display:inline-flex;border:1px solid var(--ts-field-line);border-radius:7px;overflow:hidden}
+.tsadmin .seg{position:relative;display:block}
+.tsadmin .seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0}
+.tsadmin .seg span{display:block;padding:4px 10px;font-size:12px;cursor:pointer;background:var(--ts-field-bg);
+  color:var(--ts-ink);border-left:1px solid var(--ts-field-line);min-width:44px;text-align:center}
+.tsadmin .seg:first-child span{border-left:0}
+.tsadmin .seg input:checked+span{background:var(--ts-accent);color:var(--ts-accent-ink);font-weight:600}
+/* "—" chosen is no access: neutral, the accent colour stays for a real level. */
+.tsadmin .seg input[value="-1"]:checked+span{background:var(--ts-neutral);color:var(--ts-neutral-ink)}
+.tsadmin .seg span::before{content:"✓ ";visibility:hidden}
+.tsadmin .seg input:checked+span::before{visibility:visible}
+.tsadmin .seg input:focus-visible+span{outline:2px solid var(--ts-link);outline-offset:-2px}
+.tsadmin .seg input:disabled+span{cursor:not-allowed;color:var(--ts-muted);text-decoration:line-through;
+  background:var(--ts-surface-2)}
+.tsadmin label{font-size:13px}
+.tsadmin .warnline{font-weight:400;color:var(--ts-warn-ink);margin-top:2px}
+.tsadmin .chks{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 14px}
+.tsadmin .chks label{display:flex;gap:6px;align-items:center;font-size:13px;overflow-wrap:anywhere;padding:2px 0}
+.tsadmin .form{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px 12px;margin-bottom:12px}
+@media (max-width:640px){
+  .tsadmin .wrap{padding:14px 12px}
+  .tsadmin table.ulist thead{display:none}
+  .tsadmin table.ulist tr{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:10px 2px;
+    border-bottom:1px solid var(--ts-line-soft)}
+  .tsadmin table.ulist td{border:0;padding:0;white-space:normal}
+  .tsadmin table.ulist td.type{text-align:right}
+  .tsadmin table.ulist td.roles{grid-column:1/-1}
+  .tsadmin dl.kv{grid-template-columns:1fr;gap:2px}
+  .tsadmin dl.kv dd{margin-bottom:8px}
+}
 __BRANDCSS__
 </style>__BRANDHEAD__</head><body>
 __HEADER__
@@ -915,6 +990,8 @@ __DIALOG__
 const B="__BASE__";                                    // mount point (freely chosen) → relative API calls
 const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles; a delegate: their list)
 const SCOPE=__SCOPE__;                                 // null = administrator; {roles,can} = delegated admin (T-74) — a view only, the server decides
+const LADDERS=__LADDERS__;                             // config.role_levels over the roles this viewer may grant: [{label,levels,entries:[{key,own,offer}]}]
+const ME=__ME__;                                       // the viewer: {id, owner} — hides what the server would refuse anyway
 const CAN=a=>!SCOPE||SCOPE.can.includes(a);            // may the viewer do this action (`can` of their delegate roles)?
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (e-mail required)
 const L=__I18N__;                                      // texts in config.lang — see messages.py
@@ -954,102 +1031,170 @@ const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;","
 const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" ${on("go",k)}>${esc(l)}</div>`).join("")}
-function go(k){cur=k;tabs();({users:users,sessions:sessions,devices:devices,apppw:apppw,security:security,audit:audit})[k]()}
+function go(k){cur=k;tabs();if(location.hash)history.replaceState(null,"",location.pathname+location.search);({users:users,sessions:sessions,devices:devices,apppw:apppw,security:security,audit:audit})[k]()}
 const V=h=>document.getElementById("view").innerHTML=h;
 
-async function users(){
-  const us=await g("/api/users");
-  V(`${SCOPE?`<div class="muted small">${esc(L.delegate_note)} ${esc(SCOPE.roles.join(", "))}</div>`:""}${CAN("create")?`<div class=card><h2>${esc(L.new_user)}</h2><div class=row>
-    <input id=nu placeholder="${esc(L["f.username"])}"><input id=ne type=email placeholder="${esc(REQMAIL?L["f.email"]:L["f.email_optional"])}">
-    <input id=np type=password placeholder="${esc(L["f.password"])}">
-    <input id=nr placeholder="${esc(L["f.roles"])}" class=w200>
-    ${SCOPE?"":`<label><input type=checkbox id=na> ${esc(L["f.admin"])}</label><label><input type=checkbox id=ns> ${esc(L["f.service"])}</label>`}
-    <button ${on("mkuser")}>${esc(L.create)}</button></div></div>`:""}
-    <table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.email"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th><th>${esc(L["th.actions"])}</th></tr>`+
-    us.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
-      <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
-      <td>${u.is_owner?'<span class="badge grn">owner</span> ':''}${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}</td>
-      <td>${esc((u.roles||[]).join(", "))||'—'}</td>
-      <td>${u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
-      <td>
-        ${CAN("disable")?`<button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>`:""}
-        ${SCOPE?"":`<button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
-        <button class=sec ${on("ren",u.id,u.username)}>${esc(L["btn.rename"])}</button>`}
-        ${CAN("roles")?`<button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>`:""}
-        ${SCOPE?"":`<button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
-        <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>`}
-        ${LINKS&&CAN("signin_link")&&!u.is_service&&!u.disabled?`<button class=sec ${on("link",u.id,u.username)}>${esc(L["btn.link"])}</button>`:''}
-        ${SCOPE?"":`<button class=sec ${on("own",u.id,!u.is_owner)}>${esc(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"])}</button>
-        <button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>`}
-      </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
-}
-async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean)};
+// ---------- Accounts: a slim list, a detail page per account (`#user/<id>`), a form for a new one (`#new`) ----------
+let US=[];                                             // the account list as last loaded
+// The roles a ladder covers (every role an entry's levels add) — the rest of ROLES is grouped by prefix.
+const COVERED=new Set(LADDERS.flatMap(l=>l.entries.flatMap(e=>e.own)));
+const OTHERS=ROLES.filter(r=>!COVERED.has(r));
+// The level an account holds in one ladder entry: the highest level whose role it holds, and whether it holds exactly
+// the roles up to that level. An incomplete entry (`coll:a` without `coll:a-read`) preselects no level: saving keeps
+// those roles as they are until the admin picks one — the picker never widens rights on its own.
+function stateOf(e,held){const f=e.own.map(r=>held.has(r)),top=f.lastIndexOf(true);
+  return {level:top,complete:f.every((x,i)=>x===(i<=top))}}
+const badges=u=>`${u.is_owner?'<span class="badge grn">owner</span> ':''}${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}`;
+const state=u=>u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`;
+// Roles as chips: one per ladder entry ("a · write"), an incomplete one marked in words, then the other roles.
+function chips(u,max){const held=new Set(u.roles||[]),out=[];
+  for(const l of LADDERS)for(const e of l.entries){const s=stateOf(e,held);if(s.level<0)continue;
+    out.push(s.complete?`<span class=chip>${esc(e.key)} · ${esc(l.levels[s.level])}</span>`
+      :`<span class="chip warn">⚠ ${esc(e.key)} · ${esc(L.incomplete)}</span>`);e.own.forEach(r=>held.delete(r))}
+  held.forEach(r=>out.push(`<span class=chip>${esc(r)}</span>`));
+  if(!out.length)return '<span class=muted>—</span>';
+  return out.slice(0,max||99).join(" ")+(max&&out.length>max?` <span class="chip more">+${out.length-max}</span>`:"")}
+async function users(){US=await g("/api/users");route()}
+async function refresh(){US=await g("/api/users");route()}
+function nav(h){if(location.hash===h)route();else location.hash=h}
+// What the users tab shows follows the address: back/forward and a bookmarked account work.
+function route(){if(cur!=="users")return;const m=location.hash.match(/^#user\/(\d+)$/);
+  const u=m&&US.find(x=>x.id===+m[1]);if(u)return detail(u);
+  if(location.hash==="#new"&&CAN("create"))return newform();
+  list()}
+function list(){
+  V(`${SCOPE?`<div class="muted small">${esc(L.delegate_note)} ${esc(SCOPE.roles.join(", "))}</div>`:""}
+    <div class="row bar"><input id=us type=search class=grow data-filter=rows aria-label="${esc(L.search)}" placeholder="${esc(L.search)}">
+    ${CAN("create")?`<button ${on("nav","#new")}>${esc(L.new_user)}</button>`:""}</div>
+    <table class=ulist><thead><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th></tr></thead><tbody>`+
+    US.map(u=>`<tr class=click data-q="${esc([u.username,u.email,u.display_name,...(u.roles||[])].join(" ").toLowerCase())}" ${on("nav","#user/"+u.id)}>
+      <td><a href="#user/${u.id}"><b>${esc(u.username)}</b></a>${u.email?`<div class="muted small">${esc(u.email)}</div>`:""}</td>
+      <td class=type>${badges(u)}</td><td class=roles>${chips(u,6)}</td><td>${state(u)}</td></tr>`).join("")+`</tbody></table>`)}
+// The role picker: per ladder a table with one row per entry and a radio per level; the other roles as checkboxes
+// grouped by prefix (`xyz:`); roles the account holds that nobody configured stay ticked under their own heading, so
+// saving never drops them unseen. Without known roles: the free-text field as before. `pid` names the container.
+function picker(pid,roles){const held=new Set(roles||[]);
+  if(!ROLES.length&&!SCOPE)return `<input id="${pid}" value="${esc((roles||[]).join(", "))}" placeholder="${esc(L["f.roles"])}" class=w280>`;
+  let n=0,h="";
+  // A delegate sees only the levels they may grant (all roles in their scope) and no entry without one; an
+  // administrator sees a level whose roles are not configured struck through, with the reason in words.
+  LADDERS.forEach((l,li)=>{let rows="";
+    l.entries.forEach((e,ei)=>{if(SCOPE&&!e.offer.some(Boolean))return;
+      n++;const s=stateOf(e,held),nm=`${pid}_${li}_${ei}`,why=[];
+      const seg=(i,text,title,off)=>`<label class=seg title="${esc(title)}"><input type=radio name="${nm}" value=${i} aria-label="${esc(e.key+": "+text+(off?" — "+off:""))}"${off?" disabled":""}${s.complete&&s.level===i?" checked":""}><span>${esc(i<0?"—":text)}</span></label>`;
+      const segs=e.own.map((r,i)=>{if(e.offer[i])return seg(i,l.levels[i],e.own.slice(0,i+1).join(", "),"");
+        if(SCOPE)return "";
+        const off=L.unavailable+": "+L.unavailable_reason.replace("{roles}",e.own.slice(0,i+1).filter(x=>!ROLES.includes(x)).join(", "));
+        why.push(l.levels[i]+" — "+off);return seg(i,l.levels[i],off,off)}).join("");
+      rows+=`<div class=ent data-q="${esc(e.key.toLowerCase())}"><span class=key>${esc(e.key)}</span><span class=segs role=radiogroup aria-label="${esc(e.key)}">`+
+        seg(-1,L.level_none,L.level_none,"")+segs+`</span>`+
+        why.map(w=>`<div class="muted small whyline">${esc(w)}</div>`).join("")+
+        (s.complete?"":`<div class="warnline small">⚠ ${esc(L.incomplete)}: ${esc(e.own.filter(r=>held.has(r)).join(", "))} — ${esc(L.incomplete_hint)}</div>`)+`</div>`});
+    if(rows)h+=`<fieldset><legend>${esc(l.label)}</legend><div class=ents>${rows}</div></fieldset>`});
+  const groups={};OTHERS.forEach(r=>{const i=r.indexOf(":"),k=i>0?r.slice(0,i+1):"";(groups[k]=groups[k]||[]).push(r)});
+  const unknown=[...held].filter(r=>!COVERED.has(r)&&!OTHERS.includes(r));
+  const box=(title,rs)=>`<fieldset><legend>${esc(title)}</legend><div class=chks>`+rs.map(r=>{n++;
+    return `<label data-q="${esc(r.toLowerCase())}"><input type=checkbox value="${esc(r)}"${held.has(r)?" checked":""}> ${esc(r)}</label>`}).join("")+`</div></fieldset>`;
+  Object.keys(groups).sort((a,b)=>(a==="")-(b==="")||a.localeCompare(b)).forEach(k=>{h+=box(k||L.roles_other,groups[k])});
+  if(unknown.length)h+=box(L.roles_unknown,unknown);
+  return `<div class=picker id="${pid}">${n>12?`<input type=search class=pfilter data-filter=roles data-p="${pid}" aria-label="${esc(L.filter_roles)}" placeholder="${esc(L.filter_roles)}">`:""}${h||`<span class=muted>${esc(L.no_roles)}</span>`}</div>`}
+// The roles the picker stands for: per entry the roles up to the chosen level (none for "—"), an entry left without a
+// choice (only an incomplete one) keeps the roles it held, plus every ticked checkbox. Hidden by the filter ≠ removed.
+function collect(pid,roles){const held=new Set(roles||[]),box=document.getElementById(pid);
+  if(!box||box.tagName==="INPUT")return ((box&&box.value)||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const out=[];
+  LADDERS.forEach((l,li)=>l.entries.forEach((e,ei)=>{const c=box.querySelector(`input[name="${pid}_${li}_${ei}"]:checked`);
+    if(!c){e.own.forEach(r=>{if(held.has(r))out.push(r)});return}
+    out.push(...e.own.slice(0,parseInt(c.value,10)+1))}));
+  box.querySelectorAll("input[type=checkbox]:checked").forEach(c=>out.push(c.value));
+  return [...new Set(out)]}
+const FILTER={
+  rows:f=>{const q=f.value.trim().toLowerCase();document.querySelectorAll("table.ulist tbody tr").forEach(t=>{t.hidden=!!q&&!t.dataset.q.includes(q)})},
+  roles:f=>{const q=f.value.trim().toLowerCase(),box=document.getElementById(f.dataset.p);
+    box.querySelectorAll("[data-q]").forEach(t=>{t.hidden=!!q&&!t.dataset.q.includes(q)});
+    box.querySelectorAll("fieldset").forEach(s=>{s.hidden=!s.querySelector("[data-q]:not([hidden])")})}};
+document.addEventListener("input",e=>{const f=e.target.closest&&e.target.closest("[data-filter]");if(f&&FILTER[f.dataset.filter])FILTER[f.dataset.filter](f)});
+const line=(what,hint,act,sub)=>`<div class=line><div class=what><b>${esc(what)}</b>${hint?`<div class=muted>${esc(hint)}</div>`:""}</div>${act||""}${sub||""}</div>`;
+function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
+  const signin=[
+    admin&&!svc?line(L.password,L.pw_hint,`<button class=sec ${on("pw",u.id)}>${esc(L.set_password)}</button>`):"",
+    admin&&!svc?line(L.passkeys,"","",`<div id=pkl class=sub></div>`):"",
+    admin?line(L.api_keys,"","",`<div id=kl class=sub></div>`):"",
+    LINKS&&CAN("signin_link")&&!svc&&!u.disabled?line(L.signin_link,L.link_hint,`<button class=sec ${on("link",u.id,u.username)}>${esc(L.issue_link)}</button>`,`<div id=lko class=sub></div>`):""].join("");
+  const danger=[
+    CAN("disable")&&!self&&!(u.is_owner&&!u.disabled)?line(u.disabled?L.enable:L.disable,u.disabled?"":L.disable_hint,`<button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>`):"",
+    admin&&ME.owner?line(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"],L.owner_hint,`<button class=sec ${on("own",u.id,!u.is_owner)}>${esc(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"])}</button>`):"",
+    admin&&!self&&!u.is_owner?line(L["btn.delete"],L.delete_hint,`<button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>`):""].join("");
+  V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
+    <div class=dhead><h2 class=uname>${esc(u.username)}</h2>${badges(u)} ${state(u)}</div>
+    <section class=card><h2>${esc(L["sec.profile"])}</h2><dl class=kv>
+      <dt>${esc(L["f.username"])}</dt><dd><b>${esc(u.username)}</b>${admin?`<button class=sec ${on("ren",u.id,u.username)}>${esc(L["btn.rename"])}</button>`:""}</dd>
+      <dt>${esc(L["f.display_name"])}</dt><dd>${esc(u.display_name)||'<span class=muted>—</span>'}</dd>
+      <dt>${esc(L["f.email"])}</dt><dd>${esc(u.email)||'<span class=muted>—</span>'}</dd>
+      <dt>${esc(L.created)}</dt><dd>${dt(u.created_at)}</dd></dl></section>
+    <section class=card><h2>${esc(L["sec.access"])}</h2>${CAN("roles")?picker("pk",u.roles)+`
+      <div class=row>${admin&&!svc?`<label class=mr12><input type=checkbox id=ra${u.is_admin?" checked":""}> ${esc(L["f.admin"])}</label>`:""}
+      <button ${on("saveroles",u.id)}>${esc(L.save)}</button><span id=rs class="muted small" role=status aria-live=polite></span></div>`:chips(u)}</section>
+    ${signin?`<section class=card><h2>${esc(L["sec.signin"])}</h2>${signin}</section>`:""}
+    ${danger?`<section class="card danger"><h2>${esc(L["sec.danger"])}</h2>${danger}</section>`:""}`);
+  if(admin){keys(u.id);if(!svc)pks(u.id)}}
+function newform(){
+  V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
+    <section class=card><h2>${esc(L.new_user)}</h2><div class=form>
+    <input id=nu aria-label="${esc(L["f.username"])}" placeholder="${esc(L["f.username"])}"><input id=ne type=email aria-label="${esc(L["f.email"])}" placeholder="${esc(REQMAIL?L["f.email"]:L["f.email_optional"])}">
+    <input id=nd aria-label="${esc(L["f.display_name"])}" placeholder="${esc(L["f.display_name"])}"><input id=np type=password autocomplete=new-password aria-label="${esc(L["f.password"])}" placeholder="${esc(L["f.password"])}"></div>
+    ${SCOPE?"":`<div class=row><label class=mr12><input type=checkbox id=na> ${esc(L["f.admin"])}</label><label><input type=checkbox id=ns> ${esc(L["f.service"])}</label></div>`}
+    <h2>${esc(L["sec.access"])}</h2>${picker("pkn",[])}
+    <div class=row><button ${on("mkuser")}>${esc(L.create)}</button></div></section>`)}
+async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,display_name:nd.value||null,roles:collect("pkn",[])};
   // A delegate's form has no admin/service box (T-74); the fields stay out of the body altogether.
   if(!SCOPE){b.is_admin=na.checked;b.is_service=ns.checked}
   if(REQMAIL&&!b.is_service&&!ne.value.trim()){tsAlert(L["err.email"]);return}
-  const r=await p("/api/users",b);if(!rejected(r))users()}
-async function own(id,o){if(!await tsConfirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;rejected(await p(`/api/users/${id}/owner`,{owner:o}));users()}
-async function dis(id,d){if(!await tsConfirm(d?L["confirm.disable"]:L["confirm.enable"],{danger:d}))return;rejected(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
+  const r=await p("/api/users",b);if(!rejected(r)){US=await g("/api/users");nav("#user/"+r.id)}}
+async function own(id,o){if(!await tsConfirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;rejected(await p(`/api/users/${id}/owner`,{owner:o}));refresh()}
+async function dis(id,d){if(!await tsConfirm(d?L["confirm.disable"]:L["confirm.enable"],{danger:d}))return;rejected(await p(`/api/users/${id}/disable`,{disabled:d}));refresh()}
 async function pw(id){const v=await tsPrompt(L["prompt.pw"],"",{type:"password"});if(v&&!rejected(await p(`/api/users/${id}/password`,{password:v})))await tsAlert(L.pw_set)}
-async function ren(id,alt){const v=await tsPrompt(L["prompt.username"],alt);if(v&&v!==alt&&!rejected(await p(`/api/users/${id}/username`,{username:v})))users()}
-async function roles(id,cur,isadmin){
-  const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
-  const inner = ROLES.length
-    ? ROLES.map(r=>`<label class=mr12><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
-    : `<input id="rf${id}" value="${esc(cur)}" placeholder="${esc(L["f.roles"])}" class=w280>`;
-  document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.roles_groups)}</h2>
-    <div class=row>${inner||`<span class=muted>${esc(L.no_roles)}</span>`}</div>
-    <div class=row>${SCOPE?"":`<label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> ${esc(L["f.admin"])}</label>`}
-      <button ${on("saveroles",id)}>${esc(L.save)}</button>
-      <button class=sec ${on("clr",id)}>${esc(L.cancel)}</button></div></div></td>`;
-}
-async function saveroles(id){
-  const roles = ROLES.length
-    ? [...document.querySelectorAll(".rc_"+id+":checked")].map(c=>c.value)
-    : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
-  const b={roles};if(!SCOPE)b.is_admin=document.getElementById("ra"+id).checked;   // a delegate never sends the flag (T-74)
-  rejected(await p(`/api/users/${id}/roles`,b));users();
-}
-// The detail row under an account shows one thing at a time: its keys, its passkeys or a sign-in link. Each view
-// claims the row before it waits for the server and writes only while its claim is the newest — otherwise a reply
-// that arrives late overwrites what came after it: `mkkey` refreshes the key list without waiting, and when that
-// refresh landed after a sign-in link issued in the meantime, the link (shown once, never again) was gone.
-const rowClaims={};
-function claimRow(id){const n=(rowClaims[id]||0)+1;rowClaims[id]=n;
-  return h=>{if(rowClaims[id]===n)document.getElementById("k"+id).innerHTML=h}}
-async function keys(id,name){const put=claimRow(id);const ks=await g(`/api/users/${id}/keys`);
-  put(`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
-    <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" class=w150>
-    <button ${on("mkkey",id)}>${esc(L.create_key)}</button></div>
+async function ren(id,alt){const v=await tsPrompt(L["prompt.username"],alt);if(v&&v!==alt&&!rejected(await p(`/api/users/${id}/username`,{username:v})))refresh()}
+async function saveroles(id){const u=US.find(x=>x.id===id)||{roles:[]};
+  const b={roles:collect("pk",u.roles)};const ra=document.getElementById("ra");
+  if(!SCOPE&&ra)b.is_admin=!!ra.checked;   // a delegate never sends the flag (T-74)
+  if(!rejected(await p(`/api/users/${id}/roles`,b))){await refresh();const s=document.getElementById("rs");if(s)s.textContent=L.saved}}
+// Each part of the detail page (keys, passkeys, sign-in link) claims its box before it waits for the server and
+// writes only while its claim is the newest — otherwise a late reply overwrites what came after it: `mkkey` refreshes
+// the key list without waiting, and a link shown once must not be replaced by a list that arrived late.
+const claims={};
+function claim(box){const n=(claims[box]||0)+1;claims[box]=n;
+  return h=>{const el=document.getElementById(box);if(claims[box]===n&&el)el.innerHTML=h}}
+async function keys(id){const put=claim("kl");const ks=await g(`/api/users/${id}/keys`);
+  put(`<div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" class=w200>
+    <button class=sec ${on("mkkey",id)}>${esc(L.create_key)}</button></div>
     ${SVC?`<div class=row><input id=sn placeholder="${esc(L["f.service_name"])}"><select id=sr>${RESOURCES.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("")}</select>
-    <button ${on("mksvc",id)}>${esc(L.pair_service)}</button></div>`:""}
-    <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
+    <button class=sec ${on("mksvc",id)}>${esc(L.pair_service)}</button></div>`:""}
+    ${ks.length?`<table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
-      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`)}
+      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table>`:`<div class="muted small">${esc(L.no_keys)}</div>`}`)}
 // A pairing code (T-60) is shown ONCE — the service redeems it with `tinysesam-client pair <url> <code>`.
 async function mksvc(id){const r=await p(`/api/users/${id}/service-pairing`,{name:sn.value,resources:[sr.value]});
   if(!rejected(r)&&r.code)await tsSecret(L.pairing_code,r.code,L.pairing_once+"\ntinysesam-client pair "+r.issuer+" "+r.code)}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
-  keys(id,"");if(!rejected(r)&&r.key)await tsSecret(L.key_new,r.key,L.key_once)}
-async function pks(id,name){const put=claimRow(id);const ps=await g(`/api/users/${id}/passkeys`);
-  put(`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
-    <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
-      <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`)}
+  keys(id);if(!rejected(r)&&r.key)await tsSecret(L.key_new,r.key,L.key_once)}
+async function pks(id){const put=claim("pkl");const ps=await g(`/api/users/${id}/passkeys`);
+  put(ps.length?`<table>`+ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
+      <td><button class=warn ${on("delpk",id,c.id)}>${esc(L.revoke)}</button></td></tr>`).join("")+`</table>`:`<div class="muted small">${esc(L.no_passkeys)}</div>`)}
 // Sign-in link without mail (T-33): shown ONCE — the server keeps only the hash.
 async function link(id,name){const v=await tsPrompt(L["prompt.link_ttl"],String(LINKTTL),{type:"number"});if(v===null)return;
-  const put=claimRow(id);const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
-  put(`<td colspan=5><div class=card><h2>${esc(L.signin_link)} · ${esc(name)}</h2>
-    <div class="muted small">${esc(L.link_once)}</div>
+  const put=claim("lko");const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
+  put(`<div class="muted small">${esc(L.link_once)}</div>
     <div class="row lkcopy"><input id=lk${id} readonly class=w280 value="${esc(r.url)}">
       <button class=sec ${on("copylink",id)}>${esc(L.copy)}</button><span id=lks${id} class=lkstate role=status aria-live=polite></span></div>
     ${r.qr?`<img class=qr alt="" src="${esc(r.qr)}">`:""}
-    <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div></div></td>`)}
+    <div class="muted small">${esc(L.expires)} ${dt(r.expires_at)}</div>`)}
 // T-35: copy the link once shown; without the clipboard API the field is selected for Ctrl+C.
 async function copylink(id){const f=document.getElementById("lk"+id),s=document.getElementById("lks"+id);
   const ok=await tsCopy(f.value,f);s.textContent=ok?L.copied:L.copy_manual;s.className="lkstate"+(ok?"":" manual")}
-async function delpk(uid,cid,name){if(await tsConfirm(L["confirm.pk_delete"],{danger:true})){rejected(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
-async function deluser(id){if(!await tsConfirm(L["confirm.delete"],{danger:true}))return;if(!rejected(await p(`/api/users/${id}/delete`)))users()}
-async function revk(kid,uid,name){if(await tsConfirm(L["confirm.revoke"],{danger:true})){rejected(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
+async function delpk(uid,cid){if(await tsConfirm(L["confirm.pk_delete"],{danger:true})){rejected(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid)}}
+async function deluser(id){if(!await tsConfirm(L["confirm.delete"],{danger:true}))return;if(!rejected(await p(`/api/users/${id}/delete`))){US=await g("/api/users");nav("")}}
+async function revk(kid,uid){if(await tsConfirm(L["confirm.revoke"],{danger:true})){rejected(await p(`/api/keys/${kid}/revoke`));keys(uid)}}
 
 async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
@@ -1078,7 +1223,6 @@ async function apppw(){const ps=await g("/api/app-passwords");
       <td>${a.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:a.expired?`<span class="badge red">${esc(L.expired)}</span>`:`<button class=warn ${on("revap",a.id)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table>`
     :`<div class=muted>${esc(L.no_app_passwords)}</div>`)}
 async function revap(id){if(await tsConfirm(L["confirm.revoke_app_password"],{danger:true})){rejected(await p(`/api/app-passwords/${id}/revoke`));apppw()}}
-function clr(id){document.getElementById("r"+id).innerHTML=""}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
   V(`<div class=card><h2>${esc(L.hardening)}</h2>`+
@@ -1096,9 +1240,12 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,copylink};
+const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
+// Back/forward to an account or the new-account form also from another tab.
+window.addEventListener("hashchange",()=>{if(cur==="users")return route();
+  if(/^#(user\/\d+|new)$/.test(location.hash)){cur="users";tabs();users()}});
 tabs();users();
 </script>
 </div>__FOOTER__</body></html>"""

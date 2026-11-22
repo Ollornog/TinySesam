@@ -409,6 +409,11 @@ assert "scripts/check.sh" in hook, "the hook must run the suite"
 
 check = read("scripts", "check.sh")
 assert "tests/run_all.py" in check and "web.build" in check
+# One Rust build directory per checkout (pipeline register 2026-11-22): a shared one handed a working tree the test
+# binaries of another — cargo does not rebuild a workspace member for a new path. (Mutation: the key removed → red.)
+_rust_target = re.search(r'RUST_TARGET="([^"]+)"', check)
+assert _rust_target and "pwd -P" in _rust_target.group(1) and 'CARGO_TARGET_DIR="$RUST_TARGET"' in check, \
+    "check.sh: the Rust build directory must be one per checkout"
 
 ci = read(".github", "workflows", "ci.yml")
 for needed in ("tests/test_browser.py", "tests/test_repo.py", "tests/test_site.py",

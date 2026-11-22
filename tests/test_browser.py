@@ -631,45 +631,50 @@ async def run():
         # R8-1: The panel only got the CSP once its inline handlers were gone. Whether the
         # delegated `data-on` buttons really work, only a browser with a real policy shows.
         await p.go("/auth/admin", wait=1.5)
-        assert await p.js("document.querySelectorAll('#view tr').length") > 1, "user list empty"
-        await p.click("[data-on=keys]")
-        await asyncio.sleep(0.6)
-        assert await p.js("!!document.querySelector('#view #kn')"), "keys button without effect"
+        assert await p.js("document.querySelectorAll('table.ulist tbody tr').length") > 1, "user list empty"
+        # 7f: the list is slim — no button bar per account; everything lives on the account's own page.
+        assert await p.js("document.querySelectorAll('table.ulist tbody button').length") == 0, "buttons in the list"
+        _st = showcase.auth.store
+        _demo = _st.get_user_by_name("demo")["id"]
+        await p.js(f"document.querySelector('table.ulist a[href=\"#user/{_demo}\"]').click();true")
+        await p.until("!!document.querySelector('#view #kn')", "the account page shows no API keys")
+        assert await p.js("location.hash") == f"#user/{_demo}", "the address does not name the account"
         # G13/G3: „Rename“ and „Make owner“ work in the browser. The owner button was never
         # wired up (missing in ACT, the click did nothing), and its label did not arrive.
         # The questions come in the panel's own dialog (T-35) — answered like a person would.
-        _st = showcase.auth.store
-        _demo = _st.get_user_by_name("demo")["id"]
         await p.js(f"document.querySelector('[data-on=ren][data-a^=\"[{_demo},\"]').click();true")
         await p.answer(value="demo-probe")
         await until_py(lambda: _st.get_user(_demo)["username"] == "demo-probe",
                        f"rename without effect: {_st.get_user(_demo)['username']!r}")
-        # The list reloads with the new name — only then does the button carry it (otherwise „demo“ = the old name).
+        # The page reloads with the new name — only then does the button carry it (otherwise „demo“ = the old name).
         await p.until(f"[...document.querySelectorAll('[data-on=ren]')].some(b=>b.dataset.a==="
-                      f"JSON.stringify([{_demo},'demo-probe']))", "the list did not reload after renaming")
+                      f"JSON.stringify([{_demo},'demo-probe']))", "the page did not reload after renaming")
         await p.js(f"document.querySelector('[data-on=ren][data-a^=\"[{_demo},\"]').click();true")
         await p.answer(value="demo")
         await until_py(lambda: _st.get_user(_demo)["username"] == "demo", "renaming back without effect")
-        # Only an owner can grant the owner role — the demo account is not one, so for this probe
-        # it is made one and afterwards reset to its previous state.
+        # Only an owner can grant the owner role (the panel shows the button to owners only) — the demo admin is not
+        # one, so for this probe it is made one and afterwards reset to its previous state.
         _demoadmin = _st.get_user_by_name("demoadmin")["id"]
         _was_owner = bool(_st.get_user(_demoadmin)["is_owner"])
         _st.set_owner(_demoadmin, True)
         try:
-            await p.go("/auth/admin", wait=1.5)
+            # The same address with its fragment would be a same-document navigation — reload for the owner view.
+            await p.cmd("Page.reload")
+            await asyncio.sleep(1.5)
+            await p.until(f"!!document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]')", "no owner button")
             _button = await p.js(f"document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]').textContent.trim()")
             assert _button, "owner button without label"
             await p.js(f"document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]').click();true")
             await p.answer()
             await until_py(lambda: _st.get_user(_demo)["is_owner"], "„Make owner“ without effect")
             await p.until(f"!!document.querySelector('[data-on=own][data-a^=\"[{_demo},false\"]')",
-                          "the list did not reload after „Make owner“")
+                          "the page did not reload after „Make owner“")
             await p.js(f"document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]').click();true")
             await p.answer()
             await until_py(lambda: not _st.get_user(_demo)["is_owner"], "„Give up owner“ without effect")
         finally:
             _st.set_owner(_demoadmin, _was_owner)
-        print("  admin panel: rename and owner button work (G13, G3)")
+        print("  admin panel: slim list, the account page by address, rename and owner button work (7f, G13, G3)")
         await p.click(".tab[data-on=go]:nth-child(2)")
         await asyncio.sleep(0.6)
         assert await p.js("document.querySelector('.tab.on').textContent") != \
@@ -761,6 +766,7 @@ async def run():
         await c22_adapter(p)
         await top_bar(p)
         await delegate_panel(p)
+        await accounts_panel(p)
 
 
 async def t33_alternatives(p):
@@ -842,7 +848,8 @@ async def t33_alternatives(p):
 
     # 3) Admin panel: the sign-in link button shows link and QR code once.
     carol = t33.store.get_user_by_name("carol")["id"]
-    await go("/auth/admin", wait=1.5)
+    await go(f"/auth/admin#user/{carol}", wait=1.5)
+    await p.until(f"!!document.querySelector('[data-on=link][data-a^=\"[{carol},\"]')", "no sign-in link button")
     await p.js(f"document.querySelector('[data-on=link][data-a^=\"[{carol},\"]').click();true")
     await p.answer(value="30")
     await p.until(f"!!document.getElementById('lk{carol}')", "no link shown")
@@ -1612,10 +1619,8 @@ async def _own_dialogs(p):
 
     # 7) Admin panel: API key in the secret dialog, the sign-in link with its copy button.
     await as_user(t33.store.get_user_by_name("boss")["id"])
-    await go("/auth/admin")
-    await p.until(f"!!document.querySelector('[data-on=keys][data-a^=\"[{carol},\"]')", "user list empty")
-    await p.js(f"document.querySelector('[data-on=keys][data-a^=\"[{carol},\"]').click();true")
-    await p.until("!!document.getElementById('kn')", "keys button without effect")
+    await go(f"/auth/admin#user/{carol}")
+    await p.until("!!document.getElementById('kn')", "the account page shows no API keys")
     # `mkkey` refreshes the key list without waiting for it. Under load that refresh came back after the sign-in
     # link issued next and overwrote it — the link, shown once, was gone (2026-11-21, “panel: no sign-in link”
     # with two suites at once). Here the order is forced instead of hoped for: the page's own `fetch` holds the
@@ -1707,58 +1712,206 @@ async def delegate_panel(_first):
         await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
             "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
             "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
-        before = (t33.cfg.available_roles, t33.cfg.admin_delegates)
-        t33.cfg.available_roles = ["A", "B", "teamlead"]
-        t33.cfg.admin_delegates = {"teamlead": {"roles": ["A", "B"], "can": ["create", "disable", "roles"]}}
+        before = (t33.cfg.available_roles, t33.cfg.admin_delegates, t33.cfg.role_levels)
+        t33.cfg.available_roles = ["A", "B", "teamlead"] + LADDER_ROLES
+        t33.cfg.role_levels = [LADDER]
+        # The team manages `x` up to write, `y` only up to read, `z` not at all.
+        t33.cfg.admin_delegates = {"teamlead": {"roles": ["A", "B", "coll:x", "coll:x-r", "coll:y-r"],
+                                                "can": ["create", "disable", "roles"]}}
         try:
             await _delegate_panel(p)
         finally:
-            t33.cfg.available_roles, t33.cfg.admin_delegates = before
+            t33.cfg.available_roles, t33.cfg.admin_delegates, t33.cfg.role_levels = before
 
 
 async def _delegate_panel(p):
     failed_before = len(p.failed)
     lead = t33.create_user("tl74", password="tl74-pw-123456", roles=["teamlead"])
-    member = t33.create_user("mem74", password="mem74-pw-12345", roles=["A"])
+    member = t33.create_user("mem74", password="mem74-pw-12345", roles=["A", "coll:x-r"])
     t33.create_user("out74", password="out74-pw-12345", roles=["teamlead", "A"])
     token, _ = t33.start_session(lead, "password")
     await p.cmd("Network.clearBrowserCookies")
     await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
     await p.cmd("Page.navigate", url=T33 + "/auth/admin")
-    await p.until(f"!!document.querySelector('[data-on=roles][data-a^=\"[{member},\"]')", "delegate view not built")
+    await p.until(f"!!document.querySelector('table.ulist a[href=\"#user/{member}\"]')", "delegate view not built")
     assert await p.js("document.querySelectorAll('#tabs .tab').length") == 1, "a delegate sees more than one tab"
-    users = await p.js("[...document.querySelectorAll('#view td b')].map(b=>b.textContent).join(',')")
+    users = await p.js("[...document.querySelectorAll('table.ulist tbody b')].map(b=>b.textContent).join(',')")
     assert users == "mem74", f"a delegate sees {users!r}"
-    assert not await p.js("!!document.getElementById('na') || !!document.getElementById('ns')"), "admin/service box"
-    for action in ("pw", "ren", "keys", "pks", "own", "deluser", "link"):
-        assert not await p.js(f"!!document.querySelector('[data-on={action}]')"), f"button {action} for a delegate"
+    assert await p.js("[...document.querySelectorAll('[data-on=nav]')].some(b=>JSON.parse(b.dataset.a)[0]==='#new')"), \
+        "no „new account“"
     assert await p.js("!!document.querySelector('.tsbar-pop a[href$=\"/auth/admin\"]')"), "no panel entry in the bar"
-    # Roles: the checkboxes of the list, no admin box; save sets them on the server.
-    await p.js(f"document.querySelector('[data-on=roles][data-a^=\"[{member},\"]').click();true")
-    await p.until(f"!!document.querySelector('.rc_{member}')", "roles editor did not open")
-    boxes = await p.js(f"[...document.querySelectorAll('.rc_{member}')].map(c=>c.value).join(',')")
+    # The account page: roles of the list, the levels the team may grant, no admin box, no buttons beyond theirs.
+    await p.js(f"document.querySelector('table.ulist a[href=\"#user/{member}\"]').click();true")
+    await p.until("!!document.getElementById('pk')", "the account page did not open")
+    for action in ("pw", "ren", "mkkey", "delpk", "own", "deluser", "link"):
+        assert not await p.js(f"!!document.querySelector('[data-on={action}]')"), f"button {action} for a delegate"
+    assert not await p.js("!!document.getElementById('ra') || !!document.getElementById('kl')"), "admin parts"
+    boxes = await p.js("[...document.querySelectorAll('#pk input[type=checkbox]')].map(c=>c.value).join(',')")
     assert boxes == "A,B", boxes
-    assert not await p.js(f"!!document.getElementById('ra{member}')"), "admin box in a delegate's roles editor"
-    await p.js(f"document.querySelector('.rc_{member}[value=B]').checked=true;"
-               f"document.querySelector('[data-on=saveroles][data-a=\"[{member}]\"]').click();true")
-    await until_py(lambda: sorted(t33.user_roles(t33.store.get_user(member))) == ["A", "B"], "roles not saved")
-    # Lock through the own dialog.
-    await p.until(f"!!document.querySelector('[data-on=dis][data-a^=\"[{member},\"]')", "list not rebuilt")
+    # Levels: `x` read and write, `y` only read (write hidden, not greyed), `z` absent — the PO's choice.
+    entries = await p.js("[...document.querySelectorAll('#pk .ent')].map(e=>e.dataset.q+':'+"
+                         "[...e.querySelectorAll('input[type=radio]')].map(r=>r.value).join('/')).join(' ')")
+    assert entries == "x:-1/0/1 y:-1/0", entries
+    assert not await p.js("!!document.querySelector('#pk input[disabled]')"), "a delegate sees a greyed-out level"
+    await p.js("document.querySelector('#pk .ent[data-q=x] input[value=\"1\"]').click();"
+               "document.querySelector('#pk input[type=checkbox][value=B]').click();"
+               "document.querySelector('[data-on=saveroles]').click();true")
+    await until_py(lambda: sorted(t33.user_roles(t33.store.get_user(member))) == ["A", "B", "coll:x", "coll:x-r"],
+                   f"roles not saved: {t33.user_roles(t33.store.get_user(member))}")
+    # Lock through the own dialog — on the account page, rebuilt after saving.
+    await p.until(f"!!document.querySelector('[data-on=dis][data-a^=\"[{member},\"]')", "page not rebuilt")
     await p.js(f"document.querySelector('[data-on=dis][data-a^=\"[{member},\"]').click();true")
     await p.answer()
     await until_py(lambda: bool(t33.store.get_user(member)["disabled"]), "lock without effect")
-    # Create an account with a role of the list.
-    await p.until("!!document.getElementById('nu')", "form gone")
-    await p.js("document.getElementById('nu').value='new74';document.getElementById('nr').value='A';"
-               "document.getElementById('ne').value='new74@example.com';"
+    # Create an account with a role and a level of the list.
+    await p.js("location.hash='#new';true")
+    await p.until("!!document.getElementById('nu') && !!document.getElementById('pkn')", "form gone")
+    assert not await p.js("!!document.getElementById('na') || !!document.getElementById('ns')"), "admin/service box"
+    await p.js("document.getElementById('nu').value='new74';document.getElementById('ne').value='new74@example.com';"
+               "document.querySelector('#pkn input[type=checkbox][value=A]').click();"
+               "document.querySelector('#pkn .ent[data-q=y] input[value=\"0\"]').click();"
                "document.querySelector('[data-on=mkuser]').click();true")
     await until_py(lambda: t33.store.get_user_by_name("new74") is not None, "account not created")
-    assert t33.user_roles(t33.store.get_user_by_name("new74")) == ["A"]
+    assert sorted(t33.user_roles(t33.store.get_user_by_name("new74"))) == ["A", "coll:y-r"]
     viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
     assert viol == "[]", f"CSP violation in the delegate panel: {viol}"
     assert not p.console, f"console errors: {p.console[:2]}"
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
-    print("  delegate panel: one tab, only the team, no admin buttons; roles, lock and create work (strict CSP)")
+    print("  delegate panel: one tab, only the team, no admin parts, only grantable levels; roles, lock and create "
+          "work (strict CSP)")
+
+
+#: The ladder of the accounts sections (7f): `x` and `y` complete, `z` lacks its read role (not available).
+LADDER = {"name": "coll", "label": "Collections",
+          "levels": [{"name": "read", "role": "coll:{1}-r"}, {"name": "write", "role": "coll:{1}"}]}
+LADDER_ROLES = ["coll:x", "coll:x-r", "coll:y", "coll:y-r", "coll:z"]
+
+
+#: Save the roles on an account page: the status line is emptied first, so "saved" means the rebuilt page.
+SAVE = ("document.getElementById('rs').textContent='';"
+        "document.querySelector('[data-on=saveroles]').click();true")
+SAVED = "!!document.getElementById('rs') && document.getElementById('rs').textContent!==''"
+
+
+async def accounts_panel(_first):
+    """7f in a real browser on the T-33 app (strict CSP, real CSRF), as administrator, in a tab of its own: the slim
+    list with search, the account page by address (back/forward), the role levels — an incomplete entry keeps its
+    roles until a level is chosen, roles outside the configuration survive a save (the old editor dropped them), a
+    level stores its full set, "—" is drawn neutral, a level without its roles is struck through with the reason —,
+    the new-account form with levels, and phone width plus dark mode without sideways scrolling."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
+        before = (t33.cfg.available_roles, t33.cfg.role_levels)
+        # Enough roles for the filter field (more than 12 choices).
+        t33.cfg.available_roles = ["editor", "app:wiki", "app:mail"] + [f"app:a{i}" for i in range(8)] + LADDER_ROLES
+        t33.cfg.role_levels = [LADDER]
+        try:
+            await _accounts_panel(p)
+        finally:
+            t33.cfg.available_roles, t33.cfg.role_levels = before
+            await p.cmd("Emulation.clearDeviceMetricsOverride")
+
+
+async def _accounts_panel(p):
+    failed_before = len(p.failed)
+    boss = t33.store.get_user_by_name("boss")["id"]
+    # `coll:x` without `coll:x-r`: incomplete; `legacy-77` is in no configuration.
+    acc = t33.create_user("lv77", password="lv77-pw-123456", roles=["coll:x", "coll:y-r", "legacy-77", "app:wiki"])
+    roles = lambda: sorted(t33.user_roles(t33.store.get_user(acc)))  # noqa: E731
+    token, _ = t33.start_session(boss, "password")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+    await p.cmd("Page.navigate", url=T33 + "/auth/admin")
+    await p.until(f"!!document.querySelector('table.ulist a[href=\"#user/{acc}\"]')", "list not built")
+    assert await p.js("document.querySelectorAll('table.ulist tbody button').length") == 0, "buttons in the list"
+    chips = await p.js(f"document.querySelector('table.ulist a[href=\"#user/{acc}\"]').closest('tr')"
+                       ".querySelector('td.roles').innerText")
+    assert "x · incomplete" in chips and "y · read" in chips and "legacy-77" in chips, chips
+    # Search: only the matching row stays.
+    await p.js("{const f=document.getElementById('us');f.value='lv77';f.dispatchEvent(new Event('input',{bubbles:true}))}"
+               "true")
+    shown = await p.js("[...document.querySelectorAll('table.ulist tbody tr')].filter(t=>!t.hidden).length")
+    assert shown == 1, f"search shows {shown} rows"
+    # A click on the row opens the account page; the address names it.
+    await p.js(f"document.querySelector('table.ulist a[href=\"#user/{acc}\"]').closest('tr').click();true")
+    await p.until("!!document.getElementById('pk')", "the account page did not open")
+    assert await p.js("location.hash") == f"#user/{acc}"
+    assert await p.js("document.querySelector('h2.uname').textContent") == "lv77"
+    # The incomplete entry: nothing chosen, said in words; the legacy role ticked under its own heading.
+    assert await p.js("!document.querySelector('#pk .ent[data-q=x] input:checked')"), "incomplete entry preselected"
+    assert "incomplete" in await p.js("document.querySelector('#pk .ent[data-q=x]').innerText")
+    assert await p.js("document.querySelector('#pk input[type=checkbox][value=\"legacy-77\"]').checked")
+    # `z` lacks `coll:z-r`: both levels struck through, disabled, the reason in words and in the label.
+    z = await p.js("[...document.querySelectorAll('#pk .ent[data-q=z] input[disabled]')].map(r=>r.getAttribute"
+                   "('aria-label')).join('|')+' || '+document.querySelector('#pk .ent[data-q=z]').innerText")
+    assert "z: write — not available: coll:z-r not in the configured roles" in z and "write — not available" in \
+        z.split(" || ")[1], z
+    # "—" chosen is neutral, a chosen level carries the accent colour.
+    colours = await p.js("(()=>{const bg=s=>getComputedStyle(document.querySelector(s)).backgroundColor;"
+                         "return [bg('#pk .ent[data-q=z] input[value=\"-1\"]+span'),"
+                         "bg('#pk .ent[data-q=y] input[value=\"0\"]+span')]})()")
+    assert colours[0] != colours[1], f"„—“ looks like a level: {colours}"
+    # Save untouched: everything stays — the incomplete entry and the legacy role too.
+    await p.js(SAVE)
+    await p.until(SAVED, "no „saved“")
+    assert roles() == ["app:wiki", "coll:x", "coll:y-r", "legacy-77"], roles()
+    # A level stores its full set: y → write; x → read normalises the incomplete entry.
+    await p.js("document.querySelector('#pk .ent[data-q=y] input[value=\"1\"]').click();"
+               "document.querySelector('#pk .ent[data-q=x] input[value=\"0\"]').click();"
+               + SAVE)
+    await until_py(lambda: roles() == ["app:wiki", "coll:x-r", "coll:y", "coll:y-r", "legacy-77"], f"{roles()}")
+    await p.until(SAVED, "page not rebuilt after saving")
+    # "—" removes the entry; a checkbox hidden by the filter keeps its tick.
+    await p.js("{const f=document.querySelector('#pk [data-filter=roles]');f.value='y';"
+               "f.dispatchEvent(new Event('input',{bubbles:true}))}true")
+    assert await p.js("document.querySelector('#pk input[value=\"app:wiki\"]').closest('[data-q]').hidden"), \
+        "the role filter hides nothing"
+    await p.js("document.querySelector('#pk .ent[data-q=y] input[value=\"-1\"]').click();" + SAVE)
+    await until_py(lambda: roles() == ["app:wiki", "coll:x-r", "legacy-77"], f"{roles()}")
+    # Back to the list, and forward again by history.
+    await p.js("document.querySelector('a.back').click();true")
+    await p.until("!!document.querySelector('table.ulist')", "„All accounts“ did not lead back")
+    await p.js("history.back();true")
+    await p.until("!!document.getElementById('pk')", "history back did not reopen the account page")
+    # New account with a level.
+    await p.js("location.hash='#new';true")
+    await p.until("!!document.getElementById('pkn')", "no new-account form")
+    await p.js("document.getElementById('nu').value='lv78';document.getElementById('ne').value='lv78@example.com';"
+               "document.querySelector('#pkn .ent[data-q=x] input[value=\"1\"]').click();"
+               "document.querySelector('[data-on=mkuser]').click();true")
+    await p.until("!!document.querySelector('dialog.tsdlg[open]') || /^#user\\/\\d+$/.test(location.hash)",
+                  "creating gave no answer")
+    refusal = await p.js("(document.querySelector('dialog.tsdlg[open]')||{innerText:''}).innerText")
+    assert not refusal, f"creating was refused: {refusal!r}"
+    await until_py(lambda: t33.store.get_user_by_name("lv78") is not None, "account not created")
+    new = t33.store.get_user_by_name("lv78")
+    assert sorted(t33.user_roles(new)) == ["coll:x", "coll:x-r"], t33.user_roles(new)
+    await p.until(f"location.hash==='#user/{new['id']}'", "the new account's page did not open")
+    # Phone width, light and dark: no sideways scrolling on the list and the account page.
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
+    for theme in ("light", "dark"):
+        await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+        for where in ("", f"#user/{acc}"):
+            await p.cmd("Page.navigate", url=T33 + "/auth/admin" + where)
+            await p.until("!!document.querySelector('table.ulist') || !!document.getElementById('pk')", "not built")
+            await asyncio.sleep(0.3)
+            assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")
+            width = await p.js("document.documentElement.scrollWidth")
+            assert width <= 390, f"{theme} {where or 'list'}: {width}px wide at 390px"
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation in the accounts panel: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  accounts panel: slim list, search, account page by address, levels (incomplete kept, legacy role kept, "
+          "full set, neutral „—“, reason for a missing level), new account, 390px light/dark (strict CSP)")
 
 
 async def top_bar(_first):

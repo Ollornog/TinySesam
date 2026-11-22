@@ -4,6 +4,46 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — accounts page and role levels in the admin panel (T-87)
+
+- The users tab lists accounts slimly — name, type, roles as chips, status — with a search field; there is no button
+  bar per row any more. A click opens the account's own page (`#user/<id>`, back and forward work) with the sections
+  *Profile* (rename), *Access* (roles, admin), *Sign-in* (password, passkeys, API keys and service pairing, sign-in
+  link) and *Danger zone* (lock or unlock, owner, delete), each action with a sentence on what it does.
+- `role_levels`: ladders of role templates with `{1}` (`coll:{1}-read` < `coll:{1}`). The panel offers one choice per
+  entry ("— / read / write") and stores the full set of the chosen level. A display aid only: `Remote-Groups`, the
+  gate token, key scopes and `has_role` carry exactly the stored roles. An account holding only part of a level is
+  shown as incomplete and keeps its roles until an administrator picks a level. A level whose roles are not all in
+  `available_roles` is struck through with the reason; a delegated admin sees only the levels within their scope.
+  Checked at construction (shape, at least two levels, unique templates, no comma, no overlapping ladders).
+- The roles outside a ladder are grouped by prefix (`app:`, `ops:` …) with a filter once there are many; the
+  new-account form uses the same picker instead of the free-text field (which stays when `available_roles` is empty).
+
+### Fixed — `scripts/check.sh` ran another working tree's Rust test binaries
+
+- The Rust gate client was built in one shared directory in the cache directory. Cargo keys a workspace member's build by
+  the modification times of its sources, not by its path, so a checkout with older files reused the test binaries
+  another checkout had built later — with that tree's `CARGO_MANIFEST_DIR` baked in: red with "No such file" once the
+  other tree was gone, or green against code that is not in this tree. The build directory is now one per checkout
+  (a hash of its path); `tests/test_repo.py` pins it (mutation: the key removed → red).
+
+### Fixed — `tests/test_prebooking_pending.py` red on a loaded machine
+
+- Section (a) assumed that all fifteen parallel sign-ins reach the hanging directory within its 1.5 s of wall clock.
+  On a slow node a sign-in reached it later, met the outage marker the first timeout had armed, and rightly never asked
+  — the test waited 20 s for an attempt the product does not make (ci-local: "15 attempts in the hanging directory";
+  reproduced by delaying the colleagues' pre-booking 2 s: 5 asked, marker armed). The hanging directory now holds its
+  questions until the test opens a gate, and the test waits on events (each question, each taken waiting slot) instead
+  of polling against a deadline; the same in sections (d), (e), (h) and (i). No product change: under load fewer
+  sign-ins reach a hanging directory, and none counts as a failed attempt.
+
+### Fixed — saving roles in the panel dropped roles outside `available_roles`
+
+- The roles editor sent only the ticked roles of `available_roles`, so saving an account silently removed every role
+  it held that was not listed there (a legacy role, one set through the API). Such roles now stay ticked under
+  "Not in the configuration" and are kept unless an administrator unticks them (`tests/test_role_levels.py`,
+  `tests/test_browser.py`).
+
 ### Fixed — the dress rehearsal tries each attestation up to three times (Sigstore tlog 404)
 
 - `release.yml`, job `rehearsal-attest`: the required check went red three times on 2026-11-22 with

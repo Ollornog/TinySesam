@@ -16,6 +16,7 @@ with their front door: keep the surface small, every feature optional, and prove
 | `tinysesam/config_check.py` | every contradiction of a configuration at construction (errors abort, warnings log) |
 | `tinysesam/router.py` | `/auth/*` routes of the built-in pages and JSON endpoints |
 | `tinysesam/admin.py` | the admin panel as a mountable router (`/auth/admin`, JSON under `<mount>/api/*`) |
+| `tinysesam/_role_levels.py` | role levels (`role_levels`): pure functions the panel and `config_check` share |
 | `tinysesam/store.py` | SQLite store, schema and migrations (`Store.SCHEMA_VERSION`) |
 | `tinysesam/security.py` | client IP behind proxies, rate limits, lockout thresholds, the `tinysesam.security` logger |
 | `tinysesam/templates.py`, `theme.py`, `topbar.py`, `dialog.py`, `c22.css` | built-in pages, design tokens (the only place with colour values), top bar, own dialogs, C22 adapter |

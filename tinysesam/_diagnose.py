@@ -82,6 +82,7 @@ FIELDS: dict[str, Any] = {
     "admin_implies_roles": SHOW,
     "group_match": _one_of("exact", "substring"),
     "available_roles": REDACT,
+    "role_levels": REDACT,
     "oidc_group_role_map": REDACT,
     "saml_group_role_map": REDACT,
     "ldap_group_role_map": REDACT,
