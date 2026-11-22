@@ -1,7 +1,7 @@
 {
   "schema": "semver",
   "versionsdateien": [{"datei": "pyproject.toml", "muster": "^version = \"(?P<v>[^\"]+)\"$"}],
-  "versionsbefehl": ["scripts/_release.py", "{version}"],
+  "versionsbefehl": ["scripts/_release.py", "--automation", "{version}"],
   "pruefbefehl": ["scripts/_release.py", "--check"],
   "changelog": {"datei": "CHANGELOG.md", "form": "keepachangelog", "sprache": "en"},
   "abbilder": ["ghcr.io/ollornog/tinysesam"]

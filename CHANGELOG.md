@@ -40,6 +40,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - Rust build directories (about 1 GB per checkout) record their checkout in `.checkout`; the next run removes the
   directories whose checkout is gone and only reports older ones without the record.
 
+### Fixed — release automation cut a patch release with new features
+
+- After a Dependabot merge that changes the image, the release automation took the whole `[Unreleased]` section into a
+  PATCH release: 0.27.1 (and 0.26.3 before it) published new API as a patch. `scripts/_release.py --automation`, which
+  the automation now calls (`.github/release-automatik.json`), refuses unless `[Unreleased]` holds only `Fixed`,
+  `Security` or `Dependencies`: the job fails with a message in the log and the job summary, no release PR is opened,
+  nothing changes. A minor release stays a human's decision.
+- Closing the CHANGELOG (`scripts/_release.py`) now leaves an empty `## [Unreleased]` above the new section. Before,
+  no open section existed until someone wrote one, and the next entry went into the section just published (#317).
+
 ## [0.27.1] — 2026-11-22
 
 ### Changed
