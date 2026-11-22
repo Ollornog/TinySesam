@@ -28,7 +28,6 @@ The checks of the panel stay where they are: the roles and the lock go through `
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import time
@@ -162,16 +161,18 @@ class Provisioning:
             raise ProvisioningError("unauthenticated", 401, "an automation key of the application's service account")
         auth._remember_request(request)
         u, _scope = auth.verify_api_key(key)
-        row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest()) if u else None
-        if u is None or row is None:
+        if u is None:
             raise ProvisioningError("unauthenticated", 401, "an automation key of the application's service account")
+        # The kind from the key itself (`api_key_kind`), not from `_last_key_kind`: that attribute belongs to the
+        # instance and another thread may have overwritten it in between.
+        kind = auth.api_key_kind(key)
         auth._remember_request(request, u)
         app = None
-        if auth._key_kind(row) == "automation" and u.get("is_service") == 1:
+        if kind == "automation" and u.get("is_service") == 1:
             name = str(u.get("username") or "").lower()
             app = next((a for a in self.apps().values() if a["account"].lower() == name), None)
         if app is None:
-            auth.audit("provision_denied", u["username"], None, f"reason=not_a_provisioning_app key={row['id']}")
+            auth.audit("provision_denied", u["username"], None, f"reason=not_a_provisioning_app kind={_safe(kind)}")
             raise ProvisioningError("not_a_provisioning_app", 403,
                                     "the key does not belong to the service account of an application")
         return app
