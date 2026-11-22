@@ -329,7 +329,7 @@ jobs:
           persist-credentials: false
       - name: Build the image, start it, check HEALTHCHECK and /healthz
         run: scripts/_image_probe.sh
-      # CVE scan of the image just built (H1, ASVS 15.2.1): the Python audit (audit.yml) sees the Python packages, not the
+      # CVE scan of the image just built (H1, ASVS 15.2.1): pip-audit (audit.yml) sees the Python packages, not the
       # OS packages of the base (distroless since T-59, plus the libraries the Dockerfile copies with their dpkg record).
       # Red on every finding of severity high or above that has a fix;
       # exceptions only in .grype.yaml with an end date (SECURITY.md, "Vulnerable dependencies"), checked first.
