@@ -62,6 +62,16 @@ else
     "$PY" tests/run_all.py || fail "test suite"
 fi
 
+# The Go gate client (clients/go): vet and the tests with every vector of spec/vectors. Without a Go toolchain this
+# step skips with its reason — a skip is not a green: the CI workflow client-go runs it in any case, with staticcheck,
+# govulncheck, the race detector and a fuzz run on top.
+if command -v go >/dev/null; then
+    step "Go gate client (clients/go): go vet + go test"
+    (cd clients/go && go vet ./... && go test -count=1 ./...) || fail "Go gate client"
+else
+    step "Go gate client SKIPPED — no Go toolchain here (the CI workflow client-go runs it)"
+fi
+
 step "Build the website — exactly what the Pages action ships"
 # Into a throwaway directory, not into `_site/` in the tree: there the build sat silently next to a
 # `_site/` of its own (and deleted it afterwards), and two runs in the same tree cleaned each other away.

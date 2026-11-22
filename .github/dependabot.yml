@@ -145,6 +145,24 @@ updates:
     commit-message:
       prefix: "deploy"
 
+  # The Go gate client (clients/go, T-80). The library itself has no dependencies (standard library only); its CI tools
+  # (govulncheck, staticcheck) are pinned in .github/audit/go.mod — the kit's place for the tools of the vulnerability
+  # gate — so no application that imports the client inherits them. The workflow client-go accepts every bump: it builds
+  # the tools and runs them.
+  - package-ecosystem: gomod
+    directories: ["/clients/go", "/.github/audit"]
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    groups:
+      # Patch and minor bundled, majors singly (as above).
+      go-client:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+
   # The throwaway targets of the dress rehearsal (release.yml on every PR). The rehearsal itself accepts their update:
   # if the registry or the package server does not start, `rehearsal` is red.
   # NOT under .github/ (2026-11-13): there Dependabot may not open a PR for docker files — the job of 2026-11-12 ended

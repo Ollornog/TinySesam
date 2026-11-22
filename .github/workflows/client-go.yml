@@ -1,0 +1,108 @@
+# The Go gate client (clients/go, T-80): gofmt, go vet, staticcheck, govulncheck, the tests with the race detector
+# (every vector of spec/vectors, the JWKS server tests) and a short fuzz run, on the two supported Go releases.
+#
+# Public repository → GitHub-hosted runners only. No path filter on the trigger: a required check that is skipped
+# blocks the merge forever (clients/README.md). Instead the job ends early and green when a pull request touches
+# neither clients/go/, spec/, the tools in .github/audit/go.mod nor this file; on main and by hand it always runs in full.
+name: client-go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  client-go:
+    name: client-go (${{ matrix.go }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The current and the previous Go release (the two Go supports); setup-go resolves them to the newest patch.
+        go: [stable, oldstable]
+    defaults:
+      run:
+        working-directory: clients/go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit of a pull request and its two parents: enough to see what the pull request changes.
+          fetch-depth: 2
+
+      - name: Scope — does the change touch the Go client?
+        id: scope
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if grep -qE '^(clients/go/|spec/|\.github/audit/go\.(mod|sum)$|\.github/workflows/client-go\.yml$)' <<<"$changed"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No change in clients/go/, spec/ or this workflow — nothing to check."
+          fi
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          go-version: ${{ matrix.go }}
+          # The library has no dependencies; the tools module is what gets downloaded and built.
+          cache-dependency-path: .github/audit/go.sum
+
+      - name: Go version
+        if: steps.scope.outputs.run == 'true'
+        run: go version
+
+      - name: gofmt
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        if: steps.scope.outputs.run == 'true'
+        run: go vet ./...
+
+      - name: Build staticcheck and govulncheck (pinned in .github/audit/go.mod)
+        if: steps.scope.outputs.run == 'true'
+        working-directory: .github/audit
+        run: go build -o "$RUNNER_TEMP/bin/" tool  # `tool`: every tool of that go.mod
+
+      - name: staticcheck
+        if: steps.scope.outputs.run == 'true'
+        run: '"$RUNNER_TEMP/bin/staticcheck" ./...'
+
+      - name: govulncheck
+        if: steps.scope.outputs.run == 'true'
+        run: '"$RUNNER_TEMP/bin/govulncheck" ./...'
+
+      - name: Tests with the race detector (all vectors of spec/vectors)
+        if: steps.scope.outputs.run == 'true'
+        run: go test -race -count=1 ./...
+
+      - name: Fuzz every target for 15 s
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          targets="$(go test -list '^Fuzz' . | grep '^Fuzz')"
+          if [ -z "$targets" ]; then
+            echo "no fuzz targets found"
+            exit 1
+          fi
+          for target in $targets; do
+            go test -run='^$' -fuzz="^${target}\$" -fuzztime=15s .
+          done

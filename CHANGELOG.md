@@ -4,6 +4,27 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — gate client in Go (T-80)
+
+- `clients/go/` (module `github.com/Ollornog/TinySesam/clients/go`, package `tinysesam`, Go 1.26+): the gate client
+  of `spec/gate-client.md` for `net/http`, standard library only. **Header mode** reads the `Remote-*` headers (strict
+  UTF-8, controls refused, repeated fields refused, optional trusted proxy addresses, renamable names); **token mode**
+  verifies the gate token itself with fixed keys (`tinysesam gate-key`) or a JWKS URL (5 s deadline, 64 KiB, cache
+  with `max-age` clamped to 60–3600 s, one fetch per 10 s, the previous set kept on failure, a running fetch shared).
+  `Gate.Middleware` stores the `Identity` in the context; `RequireAuth`, `RequireRole` and `RequireSession` answer
+  401/403 without a reason; errors are typed per class of the specification. Optional `ParseTopbar`/`FetchTopbar`.
+  Header mode is the default; token mode waits for a delivery path to the application (T-84). Not published to the Go
+  module proxy and not tagged yet; use it by commit (pseudo-version).
+- Tests: every vector of `spec/vectors/` read from the repository (114 token, 33 header, 19 key set, 10 cache
+  scenarios, 6 top bar), a JWKS server that never answers, a body above 64 KiB, concurrent requests sharing one fetch,
+  five fuzz targets. Mutation proof: 57 hand mutations, one per checking step, 54 red; the three green ones are guarded
+  twice.
+- CI: `.github/workflows/client-go.yml` (gofmt, `go vet`, staticcheck, govulncheck, `go test -race`, a fuzz run, on the
+  current and the previous Go release; no path filter, it ends early when a pull request does not touch the client or
+  the spec), a required workflow of the Dependabot auto-merge; CodeQL analyses Go too; `scripts/check.sh` runs the Go
+  tests when a Go toolchain is present. Dependabot `gomod` for `/clients/go` and `/.github/audit` (the CI tools,
+  pinned in `.github/audit/go.mod`, out of the library's `go.mod`).
+
 ### Added — `tinysesam diagnose` and a bug form instead of telemetry (T-79)
 
 - `python -m tinysesam diagnose [--config module:attr] [--db F] [--log F] [--lines N] [--no-link]` and, in the gateway
