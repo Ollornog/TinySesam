@@ -2,7 +2,13 @@
 
 All notable changes. Format loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.27.1] — 2026-11-22
+
+### Changed
+
+Patch release cut by the release automation after Dependabot merges:
+
+- chore(deps): bump the all group in /deploy/gateway with 2 updates (#315)
 
 ### Added — gate client in PHP (T-83)
 
