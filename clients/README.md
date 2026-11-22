@@ -1,8 +1,8 @@
 # Gate clients
 
 Small libraries for applications behind TinySesam's gate, one per language (Python lives in the package itself). Built so far:
-**Go** ([`clients/go/`](go/README.md)), **Rust** ([`clients/rust/`](rust/README.md)) and **JS/TS**
-([`clients/js/`](js/README.md)). This directory holds the
+**Go** ([`clients/go/`](go/README.md)), **Rust** ([`clients/rust/`](rust/README.md)), **JS/TS**
+([`clients/js/`](js/README.md)) and **Python** (`tinysesam.gate_client`, in the package). This directory holds the
 conventions every client follows. The contract is [`spec/gate-client.md`](../spec/gate-client.md); the
 proof is that a client passes every vector in [`spec/vectors/`](../spec/vectors/).
 
