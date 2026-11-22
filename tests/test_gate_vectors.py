@@ -292,6 +292,24 @@ INHERENT = {
 }
 
 
+def readable_claims(jws) -> dict:
+    """The payload of a token as a JSON object, or {} when it cannot be read (no configuration repair then)."""
+    try:
+        value = json.loads(ref.b64u_decode(jws.split(".")[1]))
+    except (ValueError, IndexError, ref.GateError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def kid_follows_x(entry) -> bool:
+    """True when an entry's kid is the kid rule over its own x — a kid recomputed for a changed x is not a second
+    defect."""
+    try:
+        return entry["kid"] == ref.key_id(ref.b64u_decode(entry["x"]))
+    except (ref.GateError, KeyError, TypeError):
+        return False
+
+
 def repairs(kind, v) -> list:
     """The single repairs under which an attack vector is accepted."""
     found = []
@@ -302,14 +320,14 @@ def repairs(kind, v) -> list:
         widened = dict(v, input=dict(v["input"], jwks={"keys": list(TEST_KEYS.values())}))
         if run_token(widened)["ok"]:
             found.append("key in the set")
-        try:   # a repair of the configuration: issuer and audience as the token names them
-            c = json.loads(ref.b64u_decode(v["input"]["jws"].split(".")[1]))
-            aud = c["aud"] if isinstance(c["aud"], str) else c["aud"][-1]
-            for field, value in (("issuer", c["iss"]), ("audience", aud)):
-                if run_token(dict(v, input=dict(v["input"], **{field: value})))["ok"]:
-                    found.append(f"configured {field}")
-        except (ValueError, KeyError, IndexError, TypeError, ref.GateError):
-            pass
+        # A repair of the configuration: issuer and audience as the token names them (when it names them readably).
+        c = readable_claims(v["input"]["jws"])
+        aud = c.get("aud")
+        targets = [("issuer", c.get("iss")), ("audience", aud if isinstance(aud, str) else
+                                                          aud[-1] if isinstance(aud, list) and aud else None)]
+        for field, value in targets:
+            if isinstance(value, str) and run_token(dict(v, input=dict(v["input"], **{field: value})))["ok"]:
+                found.append(f"configured {field}")
     else:
         found = [r for r in ref.RELAXATIONS if run_headers(v, frozenset({r}))["ok"]]
     return found
@@ -334,11 +352,8 @@ for v in JWKS["sets"]:
     if v["attack"] == "jwks-entry" and v["id"] != "duplicate-kid":
         e = v["input"]["jwks"]["keys"][0]
         changed = {m for m in set(e) | set(_jwk_a) if e.get(m, None) != _jwk_a.get(m, None)}
-        try:   # a kid recomputed for a changed x follows the x: one defect, not two
-            if {"x", "kid"} <= changed and e["kid"] == ref.key_id(ref.b64u_decode(e["x"])):
-                changed.discard("kid")
-        except (ref.GateError, KeyError, TypeError):
-            pass
+        if {"x", "kid"} <= changed and kid_follows_x(e):
+            changed.discard("kid")
         assert len(changed) == 1, f"jwks/{v['id']}: the skipped entry differs from a usable one in {sorted(changed)}"
 ok(f"one defect: {len(attack_vectors) - len(INHERENT)} attack vectors accepted after one repair, {len(INHERENT)} "
    "listed where the defect cannot occur alone; key-set entries differ from a usable one in one member")
