@@ -1,0 +1,5 @@
+# Paths a run of scripts/check.sh may leave behind (read by scripts/_residue_check.sh; globs, one per line).
+# The dev tools of the JS gate client: `npm ci` in check.sh installs them from the lock file and deletes the folder
+# first on every run, so the next run inherits nothing. The kit's list of setup folders knows `node_modules/` only at
+# the root of the repository.
+clients/js/node_modules/

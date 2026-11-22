@@ -65,6 +65,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   accepts `npm` updates. `scripts/check.sh` runs the client in the full gate when Node can run TypeScript directly
   (22.18+) and the npm registry answers, and says why it skipped otherwise or with `--fast` (the first push went red in
   the offline container of the pre-push hook: `npm ci` got `EAI_AGAIN`; the probe was proven by mutation).
+  `.ci-allow-dirty` names `clients/js/node_modules/` for the residue check (the kit's list of setup folders knows
+  `node_modules/` only at the root; the CI job `repeat` went red on it).
 
 ### Added — CodeQL for the JS/TS and the Rust gate client
 
