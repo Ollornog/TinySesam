@@ -1965,6 +1965,208 @@
       "tier": "B"
     }
   },
+  "gate_client": {
+    "ASGIMiddleware": {
+      "sig": "class (app: 'Callable[..., Any]', gate: 'GateClient')",
+      "tier": "B"
+    },
+    "AudienceError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "AudienceError.kind": {
+      "sig": "'audience'",
+      "tier": "B"
+    },
+    "ClaimsError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "ClaimsError.kind": {
+      "sig": "'claims'",
+      "tier": "B"
+    },
+    "DEFAULT_GATE_COOKIE": {
+      "sig": "'__Host-tinysesam_gate'",
+      "tier": "B"
+    },
+    "Expired": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "Expired.kind": {
+      "sig": "'expired'",
+      "tier": "B"
+    },
+    "GateClient": {
+      "sig": "class (*, mode: 'str', trusted_proxies: 'Optional[Iterable[str]]' = None, header_names: 'Optional[Mapping[str, str]]' = None, issuer: 'Optional[str]' = None, audience: 'Optional[str]' = None, gate_keys: 'Optional[Iterable[str]]' = None, jwks_url: 'Optional[str]' = None, leeway: 'int' = 0, cookie_name: 'Optional[str]' = None, token_header: 'Optional[str]' = None)",
+      "tier": "B"
+    },
+    "GateClient.identify": {
+      "sig": "(headers: 'Any', *, peer: 'Optional[str]' = None, now: 'Optional[int]' = None) -> 'Identity'",
+      "tier": "B"
+    },
+    "GateClient.verify": {
+      "sig": "(jws: 'str', *, now: 'Optional[int]' = None) -> 'tuple[Identity, dict[str, Any]]'",
+      "tier": "B"
+    },
+    "GateError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "GateError.kind": {
+      "sig": "'internal'",
+      "tier": "B"
+    },
+    "HeaderError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "HeaderError.kind": {
+      "sig": "'header'",
+      "tier": "B"
+    },
+    "Identity": {
+      "sig": "class (user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str') -> None",
+      "tier": "B"
+    },
+    "Identity.has_role": {
+      "sig": "(role: 'str') -> 'bool'",
+      "tier": "B"
+    },
+    "Identity.is_session": {
+      "sig": "() -> 'bool'",
+      "tier": "B"
+    },
+    "InternalError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "InternalError.kind": {
+      "sig": "'internal'",
+      "tier": "B"
+    },
+    "IssuerError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "IssuerError.kind": {
+      "sig": "'issuer'",
+      "tier": "B"
+    },
+    "KeyUnavailable": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "KeyUnavailable.kind": {
+      "sig": "'key_unavailable'",
+      "tier": "B"
+    },
+    "KidError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "KidError.kind": {
+      "sig": "'kid'",
+      "tier": "B"
+    },
+    "LifetimeError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "LifetimeError.kind": {
+      "sig": "'lifetime'",
+      "tier": "B"
+    },
+    "MalformedToken": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "MalformedToken.kind": {
+      "sig": "'malformed'",
+      "tier": "B"
+    },
+    "NotYetValid": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "NotYetValid.kind": {
+      "sig": "'not_yet_valid'",
+      "tier": "B"
+    },
+    "SignatureError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "SignatureError.kind": {
+      "sig": "'signature'",
+      "tier": "B"
+    },
+    "TokenError": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "Topbar": {
+      "sig": "class (brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None",
+      "tier": "B"
+    },
+    "Topbar.to_dict": {
+      "sig": "() -> 'dict[str, Any]'",
+      "tier": "B"
+    },
+    "TopbarLink": {
+      "sig": "class (title: 'str', href: 'str') -> None",
+      "tier": "B"
+    },
+    "Unauthenticated": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "Unauthenticated.kind": {
+      "sig": "'unauthenticated'",
+      "tier": "B"
+    },
+    "UntrustedPeer": {
+      "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
+      "tier": "B"
+    },
+    "UntrustedPeer.kind": {
+      "sig": "'untrusted_peer'",
+      "tier": "B"
+    },
+    "WSGIMiddleware": {
+      "sig": "class (app: 'Callable[..., Any]', gate: 'GateClient')",
+      "tier": "B"
+    },
+    "current_identity": {
+      "sig": "(source: 'Any' = None) -> 'Optional[Identity]'",
+      "tier": "B"
+    },
+    "fetch_topbar": {
+      "sig": "(url: 'str', cookie_header: 'str' = '') -> 'Topbar'",
+      "tier": "B"
+    },
+    "guard_status": {
+      "sig": "(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False) -> 'Optional[int]'",
+      "tier": "B"
+    },
+    "parse_topbar": {
+      "sig": "(data: 'Any') -> 'Topbar'",
+      "tier": "B"
+    },
+    "require_auth": {
+      "sig": "(app: 'Callable[..., Any]') -> 'Callable[..., Any]'",
+      "tier": "B"
+    },
+    "require_role": {
+      "sig": "(role: 'str') -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'",
+      "tier": "B"
+    },
+    "require_session": {
+      "sig": "(app: 'Callable[..., Any]') -> 'Callable[..., Any]'",
+      "tier": "B"
+    }
+  },
   "http.contract": {
     "cookie:__Host-tinysesam_link": {
       "tier": "A"
@@ -2927,6 +3129,9 @@
       "tier": "A"
     },
     "tinysesam.client": {
+      "tier": "A"
+    },
+    "tinysesam.gate_client": {
       "tier": "A"
     },
     "tinysesam.mail": {

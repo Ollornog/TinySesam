@@ -1,8 +1,8 @@
 # Gate clients
 
 Small libraries for applications behind TinySesam's gate, one per language (Python lives in the package itself). Built so far:
-**Go** ([`clients/go/`](go/README.md)), **Rust** ([`clients/rust/`](rust/README.md)) and **JS/TS**
-([`clients/js/`](js/README.md)). This directory holds the
+**Go** ([`clients/go/`](go/README.md)), **Rust** ([`clients/rust/`](rust/README.md)), **JS/TS**
+([`clients/js/`](js/README.md)) and **Python** (`tinysesam.gate_client`, in the package). This directory holds the
 conventions every client follows. The contract is [`spec/gate-client.md`](../spec/gate-client.md); the
 proof is that a client passes every vector in [`spec/vectors/`](../spec/vectors/).
 
@@ -12,11 +12,14 @@ proof is that a client passes every vector in [`spec/vectors/`](../spec/vectors/
 | [`clients/rust/`](rust/README.md) | Rust | [T-81](../backlog/T-81-gate-client-in-rust.md) — built (crate `tinysesam-gate`) |
 | [`clients/js/`](js/README.md) | JavaScript / TypeScript | [T-82](../backlog/T-82-gate-client-in-javascript-and-typescript.md) — built (package `@tinysesam/gate`, private) |
 | `clients/php/` | PHP | [T-83](../backlog/T-83-gate-client-in-php.md) |
-| `tinysesam/gate_client.py` (module `tinysesam.gate_client`) | Python | [T-86](../backlog/T-86-python-gate-client.md) |
+| `tinysesam/gate_client.py` (module `tinysesam.gate_client`) | Python | [T-86](../backlog/T-86-python-gate-client.md) — built |
 
 The Python client is part of the `tinysesam` package, not of this directory: no FastAPI dependency (only the standard
 library and `cryptography`, which the package requires anyway), a WSGI and an ASGI middleware, examples for Flask and
-Django. Its vector runner is a suite in `tests/`; it grows out of the reference client `tests/_gate_reference.py`.
+Django (`examples/gate_client/`). Its vector runner is `tests/test_gate_vectors.py`, which also holds the relaxation
+self-probes (`tests/_gate_relax.py` switches off one check of the client at a time); `tests/test_gate_client.py` covers
+the JWKS server tests, the middleware and the configuration errors. Documented in the README, section "Gate client for
+Flask, Django and other Python apps".
 Order: Go, Rust and Python first (phase 2), then JS/TS and PHP.
 
 TinySesam itself stays Python; a client never issues tokens and never signs anyone in (ADR-9, T-28).
@@ -54,7 +57,7 @@ library enforces all of them. Starting points — check the current stable relea
 | Rust | `ed25519-dalek` (with `verify_strict`) | `serde_json` with a visitor that rejects repeated keys | `jsonwebtoken` takes the algorithm from a `Validation` you pin — still do the pre-checks |
 | JS/TS | WebCrypto `Ed25519` (Node ≥ 22, Deno, Bun, edge runtimes, browsers) — chosen, no runtime dependency; `jose` (panva) with `algorithms: ['EdDSA']` was the alternative | `JSON.parse`, then a scan of the accepted text (it keeps the last duplicate, accepts lone surrogates and loses `1.0` vs `1`) | ESM, typed; no Node-only APIs in the core so it runs on edge runtimes |
 | PHP | `sodium_crypto_sign_verify_detached` (ext-sodium, bundled) | a check before `json_decode` (it keeps the last duplicate) | `web-token/jwt-framework` only if it can be pinned to EdDSA |
-| Python | `cryptography` (`Ed25519PublicKey.verify`) | `json.loads` with an `object_pairs_hook` that refuses repeats and a `parse_constant` that refuses `NaN` | no JOSE library needed; see `tests/_gate_reference.py` |
+| Python | `cryptography` (`Ed25519PublicKey.verify`) | `json.loads` with an `object_pairs_hook` that refuses repeats and a `parse_constant` that refuses `NaN` | no JOSE library needed; see `tinysesam/gate_client.py` |
 
 Every parser in this table keeps the **last** of two equal member names by default — the duplicate check is a MUST of
 the specification and has its own vectors.

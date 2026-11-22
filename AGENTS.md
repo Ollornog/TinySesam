@@ -21,7 +21,7 @@ with their front door: keep the surface small, every feature optional, and prove
 | `tinysesam/templates.py`, `theme.py`, `topbar.py`, `dialog.py`, `c22.css` | built-in pages, design tokens (the only place with colour values), top bar, own dialogs, C22 adapter |
 | `tinysesam/oidc.py`, `saml_.py`, `ldap_.py`, `webauthn_.py`, `totp.py`, `passwords.py` | sign-in methods; optional ones live behind extras |
 | `tinysesam/oauth.py` | OAuth 2.1 authorization server for MCP clients (ADR-11) |
-| `tinysesam/gate.py`, `gateway.py` | gate token (ADR-9) and the ready-to-run OIDC gateway |
+| `tinysesam/gate.py`, `gateway.py`, `gate_client.py` | gate token (ADR-9), the ready-to-run OIDC gateway, the gate client for WSGI/ASGI apps without FastAPI (T-86; every check a small function, relaxed one at a time by `tests/_gate_relax.py`) |
 | `tinysesam/vault.py` | encryption of reversible secrets at rest |
 | `tinysesam/messages.py` | UI texts, English plus German translation |
 | `tinysesam/__main__.py`, `_diagnose.py` | CLI `python -m tinysesam` (`passwd`, `backup`, `restore`, `owner`, `unlock`, `keys`, `gate-key`, `diagnose`, …) |

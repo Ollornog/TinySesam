@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 68/79 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 69/79 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -98,7 +98,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-83](T-83-gate-client-in-php.md)** Gate client in PHP · M-2
 * ☐ **[T-84](T-84-token-mode-delivery-to-the-application.md)** Token mode: deliver the gate token to the application · M-2
 * ☐ **[T-85](T-85-role-names-without-comma.md)** Role names without comma and control characters · M-2
-* ☐ **[T-86](T-86-python-gate-client.md)** Python gate client · M-2
+* ☑ **[T-86](T-86-python-gate-client.md)** Python gate client · M-2
 
 ## Fehler
 

@@ -8,8 +8,8 @@ The valid tokens come from TinySesam's own issuing path (`TinySesam._gate_cookie
 inputs from `TinySesam._forward_response_headers`, the top bar from `TinySesam.topbar_data` — so the vectors follow
 the server. The attacks are built here byte by byte, signed with the fixed test keys. The expected verdict of every
 vector is written down here by hand, never computed by a verifier: a verifier that wrote its own expectations would
-pass by construction. `tests/test_gate_vectors.py` checks the files against this generator and against the reference
-client in `tests/_gate_reference.py`.
+pass by construction. `tests/test_gate_vectors.py` checks the files against this generator and against the Python
+gate client `tinysesam.gate_client`.
 
 The keys are TEST MATERIAL: derived from a public label, printed in `spec/vectors/keys.json`, worthless as a secret.
 """
