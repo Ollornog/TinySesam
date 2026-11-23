@@ -696,6 +696,10 @@ MESSAGES = {
         "apv.m.totp": "authenticator app (TOTP)",
         "apv.m.passkeys": "{n} passkey(s)",
         "apv.m.none": "nothing",
+        "apv.done_confirmed": "Confirmed. The application can now carry out the action — go back to it.",
+        "apv.app_type_gone": "This kind of request is no longer configured; it cannot be confirmed.",
+        "apv.f.type": "Action",
+        "apv.return": "Back to {app}",
     },
     "de": {
         # --- Replies to machines (HTTPException detail). Kept separate from `err.*`,
@@ -1370,6 +1374,10 @@ MESSAGES = {
         "apv.m.totp": "Authenticator-App (TOTP)",
         "apv.m.passkeys": "{n} Passkey(s)",
         "apv.m.none": "nichts",
+        "apv.done_confirmed": "Bestätigt. Die Anwendung kann die Aktion jetzt ausführen — geh zu ihr zurück.",
+        "apv.app_type_gone": "Diese Art von Anfrage ist nicht mehr eingerichtet; sie lässt sich nicht bestätigen.",
+        "apv.f.type": "Aktion",
+        "apv.return": "Zurück zu {app}",
     },
 }
 

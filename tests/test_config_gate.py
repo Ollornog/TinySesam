@@ -140,7 +140,7 @@ def _used_key_name():
                 else:
                     variable += 1
     for dictionary in (config_check.REQUIRES_MAILER, config_check.REQUIRES_BASE_URL,
-                        config_check.BASE_URL_RECOMMENDED):
+                        config_check.BASE_URL_RECOMMENDED, config_check.APPROVAL_FINDINGS):
         key_name.update(dictionary.values())
     return key_name, variable
 
@@ -155,7 +155,8 @@ def _gaps(de):
 
 
 _key_name, _variable = _used_key_name()
-assert len(_key_name) > 50 and _variable == 3, (len(_key_name), _variable)   # the three `_t(config, for_what)`
+# the three `_t(config, for_what)` and the one `_t(config, APPROVAL_FINDINGS[key], …)` of the approval types
+assert len(_key_name) > 50 and _variable == 4, (len(_key_name), _variable)
 assert _gaps(config_check._DE) == [], _gaps(config_check._DE)
 ok("every key that config_check uses is in _DE, placeholders in key and value equal")
 

@@ -284,6 +284,52 @@ Remaining risk: a person who confirms without reading. The match code, the step-
 that harder, not impossible — the page is deliberately plain: who asks (key name and date), what (one sentence and the
 values), the code, the time left. Revoking the asking key ends a flood of requests.
 
+## Approvals for application actions (stage B): a signed one-time confirmation
+
+An application registered in `apps` with an `approvals` block asks for one of ITS action types; the person confirms on
+the same page with the same rules as above (session of the subject only, step-up per approval, CSRF, `payload_hash`,
+match code, never framed, never a GET); TinySesam carries nothing out and hands the application one signed
+confirmation instead. The rules that are new:
+
+- **The operator's text, the application's values.** Types come only from the configuration (`apps[…].approvals.types`
+  or the operator's `types_file`), never from an API of the application: the text is the protection against phishing —
+  an application that could register "open the view" as the text of a deletion would have the person confirm the
+  deletion. `config_check` demands `en`, plain `{field}` placeholders that name fields, and type names that begin with
+  the application's id. The application sends only values; they are checked against the schema (unknown, missing,
+  wrongly typed, too long, off-pattern → `400`; control characters, C1, the bidi controls and the line separators are
+  refused, never removed) and shown escaped, each in its own `<bdi>`, with the raw field table below.
+- **Only its own prefix.** An application asks only for types that begin with its id (or with the id of `types_from`,
+  a second channel of the same product): `403 forbidden_type` otherwise, audited. `tinysesam.` stays TinySesam's.
+  `subject` may be any active person (§12 of the design: a binding to grants does not carry over the gate path); every
+  request counts against `approval_app_requests_per_hour` (120) — `invalid_subject` included, so the answer cannot map
+  the active persons — and the limits per account apply as in stage A.
+- **A key of its own.** The confirmation is signed with the keyring of purpose `approval` (`TINYSESAM_APPROVAL_KEY`,
+  `approval_key_file`, else the database encrypted with the vault key; `tinysesam keys rotate --purpose approval`),
+  published at `/auth/approvals/jwks.json` — never the gate key. The proxy checks gate tokens by the key alone (caddy-jwt
+  cannot check `typ`): with one key a confirmation could pass as a gate cookie, and a gate token as a confirmation at an
+  application with a weak check. Own key, own `typ` (`tinysesam-approval+jwt`), own `aud` (RFC 8725 §3.11/§3.12).
+- **Bound to one action, one application, one person.** `aud` is one string (the application's id — a test channel's
+  confirmation never counts in the stable one), `sub` the confirming account, exactly one `authorization_details` entry
+  (RFC 9396) with `ts_payload_sha256` over its RFC 8785 form, `auth_time` and `amr` of the step-up, `act` the asking
+  application, `jti` the approval id, at most 300 s (`approval_token_ttl_sec`, default 120).
+- **Exactly once, nowhere else.** The first status read after the confirmation moves `approved` → `consumed` and signs
+  the confirmation then — it exists in that one answer only: not stored, not in the audit (`approval_issued` names id,
+  type, application and hash), not in a log, never in the return address. Not picked up within `approval_pickup_sec`
+  (300 s) the row expires. The application remembers the `jti` until `exp` (spec step 12), so a copy taken between
+  pickup and execution is worthless. The application, the type and the person are checked again at confirmation and
+  at pickup; one gone in between gives `consumed` with `result=forbidden` and no confirmation.
+- **Browser entry without forgeable links.** The application creates the request in its back end (like RFC 9126) with
+  a `return_url` that must equal one of `apps[…].approvals.return_urls` exactly (absolute https, no query or fragment)
+  and a `state`; the browser carries only the id. Back to the application goes `?approval=<id>&state=<state>` (and
+  `&result=rejected|expired`); `state` comes back inside the confirmation as `nonce`, which the application compares
+  with its session. The page adds exactly that origin to its `form-action` (Chrome checks the redirect after the POST
+  against it) and nothing else.
+
+Remaining risk: a compromised application asks for its own types for any person — bothersome, not more: confirming
+takes that person's step-up on TinySesam's page with the operator's text. Revoking the application's key ends it. What
+the application does with a valid confirmation is its own code: the check order of
+[`spec/approval-token.md`](spec/approval-token.md) and its own rules again before it acts.
+
 ## Account API for applications
 
 With an application in `apps` that has a `provisioning` block, the application manages the accounts **it creates

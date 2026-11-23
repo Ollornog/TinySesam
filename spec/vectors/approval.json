@@ -1,0 +1,2356 @@
+{
+  "format": 1,
+  "kind": "approval",
+  "spec": "spec/approval-token.md",
+  "generated_by": "scripts/_approval_vectors.py — do not edit by hand",
+  "defaults": {
+    "issuer": "https://auth.example.com",
+    "app_id": "example",
+    "now": 1767225600,
+    "max_lifetime": 300,
+    "max_leeway": 30
+  },
+  "_test_material": "TEST KEYS ONLY. The private seeds are derived from a public label and printed here so that client authors can mint further test confirmations. Never use them anywhere else.",
+  "keys": {
+    "P": {
+      "role": "active approval key of the probe installation",
+      "seed_label": "tinysesam approval test vector key P",
+      "d": "xgNZ8Bt37UpZmJ4d88YuybEiwIVmdeXwBkv93ydGA6A",
+      "public_jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+        "kid": "e69f0aecb8602149",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    },
+    "Q": {
+      "role": "previous approval key after a rotation",
+      "seed_label": "tinysesam approval test vector key Q",
+      "d": "Qrbk8lwm9KIXc8bgyumX9Iox3ZxM1BrplC23XqU-OSE",
+      "public_jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+        "kid": "2330ec22007d84fb",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    },
+    "A": {
+      "role": "the GATE key of spec/vectors/keys.json — never in an approval key set",
+      "seed_label": "tinysesam gate-client test vector key A",
+      "d": "2xkqD-MfK5NQTd7ZeCskNxD0aFo_Gq10R13-LUdCjGI",
+      "public_jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+        "kid": "a033507ca61ad979",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    },
+    "X": {
+      "role": "the attacker's key, in no key set",
+      "seed_label": "tinysesam approval test vector key X",
+      "d": "BoTYCoHqSYF_whgvg_L9OzcgxaWDpLfL7hfAudT2ZjY",
+      "public_jwk": {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "ACTdJTuAs9V4efEQpzXzc5LJElDMNRTQiWaAaXEIzuA",
+        "kid": "1826bfa9f0b6cd77",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    }
+  },
+  "vectors": [
+    {
+      "id": "valid-basic",
+      "reason": "A confirmation as TinySesam hands it out: key P, one entry, nothing else to it.",
+      "attack": null,
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": true,
+        "claims": {
+          "iss": "https://auth.example.com",
+          "aud": "example",
+          "sub": "2",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225720,
+          "jti": "apv_ovmfpcaocigziwpyvftzld2l7a",
+          "auth_time": 1767225560,
+          "amr": [
+            "hwk",
+            "user"
+          ],
+          "act": {
+            "sub": "app:example"
+          },
+          "authorization_details": [
+            {
+              "collection": "c_81f2",
+              "name": "Project Alpha",
+              "type": "example.collection.delete_permanently"
+            }
+          ],
+          "ts_payload_sha256": "8AtEK1kfFkL6hTzc9Ds2gZOfb_IKmQYM3URMxbq7w2Y"
+        }
+      }
+    },
+    {
+      "id": "valid-nonce",
+      "reason": "Browser entry: the application's state comes back as `nonce` and matches the session.",
+      "attack": null,
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl8zaTNhNXlyZ25tb2ZlYmJrandkdGx2bXU3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSIsIm5vbmNlIjoiazNKLWJyb3dzZXIuZW50cnlfN34ifQ.RYMYfYnPFIDgWPkSbj2PwPD8E1yJa0ksIraIh5sTst6mX-6KXs6BqN9l4fjP2IRvZqZ44Txnxmx5xnFPvWyUBQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2",
+          "nonce": "k3J-browser.entry_7~"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": true,
+        "claims": {
+          "iss": "https://auth.example.com",
+          "aud": "example",
+          "sub": "2",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225720,
+          "jti": "apv_3i3a5yrgnmofebbkjwdtlvmu7a",
+          "auth_time": 1767225560,
+          "amr": [
+            "hwk",
+            "user"
+          ],
+          "act": {
+            "sub": "app:example"
+          },
+          "authorization_details": [
+            {
+              "collection": "c_81f2",
+              "name": "Project Alpha",
+              "type": "example.collection.delete_permanently"
+            }
+          ],
+          "ts_payload_sha256": "8AtEK1kfFkL6hTzc9Ds2gZOfb_IKmQYM3URMxbq7w2Y",
+          "nonce": "k3J-browser.entry_7~"
+        }
+      }
+    },
+    {
+      "id": "valid-nonce-not-expected",
+      "reason": "A `nonce` the application did not ask to compare is no reason to refuse.",
+      "attack": null,
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl8zaTNhNXlyZ25tb2ZlYmJrandkdGx2bXU3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSIsIm5vbmNlIjoiazNKLWJyb3dzZXIuZW50cnlfN34ifQ.RYMYfYnPFIDgWPkSbj2PwPD8E1yJa0ksIraIh5sTst6mX-6KXs6BqN9l4fjP2IRvZqZ44Txnxmx5xnFPvWyUBQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": true,
+        "claims": {
+          "iss": "https://auth.example.com",
+          "aud": "example",
+          "sub": "2",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225720,
+          "jti": "apv_3i3a5yrgnmofebbkjwdtlvmu7a",
+          "auth_time": 1767225560,
+          "amr": [
+            "hwk",
+            "user"
+          ],
+          "act": {
+            "sub": "app:example"
+          },
+          "authorization_details": [
+            {
+              "collection": "c_81f2",
+              "name": "Project Alpha",
+              "type": "example.collection.delete_permanently"
+            }
+          ],
+          "ts_payload_sha256": "8AtEK1kfFkL6hTzc9Ds2gZOfb_IKmQYM3URMxbq7w2Y",
+          "nonce": "k3J-browser.entry_7~"
+        }
+      }
+    },
+    {
+      "id": "valid-previous-key",
+      "reason": "Signed with the previous key Q right after a rotation; the key set still holds it.",
+      "attack": null,
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiIyMzMwZWMyMjAwN2Q4NGZiIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9xYW95d3ZjcTRld3N2YW5zbnBpbDNrMmh0dSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.fBK6o3AaIvRZenhd4KOtK8r5wb3r5uZudZF92ba9VPEA-vzfzTnyZc71ziVkT30xyGmXeVJy6k6XZGI4X8nEBg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": true,
+        "claims": {
+          "iss": "https://auth.example.com",
+          "aud": "example",
+          "sub": "2",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225720,
+          "jti": "apv_qaoywvcq4ewsvansnpil3k2htu",
+          "auth_time": 1767225560,
+          "amr": [
+            "hwk",
+            "user"
+          ],
+          "act": {
+            "sub": "app:example"
+          },
+          "authorization_details": [
+            {
+              "collection": "c_81f2",
+              "name": "Project Alpha",
+              "type": "example.collection.delete_permanently"
+            }
+          ],
+          "ts_payload_sha256": "8AtEK1kfFkL6hTzc9Ds2gZOfb_IKmQYM3URMxbq7w2Y"
+        }
+      }
+    },
+    {
+      "id": "valid-escapes-int-bool",
+      "reason": "Quote, backslash, umlaut, CJK and emoji in a string, a negative integer, a boolean: the digest is over the RFC 8785 form (only `\"` and `\\` escaped).",
+      "attack": null,
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9xa2N0eWlmeDRvcDVrd2oyYXM2ZDZkamhlNCIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3sibWVtYmVyIjoiSsO8cmdlbiBcIkpKXCIgTcO8bGxlciBcXCDmnbHkuqwg8J-agCIsIm5vdGlmeSI6ZmFsc2UsInF1b3RhIjotMSwidHlwZSI6ImV4YW1wbGUubWVtYmVyLnNldF9xdW90YSJ9XSwidHNfcGF5bG9hZF9zaGEyNTYiOiJFV1RZTHRDSG5HSUlyWUxyRlNhV09sYWQ1cURxcFhGQlNhcWY4SzBXeXFnIn0.g9Fe3dWk3F8IPIeQtej8y166zfdsYM252KljLZzk4I_Q_aiETcVY6Y_kyIq3TEkDoSxFw4SuILMFNoFmebd1Cw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.member.set_quota",
+          "fields": {
+            "member": "Jürgen \"JJ\" Müller \\ 東京 🚀",
+            "quota": -1,
+            "notify": false
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": true,
+        "claims": {
+          "iss": "https://auth.example.com",
+          "aud": "example",
+          "sub": "2",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225720,
+          "jti": "apv_qkctyifx4op5kwj2as6d6djhe4",
+          "auth_time": 1767225560,
+          "amr": [
+            "hwk",
+            "user"
+          ],
+          "act": {
+            "sub": "app:example"
+          },
+          "authorization_details": [
+            {
+              "member": "Jürgen \"JJ\" Müller \\ 東京 🚀",
+              "notify": false,
+              "quota": -1,
+              "type": "example.member.set_quota"
+            }
+          ],
+          "ts_payload_sha256": "EWTYLtCHnGIIrYLrFSaWOlad5qDqpXFBSaqf8K0Wyqg"
+        }
+      }
+    },
+    {
+      "id": "valid-leeway-edge",
+      "reason": "One second before `exp + leeway` with a leeway of 30 s.",
+      "attack": null,
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225749,
+        "leeway": 30,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": true,
+        "claims": {
+          "iss": "https://auth.example.com",
+          "aud": "example",
+          "sub": "2",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225720,
+          "jti": "apv_ovmfpcaocigziwpyvftzld2l7a",
+          "auth_time": 1767225560,
+          "amr": [
+            "hwk",
+            "user"
+          ],
+          "act": {
+            "sub": "app:example"
+          },
+          "authorization_details": [
+            {
+              "collection": "c_81f2",
+              "name": "Project Alpha",
+              "type": "example.collection.delete_permanently"
+            }
+          ],
+          "ts_payload_sha256": "8AtEK1kfFkL6hTzc9Ds2gZOfb_IKmQYM3URMxbq7w2Y"
+        }
+      }
+    },
+    {
+      "id": "valid-not-before-leeway",
+      "reason": "Thirty seconds before `nbf` with a leeway of 30 s.",
+      "attack": null,
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225570,
+        "leeway": 30,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": true,
+        "claims": {
+          "iss": "https://auth.example.com",
+          "aud": "example",
+          "sub": "2",
+          "iat": 1767225600,
+          "nbf": 1767225600,
+          "exp": 1767225720,
+          "jti": "apv_ovmfpcaocigziwpyvftzld2l7a",
+          "auth_time": 1767225560,
+          "amr": [
+            "hwk",
+            "user"
+          ],
+          "act": {
+            "sub": "app:example"
+          },
+          "authorization_details": [
+            {
+              "collection": "c_81f2",
+              "name": "Project Alpha",
+              "type": "example.collection.delete_permanently"
+            }
+          ],
+          "ts_payload_sha256": "8AtEK1kfFkL6hTzc9Ds2gZOfb_IKmQYM3URMxbq7w2Y"
+        }
+      }
+    },
+    {
+      "id": "typ-gate",
+      "reason": "A confirmation that calls itself a gate token: `typ` is tinysesam-gate+jwt.",
+      "attack": "typ-wrong",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImU2OWYwYWVjYjg2MDIxNDkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.Hwb2wJzrbldKblKEqKyyuGl7H7uxWGZlZMNwFsSctPLN6RlYsJxqmN1s4OMIlK78r7YktQlQLFO1zXBiaD1AAQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "typ-missing",
+      "reason": "No `typ` at all: a plain JWT is no confirmation.",
+      "attack": "typ-wrong",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsImtpZCI6ImU2OWYwYWVjYjg2MDIxNDkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.zp1HjNZZmSxTyO2yzJEUcf-14JvnD3nmYP0igC5FtTA74p1SDom_lT-JXbpzGgcCUpZAdaMWnAjJZEX4Q3JzAQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "typ-application-prefix",
+      "reason": "`application/tinysesam-approval+jwt`: the type is compared without prefix.",
+      "attack": "typ-wrong",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6ImFwcGxpY2F0aW9uL3RpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.tDTVahU9A0nZQOwOJVPlj8-3q1wIqhiTSW5tsQjTYfFAv6arlHZlTRbcZHL0ULpqdhq9WvWFuaYS6r-I-A_1AQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "alg-wrong",
+      "reason": "`alg` ES256 over an Ed25519 signature: the algorithm is the checker's constant.",
+      "attack": "alg-wrong",
+      "input": {
+        "jws": "eyJhbGciOiJFUzI1NiIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.JfRZmPYq_VIZfKIImppjgR-UW1vKJEX7usKiFU7TgDg1aLxLyoIb1wKw_uxWExjj9jgCxds3tsvRsFw6ZrVwAw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "header-jku",
+      "reason": "A `jku` in the header: never a key from the token.",
+      "attack": "embedded-key",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5Iiwiamt1IjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUvandrcy5qc29uIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.0RHToKl242q0UpqgMs832LpaQbZfj7aC27T4C60JdXp_PpTQqnXeRvS6rJsDuTGFkMDJWrV5PkGoG9sqvvfNBg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "gate-token",
+      "reason": "A real gate token (gate key A, typ tinysesam-gate+jwt) presented as a confirmation.",
+      "attack": "gate-token",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImdhdGUtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfa2luZCI6InVzZXIiLCJ0c19hdXRoIjoic2Vzc2lvbiJ9.tdIu1d-6KyRxFxbjjkKFSG6eHJnMatdMZYgkn5_CUYNNfeZcBzhJiPz7Upn4hRbKk4RoUmhwITQ6eouVx1HMAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "gate-key",
+      "reason": "A well-formed confirmation signed with the GATE key A under its own kid: not in the approval key set — a checker that also trusts the gate keys would accept it.",
+      "attack": "gate-key",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJhMDMzNTA3Y2E2MWFkOTc5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.y9Hw-1n80Kn9gOXrLxaYOiWdde25Wt2GVmZmFvycX3MvxTvXYecLIH4nHF6e-piUvrDfwvb0LmE6eIsYgjvEBA",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "kid"
+      }
+    },
+    {
+      "id": "foreign-key",
+      "reason": "Signed with the attacker's key X under its own kid.",
+      "attack": "foreign-key",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiIxODI2YmZhOWYwYjZjZDc3In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.l2RVF468tLhOSoj3fwptoyiTdMQ9K93jSfZyAMR_IZogKYTc--Hzpv5nbLKC3BXV6NhcMyrgX5QJkAeJG7nmAw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "kid"
+      }
+    },
+    {
+      "id": "foreign-key-trusted-kid",
+      "reason": "Signed with X under the kid of P.",
+      "attack": "foreign-key",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.lm1Kq5EbXA6-surv2jR4KcZ3dqsebmKZ9r_F205SN15VB447WF5g6ZWTSeWa1-7tl7iwC8SOj_Cd_Jj--cz4BA",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "signature"
+      }
+    },
+    {
+      "id": "kid-retired",
+      "reason": "Signed with Q after Q left the key set.",
+      "attack": "foreign-key",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiIyMzMwZWMyMjAwN2Q4NGZiIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9xYW95d3ZjcTRld3N2YW5zbnBpbDNrMmh0dSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.fBK6o3AaIvRZenhd4KOtK8r5wb3r5uZudZF92ba9VPEA-vzfzTnyZc71ziVkT30xyGmXeVJy6k6XZGI4X8nEBg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "kid"
+      }
+    },
+    {
+      "id": "payload-changed",
+      "reason": "The payload changed after signing (`sub` swapped).",
+      "attack": "bad-signature",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMSIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "signature"
+      }
+    },
+    {
+      "id": "aud-array",
+      "reason": "`aud` as an array that holds the application's id: a confirmation names ONE application.",
+      "attack": "aud-array",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOlsiZXhhbXBsZSJdLCJzdWIiOiIyIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTcyMCwianRpIjoiYXB2X292bWZwY2FvY2lneml3cHl2ZnR6bGQybDdhIiwiYXV0aF90aW1lIjoxNzY3MjI1NTYwLCJhbXIiOlsiaHdrIiwidXNlciJdLCJhY3QiOnsic3ViIjoiYXBwOmV4YW1wbGUifSwiYXV0aG9yaXphdGlvbl9kZXRhaWxzIjpbeyJjb2xsZWN0aW9uIjoiY184MWYyIiwibmFtZSI6IlByb2plY3QgQWxwaGEiLCJ0eXBlIjoiZXhhbXBsZS5jb2xsZWN0aW9uLmRlbGV0ZV9wZXJtYW5lbnRseSJ9XSwidHNfcGF5bG9hZF9zaGEyNTYiOiI4QXRFSzFrZkZrTDZoVHpjOURzMmdaT2ZiX0lLbVFZTTNVUk14YnE3dzJZIn0.9wkyputS_miDGZaCX3vyF-vnM9gouPUYE9hq5yB71U5-uHD1VHz_0xST_JVWS3aJeaU6omckipbcO_eG5B_jDw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "details-two",
+      "reason": "Two `authorization_details` entries: a confirmation carries exactly one action.",
+      "attack": "details-count",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifSx7ImNvbGxlY3Rpb24iOiJjXzgxZjIiLCJuYW1lIjoiUHJvamVjdCBBbHBoYSIsInR5cGUiOiJleGFtcGxlLmNvbGxlY3Rpb24uZGVsZXRlX3Blcm1hbmVudGx5In1dLCJ0c19wYXlsb2FkX3NoYTI1NiI6IjhBdEVLMWtmRmtMNmhUemM5RHMyZ1pPZmJfSUttUVlNM1VSTXhicTd3MlkifQ.St-E3Ye5KbgEBjMEzdIBXkk3nIRtnmQxFQZlNe8vXLDJgvuhmicvVEuSwStaLcSHa4qliCjcFoTqmf574UbsBA",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "details-empty",
+      "reason": "An empty `authorization_details` array.",
+      "attack": "details-count",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W10sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.1V-l0L-IQzjT8mdk3tFmkr3xHsh2ibcxazSyZm8eUJU5dpqYQ0YQQ2vM_Ra12zDr_8jq0Lai31djJQP-dIlMDA",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "details-object",
+      "reason": "`authorization_details` as an object instead of an array of one.",
+      "attack": "details-count",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6eyJjb2xsZWN0aW9uIjoiY184MWYyIiwibmFtZSI6IlByb2plY3QgQWxwaGEiLCJ0eXBlIjoiZXhhbXBsZS5jb2xsZWN0aW9uLmRlbGV0ZV9wZXJtYW5lbnRseSJ9LCJ0c19wYXlsb2FkX3NoYTI1NiI6IjhBdEVLMWtmRmtMNmhUemM5RHMyZ1pPZmJfSUttUVlNM1VSTXhicTd3MlkifQ.rsAPhd90eIZ-YVnEoZhLnrH-qxDHWvOgw0ptPsPg8PZFpR0x9xQGAFQoWZcUkJEp5-ZxfC3pphb_bLL_J0oOCw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "hash-other-entry",
+      "reason": "`ts_payload_sha256` of another entry (the name changed).",
+      "attack": "hash-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiQkJCY2lqcGg1U1ZiendxbXNmMjFBVE9OcHVTRFR4d2RITFE2RmVfMFd4RSJ9.ePS56Hq-2sGmX19T4FCAy1pGOVlbL1T8Lrr7EfJlHs7GkGqppg_CiitzOPNlnpeEuznnMJ4Ms6j_JOqfYXWgBw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "hash-not-canonical",
+      "reason": "The digest over the entry with spaces and unsorted members instead of RFC 8785.",
+      "attack": "hash-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiZHpkenk4ME9Ud21Udjctc2JMZmVseldjb0pONnpscXNWdmJ3SDViR3YxMCJ9.wso_Z3rPjNDb8MalYMT3KYirVfUreC6GjxH1RM9TyTZyDD_VrQHxG6tewUJR6xllIFe6BuoXrMOPXfFZ3toZDg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "auth-time-after-iat",
+      "reason": "The step-up after the issuing: impossible for TinySesam.",
+      "attack": "claim-types",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTYwNSwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.ZTdiu5NrQshF86JNpGvWog6Jb0JXbumHaCSZNMJU4NEUxwH8n1xwd6Qz7XEK3EU9W3kLNAfwwCALrllXxjbnAw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "amr-not-array",
+      "reason": "`amr` as a string.",
+      "attack": "claim-types",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjoiaHdrIiwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.r1w9NL8o5frJ-R6MutCpWVi7Ozzh5N78l1ZdTgkLeliKBSVpaWaXa3zBZ8nZNPsQXOJr8bDux9Rzj07JtjcrAw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "auth-time-missing",
+      "reason": "No `auth_time`: when the person confirmed is part of the confirmation.",
+      "attack": "claim-types",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImFtciI6WyJod2siLCJ1c2VyIl0sImFjdCI6eyJzdWIiOiJhcHA6ZXhhbXBsZSJ9LCJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7ImNvbGxlY3Rpb24iOiJjXzgxZjIiLCJuYW1lIjoiUHJvamVjdCBBbHBoYSIsInR5cGUiOiJleGFtcGxlLmNvbGxlY3Rpb24uZGVsZXRlX3Blcm1hbmVudGx5In1dLCJ0c19wYXlsb2FkX3NoYTI1NiI6IjhBdEVLMWtmRmtMNmhUemM5RHMyZ1pPZmJfSUttUVlNM1VSTXhicTd3MlkifQ.KANauMDGdc_69ZHinNyBQqeRGtwnGLJChYDTiO_KFL_wDAsItNHZ80DS6QLpX2-FI0GjWd_ykrfH8jsHQS4sAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "act-missing",
+      "reason": "No `act`: who asked is part of the confirmation.",
+      "attack": "claim-types",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYXV0aG9yaXphdGlvbl9kZXRhaWxzIjpbeyJjb2xsZWN0aW9uIjoiY184MWYyIiwibmFtZSI6IlByb2plY3QgQWxwaGEiLCJ0eXBlIjoiZXhhbXBsZS5jb2xsZWN0aW9uLmRlbGV0ZV9wZXJtYW5lbnRseSJ9XSwidHNfcGF5bG9hZF9zaGEyNTYiOiI4QXRFSzFrZkZrTDZoVHpjOURzMmdaT2ZiX0lLbVFZTTNVUk14YnE3dzJZIn0.zlgX1zBWdag8JcHzAtalJRZ2tjSLw1m7boLcWGvYpd-bHvOTRszt7HjOgCTkClMMTLvpD8_2GQd6I2tmvlLzBA",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "jti-missing",
+      "reason": "No `jti`: without it the application cannot refuse a second use.",
+      "attack": "claim-types",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.vKTLCJpYe07wxqdzMaANAyMh7WHDqIKIR2MXPfPCihsagQagqE83uLOp5UVgquPDllh-ByhloB245QF0_7cNCQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "sub-control",
+      "reason": "A line feed in `sub` — refused as such, even where the application expects that value.",
+      "attack": "unicode-control",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMlxuIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTcyMCwianRpIjoiYXB2X292bWZwY2FvY2lneml3cHl2ZnR6bGQybDdhIiwiYXV0aF90aW1lIjoxNzY3MjI1NTYwLCJhbXIiOlsiaHdrIiwidXNlciJdLCJhY3QiOnsic3ViIjoiYXBwOmV4YW1wbGUifSwiYXV0aG9yaXphdGlvbl9kZXRhaWxzIjpbeyJjb2xsZWN0aW9uIjoiY184MWYyIiwibmFtZSI6IlByb2plY3QgQWxwaGEiLCJ0eXBlIjoiZXhhbXBsZS5jb2xsZWN0aW9uLmRlbGV0ZV9wZXJtYW5lbnRseSJ9XSwidHNfcGF5bG9hZF9zaGEyNTYiOiI4QXRFSzFrZkZrTDZoVHpjOURzMmdaT2ZiX0lLbVFZTTNVUk14YnE3dzJZIn0.EuQHY9DfcFUT7FnWQESQbR8hERQ8c2VtGMoK_thp6K0h1z8bK9FWeaLcCScgGX5u5P7qyLHiNyyHS6CDd-6kCQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2\n"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "field-object",
+      "reason": "A field value of an unsupported type (an object).",
+      "attack": "claim-types",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOnsieCI6MX0sInR5cGUiOiJleGFtcGxlLmNvbGxlY3Rpb24uZGVsZXRlX3Blcm1hbmVudGx5In1dLCJ0c19wYXlsb2FkX3NoYTI1NiI6IlhiUjRjNVZqam8ybFN0a3FSalJiR3FSMDM1dzVhazRqV2lUZFFzVXZFRXcifQ.uqwUF40hkaUngKiMhb7VSM0MqZUn2H-NkcYrUn06vJuRkbWYv0bInY47zNN_ZfNLR8dBOj5g2-YEQjwMt2E7Aw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "issuer-slash",
+      "reason": "`iss` with a trailing slash.",
+      "attack": "issuer",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20vIiwiYXVkIjoiZXhhbXBsZSIsInN1YiI6IjIiLCJpYXQiOjE3NjcyMjU2MDAsIm5iZiI6MTc2NzIyNTYwMCwiZXhwIjoxNzY3MjI1NzIwLCJqdGkiOiJhcHZfb3ZtZnBjYW9jaWd6aXdweXZmdHpsZDJsN2EiLCJhdXRoX3RpbWUiOjE3NjcyMjU1NjAsImFtciI6WyJod2siLCJ1c2VyIl0sImFjdCI6eyJzdWIiOiJhcHA6ZXhhbXBsZSJ9LCJhdXRob3JpemF0aW9uX2RldGFpbHMiOlt7ImNvbGxlY3Rpb24iOiJjXzgxZjIiLCJuYW1lIjoiUHJvamVjdCBBbHBoYSIsInR5cGUiOiJleGFtcGxlLmNvbGxlY3Rpb24uZGVsZXRlX3Blcm1hbmVudGx5In1dLCJ0c19wYXlsb2FkX3NoYTI1NiI6IjhBdEVLMWtmRmtMNmhUemM5RHMyZ1pPZmJfSUttUVlNM1VSTXhicTd3MlkifQ.7okGn_onaLtZ1NgUNl4wFQItG8ELgfvStackPqZ27F0ExMI_B38vA1qLHD8dbJO6gC-xkaz-q8jPxmgf1n8jDQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "issuer"
+      }
+    },
+    {
+      "id": "aud-other-channel",
+      "reason": "Confirmed for `example_test`, presented to `example`: a test channel never counts in the stable one.",
+      "attack": "audience",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlX3Rlc3QiLCJzdWIiOiIyIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTcyMCwianRpIjoiYXB2X292bWZwY2FvY2lneml3cHl2ZnR6bGQybDdhIiwiYXV0aF90aW1lIjoxNzY3MjI1NTYwLCJhbXIiOlsiaHdrIiwidXNlciJdLCJhY3QiOnsic3ViIjoiYXBwOmV4YW1wbGUifSwiYXV0aG9yaXphdGlvbl9kZXRhaWxzIjpbeyJjb2xsZWN0aW9uIjoiY184MWYyIiwibmFtZSI6IlByb2plY3QgQWxwaGEiLCJ0eXBlIjoiZXhhbXBsZS5jb2xsZWN0aW9uLmRlbGV0ZV9wZXJtYW5lbnRseSJ9XSwidHNfcGF5bG9hZF9zaGEyNTYiOiI4QXRFSzFrZkZrTDZoVHpjOURzMmdaT2ZiX0lLbVFZTTNVUk14YnE3dzJZIn0.Sofi3jhNk4vpERkeKEBvYAEPKOCEAhyO54K-i-f7Q2rr5km0G9v4C2xeRhiivgMZackbB1joDxqza4qmV27mCw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "audience"
+      }
+    },
+    {
+      "id": "lifetime-301",
+      "reason": "`exp - nbf` = 301 s: above the 300 s a confirmation may live.",
+      "attack": "lifetime",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU5MDEsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.l6Fot_Wpixq31GlQ8-o3DmjKp-zMM4Bo08TKH-lW1S2ZrM4iT-RxkUeyN0no-p13uW0pO1nTxWN4BU-POBvZBA",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "lifetime"
+      }
+    },
+    {
+      "id": "expired-at-exp",
+      "reason": "Checked at `exp` exactly.",
+      "attack": "expired",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225720,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "expired"
+      }
+    },
+    {
+      "id": "expired-leeway-edge",
+      "reason": "At `exp + leeway` exactly, leeway 30 s.",
+      "attack": "expired",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225750,
+        "leeway": 30,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "expired"
+      }
+    },
+    {
+      "id": "not-yet-valid",
+      "reason": "One second before `nbf`, no leeway.",
+      "attack": "not-yet-valid",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225599,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "not_yet_valid"
+      }
+    },
+    {
+      "id": "type-other-action",
+      "reason": "Confirmed `…delete_permanently`, presented for `…archive`.",
+      "attack": "type-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.archive",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "approval_type"
+      }
+    },
+    {
+      "id": "field-value-differs",
+      "reason": "The application stored another collection than the one confirmed.",
+      "attack": "field-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_0000",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "approval_fields"
+      }
+    },
+    {
+      "id": "field-extra",
+      "reason": "The stored action has a field the confirmation lacks.",
+      "attack": "field-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha",
+            "purge": true
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "approval_fields"
+      }
+    },
+    {
+      "id": "field-missing",
+      "reason": "The confirmation has a field the stored action lacks.",
+      "attack": "field-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2"
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "approval_fields"
+      }
+    },
+    {
+      "id": "field-type-int-string",
+      "reason": "Confirmed the integer -1, stored the string \"-1\".",
+      "attack": "field-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9xa2N0eWlmeDRvcDVrd2oyYXM2ZDZkamhlNCIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3sibWVtYmVyIjoiSsO8cmdlbiBcIkpKXCIgTcO8bGxlciBcXCDmnbHkuqwg8J-agCIsIm5vdGlmeSI6ZmFsc2UsInF1b3RhIjotMSwidHlwZSI6ImV4YW1wbGUubWVtYmVyLnNldF9xdW90YSJ9XSwidHNfcGF5bG9hZF9zaGEyNTYiOiJFV1RZTHRDSG5HSUlyWUxyRlNhV09sYWQ1cURxcFhGQlNhcWY4SzBXeXFnIn0.g9Fe3dWk3F8IPIeQtej8y166zfdsYM252KljLZzk4I_Q_aiETcVY6Y_kyIq3TEkDoSxFw4SuILMFNoFmebd1Cw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.member.set_quota",
+          "fields": {
+            "member": "Jürgen \"JJ\" Müller \\ 東京 🚀",
+            "quota": "-1",
+            "notify": false
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "approval_fields"
+      }
+    },
+    {
+      "id": "field-type-bool-int",
+      "reason": "Confirmed `false`, stored the integer 0.",
+      "attack": "field-mismatch",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9xa2N0eWlmeDRvcDVrd2oyYXM2ZDZkamhlNCIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3sibWVtYmVyIjoiSsO8cmdlbiBcIkpKXCIgTcO8bGxlciBcXCDmnbHkuqwg8J-agCIsIm5vdGlmeSI6ZmFsc2UsInF1b3RhIjotMSwidHlwZSI6ImV4YW1wbGUubWVtYmVyLnNldF9xdW90YSJ9XSwidHNfcGF5bG9hZF9zaGEyNTYiOiJFV1RZTHRDSG5HSUlyWUxyRlNhV09sYWQ1cURxcFhGQlNhcWY4SzBXeXFnIn0.g9Fe3dWk3F8IPIeQtej8y166zfdsYM252KljLZzk4I_Q_aiETcVY6Y_kyIq3TEkDoSxFw4SuILMFNoFmebd1Cw",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.member.set_quota",
+          "fields": {
+            "member": "Jürgen \"JJ\" Müller \\ 東京 🚀",
+            "quota": -1,
+            "notify": 0
+          },
+          "sub": "2"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "approval_fields"
+      }
+    },
+    {
+      "id": "subject-other",
+      "reason": "Confirmed by anna, the application acts for another account.",
+      "attack": "subject",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "1002"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "subject"
+      }
+    },
+    {
+      "id": "nonce-other",
+      "reason": "The `nonce` is not the state in this session (a confirmation from another browser).",
+      "attack": "nonce",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl8zaTNhNXlyZ25tb2ZlYmJrandkdGx2bXU3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSIsIm5vbmNlIjoiazNKLWJyb3dzZXIuZW50cnlfN34ifQ.RYMYfYnPFIDgWPkSbj2PwPD8E1yJa0ksIraIh5sTst6mX-6KXs6BqN9l4fjP2IRvZqZ44Txnxmx5xnFPvWyUBQ",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2",
+          "nonce": "another-state"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "nonce"
+      }
+    },
+    {
+      "id": "nonce-missing",
+      "reason": "The application expects a state, the confirmation carries none.",
+      "attack": "nonce",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2",
+          "nonce": "k3J-browser.entry_7~"
+        },
+        "seen": []
+      },
+      "expected": {
+        "ok": false,
+        "error": "nonce"
+      }
+    },
+    {
+      "id": "replay",
+      "reason": "The `jti` is already in the application's store: the confirmation was used once.",
+      "attack": "replay",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1hcHByb3ZhbCtqd3QiLCJraWQiOiJlNjlmMGFlY2I4NjAyMTQ5In0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJleGFtcGxlIiwic3ViIjoiMiIsImlhdCI6MTc2NzIyNTYwMCwibmJmIjoxNzY3MjI1NjAwLCJleHAiOjE3NjcyMjU3MjAsImp0aSI6ImFwdl9vdm1mcGNhb2NpZ3ppd3B5dmZ0emxkMmw3YSIsImF1dGhfdGltZSI6MTc2NzIyNTU2MCwiYW1yIjpbImh3ayIsInVzZXIiXSwiYWN0Ijp7InN1YiI6ImFwcDpleGFtcGxlIn0sImF1dGhvcml6YXRpb25fZGV0YWlscyI6W3siY29sbGVjdGlvbiI6ImNfODFmMiIsIm5hbWUiOiJQcm9qZWN0IEFscGhhIiwidHlwZSI6ImV4YW1wbGUuY29sbGVjdGlvbi5kZWxldGVfcGVybWFuZW50bHkifV0sInRzX3BheWxvYWRfc2hhMjU2IjoiOEF0RUsxa2ZGa0w2aFR6YzlEczJnWk9mYl9JS21RWU0zVVJNeGJxN3cyWSJ9.b6sQ-HPxPfTa8CPxym9n5r2TIkkqZClrIIYLQDkOnCRj75yGRyRDs_rl3C750YuKLQ9wU7ZGlHI3guzImVSqAg",
+        "now": 1767225600,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "app_id": "example",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "JOXX4BdOKXI4TI3f3IRMxvEy7Dp8UFCu9yIrWAJuqOc",
+              "kid": "e69f0aecb8602149",
+              "alg": "EdDSA",
+              "use": "sig"
+            },
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "3u09BXnGkE0CPSKNicAQUslYTo2CzFjnuT5VfhPqTl0",
+              "kid": "2330ec22007d84fb",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        },
+        "expect": {
+          "type": "example.collection.delete_permanently",
+          "fields": {
+            "collection": "c_81f2",
+            "name": "Project Alpha"
+          },
+          "sub": "2"
+        },
+        "seen": [
+          "apv_ovmfpcaocigziwpyvftzld2l7a"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "replay"
+      }
+    }
+  ]
+}

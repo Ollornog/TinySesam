@@ -1870,8 +1870,73 @@ X-Api-Key: tsk_…
   `tinysesam gc` lässt die Zeilen ablaufen und löscht sie später.
 
 Warum das „Admin- und Delegiertenrechte nie über Tokens“ nicht aufweicht:
-[`SECURITY.de.md`, „Freigaben“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md). Freigaben für eigene Aktionen einer Anwendung (signierte
-Einmal-Bestätigungen) kommen mit Etappe B.
+[`SECURITY.de.md`, „Freigaben“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
+
+### Freigaben für Aktionen einer Anwendung: eine signierte Einmal-Bestätigung
+
+Eine Anwendung kann ihre eigenen heiklen Aktionen genauso bestätigen lassen — „diese Collection endgültig löschen“.
+TinySesam führt sie nicht aus: Es gibt der Anwendung **eine signierte Bestätigung**, dass genau dieser Mensch genau
+diese Aktion mit Step-up bestätigt hat, und die Anwendung prüft sie, bevor sie handelt. Ob die Aktion erlaubt ist (nur
+der Owner, Name eingetippt), bleibt die Regel der Anwendung, vor der Anfrage und noch einmal vor dem Ausführen.
+
+Der Betreiber trägt die Aktionstypen der Anwendung ein — die Texte, die der Mensch liest, stammen vom Betreiber, nie
+von der Anwendung; sie schickt nur Feldwerte:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    approvals_enabled=True, base_url="https://auth.example.com",
+    apps={"example": {
+        "account": "svc-example",                      # ihr Dienstkonto fragt an, mit einem Automation-Key
+        "name": {"en": "Example", "de": "Example"},
+        "approvals": {
+            "return_urls": ["https://app.example.com/approvals/return"],   # Einstieg im Browser, exakter Vergleich
+            "types": {"example.collection.delete_permanently": {
+                "fields": {"collection": {"type": "string", "max": 64, "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+                           "name": {"type": "string", "max": 120}},
+                "title": {"en": "Delete collection permanently", "de": "Collection endgültig löschen"},
+                "summary": {"en": "Permanently delete the collection {name} ({collection}).",
+                            "de": "Die Collection {name} ({collection}) endgültig löschen."},
+                "irreversible": True}}}}})
+```
+
+- **Typnamen** beginnen mit der Kennung der Anwendung (`example.<ding>.<aktion>`, mindestens drei Teile); eine
+  Anwendung fragt nur ihre eigenen an (`403 forbidden_type`). Felder sind `string` (mit `max` ≤ 500 und optionalem
+  `pattern`), `integer` (`min`/`max`) oder `boolean`; unbekannte, fehlende oder falsch typisierte Felder, Steuer- und
+  Bidi-Zeichen ergeben `400`. `types_file` nennt eine JSON-Datei mit derselben Zuordnung; mit `types_from` fragt ein
+  zweiter Kanal (`example_test`, eigenes Dienstkonto) diese Typen an, seine Bestätigungen nennen aber nur
+  `example_test`. `config_check` lehnt einen Platzhalter ohne Feld, einen Text ohne `en` und einen falschen Namen ab.
+- **Anfragen** (Backend): `POST /auth/api/approvals` mit dem Key des Dienstkontos, `{"type": …, "subject": "42",
+  "fields": {…}}` — `subject` ist der Mensch, der bestätigen muss (etwa `Remote-Id`). Die Antwort trägt `approve_url`
+  und den sechsstelligen `match_code`. Beides zeigen (ein Link, eine MCP-URL-Elicitation) — oder, wenn der Mensch schon
+  in der Anwendung ist, `return_url` (exakt eine eingetragene) und `state` (Zufall, in der Sitzung gemerkt) mitschicken
+  und den Browser auf `approve_url` umleiten.
+- **Der Mensch bestätigt** auf der Freigabe-Seite: Name der Anwendung, der Text des Betreibers mit jedem Wert escaped und
+  isoliert (`<bdi>`), die Feldtabelle, der Code, ein Step-up für diese Freigabe. Mit `return_url` geht der Browser
+  zurück auf `return_url?approval=<id>&state=<state>` (`&result=rejected|expired`, wenn nicht bestätigt) — nie mit der
+  Bestätigung.
+- **Abholen** (Backend): `GET /auth/api/approvals/{id}?wait=25`. Die erste Antwort nach der Bestätigung trägt
+  `"confirmation": "<JWS>"` — genau einmal (`approved` → `consumed`); sie gilt `approval_token_ttl_sec` (Standard 120 s,
+  höchstens 300). Nicht innerhalb von `approval_pickup_sec` (Standard 300 s) abgeholt, läuft sie ab.
+- **Prüfen** mit den Schlüsseln von `/auth/approvals/jwks.json` (`TinySesam.approval_jwks()`; ein eigener Schlüssel,
+  nie der Gate-Schlüssel), dann die `jti` merken und handeln:
+
+```python
+from tinysesam.approval_token import verify
+
+
+def may_delete(token, collection, name, person_id, keys, jti_store, state=None):
+    """keys: /auth/approvals/jwks.json; jti_store(jti, until) -> True only the first time (a unique INSERT)."""
+    return verify(token, keys=keys, issuer="https://auth.example.com", app_id="example",
+                  expect_type="example.collection.delete_permanently",
+                  expect_fields={"collection": collection, "name": name}, expect_sub=str(person_id),
+                  jti_store=jti_store, expect_nonce=state)
+```
+
+Der Vertrag für andere Sprachen, mit Vektoren: [`spec/approval-token.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/approval-token.md). Warum die
+Bestätigung einen eigenen Schlüssel, Typ und Empfänger hat: [`SECURITY.de.md`, „Freigaben für Aktionen einer
+Anwendung“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
 
 ## Konten für Anwendungen: die Konten-API
 
@@ -2612,6 +2677,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
 - **Proxy-Konfiguration für das Gate-Token:** `gate_public_key` (`sign_key` für caddy-jwt, wie
   `tinysesam gate-key`), `gate_jwks` (die Schlüsselmenge hinter `/auth/gate/jwks.json` für `jwk_url`),
   `gate_issuer` (`issuer_whitelist`).
+- **Bestätigungen von Anwendungs-Aktionen:** `approval_jwks` (die Schlüsselmenge hinter `/auth/approvals/jwks.json`
+  für die Anwendungen, die sie prüfen — nie die Gate-Schlüssel).
 - **Eigene Routen und Erweiterungspunkte:** `client_ip` (die echte Client-Adresse hinter
   `trusted_proxies`), `json_body` (JSON-Body mit CSRF-Prüfung für Cookie-Clients), `browser_path` (Links
   auf TinySesam-Seiten unter einem Montage-Präfix), `flow_cookie_name`, `t` (übersetzter Text in
@@ -2704,7 +2771,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**124 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**126 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

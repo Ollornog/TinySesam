@@ -1444,6 +1444,17 @@ def _approval_rows(rows) -> str:
     return "".join(f"<tr><th>{_e(k)}</th><td><bdi>{_e(v)}</bdi></td></tr>" for k, v in rows)
 
 
+def _approval_summary(a) -> str:
+    """The summary: a TinySesam action's sentence, or an application action's operator text with every field value
+    escaped AND bidi-isolated on its own (`<bdi>`), so a value can neither break out as markup nor reorder the text
+    around it."""
+    parts = a.get("summary_parts")
+    if parts:
+        inner = "".join(f"<bdi>{_e(text)}</bdi>" if is_value else _e(text) for text, is_value in parts)
+        return f"<p class=apvsum id=apvsum>{inner}</p>"
+    return f"<p class=apvsum id=apvsum><bdi>{_e(a.get('summary'))}</bdi></p>"
+
+
 def _approvals(auth, ctx) -> str:
     """ctx: items (views from `Approvals.view`). The person's open approvals — one link per request, no bulk
     confirmation (each request is decided on its own page with its own step-up)."""
@@ -1516,8 +1527,11 @@ def _approval(auth, ctx) -> str:
             f"stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>{_SYMBOL['warn']}</svg>"
             f"<span class=apvwarntxt><span class=apvsr>⚠ </span>{_e(a.get('warning') or t('apv.irreversible'))}</span></div>"
             if a.get("irreversible") else "")
-    summary = f"<p class=apvsum id=apvsum><bdi>{_e(a.get('summary'))}</bdi></p>"
+    summary = _approval_summary(a)
     title = f"<h1>{_e(a.get('title'))}</h1>"
+    if a.get("app_action"):
+        # Who asks, from the operator's register — above the title, so the person reads it first.
+        title = f"<p class=apvmeta id=apvapp><bdi>{_e(a.get('app_name'))}</bdi></p>{title}"
     if outcome != "open":
         state = a.get("state") or ""
         if outcome == "done":
@@ -1530,8 +1544,15 @@ def _approval(auth, ctx) -> str:
             if state == "consumed":
                 text = t("apv.done_" + str(a.get("result") or "invalid"))
         msgs = _messages([("error", ctx.get("error")), (kind, text), ("info", t("apv.back"))])
+        back = ""
+        if a.get("return_to"):
+            # Browser entry: a plain link back to the application's registered address (id and state, never the
+            # confirmation) — a link, not a redirect: the GET of this page has no effect.
+            back = (f"<p><a class=btn2 id=apvreturn href='{_e(a['return_to'])}'>"
+                    f"{_e(t('apv.return', app=a.get('app_name') or ''))}</a></p>")
         body = (f"{title}{summary}{table}<p class=apvmeta id=apvstate data-state='{_e(state)}'>"
-                f"<span class=apvstate>{_e(t('apv.state'))}: {_e(t('apv.st.' + state) if state else '—')}</span></p>")
+                f"<span class=apvstate>{_e(t('apv.state'))}: {_e(t('apv.st.' + state) if state else '—')}</span></p>"
+                f"{back}")
         return _page(auth, str(a.get("title") or ""), body, ctx=ctx, head=head, below=msgs)
     methods = list(ctx.get("methods") or [])
     fields = _approval_stepup(auth, ctx, a)

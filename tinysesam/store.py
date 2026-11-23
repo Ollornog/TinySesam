@@ -453,6 +453,7 @@ CREATE TABLE IF NOT EXISTS approval (
     payload_hash   TEXT NOT NULL,
     match_code     TEXT NOT NULL,              -- "418 207": in the channel of the requester and on the page
     return_url     TEXT,                       -- class b, browser entry only (stage B)
+    nonce          TEXT,                       -- class b, browser entry: the state sent by the application
     state          TEXT NOT NULL,              -- pending | approved | consumed | rejected | expired | withdrawn
     created_at     INTEGER NOT NULL,
     expires_at     INTEGER NOT NULL,
@@ -1036,7 +1037,10 @@ class Store:
     #:      without their owner mark while it runs, and `last_login_at` is not kept up meanwhile). The value 3 is
     #:      fail-closed there too: every version reads `disabled <> 0` as locked, and an older one never lifts it by a
     #:      confirmation link (which lifts only 1) — the operator's unlock lifts it as it lifts every lock.
-    SCHEMA_VERSION = 23
+    #: 24 — `approval.nonce` (approvals, stage B): the `state` an application sends with the browser entry; it goes back
+    #:      in the return address and into the confirmation as `nonce`. Additive; an older version ignores the column
+    #:      (and has no application actions: their requests get 400 there, open ones expire).
+    SCHEMA_VERSION = 24
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -1240,6 +1244,8 @@ class Store:
             "federated_identity": [("directory_name_folded", "TEXT")],
             # 0 for existing data: every present row is a completed attempt (G9).
             "login_attempt": [("pending", "INTEGER NOT NULL DEFAULT 0")],
+            # NULL for existing rows (schema 24): no request of stage A has a state of an application.
+            "approval": [("nonce", "TEXT")],
         }
         # `_writing`, not only `_lock`: the final commit below takes DELETE and stamp with it.
         # If something fails before that, without a rollback a transaction would stay open on the

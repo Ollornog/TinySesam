@@ -396,6 +396,7 @@ single base key encrypted the secrets AND was, by HKDF, the gate signing key and
 | `vault` | TOTP secrets, OIDC refresh and ID tokens, an OAuth successor pair in its grace window, the two keys below when kept in the database | AES-256-GCM, 96-bit random nonce, AAD = key ID + table/column/row | 32 random bytes | `TINYSESAM_SECRETS_KEY` (+ `TINYSESAM_SECRETS_KEY_PREVIOUS`), `secrets_key_file`, `<db_path>.key` (created at the first start, 0600) | as long as the row |
 | `gate` | signature of the gate tokens (ADR-9) | Ed25519 (`EdDSA`), header `typ: tinysesam-gate+jwt`, `kid` | 32-byte random seed — **never derived** from the vault key | `TINYSESAM_GATE_KEY` (+ `_PREVIOUS`), `gate_key_file`, otherwise the table `key_material`, encrypted with the vault key | `gate_token_ttl_sec`, at most 3600 s |
 | `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11), of the app passwords (T-66) and of the session handles, app-host links and area unlocks (T-71) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords: until their next use, at most `app_password_default_days` or what the holder chose; sessions: `session_ttl_hours` |
+| `approval` | signature of the approval confirmations of application actions (T-89, stage B) | Ed25519 (`EdDSA`), header `typ: tinysesam-approval+jwt`, `kid` | 32-byte random seed — never the gate key | `TINYSESAM_APPROVAL_KEY` (+ `_PREVIOUS`), `approval_key_file`, otherwise `key_material` (created at the first start with `approvals_enabled`) | `approval_token_ttl_sec`, at most 300 s |
 | (per process) | the in-memory fingerprints of repeated wrong passwords | PBKDF2-HMAC-SHA-256 | 32 random bytes per start | never stored | `password_repeat_window_sec` |
 
 Each purpose is a **keyring**: the first key is active (encrypts, signs, digests), the others are *previous* (decrypt,
@@ -442,7 +443,7 @@ someone without the vault key, or is damaged — restore it from a backup; the r
 ### Rotation — nothing is lost, nobody is signed out
 
 Run the commands as the service's user with the same environment and options as the service (`--secrets-key-file`,
-`--gate-key-file`, `--oauth-pepper-file`). They write the keyring file atomically and keep its owner and mode; a key
+`--gate-key-file`, `--oauth-pepper-file`, `--approval-key-file`). They write the keyring file atomically and keep its owner and mode; a key
 from an environment variable is changed there (the command says how). Every rotation and retirement is in the audit
 log (`key_rotated`, `key_retired`).
 
@@ -467,6 +468,11 @@ log (`key_rotated`, `key_retired`).
   needs the old one (`--force`: it stops working and must be created anew). **Session handles** (T-71) keep the pepper
   they were made with until the session ends (a new session takes the active one); `retire` refuses while a session
   or an app-host link from before the rotation still runs (`--force`: those people sign in again).
+- **Approval:** `tinysesam keys rotate --purpose approval` → restart. Applications that check confirmations fetch
+  `/auth/approvals/jwks.json` (active key + previous keys for `keys.APPROVAL_OVERLAP_SEC`, 10 minutes) and follow by
+  themselves: a confirmation with an unknown `kid` makes them fetch once more. An application configured with a fixed
+  key needs the new one. After the overlap: `tinysesam keys retire --purpose approval` (refuses earlier; `--force`: a
+  confirmation picked up but not yet checked fails, the person confirms again).
 
 ## Gate token in front of third-party applications (ADR-9)
 
@@ -1189,6 +1195,34 @@ schema change**: it writes `delete_after` and `managed_by`.
   asking for that type for an hour. With many team admins who may reset at the same time, raise
   `approval_open_per_token` (up to 50); `approval_open_per_account` and `approval_requests_per_hour` still bound each
   confirming person.
+
+## Approvals for application actions: column and rollback (schema 24)
+
+Schema 24 (T-89, stage B) **adds** one column, `approval.nonce` — the `state` an application sends with the browser
+entry (it goes back in the return address and into the confirmation as `nonce`). Existing rows get `NULL`. Application
+actions use the `approval` table of schema 22 otherwise: `class='app'`, `app_id`, `requester_kind='app'`,
+`requester_ref` = the service account's id, `return_url` for the browser entry, `issued_at` when the confirmation was
+handed out. The confirmation itself is never stored.
+
+- **Switch:** `approvals_enabled=True` and an `approvals` block in the application's `apps` entry (`types` or
+  `types_file`, optional `return_urls`, or `types_from`). Without it nothing changes; without `approvals_enabled` there
+  is no approval key and no `/auth/approvals/jwks.json`.
+- **Types:** the operator writes them (an application ships its types as a JSON snippet in its docs). A `types_file` is
+  read at the start and again when it changes (size or modification time); `config_check` checks it at construction —
+  a file broken later loses only the broken types (fail-closed), and a type that disappears ends open requests of it in
+  `consumed`/`forbidden` without a confirmation.
+- **Audit events (in addition to stage A):** `approval_requested` (`app=`, `entry=browser` for the browser entry),
+  `approval_approved` (`app=`), `approval_issued` (id, type, application, hash — the pickup; never the confirmation),
+  `approval_denied` (`reason=foreign_type|app_gone`), `approval_throttled` (`reason=per_app_hour`). No field values.
+- **Limits:** `approval_app_requests_per_hour` (120) per application and hour in the `flow` table — every request,
+  refused ones included; then the limits of stage A per account and per asking service account
+  (`approval_open_per_token` counts the application's open requests as a whole).
+- **A flood of requests** from an application: revoke its service account's key (panel). Open requests expire.
+- **Rollback:** an older version opens the file with the "newer schema version" warning; it ignores `nonce`, has no
+  application actions (its `config_check` refuses the `approvals` member of `apps` — take it out first) and lets open
+  requests expire. No SQL is needed; `ALTER TABLE approval DROP COLUMN nonce` (SQLite 3.35 or newer) removes the column
+  if you go back for good. The approval key stays in `key_material` (`DELETE FROM key_material WHERE
+  purpose='approval'` removes it; a version without stage B never reads it).
 
 ## Sign-in methods and their strength
 

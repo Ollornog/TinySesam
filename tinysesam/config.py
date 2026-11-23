@@ -493,6 +493,25 @@ class TinySesamConfig:
     # Rejections of the same type from the same token within an hour that block that token for that type for an hour
     # (1–20). The answer to a token that keeps asking for something the person keeps refusing.
     approval_reject_limit: int = 3
+    # --- Approvals, stage B: actions of an application ---
+    # An application registered in `apps` with an `approvals` block asks for one of ITS action types (a type the
+    # operator lists there, with a fixed text in English and German and a field schema) for a person; the person
+    # confirms on the same page with a step-up, and the application picks up ONE signed confirmation — a short JWT
+    # (`typ: tinysesam-approval+jwt`, `aud` = the application's id, one `authorization_details` entry, RFC 9396) that
+    # it checks against `/auth/approvals/jwks.json` before it carries the action out. See SECURITY.md "Approvals".
+    # How long a confirmed action waits for the application to pick up its confirmation, in seconds (60–900);
+    # afterwards it is `expired`.
+    approval_pickup_sec: int = 300
+    # Lifetime of a confirmation from its pickup, in seconds (30–300). Short on purpose: it carries one action, once.
+    approval_token_ttl_sec: int = 120
+    # New requests per application and hour (1–10000), whatever the outcome; more give 429. It also bounds what an
+    # application can learn from the answer `invalid_subject` about which ids are active persons.
+    approval_app_requests_per_hour: int = 120
+    # Keyring file with the Ed25519 seed that signs the confirmations (Base64 of 32 bytes; further lines: older keys,
+    # docs/OPERATIONS.md "Keys"). The environment variable TINYSESAM_APPROVAL_KEY takes precedence; without both the
+    # key is a random key of its own, stored in the database encrypted with the vault key (ADR-12). Never the gate
+    # key. Rotation: `tinysesam keys rotate --purpose approval` — the applications follow through the key set.
+    approval_key_file: str = ""
 
     # --- Applications: the account API (provisioning, stages A and B) ---
     # The register of applications that speak to TinySesam through a service account — one entry per product:
@@ -517,6 +536,16 @@ class TinySesamConfig:
     # confirms it with a step-up — then every factor of the account is deleted and the application picks up a new
     # one-time link once. `approver_role` must never stand in the allowlist of any application (a leaked key would give
     # it to a straw account it created); only the operator, or a delegate whose `roles` hold it, grants it.
+    # With an `approvals` block (needs `approvals_enabled`) the application asks people to confirm ITS OWN sensitive
+    # actions (stage B): `types` maps a type name — ASCII, at least three dot-separated segments, the first one the
+    # application's id, e.g. `example.collection.delete_permanently` — to `{"fields": {name: {"type": "string",
+    # "max": 120, "pattern": "^…$"} | {"type": "integer", "min": 0, "max": 99} | {"type": "boolean"}}, "title":
+    # {"en": …, "de": …}, "summary": {"en": "… {name} …", "de": …}, "irreversible": true}`; or `types_file` names a
+    # JSON file with the same mapping (read at the start). The texts are the operator's: the application only sends
+    # field values, which the page shows escaped and isolated. `return_urls` lists the exact addresses the browser may
+    # be sent back to when the person started in the application (no prefix match); `types_from` lets a second channel
+    # of the same product (its own id, its own service account) ask for the types of another entry, while its
+    # confirmations name only its own id. See README "Approvals for application actions".
     apps: dict = field(default_factory=dict)
 
     # --- Sessions (server-side, revocable) ---

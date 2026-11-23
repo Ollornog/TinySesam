@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 214 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 218 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 214
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 408 · B 285 · C 38 names.
+**Status:** A 408 · B 290 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -451,6 +451,10 @@ Apply a confirmed factor: attach to the running session of the same user (chain 
 
 IdP groups → local roles (at login). Mapped roles are synchronised (removed when the group goes away), manually granted roles remain. Target '__admin__' sets the admin flag and takes it back again if it came from the provider (H-5).
 
+### `approval_jwks() -> 'dict'`
+
+The public keys of the approval confirmations as a JSON Web Key Set (RFC 7517/8037): the active key and the previous ones within `keys.APPROVAL_OVERLAP_SEC`. Served at `/auth/approvals/jwks.json` for the applications that check confirmations (`tinysesam.approval_token.verify`). A set of its own — never the gate keys. Public, no secret.
+
 ### `audit(event, username=None, ip=None, detail=None)`
 
 Write an event into the audit log. `detail` takes everything that later answers the question "why".
@@ -729,7 +733,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `hsts`, `totp_required`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `apps`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `hsts`, `totp_required`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `approval_pickup_sec`, `approval_token_ttl_sec`, `approval_app_requests_per_hour`, `approval_key_file`, `apps`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -1273,4 +1277,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-164 methods, 3 properties, 12 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+165 methods, 3 properties, 12 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

@@ -1825,7 +1825,70 @@ X-Api-Key: tsk_…
   expires and later deletes the rows.
 
 Why this keeps "admin and delegate rights never through tokens": [`SECURITY.md`, "Approvals"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#approvals-stage-a-a-token-proposes-the-person-confirms).
-Approvals for an application's own actions (signed one-time confirmations) are stage B.
+
+### Approvals for application actions: a signed one-time confirmation
+
+An application can have its own sensitive actions confirmed the same way — "delete this collection permanently".
+TinySesam does not carry them out: it hands the application **one signed confirmation** that exactly this person
+confirmed exactly this action with a step-up, and the application checks it before it acts. Whether the action is
+allowed (only the owner, typed the name) stays the application's rule, before it asks and again before it acts.
+
+The operator registers the application's action types — the texts the person reads come from the operator, never from
+the application, which only sends field values:
+
+```python
+from tinysesam import TinySesamConfig
+
+cfg = TinySesamConfig(
+    approvals_enabled=True, base_url="https://auth.example.com",
+    apps={"example": {
+        "account": "svc-example",                      # its service account asks, with an automation key
+        "name": {"en": "Example", "de": "Example"},
+        "approvals": {
+            "return_urls": ["https://app.example.com/approvals/return"],   # browser entry, compared exactly
+            "types": {"example.collection.delete_permanently": {
+                "fields": {"collection": {"type": "string", "max": 64, "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+                           "name": {"type": "string", "max": 120}},
+                "title": {"en": "Delete collection permanently"},          # plus "de": … for German pages
+                "summary": {"en": "Permanently delete the collection {name} ({collection})."},
+                "irreversible": True}}}}})
+```
+
+- **Type names** begin with the application's id (`example.<thing>.<action>`, at least three segments); an
+  application asks only for its own (`403 forbidden_type`). Fields are `string` (with `max` ≤ 500 and an optional
+  `pattern`), `integer` (`min`/`max`) or `boolean`; unknown, missing or wrongly typed fields, control and bidi
+  characters are a `400`. `types_file` names a JSON file with the same mapping; `types_from` lets a second channel
+  (`example_test`, its own service account) ask for these types while its confirmations name only `example_test`.
+  `config_check` refuses a placeholder that is no field, a text without `en`, a malformed name.
+- **Ask** (back end): `POST /auth/api/approvals` with the service account's key, `{"type": …, "subject": "42",
+  "fields": {…}}` — `subject` is the person who must confirm (for example `Remote-Id`). The answer carries
+  `approve_url` and the six-digit `match_code`. Show both (a link, an MCP URL elicitation) — or, when the person is
+  already in the application, add `return_url` (exactly a registered one) and `state` (random, kept in the session)
+  and redirect the browser to `approve_url`.
+- **The person confirms** on the approval page: the application's name, the operator's text with every value escaped
+  and isolated (`<bdi>`), the field table, the code, a step-up for this approval. With `return_url` the browser goes
+  back to `return_url?approval=<id>&state=<state>` (`&result=rejected|expired` when not confirmed) — never with the
+  confirmation.
+- **Pick up** (back end): `GET /auth/api/approvals/{id}?wait=25`. The first answer after the confirmation carries
+  `"confirmation": "<JWS>"` — exactly once (`approved` → `consumed`); it lives `approval_token_ttl_sec` (default 120 s,
+  at most 300). Not picked up within `approval_pickup_sec` (default 300 s) it expires.
+- **Check** it with the keys of `/auth/approvals/jwks.json` (`TinySesam.approval_jwks()`; a key of its own, never the
+  gate key), then remember its `jti` and act:
+
+```python
+from tinysesam.approval_token import verify
+
+
+def may_delete(token, collection, name, person_id, keys, jti_store, state=None):
+    """keys: /auth/approvals/jwks.json; jti_store(jti, until) -> True only the first time (a unique INSERT)."""
+    return verify(token, keys=keys, issuer="https://auth.example.com", app_id="example",
+                  expect_type="example.collection.delete_permanently",
+                  expect_fields={"collection": collection, "name": name}, expect_sub=str(person_id),
+                  jti_store=jti_store, expect_nonce=state)
+```
+
+The contract for other languages, with vectors: [`spec/approval-token.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/approval-token.md). Why the
+confirmation has its own key, type and audience: [`SECURITY.md`, "Approvals for application actions"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#approvals-for-application-actions-stage-b-a-signed-one-time-confirmation).
 
 ## Accounts for applications: the account API
 
@@ -2546,6 +2609,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
 - **Proxy configuration for the gate token:** `gate_public_key` (`sign_key` for caddy-jwt, same as
   `tinysesam gate-key`), `gate_jwks` (the key set behind `/auth/gate/jwks.json` for `jwk_url`), `gate_issuer`
   (`issuer_whitelist`).
+- **Approval confirmations of application actions:** `approval_jwks` (the key set behind `/auth/approvals/jwks.json`
+  for the applications that check them — never the gate keys).
 - **Your own routes and extension points:** `client_ip` (the real client address behind
   `trusted_proxies`), `json_body` (JSON body with the CSRF check for cookie clients), `browser_path`
   (links to TinySesam pages under a mount prefix), `flow_cookie_name`, `t` (translated text in
@@ -2633,7 +2698,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**124 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**126 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

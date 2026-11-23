@@ -344,6 +344,12 @@ class TinySesam:
                                                legacy=derived_gate)
         self._gate_key_name = _keys.gate_private(self._gate_keyring.active.material)
         self._gate_legacy_warning()
+        # Approvals of application actions (stage B): the confirmations get a key of their OWN (purpose `approval`,
+        # ADR-12) — never the gate key, which the proxy trusts without checking `typ`. Loaded (and on the first start
+        # created) only with approvals switched on; `_approval_ring` loads it later if the switch is set afterwards.
+        self._approval_keyring: Any = None
+        if config.approvals_enabled:
+            self._approval_ring()
         # Key for the password fingerprints, per process and only in memory: a leaked memory dump is no
         # dictionary target against the typos of the real passwords without it — and it never touches the vault.
         self._pw_repetition_key_name = secrets.token_bytes(32)
@@ -7637,6 +7643,27 @@ class TinySesam:
         signed before it stay valid until they expire. Public, no secret."""
         from . import keys as _keys
         return _keys.jwks(self._gate_keyring, _wall_now())
+
+    def _approval_ring(self):
+        """The keyring of purpose `approval` (`TINYSESAM_APPROVAL_KEY`, `approval_key_file`, else the database)."""
+        from . import keys as _keys
+        if self._approval_keyring is None:
+            self._approval_keyring = _keys.load_stored(_keys.APPROVAL, self.store,
+                                                       str(getattr(self.cfg, "approval_key_file", "") or ""))
+        return self._approval_keyring
+
+    def _approval_private(self):
+        """The active approval signing key (Ed25519) — only `Approvals._confirmation` signs with it."""
+        from . import keys as _keys
+        return _keys.gate_private(self._approval_ring().active.material)
+
+    def approval_jwks(self) -> dict:
+        """The public keys of the approval confirmations as a JSON Web Key Set (RFC 7517/8037): the active key and the
+        previous ones within `keys.APPROVAL_OVERLAP_SEC`. Served at `/auth/approvals/jwks.json` for the applications
+        that check confirmations (`tinysesam.approval_token.verify`). A set of its own — never the gate keys. Public,
+        no secret."""
+        from . import keys as _keys
+        return _keys.jwks(self._approval_ring(), _wall_now())
 
     def _gate_legacy_warning(self) -> None:
         """Say so while the gate key derived from the vault key (≤ 0.25.x) is still in the keyring: a proxy that still

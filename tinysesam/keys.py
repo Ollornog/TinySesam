@@ -9,6 +9,12 @@ for any account, and there was no way to change it without losing every TOTP enr
 | `vault`        | reversible secrets at rest (AES-256-GCM)     | 32 random bytes             | `TINYSESAM_SECRETS_KEY`, `secrets_key_file`, else `<db>.key` |
 | `gate`         | signature of the gate tokens (Ed25519)       | 32-byte seed, random        | `TINYSESAM_GATE_KEY`, `gate_key_file`, else the table `key_material` |
 | `oauth-pepper` | HMAC of the stored OAuth token digests       | at least 32 random bytes    | `TINYSESAM_OAUTH_PEPPER`, `oauth_pepper_file`, else `key_material` |
+| `approval`     | signature of the approval confirmations (Ed25519) | 32-byte seed, random   | `TINYSESAM_APPROVAL_KEY`, `approval_key_file`, else `key_material` |
+
+The approval key signs only the one-time confirmations an application picks up after a person confirmed one of its
+actions (`tinysesam.approval_token`). It is never the gate key: the proxy checks gate tokens by the key alone (it
+cannot check `typ`), so a confirmation signed with the gate key could pass as a gate token, and a gate token as a
+confirmation at an application with a weak check (RFC 8725 §3.11/§3.12).
 
 The gate key and the pepper are their OWN random material, never derived from the vault key: reading the
 vault key alone (a leaked environment, a key backup) no longer mints gate tokens. Without an own source they are
@@ -48,16 +54,27 @@ from .errors import ConfigError
 VAULT = "vault"
 GATE = "gate"
 PEPPER = "oauth-pepper"
-PURPOSES = (VAULT, GATE, PEPPER)
+APPROVAL = "approval"
+PURPOSES = (VAULT, GATE, PEPPER, APPROVAL)
+#: The purposes whose key is an Ed25519 seed (sign, publish the public half as a JWKS).
+SIGNING = (GATE, APPROVAL)
 
 #: Environment variable with the active key per purpose; `<name>_PREVIOUS` holds older ones.
-ENV = {VAULT: "TINYSESAM_SECRETS_KEY", GATE: "TINYSESAM_GATE_KEY", PEPPER: "TINYSESAM_OAUTH_PEPPER"}
+ENV = {VAULT: "TINYSESAM_SECRETS_KEY", GATE: "TINYSESAM_GATE_KEY", PEPPER: "TINYSESAM_OAUTH_PEPPER",
+       APPROVAL: "TINYSESAM_APPROVAL_KEY"}
 #: The configuration field with the keyring file per purpose.
-FILE_FIELD = {VAULT: "secrets_key_file", GATE: "gate_key_file", PEPPER: "oauth_pepper_file"}
+FILE_FIELD = {VAULT: "secrets_key_file", GATE: "gate_key_file", PEPPER: "oauth_pepper_file",
+              APPROVAL: "approval_key_file"}
 
 #: How long a previous gate key stays published after it stopped signing: the longest a gate token can live
 #: (`gate.TTL_MAX`). After that no token signed with it is valid any more, and the proxy may forget it.
 GATE_OVERLAP_SEC = 3600
+#: The same for the approval key: a confirmation is signed when the application picks it up and lives at most 300 s
+#: (`approval_token.MAX_LIFETIME`); with the largest clock leeway of a checking application (30 s) and a margin,
+#: nothing signed with a retired key is valid after this.
+APPROVAL_OVERLAP_SEC = 600
+#: The overlap per signing purpose.
+OVERLAP_SEC = {GATE: GATE_OVERLAP_SEC, APPROVAL: APPROVAL_OVERLAP_SEC}
 
 #: Note on a key that a migration took over from the time of the single base key (derived from it by HKDF).
 DERIVED_V1 = "derived-v1"
@@ -118,7 +135,7 @@ def gate_private(seed: bytes):
 
 
 def kid_for(purpose: str, material: bytes) -> str:
-    if purpose == GATE:
+    if purpose in SIGNING:
         from . import gate as _gate
         return _gate.key_name_id(_gate.public_raw(gate_private(material)))
     return fingerprint(purpose, material)
@@ -178,7 +195,7 @@ def parse(purpose: str, text: str, origin: str) -> list:
 
 def render(purpose: str, keys: list) -> str:
     lines = [f"# TinySesam keyring ({purpose}). The first key is active, the others only "
-             f"{'verify' if purpose == GATE else 'decrypt' if purpose == VAULT else 'look up'}.",
+             f"{'verify' if purpose in SIGNING else 'decrypt' if purpose == VAULT else 'look up'}.",
              "# Edited by `tinysesam keys rotate|retire`. Secret: mode 0600, back it up apart from the database."]
     for i, k in enumerate(keys):
         line = base64.b64encode(k.material).decode("ascii")
@@ -328,7 +345,7 @@ def reloader(db_path: str, key_file: str) -> Callable[[], Optional[Keyring]]:
     return again
 
 
-# ---------- the keyrings in the database (gate, pepper) ----------
+# ---------- the keyrings in the database (gate, pepper, approval) ----------
 
 def load_stored(purpose: str, store, key_file: str = "", legacy: Optional[bytes] = None) -> Keyring:
     """The keyring of `purpose` from the environment, its file or the database — created on the first start.
@@ -358,12 +375,14 @@ def _read_only(e: Exception) -> bool:
 
 
 def jwks(ring: Keyring, now: int) -> dict:
-    """The public gate keys as a JSON Web Key Set (RFC 7517, OKP/Ed25519 per RFC 8037): the active key and every
-    previous one within `GATE_OVERLAP_SEC` of its retirement. For caddy-jwt's `jwk_url`."""
+    """The public keys of a signing keyring (gate or approval) as a JSON Web Key Set (RFC 7517, OKP/Ed25519 per
+    RFC 8037): the active key and every previous one within the purpose's overlap (`OVERLAP_SEC`) of its retirement.
+    The gate set is for caddy-jwt's `jwk_url`, the approval set for the applications that check confirmations."""
     from . import gate as _gate
+    overlap = OVERLAP_SEC.get(ring.purpose, GATE_OVERLAP_SEC)
     out = []
     for i, k in enumerate(ring.keys):
-        if i and k.since is not None and now - int(k.since) > GATE_OVERLAP_SEC:
+        if i and k.since is not None and now - int(k.since) > overlap:
             continue
         pub = _gate.public_raw(gate_private(k.material))
         out.append({"kty": "OKP", "crv": "Ed25519", "x": _gate._b64u(pub), "kid": k.kid, "alg": "EdDSA",

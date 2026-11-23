@@ -2209,6 +2209,7 @@ async def approvals_page(_first):
         try:
             await _approvals_page(p)
             await _reset_access_page(p)
+            await _app_action_page(p)
         finally:
             await p.cmd("Emulation.clearDeviceMetricsOverride")
             await p.js("localStorage.removeItem('themeMode');true")
@@ -2334,6 +2335,92 @@ async def _reset_access_page(p):
         t33.cfg.available_roles, t33.cfg.apps = before
     print("  reset access: summary in words, ⚠ with its own warning, methods; 375px light/dark without sideways "
           "scrolling; confirmed with the password; the application picks up the link once (strict CSP)")
+
+
+async def _app_action_page(p):
+    """An application action (T-89 stage B) on the T-33 app, entered from the application (browser entry): the page
+    shows the application's name, the operator's text with the value of a field — `<script>` and a right-to-left run in
+    it — as text in its own `<bdi>`, the ⚠ for a permanent action and the code; at 375 px in light and dark no sideways
+    scrolling; confirmed with the password, the browser lands on the registered return address of ANOTHER origin (the
+    page's `form-action` names it) with `approval` and `state` only, and the application picks the confirmation up once
+    and checks it. `TINYSESAM_SCREENSHOTS=<dir>` keeps the page at 375 px light and dark."""
+    import base64
+    from urllib.parse import parse_qs, urlsplit
+    from tinysesam import approval_token
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+    back = BASE + "/demo"
+    before = (getattr(t33.cfg, "apps", None),)
+    t33.cfg.apps = {"example": {"account": "svc-example-b", "name": {"en": "Example Team"}, "approvals": {
+        "return_urls": [back],
+        "types": {"example.collection.delete_permanently": {
+            "fields": {"collection": {"type": "string", "max": 64, "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+                       "name": {"type": "string", "max": 120}},
+            "title": {"en": "Delete collection permanently"},
+            "summary": {"en": "Permanently delete the collection {name} ({collection}). This cannot be undone."},
+            "irreversible": True}}}}}
+    try:
+        svc_id = t33.create_service("svc-example-b")
+        app_key = t33.create_api_key(svc_id, name="example")["key"]
+        owner = t33.create_user("owner89", password="own89-pw-12345")
+        fields = {"collection": "c_81f2", "name": "<script>alert(1)</script> \u05e4\u05e8\u05d5\u05d9\u05e7\u05d8 Alpha"}
+        created = urllib.request.urlopen(urllib.request.Request(
+            T33 + "/auth/api/approvals", method="POST",
+            headers={"X-Api-Key": app_key, "Content-Type": "application/json"},
+            data=json.dumps({"type": "example.collection.delete_permanently", "subject": str(owner),
+                             "fields": fields, "return_url": back, "state": "st-89.browser"}).encode()))
+        approval = json.load(created)
+        assert created.status == 201, approval
+        token, _ = t33.start_session(owner, "password")
+        await p.cmd("Network.clearBrowserCookies")
+        await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=375, height=812, deviceScaleFactor=1, mobile=True)
+        for theme in ("light", "dark"):
+            await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+            await p.cmd("Page.navigate", url=approval["approve_url"])
+            await p.until("!!document.getElementById('apvform')", "application action page not built")
+            await p.js("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+            assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")
+            assert await p.js("document.getElementById('apvapp').textContent") == "Example Team"
+            assert await p.js("document.querySelector('h1').textContent") == "Delete collection permanently"
+            values = await p.js("[...document.querySelectorAll('#apvsum bdi')].map(b=>b.textContent)")
+            assert values == [fields["name"], "c_81f2"], values
+            assert await p.js("document.querySelectorAll('#apvsum script, .tsmain script:not([nonce])').length") == 0
+            assert "⚠" in await p.js("document.getElementById('apvirrev').textContent")
+            assert await p.js("document.getElementById('apvcode').textContent") == approval["match_code"]
+            width = await p.js("document.documentElement.scrollWidth")
+            assert width <= 375, f"{theme}: {width}px wide at 375px"
+            if shots:
+                os.makedirs(shots, exist_ok=True)
+                data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+                with open(os.path.join(shots, f"approval-app-375-{theme}.png"), "wb") as fh:
+                    fh.write(base64.b64decode(data))
+        await p.js("document.querySelector('input[name=password]').value='own89-pw-12345';"
+                   "document.getElementById('apvyes').click();true")
+        await p.until(f"location.href.startsWith({json.dumps(back + '?')})", "not sent back to the application")
+        landed = urlsplit(await p.js("location.href"))
+        assert parse_qs(landed.query) == {"approval": [approval["id"]], "state": ["st-89.browser"]}, landed.query
+        out = json.load(urllib.request.urlopen(urllib.request.Request(
+            T33 + f"/auth/api/approvals/{approval['id']}", headers={"X-Api-Key": app_key})))
+        assert out["state"] == "consumed" and "confirmation" in out, out
+        keys = json.load(urllib.request.urlopen(T33 + "/auth/approvals/jwks.json"))
+        claims = approval_token.verify(out["confirmation"], keys=keys, issuer=T33, app_id="example",
+                                       expect_type="example.collection.delete_permanently", expect_fields=fields,
+                                       expect_sub=str(owner), expect_nonce="st-89.browser",
+                                       jti_store=lambda jti, until: True)
+        assert claims["jti"] == approval["id"]
+        again = json.load(urllib.request.urlopen(urllib.request.Request(
+            T33 + f"/auth/api/approvals/{approval['id']}", headers={"X-Api-Key": app_key})))
+        assert "confirmation" not in again, again
+        viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+        assert viol == "[]", f"CSP violation on the application action page: {viol}"
+        assert not p.console, f"console errors: {p.console[:2]}"
+        assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    finally:
+        (t33.cfg.apps,) = before
+    print("  application action: name, operator text with escaped values in <bdi>, ⚠, code; 375px light/dark without "
+          "sideways scrolling; confirmed → back to the registered address of another origin with approval + state; "
+          "the confirmation picked up once and verified (strict CSP)")
 
 
 try:

@@ -565,6 +565,7 @@ def _key_args(ap) -> None:
     ap.add_argument("--secrets-key-file", default="", help="like config.secrets_key_file")
     ap.add_argument("--gate-key-file", default="", help="like config.gate_key_file")
     ap.add_argument("--oauth-pepper-file", default="", help="like config.oauth_pepper_file")
+    ap.add_argument("--approval-key-file", default="", help="like config.approval_key_file")
 
 
 def _open_keys(a):
@@ -581,7 +582,8 @@ def _open_keys(a):
     rings: dict = {K.VAULT: K.load_vault(a.db, a.secrets_key_file)}
     store = Store(a.db)
     store.vault = V.Vault(rings[K.VAULT])
-    for purpose, path in ((K.GATE, a.gate_key_file), (K.PEPPER, a.oauth_pepper_file)):
+    for purpose, path in ((K.GATE, a.gate_key_file), (K.PEPPER, a.oauth_pepper_file),
+                          (K.APPROVAL, a.approval_key_file)):
         ring = K.from_override(purpose, path)
         if ring is None:
             try:
@@ -613,12 +615,13 @@ def _keys(argv) -> int:
         p = sub.add_parser(name, help=text, description=text)
         _key_args(p)
         if name in ("rotate", "retire"):
-            p.add_argument("--purpose", required=True, choices=("vault", "gate", "oauth-pepper"))
+            p.add_argument("--purpose", required=True, choices=("vault", "gate", "oauth-pepper", "approval"))
         if name == "retire":
             p.add_argument("--kid", action="append", default=[], help="only this previous key (repeatable)")
             p.add_argument("--force", action="store_true",
-                           help="gate/oauth-pepper only: retire before the overlap has passed (tokens signed or "
-                                "digested with it stop working — gate: one fallback request, OAuth: reconnect)")
+                           help="gate/oauth-pepper/approval only: retire before the overlap has passed (tokens signed "
+                                "or digested with it stop working — gate: one fallback request, OAuth: reconnect, "
+                                "approval: a confirmation not yet checked fails)")
         if name == "reencrypt":
             p.add_argument("--to", choices=("v2", "v1"), default="v2",
                            help="v1 = the format up to 0.25.x, only for going back to an older version")
@@ -642,8 +645,8 @@ def _keys(argv) -> int:
             for i, k in enumerate(ring.keys):
                 state = "active  " if i == 0 else f"previous since {_when(k.since)}"
                 extra = f"  values: {counts.get(k.kid, 0)}" if purpose == K.VAULT else ""
-                if purpose == K.GATE and i and k.since is not None:
-                    extra = ("  published" if now - k.since <= K.GATE_OVERLAP_SEC else "  no longer published")
+                if purpose in K.SIGNING and i and k.since is not None:
+                    extra = ("  published" if now - k.since <= K.OVERLAP_SEC[purpose] else "  no longer published")
                 note = f"  note: {k.note}" if k.note else ""
                 print(f"{purpose:<13} {k.kid}  {state}  [{ring.origin}]{extra}{note}")
         if counts.get("v1"):
@@ -712,6 +715,11 @@ def _keys(argv) -> int:
                   f"until then tokens of the new key take the fallback path (caddy-jwt's jwk_url: do not use, it can "
                   f"hang, docs/OPERATIONS.md).")
             print(f"After {K.GATE_OVERLAP_SEC // 60} minutes: tinysesam keys retire --purpose gate")
+        elif purpose == K.APPROVAL:
+            print("Applications that check confirmations fetch /auth/approvals/jwks.json and learn the new key there "
+                  "(an unknown kid makes them fetch again). An application configured with a fixed key needs "
+                  "the new one.")
+            print(f"After {K.APPROVAL_OVERLAP_SEC // 60} minutes: tinysesam keys retire --purpose approval")
         else:
             print("Connected programs stay connected, app passwords stay valid and nobody is signed out (looked up "
                   "with the previous pepper; a program's next refresh and an app password's next use move them to "
@@ -745,6 +753,10 @@ def _keys(argv) -> int:
         elif purpose == K.GATE and now - k.since <= K.GATE_OVERLAP_SEC:
             refusals.append(f"{k.kid}: gate tokens signed with it may still be valid until "
                             f"{_when(k.since + K.GATE_OVERLAP_SEC)} (--force: they take the fallback path once)")
+        elif purpose == K.APPROVAL and now - k.since <= K.APPROVAL_OVERLAP_SEC:
+            refusals.append(f"{k.kid}: approval confirmations signed with it may still be valid until "
+                            f"{_when(k.since + K.APPROVAL_OVERLAP_SEC)} (--force: an application that has not checked "
+                            f"one yet refuses it)")
         elif purpose == K.PEPPER and (n := store.oauth_live_tokens_before(k.since, now)):
             refusals.append(f"{k.kid}: {n} OAuth code(s)/token(s) from before the rotation are still valid "
                             f"(--force: those programs must connect again)")

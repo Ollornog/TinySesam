@@ -287,6 +287,55 @@ Restrisiko: ein Mensch, der bestätigt, ohne zu lesen. Prüfcode, Step-up je Fre
 verhindern es aber nicht — die Seite ist bewusst schlicht: wer fragt (Key-Name und Datum), was (ein Satz und die
 Werte), der Code, die Restzeit. Den anfragenden Key zu widerrufen beendet eine Flut von Anfragen.
 
+## Freigaben für Aktionen einer Anwendung (Etappe B): eine signierte Einmal-Bestätigung
+
+Eine in `apps` eingetragene Anwendung mit einem `approvals`-Block fragt einen IHRER Aktionstypen an; der Mensch bestätigt
+auf derselben Seite nach denselben Regeln wie oben (nur die Sitzung des `subject`, Step-up je Freigabe, CSRF,
+`payload_hash`, Prüfcode, nie gerahmt, nie per GET); TinySesam führt nichts aus und gibt der Anwendung stattdessen eine
+signierte Bestätigung. Neu sind diese Regeln:
+
+- **Text vom Betreiber, Werte von der Anwendung.** Typen kommen nur aus der Konfiguration (`apps[…].approvals.types`
+  oder die `types_file` des Betreibers), nie über eine API der Anwendung: Der Text ist der Schutz gegen Phishing — eine
+  Anwendung, die „Ansicht öffnen“ als Text einer Löschung eintragen könnte, ließe den Menschen die Löschung bestätigen.
+  `config_check` verlangt `en`, schlichte `{feld}`-Platzhalter, die Felder nennen, und Typnamen, die mit der Kennung der
+  Anwendung beginnen. Die Anwendung schickt nur Werte; sie werden gegen das Schema geprüft (unbekannt, fehlend, falsch
+  typisiert, zu lang, gegen das Muster → `400`; Steuerzeichen, C1, die Bidi-Steuerzeichen und die Zeilentrenner werden
+  abgelehnt, nie entfernt) und escaped angezeigt, jeder in einem eigenen `<bdi>`, darunter die Feldtabelle mit Rohwerten.
+- **Nur das eigene Präfix.** Eine Anwendung fragt nur Typen an, die mit ihrer Kennung beginnen (oder mit der von
+  `types_from`, einem zweiten Kanal desselben Produkts): sonst `403 forbidden_type`, im Audit. `tinysesam.` bleibt
+  TinySesams. `subject` darf jeder aktive Mensch sein (§12 des Entwurfs: eine Bindung an Grants trägt nicht über den
+  Gate-Weg); jede Anfrage zählt gegen `approval_app_requests_per_hour` (120) — `invalid_subject` eingeschlossen, damit die
+  Antwort die aktiven Menschen nicht verrät — und die Limits je Konto gelten wie in Etappe A.
+- **Ein eigener Schlüssel.** Die Bestätigung wird mit dem Schlüsselbund des Zwecks `approval` signiert
+  (`TINYSESAM_APPROVAL_KEY`, `approval_key_file`, sonst die Datenbank, verschlüsselt mit dem Vault-Schlüssel;
+  `tinysesam keys rotate --purpose approval`), veröffentlicht unter `/auth/approvals/jwks.json` — nie der
+  Gate-Schlüssel. Der Proxy prüft Gate-Tokens nur über den Schlüssel (caddy-jwt kann `typ` nicht prüfen): Mit einem
+  Schlüssel könnte eine Bestätigung als Gate-Cookie durchgehen und ein Gate-Token als Bestätigung bei einer Anwendung mit
+  schwacher Prüfung. Eigener Schlüssel, eigener `typ` (`tinysesam-approval+jwt`), eigene `aud` (RFC 8725 §3.11/§3.12).
+- **Gebunden an eine Aktion, eine Anwendung, einen Menschen.** `aud` ist ein String (die Kennung der Anwendung — eine
+  Bestätigung des Testkanals gilt nie im stabilen), `sub` das bestätigende Konto, genau ein Eintrag in
+  `authorization_details` (RFC 9396) mit `ts_payload_sha256` über seine Form nach RFC 8785, `auth_time` und `amr` des
+  Step-ups, `act` die anfragende Anwendung, `jti` die Freigabe-ID, höchstens 300 s (`approval_token_ttl_sec`, Standard
+  120).
+- **Genau einmal, nirgends sonst.** Der erste Status-Abruf nach der Bestätigung setzt `approved` → `consumed` und signiert
+  die Bestätigung erst dann — sie existiert nur in dieser einen Antwort: nicht gespeichert, nicht im Audit
+  (`approval_issued` nennt ID, Typ, Anwendung und Hash), nicht im Log, nie in der Rückleitungs-Adresse. Nicht innerhalb
+  von `approval_pickup_sec` (300 s) abgeholt, läuft die Zeile ab. Die Anwendung merkt sich die `jti` bis `exp` (Schritt
+  12 der Spec), damit ist ein Mitschnitt zwischen Abholung und Ausführung wertlos. Anwendung, Typ und Mensch werden beim
+  Bestätigen und beim Abholen erneut geprüft; fehlt eines inzwischen, endet es in `consumed` mit `result=forbidden` und
+  ohne Bestätigung.
+- **Einstieg im Browser ohne fälschbare Links.** Die Anwendung legt die Anfrage im Backend an (wie RFC 9126), mit einer
+  `return_url`, die exakt einer aus `apps[…].approvals.return_urls` gleichen muss (absolut, https, ohne Query und
+  Fragment), und einem `state`; der Browser trägt nur die ID. Zurück zur Anwendung geht `?approval=<id>&state=<state>`
+  (und `&result=rejected|expired`); `state` kommt in der Bestätigung als `nonce` zurück, die Anwendung vergleicht ihn mit
+  ihrer Sitzung. Die Seite nimmt genau diesen Ursprung in ihr `form-action` auf (Chrome prüft die Weiterleitung nach dem
+  POST dagegen), sonst nichts.
+
+Restrisiko: Eine kompromittierte Anwendung fragt ihre eigenen Typen für beliebige Menschen an — lästig, mehr nicht:
+Bestätigen braucht den Step-up dieses Menschen auf TinySesams Seite mit dem Text des Betreibers. Den Key der Anwendung zu
+widerrufen beendet es. Was die Anwendung mit einer gültigen Bestätigung tut, ist ihr Code: die Prüfreihenfolge aus
+[`spec/approval-token.md`](../spec/approval-token.md) und ihre eigenen Regeln noch einmal vor dem Ausführen.
+
 ## Konten-API für Anwendungen
 
 Mit einer Anwendung in `apps`, die einen `provisioning`-Block hat, verwaltet die Anwendung die Konten, **die sie selbst
