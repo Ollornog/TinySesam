@@ -50,6 +50,8 @@ func TestConfigErrorsStopTheStart(t *testing.T) {
 		"invalid trusted proxy":      {Mode: HeaderMode, TrustedProxies: []netip.Prefix{{}}},
 		"JWKS with user info":        token(Config{JWKSURL: "https://u:p@auth.example.com/jwks.json"}),
 		"http JWKS to a public addr": token(Config{JWKSURL: "http://192.0.2.1/jwks.json"}),
+		"approval key set":           token(Config{JWKSURL: "https://auth.example.com/auth/approvals/jwks.json"}),
+		"approval key set /":         token(Config{JWKSURL: "https://auth.example.com/auth/approvals/jwks.json/"}),
 	}
 	for name, cfg := range bad {
 		if _, err := New(cfg); err == nil {

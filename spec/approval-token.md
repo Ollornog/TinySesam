@@ -103,7 +103,10 @@ The confirmations have a key set of their own, served at `https://<auth host>/au
 `approval`, `tinysesam keys rotate --purpose approval`). It is **never** the gate key set (`/auth/gate/jwks.json`):
 the proxy checks gate tokens by the key alone, so only separate keys keep a confirmation out of a gate cookie and a
 gate token out of an approval check (RFC 8725 §3.11, §3.12). A helper MUST NOT accept a key of the gate key set for a
-confirmation, and a gate client MUST NOT accept an approval key.
+confirmation, and a gate client MUST NOT accept an approval key. Both directions are checked at configuration, with
+the same kind of error as any other configuration error (it stops the start): a helper refuses a key set URL whose
+path, without trailing slashes, ends in `/gate/jwks.json`, and a gate client refuses one that ends in
+`/approvals/jwks.json`.
 
 The rules for key set entries ([`gate-client.md`](gate-client.md) §4.3) and for fetching the set (§5 there: the
 deadline of 5 s, 64 KiB, freshness 60–3600 s, one attempt per 10 s, the order per request) apply word for word, with

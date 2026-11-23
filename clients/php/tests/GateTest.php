@@ -102,6 +102,8 @@ final class GateTest extends TestCase
             "https://auth.example.com/j\n",
             'http://127.0.0.1.example.com/j',
             'http://[::2]/j',
+            'https://auth.example.com/auth/approvals/jwks.json',
+            'https://auth.example.com/auth/approvals/jwks.json/',
         ];
         foreach ($urls as $url) {
             yield "jwksUrl {$url}" => [static fn () => self::build(['jwksUrl' => $url])];

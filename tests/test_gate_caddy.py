@@ -44,7 +44,7 @@ import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
-from tinysesam import gate, keys  # noqa: E402
+from tinysesam import gate, gate_client, keys  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ISS = "https://auth.example.com"
@@ -142,11 +142,13 @@ SITES = {"Caddyfile.gate": ("\nauth.example.com {", "\napp.example.com {"),
          "../quickstart/Caddyfile": ("\nhttps://{$TS_AUTH_HOST} {", "\nhttps://{$TS_APP_HOST}:{$TS_APP_PORT:443} {")}
 
 
-def start_caddy(templates_file="Caddyfile.gate", upstream=None, suffix=""):
+def start_caddy(templates_file="Caddyfile.gate", upstream=None, suffix="", transform=None):
     """Caddy needs a port that it binds itself — a bound socket cannot be
     passed on. So find a free one, release it and let Caddy bind; if that fails (another
     process was faster), try again with the next one."""
     template = (ROOT / "deploy/forward-auth" / templates_file).read_text(encoding="utf-8")
+    if transform:
+        template = transform(template)
     name = (os.path.basename(os.path.dirname(templates_file) or "forward-auth") + "-" + os.path.basename(templates_file)
             + suffix)
     auth_site, app_site = SITES[templates_file]
@@ -645,6 +647,53 @@ try:
             _caddy_late.kill()
     ok("TinySesam unreachable when Caddy starts: a gate token passes at once (no hang); once TinySesam listens, "
        "the way back issues a new token and the gate token still passes")
+
+    # ---------- Variant "the application uses FetchTopbar/FetchAccount": only the session cookie gets through ----------
+    # The template carries the variant as a comment; here it is put in place exactly as the comment says (both
+    # application upstreams behind the gate, never the share path) and measured: the session cookie and the connection
+    # cookie reach the application, every other TinySesam cookie and a browser-made placeholder do not, and the
+    # forwarded cookie is enough for the server-side helper.
+    _strip = ('header_up Cookie "(^|;)\\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""\n',
+              'header_up Cookie "^[;\\s]+" ""\n')
+
+    def _with_fetch_variant(text):
+        variant = re.findall(r"^\t+#   (header_up Cookie .*)$", text, re.M)
+        assert len(variant) == 5, variant
+        parts = re.split(r"(\t+)" + re.escape(_strip[0]) + r"\1" + re.escape(_strip[1]), text)
+        # [before share, indent, share … fast path, indent, fast path … way back, indent, rest]
+        assert len(parts) == 7, "the three application upstreams of the template have shifted"
+        out = parts[0] + parts[1] + _strip[0] + parts[1] + _strip[1] + parts[2]
+        for indent, rest in ((parts[3], parts[4]), (parts[5], parts[6])):
+            out += "".join(indent + line + "\n" for line in variant) + rest
+        return out
+
+    _caddy_fetch, PORT_FETCH = start_caddy(suffix="-fetch", transform=_with_fetch_variant)
+    try:
+        sname, sval = next(iter(session.items()))
+        assert sname == "tinysesam_session", sname
+        extra = {"__Host-tinysesam_link": "L", "tinysesam_csrf": "C", "ts-keep.tinysesam_session": "FORGED",
+                 "other": "1"}
+        before = FORWARD["n"]
+        st, _, a = request("/fetch-fast", {**session, "__Host-tinysesam_gate": signed(now_=int(time.time())),
+                                           **extra}, port=PORT_FETCH)
+        assert st == 200 and FORWARD["n"] == before, (st, FORWARD["n"] - before)
+        assert a["header"].get("Cookie") == f"{sname}={sval}; __Host-tinysesam_link=L; other=1", a["header"]
+        st, _, a = request("/fetch-back", {**session, **extra}, port=PORT_FETCH)
+        assert st == 200 and FORWARD["n"] == before + 1, (st, FORWARD["n"] - before)
+        assert a["header"].get("Cookie") == f"{sname}={sval}; __Host-tinysesam_link=L; other=1", a["header"]
+        st, _, a = request("/s/fetch", {**session, "__Host-tinysesam_link": "L", "other": "1"}, port=PORT_FETCH)
+        assert st == 200 and a["header"].get("Cookie") == "other=1", ("share path", a["header"])
+        bar = gate_client.fetch_topbar(f"http://{TS}/auth/topbar.json", f"{sname}={sval}; other=1")
+        assert bar.signed_in and bar.name == "Anna Ärger", bar
+    finally:
+        _caddy_fetch.terminate()
+        try:
+            _caddy_fetch.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _caddy_fetch.kill()
+    ok("variant for FetchTopbar/FetchAccount: fast path and way back pass exactly the session and the connection "
+       "cookie (no CSRF, gate or placeholder cookie), the share path still none; the forwarded cookie signs the "
+       "server-side top bar in")
 
     # ---------- Signing out at the application (T-22): /.tinysesam/* bypasses the gate ----------
     before = FORWARD["n"]

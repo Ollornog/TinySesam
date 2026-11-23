@@ -4,6 +4,20 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed
+
+- Every gate client refuses the approval key set as its key set URL (T-93, spec/approval-token.md §3): a JWKS URL
+  ending in `/approvals/jwks.json` stops the start — Go `New`, Rust `JwksVerifier::from_url` (new), JS/TS
+  `createGate`, PHP `Gate::tokenMode`, Python `GateClient`. The counterpart of the approval helpers refusing
+  `/gate/jwks.json` (#328).
+- Documentation, the `kid` rule for key sets (T-93): an entry whose `kid` is not the one derived from its key is
+  skipped, and a set without a usable entry gives `key_unavailable` — in spec §4.3, every client README and the README.
+- Documentation, server-side top bar and account overview vs. the proxy duty (T-93): the proxy templates strip the
+  session cookie the server-side helpers need. The browser way (`/.tinysesam/topbar.json`, `/.tinysesam/account.json`) is now the
+  recommended one; `deploy/forward-auth/Caddyfile.gate` carries a commented variant that lets through only the session
+  and the connection cookie for an application trusted with the session (measured in `tests/test_gate_caddy.py`).
+  Spec `gate-client.md` §2.1, §8, §8a.
+
 ## [0.29.0] — 2026-11-23
 
 Check before upgrading: a configuration that names a role with a comma, a control character or surrounding spaces is

@@ -170,6 +170,23 @@ app.example.com {
 			# tinysesam_* and falls under the same rule (B-20, see ./Caddyfile).
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
 			header_up Cookie "^[;\s]+" ""
+			# Variant "the application uses FetchTopbar/FetchAccount" (server-side top bar or account overview,
+			# spec/gate-client.md §8): those helpers forward the person's TinySesam cookies, which the two lines above
+			# strip — behind them a server-side fetch always reads "signed out". Prefer the browser way (the page
+			# fetches /.tinysesam/topbar.json or /.tinysesam/account.json, passed to TinySesam above): the application
+			# never holds the session. Letting the cookies through hands the application the person's browser
+			# session — whoever takes it over acts as that person at TinySesam and at every other application behind
+			# the gate. Only for an application you trust with that, and only on its host: replace the two lines above
+			# AND the two in the way back below with these five. They let through exactly the session cookie
+			# (`tinysesam_session`, set for cookie_domain; renamed session_cookie? rename it here) and the connection
+			# cookie of a host outside the cookie domain (`__Host-tinysesam_link`, T-26), and strip every other
+			# TinySesam cookie (CSRF, gate, unlock, flow) and any `ts-keep.*` cookie the browser sends itself.
+			# Measured in tests/test_gate_caddy.py.
+			#   header_up Cookie "(^|;)\s*ts-keep\.[^=;]*=[^;]*" ""
+			#   header_up Cookie "(^|;\s*)(tinysesam_session|__Host-tinysesam_link)=" "${1}ts-keep.${2}="
+			#   header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
+			#   header_up Cookie "(^|;\s*)ts-keep\.(tinysesam_session|__Host-tinysesam_link)=" "${1}${2}="
+			#   header_up Cookie "^[;\s]+" ""
 		}
 	}
 

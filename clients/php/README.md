@@ -155,6 +155,12 @@ aborted above it), certificate and host name verified, fresh for `max-age` clamp
 at most one attempt per 10 s, a failed fetch never replaces the cached set, which stays usable up to 3600 s past its
 freshness.
 
+Every key set entry's `kid` must be the one derived from its key (the first 16 hex digits of SHA-256 over the 32 key
+bytes, spec §4.3); an entry with a `kid` of your own choosing (a test fixture with `"kid": "test-key"`) is skipped
+silently, and a fetched set without a single usable entry is a failed fetch: every token gets `key_unavailable` (with
+other usable entries: `kid`). `KeySet::fromJwks` follows the same rule. A `jwksUrl` ending in `/approvals/jwks.json`
+(the approval key set) stops the start.
+
 PHP keeps nothing between requests unless something keeps it, so **where the cache lives** is a choice:
 
 - `MemoryStore` (the default) lives as long as the process: right for long-running workers (RoadRunner, FrankenPHP's
@@ -198,7 +204,7 @@ value. The token parameters are `#[\SensitiveParameter]`, so a stack trace does 
 `Gate::headerMode()` and `Gate::tokenMode()` throw a `ConfigError` instead of failing open later: no or an empty
 issuer or audience, a clock leeway outside 0 to 60, not exactly one of `gateKeys`, `jwksUrl` and `keySource`, no gate
 key, a key that is not 32 bytes of standard Base64, a key set URL that is not `https` (or `http` to a loopback address)
-or carries credentials or a fragment, `fetcher` or `store` without `jwksUrl`, `jwksUrl` without ext-curl and without a
+or carries credentials or a fragment, a `jwksUrl` ending in `/approvals/jwks.json`, `fetcher` or `store` without `jwksUrl`, `jwksUrl` without ext-curl and without a
 `Fetcher`, both `cookieName` and `tokenHeader`, an invalid cookie or header name, an invalid or repeated header name in
 `HeaderNames`, an empty or invalid trusted proxy list, no ext-sodium, and a `FileStore` whose directory is missing or
 not writable. Settings are named arguments, so a misspelt one is a PHP error at the call, not a silently ignored key.
@@ -220,7 +226,7 @@ Every class means the same to the application: not authenticated.
 doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/` (in `links` and in
 `menuLinks`, the account menu); members it does not know are ignored. Titles and names are text, never markup — escape
 them. Fetching it is the application's job: server-side with only TinySesam's cookies, a deadline, no redirects, and no
-cache across sessions. `approvals` is `['pending' => …, 'href' => …]` when TinySesam has approvals switched on,
+cache across sessions. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser"). `approvals` is `['pending' => …, 'href' => …]` when TinySesam has approvals switched on,
 otherwise `null`; show the number with a word, never a coloured dot alone.
 
 ## Account overview

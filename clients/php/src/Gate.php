@@ -154,6 +154,13 @@ final readonly class Gate
             $keySource = new StaticKeys(KeySet::fromGateKeys($gateKeys));
         } elseif ($jwksUrl !== null) {
             self::checkJwksUrl($jwksUrl);
+            $path = parse_url($jwksUrl, PHP_URL_PATH);
+            if (\is_string($path) && str_ends_with(rtrim($path, '/'), '/approvals/jwks.json')) {
+                throw new ConfigError(
+                    'jwksUrl is the APPROVAL key set; gate tokens have their own '
+                    . '(https://<auth host>/auth/gate/jwks.json)',
+                );
+            }
             if ($fetcher === null && !\function_exists('curl_init')) {
                 throw new ConfigError('jwksUrl needs ext-curl, or a Fetcher of your own');
             }

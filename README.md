@@ -1347,9 +1347,14 @@ Recipes:
   `provisioning` for the account API; `account_enabled=True`; no `admin_delegates` for the application's roles (the
   start warns when a delegate role overlaps an allowlist). The application draws its own bar (not from
   `topbar.json`) with a *Security* link to `/auth/account?app=<host>`, and its settings page shows the security state:
-  - **preferred:** the gate client fetches `/.tinysesam/account.json` server-side with only TinySesam's cookies of the
-    request (spec §8a of `spec/gate-client.md`; the helpers in the clients follow) — then TinySesam itself checks
-    "a person, by browser session";
+  - **preferred:** the settings page fetches `/.tinysesam/account.json` in the browser, same-origin — the proxy passes
+    it to TinySesam with the browser's cookies, TinySesam itself checks "a person, by browser session", and the
+    application never holds the session (spec §8a of `spec/gate-client.md`; `parse_account` and the helpers of the
+    clients normalize the answer);
+  - **or server-side** with the helpers (`fetch_account`, `FetchAccount`, …): they forward the session cookie, which
+    the proxy templates strip before the application (spec §2.1, duty 4). Letting it through hands the application the
+    person's browser session — only for an application you trust with that, with the commented variant in
+    `deploy/forward-auth/Caddyfile.gate` (spec §8, "Server-side or in the browser");
   - **or inside the wrapper:** it calls `auth.account_overview(auth.get_user(remote_id), app_host=host)` and hands the
     dict to the application, the way it hands on `topbar_data`. Then the wrapper owns three duties TinySesam cannot
     enforce on this path: call it **only** for a checked `Remote-Kind: user` with `Remote-Auth: session`, **only** for
@@ -2525,6 +2530,11 @@ except gate_client.UntrustedPeer:
   (`Topbar`, `TopbarLink`, with `links` and `menu_links`; unsafe links dropped, signed out on any doubt); `fetch_topbar(url, cookie_header)` fetches
   it server-side with only TinySesam's cookies; `Topbar.to_dict()` gives the normalized form of spec §8. With
   approvals switched on, `Topbar.approvals` is a `TopbarApprovals` (`pending`, `href`), otherwise `None`.
+- **Server-side needs the session cookie**: the proxy templates strip TinySesam's cookies before the application (spec
+  §2.1, duty 4), so `fetch_topbar` and `fetch_account` read *signed out* behind them. Prefer the browser way (the page
+  fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself, and the server never holds the session);
+  server-side only for an application you trust with the session, with the commented variant in
+  `deploy/forward-auth/Caddyfile.gate` (spec §8, "Server-side or in the browser").
 - **Account overview** (optional, spec §8a): `fetch_account(url, cookie_header)` fetches `/auth/account.json` (or
   `/.tinysesam/account.json` on the application's host) server-side with only TinySesam's cookies;
   `parse_account(data)` normalizes an answer into a plain dict — `SIGNED_OUT_ACCOUNT` for anything but
@@ -2532,6 +2542,10 @@ except gate_client.UntrustedPeer:
 - **Approval confirmations**: the check lives in `tinysesam.approval_token.verify` (also without FastAPI);
   `approval_token.JWKSKeys("https://auth.example.com/auth/approvals/jwks.json")` fetches the approval key set for it
   and refuses the gate key set. A complete application: `examples/approvals/app.py`.
+- **Key sets**: every entry's `kid` must be the one derived from its key (the first 16 hex digits of SHA-256 over the
+  32 key bytes, spec §4.3); an entry with a `kid` of your own choosing is skipped silently, and a fetched set without a
+  single usable entry is a failed fetch — every token gets `KeyUnavailable` (with other usable entries: `KidError`).
+  `jwks_url` refuses the approval key set (`…/approvals/jwks.json`), `JWKSKeys` the gate key set.
 
 Flask, with a view decorator built on `guard_status`:
 

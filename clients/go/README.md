@@ -102,7 +102,13 @@ gate, err := tinysesam.New(tinysesam.Config{
 - JWKS: fetched only from the configured URL (`https`, or `http` to a loopback address), within 5 seconds and 64 KiB,
   at most once per 10 seconds, cached for the response's `max-age` (60–3600 s, default 300). A failed fetch keeps the
   previous set; a set more than an hour past its freshness is no longer used. No request waits longer than the
-  deadline: concurrent requests share a running fetch.
+  deadline: concurrent requests share a running fetch. A `JWKSURL` ending in `/approvals/jwks.json` (the approval key
+  set) stops the start: a gate token is never checked with an approval key.
+- Key set entries (`JWKSURL`, and `ParseJWKS` for `KeySet`): the `kid` of an entry must be the one derived from its key,
+  `KeyID(pub)` — the first 16 hex digits of SHA-256 over the 32 key bytes (spec §4.3). An entry with a `kid` of your
+  own choosing (a test fixture with `"kid": "test-key"`) is skipped silently. A fetched set without a single usable
+  entry is a failed fetch, so every token is refused with `key_unavailable`; with other usable entries the token gets
+  `kid`. `ParseJWKS` returns no error for such a set — `NewApprovalVerifier` then stops with "no usable key".
 - `LeewaySeconds` allows a clock leeway of up to 60 seconds; the default is 0, as TinySesam and the proxy use.
 
 `Gate.Verify(ctx, jws)` checks a token without a request and returns the identity and the claims.
@@ -144,7 +150,8 @@ A panic inside the client is caught and refused.
 
 `New` refuses: no mode; token settings in header mode or header settings in token mode; token mode without
 `Issuer`, `Audience` or a key source, or with both `GateKeys` and `JWKSURL`; a gate key that is not 32 bytes of
-standard Base64; a `JWKSURL` that is not `https` (plain `http` only to a loopback address); `LeewaySeconds` outside
+standard Base64; a `JWKSURL` that is not `https` (plain `http` only to a loopback address) or ends in
+`/approvals/jwks.json`; `LeewaySeconds` outside
 0–60; both `CookieName` and `TokenHeader`; an invalid or repeated header name.
 
 ## Top bar data (optional)
@@ -152,7 +159,7 @@ standard Base64; a `JWKSURL` that is not `https` (plain `http` only to a loopbac
 `ParseTopbar(body)` normalizes TinySesam's `/.tinysesam/topbar.json` (spec §8): anything but `signed_in: true` with a
 string name is signed out, and links that are not absolute `http(s)` URLs or single-slash paths (`javascript:`,
 `data:`, `//host`) are dropped — in `Links` and in `MenuLinks` (the account menu) alike. `FetchTopbar` fetches it server-side with only TinySesam's cookies of the request, a
-5-second deadline and a 64 KiB limit. Do not cache the result across sessions. `Approvals` is set when TinySesam has
+5-second deadline and a 64 KiB limit. Do not cache the result across sessions. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser"). `Approvals` is set when TinySesam has
 approvals switched on (`Pending` of at least 0 and a safe `Href`), otherwise nil; show the number with a word
 ("Approvals (2)"), never a coloured dot alone.
 
@@ -227,7 +234,7 @@ exactly one `authorization_details` entry, its RFC 8785 digest, the order of the
 confirmation refused for another reason does not use up its id. Errors: the classes of the gate token plus
 `approval_type`, `approval_fields`, `subject`, `nonce`, `replay` (`ErrApprovalType`, …) and `internal` for a failing
 store; every class means *do not carry the action out*. `KeySet` (from `ParseJWKS`) takes a fixed approval key set
-instead of `JWKSURL`. A complete application with the browser entry: `examples/approvals/app.py` (Python, the same
+instead of `JWKSURL`; each entry's `kid` must be `KeyID(pub)`, see the key set rule under token mode. A complete application with the browser entry: `examples/approvals/app.py` (Python, the same
 flow).
 
 `NewApprovalVerifier` refuses: no `Issuer` or `AppID`, no or both key sources, an empty key set, a `JWKSURL` that is

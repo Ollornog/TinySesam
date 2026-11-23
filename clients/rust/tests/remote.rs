@@ -444,6 +444,28 @@ fn approval_case() -> (Value, Value) {
     (v["input"].clone(), v["expected"].clone())
 }
 
+#[test]
+fn gate_verifier_never_takes_the_approval_key_set() {
+    let config = TokenConfig::new("https://auth.example.com", "app.example.com").unwrap();
+    for approval in [
+        "https://auth.example.com/auth/approvals/jwks.json",
+        "https://auth.example.com/auth/approvals/jwks.json/",
+    ] {
+        assert!(
+            JwksVerifier::from_url(config.clone(), approval).is_err(),
+            "{approval} accepted"
+        );
+    }
+    assert!(
+        JwksVerifier::from_url(
+            config.clone(),
+            "http://auth.example.com/auth/gate/jwks.json"
+        )
+        .is_err()
+    );
+    assert!(JwksVerifier::from_url(config, "https://auth.example.com/auth/gate/jwks.json").is_ok());
+}
+
 #[tokio::test]
 async fn approval_key_set_fetched_once_never_the_gate_set() {
     use tinysesam_gate::ApprovalJwksVerifier;

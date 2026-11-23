@@ -136,6 +136,10 @@ func New(cfg Config) (*Gate, error) {
 			if err := checkJWKSURL(cfg.JWKSURL); err != nil {
 				return nil, err
 			}
+			if u, _ := url.Parse(cfg.JWKSURL); strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/approvals/jwks.json") {
+				return nil, configError("JWKSURL is the APPROVAL key set; gate tokens have their own " +
+					"(https://<auth host>/auth/gate/jwks.json)")
+			}
 			g.jwks = newJWKSCache(httpFetcher(cfg.HTTPClient, cfg.JWKSURL))
 		default:
 			return nil, configError("token mode needs GateKeys or JWKSURL")
