@@ -2524,6 +2524,9 @@ KIT_WERKZEUGE: list[tuple[str, str, str]] = [
     ("automerge", "pruefe",
      ("laeuft in jedem Repo ueber `manifest.pruefe` mit (seit 0.30.0) — eine eigene Forderung "
       "hiesse, denselben Workflow zweimal zu pruefen")),
+    ("wiederholung", "pruefe",
+     ("runs in every repo through `manifest.pruefe` (since 0.59.0), like automerge — a demand of its own would "
+      "check the same workflow twice")),
     ("hygiene", "pruefe_dateien_geschlossen",
      ("prueft den Kit-Quelltext selbst, nicht das aufrufende Repo — sie gehoert in repokits "
       "eigene Suite, und dort laeuft sie")),

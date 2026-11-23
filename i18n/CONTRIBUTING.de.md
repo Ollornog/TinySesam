@@ -11,7 +11,8 @@ durchschaubar hält, ist meistens die bessere.
 
 1. **Tests gehören zur Änderung, nicht zur Nachbereitung.** Wer Verhalten ändert, ändert im selben
    Commit einen Test. Doku und `CHANGELOG.md` wandern mit.
-2. **Die Suite ist wiederholbar.** `./scripts/check.sh` zweimal laufen lassen — beide Läufe grün.
+2. **Die Suite ist wiederholbar.** Der nächtliche Wiederholungslauf (`nightly-repeat`: die CI-Suite zweimal auf
+   `main`) prüft das; vor dem Push genügt der schnelle Pre-push-Hook, `PREPUSH_VOLL=1 git push` fährt den vollen Lauf.
    Ein Test, der beim zweiten Lauf rot wird, ist kaputt, nicht der Code. Der Rückstands-Check
    erzwingt das.
 3. **Sicherheitsänderungen sind nicht kosmetisch.** Alles, was Sitzungen, Guards, Faktor-Ketten,

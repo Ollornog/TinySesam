@@ -41,7 +41,8 @@
 #     in the earlier run, the text push itself turns green.
 #
 # STANDARD-ERLAUBNISLISTE (eine für alle Repos, nur hier): Markdown, das kein Programm liest, rendert oder ausliefert —
-#     *.md in der Wurzel · docs/**.md · backlog/**.md · changelog.d/**.md
+#     *.md in der Wurzel · docs/**.md · backlog/**.md · changelog.d/**.md · i18n/**.md (translations of the root
+#     community files and READMEs, since kit 0.57.0)
 #   Nichts sonst, auch kein .md unter roles/, templates/, playbooks/, src/, tests/, scripts/, .github/ … und kein Pfad mit
 #   Leerzeichen oder Steuerzeichen. Zusätzlich muss jede Datei eine gewöhnliche, nicht ausführbare Datei sein (kein
 #   Symlink, kein +x — ein ausführbares „.md“ ist ein Skript), und
@@ -51,7 +52,9 @@
 #   blosse Name nur aus ihrem Ordnerbaum oder aus einer Zeile, die auch einen Teil des Ordnerpfads als Wort nennt
 #   (den vollen Pfad oder `ROOT / "docs" / "API.md"`), seit Kit 0.52.2. Grenze: über Zeilen zusammengesetzte Pfade. Ausgenommen sind nur die Leser, die im Text-Modus ohnehin laufen:
 #   tests/test_repo.py und die Kit-Dateien, einzeln genannt (tests/_kit/, scripts/_nur_text.sh, _residue_check.sh,
-#   _backlog.py, .githooks/pre-push). Eine Markdown-Datei, die ihn nennt (auch außerhalb der Liste, etwa i18n/), ist
+#   _backlog.py, .githooks/pre-push), dazu (since kit 0.57.0) the release automation scripts/_release_automatik.py with
+#   .github/release-automatik.json and every workflow without a text-mode gate (`nur_text` outside a comment): check.sh
+#   never runs them, their jobs run in CI regardless, so the full suite would add nothing. Eine Markdown-Datei, die ihn nennt (auch außerhalb der Liste, etwa i18n/), ist
 #   kein Leser — außer das Repo führt Markdown aus (Signatur doctest-glob, doctest.testfile, mktestdocs …) und ein
 #   Programm nennt diese Markdown-Datei (zweite Stufe, gleiche Ordnerregel). Ist die Datei über einen getrackten Symlink außerhalb der Liste erreichbar,
 #   fährt ebenfalls die volle Suite. Submodule zählen immer (`--ignore-submodules=none`).
@@ -70,7 +73,7 @@ VERENGUNG="scripts/nur-text-verengung.txt"
 
 erlaubt() {
     [[ "$1" =~ ^[^/[:space:][:cntrl:]]+\.md$ ]] && return 0
-    [[ "$1" =~ ^(docs|backlog|changelog\.d)/[^[:space:][:cntrl:]]+\.md$ ]]
+    [[ "$1" =~ ^(docs|backlog|changelog\.d|i18n)/[^[:space:][:cntrl:]]+\.md$ ]]
 }
 
 # Verengung lesen: Muster, die die volle Suite erzwingen. Jede unlesbare Zeile → volle Suite (nie stillschweigend weiter).
@@ -226,8 +229,29 @@ fi
 # Leser, die im Text-Modus ohnehin laufen — ihre Nennung eines Dateinamens ist kein Grund für die volle Suite.
 # Einzeln genannt, kein Glob: `scripts/_*.sh` traf eigene Skripte der Repos (_abbild_probe.sh) und, weil `*` im
 # Pathspec auch `/` überspringt, scripts/_lib/… (Angriffsrunde, Fund 2).
+# Since kit 0.57.0 also the kit's release automation (script and its config): it runs only in its own workflow, never
+# in check.sh, so the full suite cannot catch anything a text change breaks there; the CHANGELOG form it needs is
+# checked by the hygiene (version, categories), which does run in text mode. Before 0.57.0 its mention of CHANGELOG.md
+# sent every CHANGELOG change in every repo to the full suite (1pipe 2026-11-23: a contact-address commit waited for a
+# ci-local slot).
 text_leser=(':!tests/test_repo.py' ':(glob,exclude)tests/_kit/**' ':!scripts/_nur_text.sh' ':!scripts/_residue_check.sh'
-            ':!scripts/_backlog.py' ':!.githooks/pre-push')
+            ':!scripts/_backlog.py' ':!.githooks/pre-push' ':!scripts/_release_automatik.py'
+            ':!.github/release-automatik.json')
+
+# A workflow is a reader only if it skips something in text mode (since kit 0.57.0). Its jobs run in CI on their own
+# triggers whatever _nur_text.sh decides, unless a job is gated on the decision — and the only gate the kit allows is
+# `outputs.nur_text` (hygiene.pruefe_nur_text). check.sh never runs workflow steps, so for an ungated workflow (a
+# release.yml on tags, the auto-merge workflow) the full suite adds nothing. Conservative: any `nur_text` on a line
+# that is not a comment counts as a gate.
+#   workflow_liest <path>   -> 0 = counts as a reader (gated, or not a workflow, or unreadable), 1 = ungated workflow
+workflow_liest() {
+    local rc
+    [[ "$1" =~ ^\.github/workflows/[^/]+\.ya?ml$ ]] || return 0
+    git -c core.quotePath=false grep -q -E -e 'nur_text' --and --not -e '^[[:space:]]*#' -- ":(literal)$1" 2>/dev/null
+    rc=$?
+    [[ $rc -eq 1 ]] && return 1
+    return 0
+}
 
 # Getrackte Symlinks außerhalb der Liste, aufgelöst: Ein Programm kann einen Text unter anderem Namen lesen (Fund 5).
 symlink_ziele=()
@@ -290,6 +314,7 @@ genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner> der Dat
             [[ $rc -eq 2 ]] && return 2
             continue
         fi
+        workflow_liest "$l" || continue
         echo "$l"; return 0
     done <<<"$treffer"
     return 1

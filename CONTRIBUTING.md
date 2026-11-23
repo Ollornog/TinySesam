@@ -11,8 +11,9 @@ the better change.
 
 1. **Tests belong to the change, not to the cleanup.** If you change behaviour, change a test in the
    same commit. Documentation and `CHANGELOG.md` move with it too.
-2. **The suite must be repeatable.** Run `./scripts/check.sh` twice — both runs green. A test that
-   fails on the second run is broken, not the code. The residue check enforces it.
+2. **The suite must be repeatable.** The nightly repeat run (`nightly-repeat`: the CI suite twice on
+   `main`) checks it; before a push the fast pre-push hook is enough, the header of `.githooks/pre-push` names the switch for the full gate. A test
+   that fails on the second run is broken, not the code. The residue check enforces it.
 3. **Security changes are not cosmetic.** Anything touching sessions, guards, factor chains, token
    handling or the login flow gets a test that would fail without the fix. "It obviously works" is
    not a review.
