@@ -2,7 +2,7 @@
 id: T-114
 type: Task
 title: "Proxy test image: nginx on the stable line instead of mainline"
-status: offen
+status: erledigt
 milestone: M-2
 tags: [ci, proxies, dependencies]
 created: 2026-11-23

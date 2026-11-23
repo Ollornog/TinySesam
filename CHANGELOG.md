@@ -9,6 +9,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - The distroless runtime base is bumped to the digest that carries `libc6` 2.41-12+deb13u5, and the two Grype rules for
   the glibc findings (CVE-2026-19499, CVE-2026-5435) are removed; `.grype.yaml` is empty again (T-118).
 
+### Changed
+
+- The proxy test image runs nginx on the stable line (1.30.x) instead of mainline (1.31.x); Dependabot ignores the
+  mainline minors, and `tests/test_proxies.py` fails on an odd minor, also without Docker (T-114).
+
 ## [0.30.0] — 2026-11-24
 
 **The last release with database migrations.** The next release starts from a single schema baseline, drops old
