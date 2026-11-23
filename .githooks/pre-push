@@ -11,9 +11,9 @@
 #   otherwise                         -> tests/test_repo.py (no private infrastructure, secret patterns, kit manifest),
 #                                        format/lint of the changed files and the tests of the changed code:
 #                                        shell (bash -n, shellcheck), Python (py_compile, ruff where configured,
-#                                        affected tests/test_*.py), Go (gofmt, go vet + go test of the changed
-#                                        packages), Rust (cargo fmt --check, clippy, cargo test of the changed
-#                                        workspaces), JS/TS (biome check of the changed files)
+#                                        affected tests/test_*.py), Go (gofmt, go vet with the repo's GO_PRUEF_TAGS,
+#                                        go test of the tag-less packages, of the changed packages), Rust (cargo fmt
+#                                        --check, clippy, cargo test of the changed workspaces), JS/TS (biome check)
 #   .githooks/pre-push.zusatz         -> the repo's own extra (kit 0.29.0), e.g. its own fast tests
 #
 # A missing tool is a visible note, not a red push: the gate is the PR CI, which has every tool.
@@ -390,6 +390,62 @@ skript_test() {
     return 0
 }
 
+# Build tags of the repo (kit 0.63.0): env GO_PRUEF_TAGS, else the assignment `GO_PRUEF_TAGS="a b"` in scripts/check.sh
+# (the same variable scripts/_go_check.sh reads; blank-separated, one vet pass per tag).
+go_tags() {
+    if [[ -n "${GO_PRUEF_TAGS:-}" ]]; then printf '%s' "$GO_PRUEF_TAGS"; return 0; fi
+    [[ -f scripts/check.sh ]] || return 0
+    sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?GO_PRUEF_TAGS=[\"']?([^\"'#]*).*/\2/p" scripts/check.sh | head -n 1
+}
+
+# go_listen <tag|""> <pattern…> — import paths of the packages that HAVE Go files (tests included) under that tag.
+go_listen() {
+    local tag="$1"; shift
+    local -a opt=(-e)
+    [[ -n "$tag" ]] && opt+=(-tags "$tag")
+    go list "${opt[@]}" -f '{{if or .GoFiles .CgoFiles .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' "$@"
+}
+
+# go_pruefen <pattern…>: go vet with the repo's tags, go test only for packages that have files without tags (kit 0.63.0).
+# A package whose files all sit behind a build tag makes a tag-less `go vet` fail ("build constraints exclude all
+# Go files"): it is vetted per tag instead. Its tests are browser/service tests and stay in the PR CI. A package with no
+# Go files even with the tags is shown as NOT checked, never counted as green.
+go_pruefen() {
+    local out p t q gefunden
+    local -a alle_p=() ohne=() mit_tag=() tagliste=()
+    local -a vet_gedeckt=()
+    out="$(go list -e -f '{{.ImportPath}}' "$@")" || rot "go list"
+    mapfile -t alle_p <<<"$out"
+    out="$(go_listen "" "$@")" || rot "go list"
+    [[ -z "$out" ]] || mapfile -t ohne <<<"$out"
+    read -r -a tagliste <<<"$(go_tags)"
+    if [[ ${#ohne[@]} -gt 0 ]]; then
+        echo "  go vet + go test: ${ohne[*]}"
+        go vet "${ohne[@]}" || rot "go vet"
+        go test "${ohne[@]}" || rot "go test"
+        vet_gedeckt=("${ohne[@]}")
+    fi
+    for t in "${tagliste[@]}"; do
+        out="$(go_listen "$t" "$@")" || rot "go list -tags $t"
+        [[ -n "$out" ]] || continue
+        mapfile -t mit_tag <<<"$out"
+        echo "  go vet -tags $t: ${mit_tag[*]}"
+        go vet -tags "$t" "${mit_tag[@]}" || rot "go vet -tags $t"
+        vet_gedeckt+=("${mit_tag[@]}")
+    done
+    for p in "${alle_p[@]}"; do
+        [[ -n "$p" ]] || continue
+        gefunden=0; for q in "${ohne[@]}"; do [[ "$q" == "$p" ]] && gefunden=1; done
+        [[ $gefunden -eq 0 ]] || continue
+        gefunden=0; for q in "${vet_gedeckt[@]}"; do [[ "$q" == "$p" ]] && gefunden=1; done
+        if [[ $gefunden -eq 1 ]]; then
+            hinweis "$p: tagged only — vetted with its tags, tests in the PR CI"
+        else
+            hinweis "$p: no Go files, not even with the tags (${tagliste[*]:-none set}) — NOT checked (GO_PRUEF_TAGS?)"
+        fi
+    done
+}
+
 schnell() {
     local basis="$1" grund="" py f d
     local -a geaendert=() alle=() sh=() pyf=() tests=() go=() gopakete=() rs=() js=()
@@ -540,9 +596,7 @@ for f in sys.argv[1:]:
                 done
             fi
             if [[ ${#gopakete[@]} -gt 0 ]]; then
-                echo "  go vet + go test: ${gopakete[*]}"
-                go vet "${gopakete[@]}" || rot "go vet"
-                go test "${gopakete[@]}" || rot "go test"
+                go_pruefen "${gopakete[@]}"
             fi
         else
             hinweis "no go toolchain here — PR CI"
