@@ -47,3 +47,6 @@ The standard library carries Ed25519 (`crypto/ed25519`); duplicate members need 
 - `.github/workflows/client-go.yml` (no path filter, ends early when a pull request touches neither `clients/go/` nor
   `spec/`), Dependabot `gomod` for `/clients/go` and `/.github/audit` (the tools), CodeQL for Go, a step in `scripts/check.sh`.
 - Not published: no tag `clients/go/v…`, no announcement to the module proxy (decision of the product owner open).
+- Published since 2026-11-23 (product owner): `clients/go/v0.29.0` set by hand; from the next release on
+  `.github/workflows/release.yml` tags `clients/go/vX.Y.Z` on the commit of every `vX.Y.Z` itself (`clients/README.md`,
+  "Publishing").

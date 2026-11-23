@@ -4,6 +4,15 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+
+- The Go gate client is published as a Go module: every release tags `clients/go/vX.Y.Z` on the commit of `vX.Y.Z`
+  (`go get github.com/Ollornog/TinySesam/clients/go@v0.29.0` — `v0.29.0` was tagged by hand). `release.yml` sets the tag
+  itself as its last step, after the GitHub release, PyPI, both images and their attestations (jobs `go-module-plan`,
+  `go-module-tag`, `go-module-verify`, logic in `scripts/_go_module_tag.py`): idempotent, never moved, none for a
+  pre-release; a proxy.golang.org probe afterwards only warns. `scripts/_release.py --check` checks the module path and
+  bumps the `go get` line of `clients/go/README.md`.
+
 ### Changed
 
 - Every gate client refuses the approval key set as its key set URL (T-93, spec/approval-token.md §3): a JWKS URL
