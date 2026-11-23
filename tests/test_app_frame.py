@@ -148,6 +148,8 @@ for auth, app, kind in ((auth_g, app_g, "gateway"), (auth_l, app_l, "library")):
         assert "<span>Example</span>" in bar and "<a " not in bar and "tsbar-menu" not in bar, (kind, was, bar)
         for hidden in ("/spaces", "Spaces", f"{APP}/team", f"{APP}/start", "GatewayLink", "GatewayMenu"):
             assert hidden not in r.text, (kind, was, hidden)
+    line = re.search(r"<p class=app>([^<]*)</p>", pages["sign-in (?app)"].text)
+    assert line and "Example" in line.group(1), "the sign-in card does not name the application of the frame"
     ok(f"F6 ({kind}): sign-in (absolute next, ?app) and error page — the name only, no back link, no link in the "
        "source")
 
@@ -267,6 +269,18 @@ for text in (t("bar.back", name="Example"), t("bar.via", name="Example Gate"), t
              t("bar.approvals_n", n=2)):
     assert text in bar or text.replace("'", "&#x27;") in bar, text
 assert t("bar.security") != "Security", "probe: the German table answers"
+# The approval list and the approval page keep the frame for the next step (link and form action).
+from tinysesam import templates as _tpl  # noqa: E402
+
+frame = auth_m._frame_of(APP)
+item = {"id": "apv1", "title": "Revoke", "match_code": "AB12", "minutes_left": 5}
+listed = _tpl._approvals(auth_m, {"items": [item], "frame": frame})
+assert f"href='__TS_P__/auth/approvals/apv1?app={APP}'" in listed, "the list link drops the frame"
+page = _tpl._approval(auth_m, {"outcome": "open", "approval": {**item, "summary": "s", "rows": [], "via": "x",
+                                                                "payload_hash": "h"},
+                               "methods": ["password"], "frame": frame})
+assert f"action='__TS_P__/auth/approvals/apv1?app={APP}'" in page, "the decision form drops the frame"
+assert "?app=" not in _tpl._approvals(auth_m, {"items": [item]}), "without a frame no app="
 ok("F11: Security and approvals keep app=, 'Approvals (2)' as number and word, admin panel for operators only; "
    "German texts")
 

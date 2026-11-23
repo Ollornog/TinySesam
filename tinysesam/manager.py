@@ -8212,7 +8212,8 @@ class TinySesam:
             name = str(e.get("name") or "").strip()
             if not name or not ({"home", "links"} & set(e)):
                 return None
-            home = e.get("home") if isinstance(e.get("home"), str) and e.get("home") else "/"
+            raw = e.get("home")
+            home: str = raw if isinstance(raw, str) and raw else "/"
             return {"host": want, "name": name, "home": _topbar.frame_href(want, home),
                     "links": list(e.get("links") or [])}
         return None

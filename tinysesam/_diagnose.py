@@ -118,6 +118,7 @@ FIELDS: dict[str, Any] = {
     "forward_logout": _one_of("all", "app", "ask"),
     "forward_logged_out_sec": SHOW,
     "forward_apps": REDACT,
+    "forward_frame_default": REDACT,
     "gate_cookie_name": REDACT,
     "gate_link_enabled": SHOW,
     "oauth_enabled": SHOW,

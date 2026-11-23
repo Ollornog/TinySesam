@@ -1478,7 +1478,7 @@ def _approvals(auth, ctx) -> str:
     items = ctx.get("items") or []
     if items:
         lis = "".join(
-            f"<li><a href='__TS_P__/auth/approvals/{_e(a['id'])}' data-apv='{_e(a['id'])}'>"
+            f"<li><a href='__TS_P__/auth/approvals/{_e(a['id'])}{_e(_app_q(ctx))}' data-apv='{_e(a['id'])}'>"
             f"<b>{_e(a['title'])}</b><small>{_e(t('apv.code'))} <span class=mono>{_e(a['match_code'])}</span> · "
             f"{_e(t('apv.left', minutes=a['minutes_left']))}</small></a></li>" for a in items)
         body = f"<ul class=apvlist>{lis}</ul>"
@@ -1585,7 +1585,7 @@ def _approval(auth, ctx) -> str:
             extra += (f"<a class=btn2 id=apvoidc href='__TS_P__/auth/oidc/start?approval={_e(a.get('id', ''))}"
                       f"&amp;next={_next_q('__TS_P__' + back)}'>{_e(t('reauth.oidc', name=auth.cfg.oidc_name))}</a>")
     nothing = "" if methods else f"<div class=warnbar id=apvnomethod>{_e(t('apv.no_method'))}</div>"
-    action = f"__TS_P__/auth/approvals/{_e(a.get('id', ''))}"
+    action = f"__TS_P__/auth/approvals/{_e(a.get('id', ''))}{_e(_app_q(ctx))}"
     body = (f"{title}{summary}{warn}{table}"
             f"<label>{_e(t('apv.code_question'))}</label><div class=apvcode id=apvcode>{_e(a.get('match_code'))}</div>"
             f"<p class=apvmeta id=apvvia>{_e(a.get('via'))} · {_e(t('apv.left', minutes=a.get('minutes_left', 0)))}</p>"
