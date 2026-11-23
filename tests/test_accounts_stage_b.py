@@ -246,14 +246,16 @@ try:
     c4 = client(app4)
     ids = [c4.post("/auth/api/users", headers=H(key4), json={"username": f"lim{i}", "roles": ["example-member"]})
            .json()["id"] for i in range(5)]
-    assert [c4.delete(f"/auth/api/users/{i}", headers=H(key4)).status_code for i in ids[:2]] == [204, 204]
+    first_two = [c4.delete(f"/auth/api/users/{i}", headers=H(key4)).status_code for i in ids[:2]]
+    assert first_two == [204, 204], first_two
     r = c4.delete(f"/auth/api/users/{ids[2]}", headers=H(key4))
     assert r.status_code == 429 and r.json() == {"error": "limit", "error_description": "delete_per_hour"}, r.text
     assert int(r.headers["retry-after"]) == 3600 - 600 and a4.store.get_user(ids[2]) is not None
     assert "account API throttled app=example action=delete window=hour" in buf.getvalue(), buf.getvalue()
     assert any(a["event"] == "provision_throttled" and "action=delete" in a["detail"] for a in audit(a4))
     prov._now = lambda: fixed + 3600
-    assert c4.delete(f"/auth/api/users/{ids[2]}", headers=H(key4)).status_code == 204
+    r = c4.delete(f"/auth/api/users/{ids[2]}", headers=H(key4))
+    assert r.status_code == 204, r.text
     r = c4.delete(f"/auth/api/users/{ids[3]}", headers=H(key4))
     assert r.status_code == 429 and r.json()["error_description"] == "delete_per_day", r.text
     assert int(r.headers["retry-after"]) == 86400 - 600 - 3600
@@ -411,7 +413,8 @@ logging.getLogger("tinysesam").addHandler(handler)
 try:
     orphaned = auth.store.get_user_by_name("otherapp")["id"]
     assert row(orphaned)["managed_by"] == "other"
-    again_auth = TinySesam(TinySesamConfig(**config(auth.cfg.db_path)))
+    with TinySesam(TinySesamConfig(**config(auth.cfg.db_path))):
+        pass                                     # the start check runs in the constructor
 finally:
     logging.getLogger("tinysesam").removeHandler(handler)
 assert "account(s) are managed by the application other, which is not configured" in buf.getvalue(), buf.getvalue()
