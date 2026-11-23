@@ -363,7 +363,9 @@ jobs:
           image=tinysesam-caddy-gate-probe:local
           docker build --quiet --tag "$image" deploy/forward-auth/caddy-gate >/dev/null
           docker run --rm "$image" caddy version
-          docker run --rm "$image" caddy list-modules | grep -qx 'http.authentication.providers.jwt'
+          # Not `… | grep -q` under pipefail: grep leaves at the first hit, caddy then dies of a broken pipe and the step is red by chance.
+          modules=$(docker run --rm "$image" caddy list-modules)
+          grep -qx 'http.authentication.providers.jwt' <<<"$modules"
           # The gate template takes the fixed key from TS_GATE_PUBKEY (sign_key) and refuses to start without it — any valid
           # Ed25519 public key will do for validating (here 32 zero bytes).
           docker run --rm -e TS_GATE_PUBKEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= -v "$PWD/deploy/forward-auth:/t:ro" "$image" \
