@@ -28,6 +28,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   confirmation up, checks it, writes the `jti` with one `INSERT` and runs its own rule again; `--demo` starts a real
   TinySesam and the app on loopback. `tests/test_example_approvals.py` drives it against TinySesam's approval page.
 
+### Security
+
+- Role names without comma and control characters (T-85). `Remote-Groups` and the claim `ts_groups` join the roles with
+  `,` and have no escape, gate clients trim the spaces around an entry, and the header cleaning stripped C0/DEL: a role
+  `staff,admin`, `ad\x01min` or ` admin` reached the application as `admin`. One rule now, `role_invalid` (a comma,
+  C0/DEL, surrounding spaces, empty): `config_check` refuses it in `available_roles`, `signup_default_roles`, every group
+  map (also per OIDC client), `admin_delegates` (role, `roles`, `manages`) and the role of a top bar or menu link (the
+  provisioning fields and `role_levels` keep their findings, now on the same rule); `create_user`, `set_roles` and
+  `create_invite` raise `ConfigError` with `field="roles"` before writing; the admin panel answers `400`; a group map
+  changed at runtime skips such a target with a security line. An account that still holds such a role (older data, a
+  raw write) is refused at the forward check (`403`, so no gate token either) instead of being passed on changed, and
+  the start names the roles once. Nothing is rewritten.
+
 ### Changed — test kit 0.62
 
 - Test kit 0.62.0 (repokit): test scripts without a `__main__` guard run in the pre-push hook, and `nightly-repeat.yml` now comes

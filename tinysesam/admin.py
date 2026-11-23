@@ -21,7 +21,7 @@ from .errors import ConfigError, StateError
 from .router import _key_kind, _mail_base, hardened_route
 from . import _role_levels, config_check, provisioning as _provisioning, security
 from ._vocabulary import audit_line_new
-from .store import name_invalid, norm_email, valid_email
+from .store import name_invalid, norm_email, role_invalid, valid_email
 from . import dialog as _dialog
 from . import topbar as _topbar
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
@@ -135,6 +135,11 @@ class PanelActions:
             return []
         if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
             raise HTTPException(400, self.auth.t("api.invalid", reason="roles"))
+        # A comma, a control character or surrounding spaces (T-85): Remote-Groups would carry it as another role or
+        # as several — refused here, before any write, with the role named (escaped by the panel like every text).
+        for role in raw:
+            if role_invalid(role):
+                raise HTTPException(400, self.auth.t("api.role_name", role=repr(role)))
         return list(raw)
 
     def set_roles(self, request: Request, me, scope, uid: int, b: dict) -> dict:

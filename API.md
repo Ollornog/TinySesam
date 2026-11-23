@@ -649,7 +649,7 @@ Attach a custom rate-limit backend — any object with allow(key, max, window)->
 
 ### `set_roles(user_id, roles)`
 
-Replace the roles of an account.
+Replace the roles of an account. A role name with a comma, a control character or surrounding spaces raises `ConfigError` (`field="roles"`) before anything is written (T-85): `Remote-Groups` would carry it as another role or as several.
 
 ### `stepup_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
 

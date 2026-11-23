@@ -2,7 +2,7 @@
 id: T-85
 type: Task
 title: 'Role names without comma and control characters'
-status: offen
+status: erledigt
 milestone: M-2
 tags: [roles, forward-auth, gate]
 created: '2026-11-22'
@@ -18,11 +18,19 @@ with a control character loses it on the way out (`_header_value` and the claims
 from the operator's configuration or an admin (delegates only grant roles listed in `admin_delegates`), so this is no
 path for an outsider — but it turns a typo or a pasted value into another role.
 
-## To do
+## Done
 
-- Refuse a comma and C0/DEL in role names wherever roles are set or configured (`config_check` for the maps and
-  `available_roles`, `set_roles`, `apply_idp_groups`, the panel's API); an IdP group mapped to such a role is a
-  configuration error, a role arriving from an IdP is skipped with a security log line.
-- Existing accounts with such a role: a startup warning naming the role, no silent rewrite; on the way out refuse
-  rather than strip (like the account name).
-- A test that fails without the check.
+- [x] One rule, `store.role_invalid`: not a string, empty, a comma, C0/DEL or surrounding spaces (gate clients trim
+      the spaces around an entry, spec §3.3, so ` admin` would arrive as `admin`).
+- [x] `config_check`: an error in every field that names a role (`config_check.configured_roles`): `available_roles`,
+      `signup_default_roles`, the three group maps and the map per OIDC client, `admin_delegates` (role, `roles`,
+      `manages`), the role of a top bar or menu link; the provisioning allowlist, `approver_role` and the `role_levels`
+      templates keep their own findings, now on the same rule. English and German.
+- [x] Writing: `create_user`, `set_roles` and `create_invite` raise `ConfigError` (`field="roles"`) before anything is
+      written; the admin panel answers `400` naming the role (`PanelActions.roles_from`, also for approvals of
+      `tinysesam.account.set_roles`). API key and service scopes are a subset of the account's roles and need no
+      check of their own.
+- [x] Identity provider: a map target changed at runtime is skipped with a security line, the other roles apply.
+- [x] Existing data: a start warning names the roles, nothing is rewritten; the forward check refuses such an account
+      (`403`, so no gate token) instead of stripping or splitting the role.
+- [x] Tests `tests/test_role_names.py` with a mutation per check (PR description).

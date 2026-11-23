@@ -26,6 +26,7 @@ import re
 from . import _chain
 from . import _role_levels
 from . import security
+from .store import role_invalid
 
 #: Method → which config field switches it on. The same list serves the chain check.
 PROCEDURE = {
@@ -1017,6 +1018,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
                 "auth.set_mailer(...) at runtime — then this message is moot.",
                 field=slot, what=_t(config, for_what)))
 
+    _role_names(config, error)
     _roles_without_list(config, warnings)
     _admin_delegates(config, error, warnings)
     _delegates_and_app_allowlists(config, warnings)
@@ -1278,6 +1280,69 @@ def _mapped_roles(config) -> list:
     return sorted({str(r) for m in maps if isinstance(m, dict) for r in m.values() if r and r != "__admin__"})
 
 
+def configured_roles(config) -> list:
+    """Every `(field, role)` the configuration names as a role, in a stable order: `available_roles`,
+    `signup_default_roles`, the targets of the group maps (also per OIDC client, without the flag `__admin__`), the
+    delegate roles of `admin_delegates` with their `roles` and `manages`, the roles the top bar and menu links are
+    shown to, and the allowlists and `approver_role` of `apps[…].provisioning`. Non-strings are left to the shape
+    checks of each field. One list for the name check (T-85) and for what the configuration owns."""
+    out: list = []
+
+    def strings(field: str, values) -> None:
+        for v in values if isinstance(values, (list, tuple)) else []:
+            out.append((field, v))
+
+    strings("available_roles", getattr(config, "available_roles", None))
+    strings("signup_default_roles", getattr(config, "signup_default_roles", None))
+    for field, m in (("oidc_group_role_map", getattr(config, "oidc_group_role_map", None)),
+                     ("saml_group_role_map", getattr(config, "saml_group_role_map", None)),
+                     ("ldap_group_role_map", getattr(config, "ldap_group_role_map", None))):
+        if isinstance(m, dict):
+            strings(field, [r for r in m.values() if r != "__admin__"])
+    clients = getattr(config, "oidc_clients", None)
+    for key, entry in (clients.items() if isinstance(clients, dict) else []):
+        m = entry.get("group_role_map") if isinstance(entry, dict) else None
+        if isinstance(m, dict):
+            strings(f"oidc_clients[{key!r}].group_role_map", [r for r in m.values() if r != "__admin__"])
+    delegates = getattr(config, "admin_delegates", None)
+    for role, entry in (delegates.items() if isinstance(delegates, dict) else []):
+        out.append(("admin_delegates", role))
+        if isinstance(entry, dict):
+            strings(f"admin_delegates[{role!r}].roles", entry.get("roles"))
+            strings(f"admin_delegates[{role!r}].manages", entry.get("manages"))
+    for field, links in (("topbar_links", getattr(config, "topbar_links", None)),
+                         ("topbar_menu_links", getattr(config, "topbar_menu_links", None))):
+        for link in links if isinstance(links, (list, tuple)) else []:
+            rule = link[2] if isinstance(link, (list, tuple)) and len(link) == 3 else None
+            if isinstance(rule, dict) and set(rule) == {"role"}:
+                out.append((field, rule["role"]))
+    apps = getattr(config, "apps", None)
+    for app_id, entry in (apps.items() if isinstance(apps, dict) else []):
+        block = entry.get("provisioning") if isinstance(entry, dict) else None
+        if isinstance(block, dict):
+            strings(f"apps[{app_id!r}].provisioning.roles", block.get("roles"))
+            if "approver_role" in block:
+                out.append((f"apps[{app_id!r}].provisioning.approver_role", block["approver_role"]))
+    return out
+
+
+def _role_names(config, error: list) -> None:
+    """Role names that cannot travel as one role (T-85, `store.role_invalid`): a comma, a control character,
+    surrounding spaces or an empty name — wherever the configuration names a role. `Remote-Groups` and `ts_groups`
+    join roles with `,` without an escape, and a gate client trims the spaces around an entry: `staff,admin` would
+    arrive as `admin`. A group map that assigns such a role would hand it to everyone in the group. The provisioning
+    fields keep their own, more specific findings (`_provisioning_apps`, `_approver_roles`)."""
+    seen: set = set()
+    for field, role in configured_roles(config):
+        if field.startswith("apps[") or not isinstance(role, str) or (field, role) in seen:
+            continue
+        seen.add((field, role))
+        if role_invalid(role):
+            error.append(_t(config, "{field}: the role {role!r} is empty, holds a comma or a control character, or has "
+                                    "surrounding spaces — Remote-Groups would read it as another role or as several",
+                            field=field, role=role))
+
+
 def _roles_without_list(config, warnings: list) -> None:
     """Roles are in use, but `available_roles` is empty: the admin panel then offers a free-text field for roles
     instead of checkboxes (`admin.py`, `ROLES`), and a typo there silently creates a role nothing checks. The group
@@ -1481,9 +1546,6 @@ def _admin_delegates(config, error: list, warnings: list) -> None:
                                    "admin_path. Mount auth.admin_router() yourself, or delegates have no panel."))
 
 
-_CONTROL = re.compile(r"[\x00-\x1f\x7f,]")
-
-
 def _role_level_ladders(config, error: list, warnings: list) -> None:
     """Role levels (`role_levels`): the shape, every template usable, no ladder with fewer than two levels, no template
     twice in a ladder, no two templates that could claim the same role ambiguously — and, as warnings, what the panel
@@ -1510,7 +1572,7 @@ def _role_level_ladders(config, error: list, warnings: list) -> None:
             continue
         names.add(ladder["name"])
         for level in ladder["levels"]:
-            if _CONTROL.search(level["role"]):
+            if role_invalid(level["role"]):
                 error.append(_t(config, "role_levels: {ladder!r} level {level!r}: the role {role!r} holds a comma or a "
                                         "control character — Remote-Groups would read it as other roles",
                                 ladder=ladder["name"], level=level["name"], role=level["role"]))
@@ -2044,7 +2106,7 @@ def _apps(config, error: list, warnings: list) -> None:
                 error.append(_t(config, "apps[{app!r}].provisioning.roles: {role!r} is assigned by a group map — the "
                                         "next sign-in would overwrite what the application set (two sources of one "
                                         "truth)", app=app_id, role=role))
-            elif "," in role or any(ord(z) < 32 or ord(z) == 127 for z in role) or role != role.strip():
+            elif role_invalid(role):
                 error.append(_t(config, "apps[{app!r}].provisioning.roles: {role!r} contains a comma, a control "
                                         "character or surrounding spaces — Remote-Groups would read it as other "
                                         "roles", app=app_id, role=role))
@@ -2138,8 +2200,7 @@ def _approver_roles(config, raw: dict, known: set, error: list, warnings: list) 
                 error.append(_t(config, "apps[{app!r}]: the scope users:reset needs provisioning.approver_role — the "
                                         "role of the people who may confirm a reset", app=app_id))
             continue
-        if (not isinstance(role, str) or not role.strip() or role != role.strip() or "," in role
-                or any(ord(z) < 32 or ord(z) == 127 for z in role)):
+        if role_invalid(role):
             error.append(_t(config, "apps[{app!r}].provisioning.approver_role={v!r} — one role name without comma, "
                                     "control character or surrounding spaces", app=app_id, v=role))
             continue
@@ -2637,6 +2698,10 @@ def _combinations(config, error: list, warnings: list) -> None:
 # REQUIRES_MAILER / REQUIRES_BASE_URL / BASE_URL_RECOMMENDED must be a key of `_DE`, and every
 # key must be used (`config_check._DE`).
 _DE: dict[str, str] = {
+    ("{field}: the role {role!r} is empty, holds a comma or a control character, or has surrounding spaces — "
+     "Remote-Groups would read it as another role or as several"):
+        ("{field}: Die Rolle {role!r} ist leer, enthält ein Komma oder ein Steuerzeichen oder hat Leerzeichen am Rand — "
+         "Remote-Groups läse sie als andere Rolle oder als mehrere"),
     ("apps: the id 'tinysesam' is reserved for TinySesam's own approval types — name the application "
      "differently"):
         ("apps: Die Kennung 'tinysesam' ist für TinySesams eigene Freigabe-Typen reserviert — die Anwendung "

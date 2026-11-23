@@ -37,7 +37,7 @@ from . import app_passwords as _ap
 from . import config_check
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import (Store, key_kind_of, name_invalid, norm_email, norm_identifier, now as _now,
+from .store import (Store, key_kind_of, name_invalid, role_invalid, norm_email, norm_identifier, now as _now,
                     wall_now as _wall_now, read_payload, valid_email, attempt_deadline as _attempt_deadline)
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
@@ -544,6 +544,14 @@ class TinySesam:
         # Roles in accounts, but no list of known roles: the admin panel offers a free-text field for roles, and a
         # typo there silently creates a role nothing checks. The group maps are reported by config_check; this is the
         # database side.
+        # Roles stored by an older version or a raw write that cannot travel as one role (T-85): named once at start,
+        # never rewritten silently. The forward check refuses such an account until an administrator removes the role.
+        broken = [r for r in self.store.roles_in_use() if role_invalid(r)]
+        if broken:
+            security.seclog.warning(
+                "Accounts carry role names with a comma, a control character or surrounding spaces: %s. Forward auth "
+                "refuses these accounts (403) until the role is removed in the admin panel.",
+                security.for_log(", ".join(repr(r) for r in broken)))
         if config.admin_enabled and not config.available_roles:
             stored = self.store.roles_in_use()
             if stored:
@@ -766,6 +774,7 @@ class TinySesam:
             error = ConfigError("Username contains control or format characters")
             error.field = "username"
             raise error
+        self._refuse_role_names(roles)
         for slot, key_name, identifier in (("username", "username", username),
                                           ("email address", "email", email)):
             owner = self.identifier_taken(identifier) if identifier else None
@@ -900,8 +909,22 @@ class TinySesam:
         return d
 
     def set_roles(self, user_id, roles):
-        """Replace the roles of an account."""
+        """Replace the roles of an account. A role name with a comma, a control character or surrounding spaces
+        raises `ConfigError` (`field="roles"`) before anything is written (T-85): `Remote-Groups` would carry it as
+        another role or as several."""
+        self._refuse_role_names(roles)
         self.store.set_roles(user_id, roles)
+
+    @staticmethod
+    def _refuse_role_names(roles) -> None:
+        """`ConfigError` (`field="roles"`) for the first role in `roles` that cannot travel as one role
+        (`store.role_invalid`, T-85) — the one check of every path that stores roles on an account or a key."""
+        for role in roles or []:
+            if role_invalid(role):
+                error = ConfigError(f"Role name not allowed (comma, control character, surrounding spaces or empty): "
+                                    f"{role!r}")
+                error.field = "roles"
+                raise error
 
     def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None,
                          dn: bool = False):
@@ -935,6 +958,14 @@ class TinySesam:
             for key in mapping:
                 _substring_notice(key, gs, "ldap_group_role_map")
         managed = {role for role in mapping.values() if role != "__admin__"}
+        # A map target that cannot travel as one role (T-85) is never granted — `config_check` refuses it at
+        # construction, this catches a map changed at runtime. Skipped with a security line, not stripped: `ad\x01min`
+        # must not become `admin`.
+        for bad in sorted(r for r in matched if r != "__admin__" and role_invalid(r)):
+            security.seclog.warning("Role from the identity provider skipped: the role name %s holds a comma, a control "
+                                    "character or surrounding spaces (user_id=%s)", security.for_log(repr(bad)),
+                                    user_id)
+        matched = {r for r in matched if r == "__admin__" or not role_invalid(r)}
         current = set(self.store.get_roles(user_id))
         new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
         if new_roles != current:
@@ -4798,6 +4829,7 @@ class TinySesam:
         `signin_link_max_ttl_min`, the bound of every hand-over link; anything else raises `ValueError`.
         """
         base_url = self._checked_base(base_url)
+        self._refuse_role_names(roles)      # the invitee would carry them into the account (T-85)
         if ttl_min is None:
             ttl = int(self.cfg.invite_ttl_min)
         elif isinstance(ttl_min, bool) or not isinstance(ttl_min, int):
@@ -7615,7 +7647,16 @@ class TinySesam:
 
     def _forward_values(self, user) -> dict:
         """The values behind the forward-auth headers and the claims of the gate token — ONE source,
-        so that the proxy passes on the same identity on both routes."""
+        so that the proxy passes on the same identity on both routes.
+
+        An account that still holds a role which cannot travel as one role (T-85, `store.role_invalid` — stored by an
+        older version or a raw write) is refused with 403, like an account name with a control character: stripping
+        would turn `ad\\x01min` into `admin`, and a comma would split one role into two."""
+        bad = [r for r in self.user_roles(user) if role_invalid(r)]
+        if bad:
+            security.seclog.warning("forward-auth rejected: role name with a comma, a control character or surrounding "
+                                    "spaces (user_id=%s)", user["id"])
+            raise HTTPException(403, self.t("api.role_invalid"))
         return {
             "id": str(user["id"]),
             "user": str(user["username"] or ""),

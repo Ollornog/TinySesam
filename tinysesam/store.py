@@ -586,6 +586,20 @@ def name_invalid(name) -> bool:
     return any(unicodedata.category(z) in ("Cc", "Cf", "Zl", "Zp") for z in str(name or ""))
 
 
+def role_invalid(role) -> bool:
+    """Can `role` not travel as one role (T-85)? Not a string, empty, a comma, a C0 control character or DEL, or
+    surrounding spaces.
+
+    `Remote-Groups` and the claim `ts_groups` join the roles with `,` and have no escape (`spec/gate-client.md`
+    §3.3): a role `staff,admin` would reach the application as the two groups `staff` and `admin`. A control
+    character was stripped on the way out (`ad\\x01min` arrived as `admin`), and every gate client trims the spaces
+    around an entry (` admin` arrives as `admin`). Such a role is refused where roles are set or configured, and an
+    account that still holds one is refused at the forward check rather than passed on changed."""
+    if not isinstance(role, str) or not role.strip() or role != role.strip() or "," in role:
+        return True
+    return any(z < " " or z == "\x7f" for z in role)
+
+
 def norm_identifier(identifier) -> str:
     """The login identifier as the lockout counter keeps it: NFKC, trimmed, lowercase — and an
     address as canonical as `norm_email` stores it.
