@@ -227,7 +227,18 @@ def _bar(auth, ctx, current="") -> str:
     if not getattr(auth.cfg, "topbar_enabled", True):
         return ""
     ctx = ctx or {}
+    # The app frame (T-91): `render_page` puts the frame of the host a person comes from into ctx["frame"].
+    if ctx.get("frame"):
+        return (_topbar.render_frame(auth, ctx["frame"], viewer=ctx.get("viewer"), csrf=ctx.get("csrf", ""),
+                                     current=current) + _topbar.assets())
     return _topbar.render(auth, viewer=ctx.get("viewer"), csrf=ctx.get("csrf", ""), current=current) + _topbar.assets()
+
+
+def _app_q(ctx, sep: str = "?") -> str:
+    """`app=<host>` of the page's app frame (T-91) for an internal link, so the next page stays framed — empty without
+    a frame. `sep` is "?" or "&" (already HTML-escaped by the caller where needed)."""
+    frame = (ctx or {}).get("frame")
+    return f"{sep}app={_quote(frame['host'], safe='')}" if frame else ""
 
 
 def _page(auth, title, body, card=True, top="", below="", head="", ctx=None, current=""):
@@ -427,6 +438,9 @@ def _login(auth, ctx) -> str:
     # In front of an application (forward_apps[host].name, T-21) the page says what you sign in for. With a brand
     # (gate_brand) the brand stands on top and the application as its own line below.
     brand = getattr(cfg, "gate_brand", "") or ""
+    # In an app frame (T-91) the page names that application even when only `?app=` chose it.
+    if not ctx.get("app_name") and ctx.get("frame"):
+        ctx = {**ctx, "app_name": ctx["frame"]["name"]}
     if brand:
         title = t("login.for_app", name=brand)
     else:
@@ -534,14 +548,15 @@ def _account(auth, ctx) -> str:
                     f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>")
         else:
             notice = ""
-            totp = f"<a class=btnlink href='__TS_P__/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
-        sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
+            totp = (f"<a class=btnlink href='__TS_P__/auth/totp/setup{_e(_app_q(ctx))}'>"
+                    f"{_e(t('acc.totp_setup'))}</a>")
+        sections.append(f"<div class=sec><h2 id=totp>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
                         f"{notice}</div>")
 
     # Passkeys
     if "passkey" in methods:
         sections.append(
-            f"<div class=sec><h2>{_e(t('acc.passkeys'))}</h2><ul id=pklist></ul>"
+            f"<div class=sec><h2 id=passkeys>{_e(t('acc.passkeys'))}</h2><ul id=pklist></ul>"
             f"<button data-act=addpk>{_e(t('acc.passkey_add'))}</button><span id=pk_msg class=msg></span></div>")
 
     # API keys
@@ -556,7 +571,7 @@ def _account(auth, ctx) -> str:
 
     # Active sessions (always)
     sections.append(
-        f"<div class=sec><h2>{_e(t('acc.sessions'))}</h2><ul id=sesslist></ul>"
+        f"<div class=sec><h2 id=sessions>{_e(t('acc.sessions'))}</h2><ul id=sesslist></ul>"
         f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
 
@@ -593,7 +608,7 @@ def _account(auth, ctx) -> str:
     .tsmain .sec{background:var(--ts-surface);border:1px solid var(--ts-line);
          border-radius:var(--ts-radius);padding:16px;margin-bottom:14px}
     .tsmain .sec h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;
-         letter-spacing:.05em;margin:0 0 12px}
+         letter-spacing:.05em;margin:0 0 12px;scroll-margin-top:72px}
     .tsmain .sec small{text-transform:none;letter-spacing:0}
     .tsmain .sec input{margin:4px 0}
     .tsmain .sec button,.tsmain .btnlink{width:auto;display:inline-block;margin:8px 6px 0 0;padding:9px 14px}
@@ -627,7 +642,7 @@ def _account(auth, ctx) -> str:
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>{own_links}</header>"
             + "".join(sections)
             + ("" if static else _dialog.assets(auth) + _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name)).replace("__TXT__", _account_texts(auth))
-               + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RETURN_JS
+               + _revoke_js(auth, "location.pathname+'?revoke_others=1" + _app_q(ctx, "&") + "'") + _ACCOUNT_RETURN_JS
                .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
             + pkjs)
     # Account uses full width (no card) + account CSS + branding
@@ -699,7 +714,7 @@ async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Typ
   // 403 + X-TinySesam-Reauth: factor management has required a fresh confirmation since R3-3.
   // Without this switch the button failed silently once the freshness had expired.
   const re=r.headers.get('X-TinySesam-Reauth');
-  if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname);return r}
+  if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname+location.search);return r}
   return r}
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function setname(){const r=await J('__TS_P__/auth/account/username',{username:un_new.value});
@@ -1055,7 +1070,8 @@ def _revoke_js(auth, back: str) -> str:
 # executed — otherwise every foreign link to this address would end the other sessions.
 _ACCOUNT_RETURN_JS = """<script>
 if(new URLSearchParams(location.search).get('revoke_others')==='1'){
-  history.replaceState(null,'',location.pathname);
+  const keep=new URLSearchParams(location.search);keep.delete('revoke_others');
+  history.replaceState(null,'',location.pathname+(keep.toString()?'?'+keep.toString():''));
   tsConfirm(__CONFIRM__,{danger:true}).then(yes=>{if(yes)tsRevokeOthers().then(ok=>{if(ok)say('sess_msg',TXT.ended,true);loadsess()})})}
 </script>"""
 
@@ -1609,7 +1625,7 @@ def _app_passwords_section(auth, ctx, u) -> str:
         f"{_e(t('acc.ap_year') if d == 365 else t('acc.ap_days', n=d))}</option>" for d in choices)
     if ap.get("allow_unlimited"):
         options += f"<option value=0>{_e(t('acc.ap_never_expires'))}</option>"
-    return (f"<div class=sec id=apsec data-user='{_e(u['username'])}'><h2>{_e(t('acc.app_passwords'))}</h2>"
+    return (f"<div class=sec id=apsec data-user='{_e(u['username'])}'><h2 id=app-passwords>{_e(t('acc.app_passwords'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.app_passwords_hint'))}</p><ul id=aplist></ul>"
             f"<input id=ap_name maxlength=80 autocomplete=off placeholder='{_e(t('acc.ap_name'))}'>"
             f"<fieldset class=apapps><legend>{_e(t('acc.ap_for'))}</legend>{apps}</fieldset>"
@@ -1634,7 +1650,7 @@ def _devices_section(auth, ctx) -> str:
         f"<form method=post class=devrevoke action='__TS_P__/auth/oauth/devices/{int(d['id'])}/revoke'>{_cf(ctx)}"
         f"<button type=submit class=warn>{_e(t('acc.device_revoke'))}</button></form></li>"
         for d in devices) or f"<li>{_e(t('acc.devices_none'))}</li>"
-    return (f"<div class=sec><h2>{_e(t('acc.devices'))}</h2>"
+    return (f"<div class=sec><h2 id=devices>{_e(t('acc.devices'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.devices_hint'))}</p><ul id=devlist>{lines}</ul></div>")
 
 
@@ -1647,7 +1663,7 @@ def _services_section(auth, ctx) -> str:
     t = auth.t
     boxes = "".join(f"<label class=apapp><input type=checkbox name=sv_res value='{_e(r)}'"
                     f"{' checked' if i == 0 else ''}> {_e(r)}</label>" for i, r in enumerate(resources))
-    return (f"<div class=sec id=svsec><h2>{_e(t('acc.services'))}</h2>"
+    return (f"<div class=sec id=svsec><h2 id=services>{_e(t('acc.services'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.services_hint'))}</p><ul id=svlist></ul>"
             f"<input id=sv_name maxlength=80 autocomplete=off placeholder='{_e(t('acc.service_name'))}'>"
             f"<fieldset class=apapps><legend>{_e(t('acc.service_for'))}</legend>{boxes}</fieldset>"

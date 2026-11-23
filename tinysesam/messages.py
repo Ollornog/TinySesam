@@ -381,6 +381,9 @@ MESSAGES = {
         "bar.light": "Light",
         "bar.dark": "Dark",
         "bar.system": "System",
+        "bar.back": "Back to {name}",
+        "bar.via": "via {name}",
+        "bar.security": "Security",
         # --- admin panel ---
         # `admin.locale` drives `toLocaleString()` in the panel — not text, a BCP-47 tag.
         "admin.locale": "en-GB",
@@ -1063,6 +1066,9 @@ MESSAGES = {
         "bar.light": "Hell",
         "bar.dark": "Dunkel",
         "bar.system": "System",
+        "bar.back": "Zurück zu {name}",
+        "bar.via": "über {name}",
+        "bar.security": "Sicherheit",
         # --- Admin panel ---
         "admin.locale": "de-DE",
         "admin.app": "App",

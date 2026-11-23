@@ -460,6 +460,38 @@ Restrisiko: Ein Freigeber, der für die falsche Person bestätigt, oder ein Frei
 Freigeber hat der Betreiber gewählt, er bestätigt jedes Zurücksetzen mit einem Step-up und steht im Audit; die
 Inhaberin wird benachrichtigt.
 
+## App-Rahmen und das eigene Konto als Daten
+
+**App-Rahmen** (`forward_apps[host]` `home`, `links`): Die Anfrage *wählt* nur einen Rahmen (`?app=<host>`, der Host
+eines absoluten `next`/`return_url`, `app=<host>` in einem relativen `next`); Name, Zurück-Link und Links kommen allein
+aus der Konfiguration und werden beim Start darauf geprüft, dass sie auf genau diesem Host liegen (ein Pfad oder
+`https://` darauf — kein `//`, kein Benutzerteil, keine Anführungszeichen). Der Rahmen ist also keine offene
+Weiterleitung, und ein unbekannter Host antwortet byte-gleich zur Seite ohne ihn (kein Orakel der konfigurierten
+Hosts). Seiten ohne angemeldetes Konto tragen keinen Link des Rahmens. Abmelden im Rahmen ist das von TinySesam (die
+Sitzung endet), nicht das `forward_logout` der Anwendung.
+
+**Das eigene Konto lesen** (`GET /auth/account.json`, `GET /.tinysesam/account.json`, `auth.account_overview`):
+
+- **Nur eine volle Browser-Sitzung.** Ein API-Key, ein OAuth-Access-Token, ein App-Passwort und eine halbe Sitzung
+  bekommen 401: Adressen und Geräte der Sitzungen sind die Sicht eines Menschen (F-09, wie `/auth/sessions`), und der
+  Faktorstand verriete einem geleakten Token, welcher Faktor fehlt. Ein gesperrtes Konto mit gültigem Cookie bekommt
+  401. Kein Parameter wählt ein Konto; die Konten-API liest den Sicherheitsstand fremder Konten nie.
+- **Nie in der Antwort:** Adressen, Sitzungs-Hashes, Geheimnisse, Key-Hashes oder -Präfixe, rohe Browser-Kennungen,
+  IDs fremder Objekte. Eine Sitzung zeigt grob „Browser · System“.
+- **CSRF und fremde Ursprünge:** Nur GET, nichts ändert sich (POST/DELETE → 405), also kein CSRF-Token; kein
+  CORS-Header, eine Seite eines fremden Ursprungs kann es also nicht lesen; `no-store` und `Vary: Cookie` halten es aus
+  geteilten Caches. Unter `/.tinysesam/` gibt es keine schreibende Route: Dort gilt der Host der Anwendung als eigener
+  Ursprung (`_origin_ok`), und ein XSS in der Anwendung könnte sonst nach frischem Step-up Sitzungen beenden. Sitzungen
+  beenden, Programme und App-Passwörter widerrufen bleibt auf der Kontoseite, hinter den vorhandenen, auditierten und
+  per Step-up geschützten Routen.
+- **Rate und Log:** 60 Abrufe je Konto und Minute; eine Ablehnung (429, `Retry-After`) schreibt eine Zeile
+  `failed verification … reason=ratelimit_account_json`, nie `failed login` (das fail2ban-Jail bleibt still).
+  Lesen wird nicht auditiert (eigene Daten; jede Änderung schon).
+- **In einem Wrapper**, der `account_overview` an eine Anwendung in anderer Sprache weiterreicht, tragen die drei
+  Pflichten des Rezepts der Wrapper: nur für ein geprüftes `Remote-Kind: user` mit `Remote-Auth: session`, nur für die
+  `Remote-Id` dieser Anfrage, mit `no-store` beantwortet. TinySesam kann sie auf diesem Weg nicht erzwingen; der Abruf
+  von `/.tinysesam/account.json` durch den Gate-Client (Spec §8a) lässt die Prüfung bei TinySesam.
+
 ## Verwundbare Abhängigkeiten
 
 Fristen, in denen eine bekannte Schwachstelle in einer Abhängigkeit des Pakets oder des

@@ -29,7 +29,7 @@ truth. Every Python block below is executed by the repo's test suite, every name
 ## Choose the shape first
 
 1. **Your own FastAPI app** → library mode: `TinySesam(TinySesamConfig(...))`, `app.include_router(auth.router())`,
-   guards as dependencies. Recipes 1–5.
+   guards as dependencies. Recipes 1–5; your app draws its own settings page and keeps TinySesam's pages framed: 5a.
 2. **Someone else's app** (wiki, dashboard, static site, any language) → gateway mode: TinySesam answers the proxy's
    sub-request `GET /auth/forward`, the app sees `Remote-User`/`Remote-Groups`/`Remote-Email` headers. Recipe 6;
    clients without a browser (WebDAV, CalDAV, Git) get app passwords, recipe 6a.
@@ -190,6 +190,47 @@ TinySesam and back: README *Recipe: link your app's admin*, runnable as `example
 
 Replace a whole built-in page with `auth.set_template(name, fn)`; `fn(auth, ctx)` gets `ctx["nonce"]` and
 `ctx["dialog"]` (TinySesam's own dialog instead of `alert`/`confirm`/`prompt`). README: *Look & feel*.
+
+## Recipe 5a — the app provides the UI: app frame and security state
+
+There is no mode switch. When your app draws its own settings page and TinySesam keeps sign-in, step-up and the
+account page, give the app's host a frame: TinySesam's pages then show "‹ YourApp" back to `home`, your links and an
+account menu with *Security* — no TinySesam navigation. The frame is chosen by `?app=<host>` (or the host of an
+absolute `next`); every target comes from the config. Show the security state on your page from
+`auth.account_overview(…)` (the same data as `GET /auth/account.json`) and link every change to the account page and
+its anchors (`#sessions`, `#totp`, `#passkeys`, `#devices`, `#app-passwords`, `#services`):
+
+```python
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(
+    db_path="app.db",
+    base_url="https://app.example.com",
+    account_enabled=True,
+    trusted_redirect_hosts=["app.example.com"],
+    forward_apps={"app.example.com": {"name": "Example", "home": "/",
+                                      "links": [("Spaces", "/spaces")]}},
+    forward_frame_default="app.example.com",     # one app per instance: frame every TinySesam page
+))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.get("/settings/security.json")
+def security_state(request: Request):
+    user = auth.session_user(request)             # a person by browser session — never an API key
+    if user is None:
+        raise HTTPException(401)
+    view = auth.account_overview(user, request=request, app_host="app.example.com")
+    return JSONResponse(view, headers={"Cache-Control": "no-store", "Vary": "Cookie"})
+```
+
+Behind the gateway, an app in another language reads `/.tinysesam/account.json` on its own host (same-origin, through
+the proxy) instead. A wrapper that hands `account_overview` on itself must call it only for `Remote-Kind: user` with
+`Remote-Auth: session`, only for that request's `Remote-Id`, and answer `no-store`. README: *Two ways to use
+TinySesam*.
 
 ## Recipe 6 — a gate in front of any app (forward auth)
 

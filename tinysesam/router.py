@@ -174,7 +174,9 @@ def build_router(auth) -> APIRouter:
         a voluntary setup (full session) goes back to the account page, if it is on. The mandatory
         setup under the chain keeps the usual fallback (`login_redirect`)."""
         if not next_ and cfg.account_enabled and auth.session_user(request):
-            return auth.browser_path(request, "/auth/account")
+            # …in the app frame it came in with (T-91).
+            app = auth._frame_app(request)
+            return auth.browser_path(request, "/auth/account") + (f"?app={_q(app)}" if app else "")
         return auth.safe_next(next_, request)
 
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
@@ -1494,6 +1496,16 @@ def build_router(auth) -> APIRouter:
             s = auth._gate_session(request, host)
             return _topbar_json(auth._account_of_session(s) if s else None, request)
 
+        @r.get("/.tinysesam/account.json")
+        def gate_account_json(request: Request):
+            """The own account as data on the APPLICATION'S host (T-91), like `/.tinysesam/topbar.json`: fetched
+            same-origin by the application's page, the session via the own cookie or this host's connection (T-26).
+            The links carry `app=<host>` when the host has an app frame. Read only — no writing route under
+            `/.tinysesam/`, where the application's host counts as an own origin."""
+            host = _gate_host_or_404(request)
+            s = auth._gate_session(request, host)
+            return _account_json(auth._account_of_session(s) if s else None, request, host)
+
         @r.get("/.tinysesam/after-logout", response_class=HTMLResponse)
         def gate_after_logout(request: Request):
             """Return path from the provider after signing out — triggered by TinySesam or by the
@@ -1747,17 +1759,21 @@ def build_router(auth) -> APIRouter:
             if (cfg.pin_enabled and (cfg.pin_login or "pin" in _chain.factors(cfg.login_chain))
                     and "pin" not in methods):
                 methods.append("pin")
+            # One source (T-91): the page reads the state from `account_overview`, the same function behind
+            # `/auth/account.json` — page and data cannot drift apart.
+            view = auth.account_overview(u) or {}
+            sign_in = view.get("sign_in") or {}
+            totp = sign_in.get("totp") or {}
             return auth.render_page("account", request=request, user=u, methods=methods,
                                     # B-10: without a password the page offers to set one, without the
                                     # field for the current one (not with a directory: `set_initial_password`).
-                                    password_initial=not (auth.store.get_password_hash(u["id"]) or cfg.ldap_enabled),
+                                    password_initial=sign_in.get("password") == "unset",
                                     # A directory account without a local password changes it in the directory.
-                                    password_directory=bool(cfg.ldap_enabled
-                                                            and not auth.store.get_password_hash(u["id"])),
-                                    has_totp=auth.store.has_confirmed_totp(u["id"]),
-                                    recovery_left=auth.recovery_codes_remaining(u["id"]),
+                                    password_directory=sign_in.get("password") == "directory",
+                                    has_totp=bool(totp.get("enabled")),
+                                    recovery_left=totp.get("recovery_left"),
                                     recovery_warn=auth._RECOVERY_WARN_THRESHOLD,
-                                    has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
+                                    has_pin=bool(sign_in.get("pin")),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
                                     # The link to the panel: administrators and delegated admins (T-74).
                                     admin_panel=auth._admin_panel_visible(u),
@@ -1856,12 +1872,10 @@ def build_router(auth) -> APIRouter:
         # (ASVS 5.0 7.5.2 demands it only for ending), but a real session.
         auth.require_session(request, u)
         cur = auth._session_from_request(request)
-        cur_tok = cur["token_hash"] if cur else None
-        out = []
-        for s in auth.store.list_sessions(u["id"]):
-            out.append({"created_at": s["created_at"], "ip": s["ip"], "method": s["method"],
-                        "user_agent": (s["user_agent"] or "")[:120], "current": s["token_hash"] == cur_tok})
-        return out
+        # One source with `account_overview` (T-91): the same rows, here with address and browser string.
+        return [{"created_at": s["created_at"], "ip": s["ip"], "method": s["method"], "user_agent": s["user_agent"],
+                 "current": bool(s["current"])}
+                for s in auth._own_session_rows(u["id"], cur["token_hash"] if cur else None)]
 
     @r.post("/auth/sessions/revoke-after-login")
     async def sessions_revoke_after_login(request: Request):
@@ -2011,6 +2025,30 @@ def build_router(auth) -> APIRouter:
     @r.get("/auth/topbar.json")
     def topbar_json(request: Request):
         return _topbar_json(auth.session_user(request), request)
+
+    # ---------- The own account as data (T-91) ----------
+    def _account_json(viewer, request: Request, app_host: str = ""):
+        """The account page's state for the account of this request's FULL browser session — an API key, an OAuth
+        token, an app password or a half session is "not signed in" (401). No parameter chooses an account. Like the
+        bar: `no-store` + `Vary: Cookie`, no CORS header (another origin's page cannot read it), read only. 60 reads
+        per account and minute (`_ACCOUNT_JSON_PER_MINUTE`); a refusal is a `failed verification` line, never a
+        `failed login` (the fail2ban jail stays quiet). Reading is not audited — the own data, and every change goes
+        through the audited routes of the account page."""
+        headers = {"Cache-Control": "no-store", "Vary": "Cookie"}
+        if not viewer:
+            return JSONResponse({"authenticated": False, "signed_in": False}, 401, headers=headers)
+        if not auth.rl.allow(f"account_json:{int(viewer['id'])}", auth._ACCOUNT_JSON_PER_MINUTE, 60):
+            auth._rejected(viewer["username"], auth.client_ip(request), "ratelimit_account_json", login=False)
+            return JSONResponse({"detail": auth.t("api.too_many")}, 429, headers={**headers, "Retry-After": "60"})
+        base = (security.normalize_base(str(cfg.base_url or "").strip()) or "").rstrip("/") or auth._prefix(request)
+        view = auth.account_overview(viewer, base=base, app_host=app_host or None, request=request)
+        if view is None:
+            return JSONResponse({"authenticated": False, "signed_in": False}, 401, headers=headers)
+        return JSONResponse({"signed_in": True, **view}, headers=headers)
+
+    @r.get("/auth/account.json")
+    def account_json(request: Request):
+        return _account_json(auth.session_user(request), request)
 
     # ---------- OIDC (only if enabled) ----------
     if auth.oidc:

@@ -384,6 +384,9 @@ try:
         auth.cfg.forward_headers = {}
     st, h, a = request(NG, "/.tinysesam/topbar.json", "app.example.com", cookies=SESSION)
     assert st == 200 and a and a.get("signed_in") is True and not a.get("app"), (st, a)
+    st, h, a = request(NG, "/.tinysesam/account.json", "app.example.com", cookies=SESSION)       # T-91
+    assert st == 200 and a and a.get("signed_in") is True and a.get("account") and not a.get("app"), (st, a)
+    assert h.get("Cache-Control") == "no-store", dict(h)
     st, h, a = request(NG, "/.tinysesam/logout?scope=app", "app.example.com", cookies=throwaway_session())
     assert st in (200, 303) and not (a and a.get("app")), ("sign-out reached the application", st, a)
     log = logs_of(ng)
@@ -433,6 +436,9 @@ try:
     assert not leaked, ("the open part passes the client's identity to PHP", leaked)
     st, h, a = request(NGP, "/.tinysesam/topbar.json", "example.com", cookies=SESSION)
     assert st == 200 and a and a.get("signed_in") is True and not a.get("php"), (st, a)
+    st, h, a = request(NGP, "/.tinysesam/account.json", "example.com", cookies=SESSION)       # T-91
+    assert st == 200 and a and a.get("signed_in") is True and a.get("account") and not a.get("php"), (st, a)
+    assert h.get("Cache-Control") == "no-store", dict(h)
     log = logs_of(ngp)
     assert API_KEY not in log and API_KEY[:12] not in log, "a credential in nginx's log"
     ok("nginx + PHP (FastCGI): anonymous → redirect; session and API key → $_SERVER carries TinySesam's Remote-* incl. "
@@ -468,6 +474,9 @@ try:
         auth.cfg.forward_headers = {}
     st, h, a = request(TR, "/.tinysesam/topbar.json", "app.example.com", cookies=SESSION)
     assert st == 200 and a and a.get("signed_in") is True and not a.get("app"), (st, a)
+    st, h, a = request(TR, "/.tinysesam/account.json", "app.example.com", cookies=SESSION)       # T-91
+    assert st == 200 and a and a.get("signed_in") is True and a.get("account") and not a.get("app"), (st, a)
+    assert h.get("Cache-Control") == "no-store", dict(h)
     st, h, a = request(TR, "/.tinysesam/logout?scope=app", "app.example.com", cookies=throwaway_session())
     assert st in (200, 303) and not (a and a.get("app")), ("sign-out reached the application", st, a)
     log = logs_of(tr)
