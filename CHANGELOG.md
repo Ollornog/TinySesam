@@ -4,6 +4,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-11-23
+
+Who needs this release: applications that manage their own accounts (account API with deletion, adopt/release, an
+access reset confirmed by a team admin), that want a person to confirm a dangerous action (approvals, stages A and B),
+or that bring their own UI and want TinySesam's pages framed as theirs (app frame, account overview). Nothing changes
+without the new configuration blocks. Schema 21 → 24 (additive; migration runs at start, rollback in
+`docs/OPERATIONS.md`) — back up the database before upgrading.
+
 ### Added — approvals for application actions
 
 - Approvals, stage B (T-89, draft "approvals" §3–§6, §11 B): an application in `apps` with an `approvals` block asks
