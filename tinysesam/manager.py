@@ -945,11 +945,12 @@ class TinySesam:
         if actor is None:
             return None
         try:
-            if actor["is_admin"]:
-                return str(actor["username"])
+            admin, name = actor["is_admin"], actor["username"]
         except (KeyError, IndexError, TypeError):
-            pass
-        raise RoleError("forbidden", "Only an administrator changes the role catalog")
+            admin, name = False, None         # not an account row: no administrator either
+        if not admin:
+            raise RoleError("forbidden", "Only an administrator changes the role catalog")
+        return str(name)
 
     def create_role(self, name: str, actor=None) -> dict:
         """Add a role to the catalog, so the admin panel offers it without a change of the configuration. A
