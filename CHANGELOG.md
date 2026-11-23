@@ -4,6 +4,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.29.1] — 2026-11-23
+
+Who needs this release: users of the Go gate client, who can now pin `clients/go@vX.Y.Z` instead of a pseudo-version;
+operators of the account API (panel hint for accounts no application can take over); everyone running a gate client
+with a key set URL — it now refuses the approval key set. Proxy templates and the docs explain why the top bar and the
+account overview are best fetched in the browser. No schema change, no configuration change.
+
 ### Added
 
 - Panel hint (T-90): on the account page of an unmanaged account that no application with the account API could take
