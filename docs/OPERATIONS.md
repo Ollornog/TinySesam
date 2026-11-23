@@ -1156,6 +1156,12 @@ schema change**: it writes `delete_after` and `managed_by`.
   `tinysesam accounts release --db auth.db --app example [--user NAME] [--dry-run]`,
   `tinysesam accounts list --db auth.db [--app example] [--config myapp:cfg]`. Audit `account_adopted` /
   `account_released` under the account (`source=cli` or `actor=<admin>`). Releasing ends a pending deletion.
+  `--config module:attr` (here and for `roles` and `diagnose`) points at a `TinySesamConfig` **or** at your
+  `TinySesam` object (`auth = TinySesam(...)` → `--config myapp:auth`; its `cfg` is taken) or a function returning
+  one; any other type stops with the type named.
+- **Panel hint:** when applications with the account API are configured, the account page shows a note on an
+  unmanaged account that no application could take over (no role, or roles outside every allowlist — the rule of
+  "Take over for …"). Only a note, nothing is blocked; delegates do not see it.
 - **The application's sign-in links** (creation, `signin-link`, access reset) carry the application's id: the door
   refuses one once the account holds a role outside the allowlist, has become administrator or delegate, is released,
   or someone signed in to it after the link was issued — audit `magic_app_link_refused` under the account. So making
@@ -1235,6 +1241,7 @@ nothing — accounts hold their roles in `users.roles` as before.
   it owns):
 
   ```
+  # --config: a TinySesamConfig or a TinySesam object (its configuration is taken)
   tinysesam roles list   --db auth.db [--config mod:attr]
   tinysesam roles create --db auth.db --config mod:attr editor
   tinysesam roles delete --db auth.db --config mod:attr editor

@@ -190,6 +190,25 @@ code, out = run(main, ["diagnose", "--config", f"{mod}:missing_name"])
 assert code == 0 and "Could not be loaded: AttributeError" in out and leaks(out) == [], out
 ok("CLI: --config module:attr, link at the end, no canary; a broken --config is reported by type")
 
+# `--config` also takes a TinySesam object (its `cfg`) or a function returning one; any other type is named in the error.
+obj_mod = os.path.join(tmp, f"{CANARY}obj.py")
+with open(obj_mod, "w", encoding="utf-8") as fh:
+    fh.write("from tinysesam import TinySesam, TinySesamConfig\n"
+             f"auth = TinySesam(TinySesamConfig(db_path={os.path.join(tmp, CANARY + 'obj.db')!r}, "
+             "base_url='https://obj.example'))\n"
+             "def make():\n    return auth\n"
+             "number = 5\n")
+for attr in ("auth", "make"):
+    got = D._load_config(f"{obj_mod}:{attr}")
+    assert isinstance(got, TinySesamConfig) and got.base_url == "https://obj.example", (attr, got)
+try:
+    D._load_config(f"{obj_mod}:number")
+except TypeError as e:
+    assert "int" in str(e) and "TinySesam" in str(e), str(e)
+else:
+    raise AssertionError("an int was taken as a configuration")
+ok("--config takes a TinySesamConfig, a TinySesam object or a factory; another type is refused with its name")
+
 # The gateway reads its environment.
 _env = {
     "TINYSESAM_OIDC_ISSUER": f"https://{CANARY}gw.example/realms/{CANARY}realm",

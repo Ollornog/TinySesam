@@ -6,6 +6,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Panel hint (T-90): on the account page of an unmanaged account that no application with the account API could take
+  over (no role, or roles outside every allowlist), a note says so — computed by the rule of "Take over for …"
+  (`provisioning.no_app_can_adopt` over `adopt_refusal`), shown to administrators only, nothing is blocked.
+- `--config module:attr` (`accounts`, `roles`, `diagnose`) is documented to take a `TinySesam` object as well as a
+  `TinySesamConfig` (it already did); a wrong type now names the type in the error. Pinned by `tests/test_diagnose.py`.
+
 - The Go gate client is published as a Go module: every release tags `clients/go/vX.Y.Z` on the commit of `vX.Y.Z`
   (`go get github.com/Ollornog/TinySesam/clients/go@v0.29.0` — `v0.29.0` was tagged by hand). `release.yml` sets the tag
   itself as its last step, after the GitHub release, PyPI, both images and their attestations (jobs `go-module-plan`,

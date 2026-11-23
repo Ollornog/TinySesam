@@ -64,7 +64,8 @@ def run(argv: list, *, prog: str, config_loader: Optional[Callable[[], Any]] = N
         p.add_argument("--db", default="", help="the database (default: db_path of the configuration)")
         if config_loader is None:
             p.add_argument("--config", default="", required=name == "adopt",
-                           help="your configuration as module:attr or file.py:attr (needed for adopt: the allowlist)")
+                           help="your configuration as module:attr or file.py:attr — a TinySesamConfig or a TinySesam "
+                                "(its configuration is taken); needed for adopt: the allowlist")
         if name in ("list", "adopt", "release"):
             p.add_argument("--app", default="", required=name != "list", help="the application id (apps[…])")
         if name in ("adopt", "release"):

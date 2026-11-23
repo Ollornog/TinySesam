@@ -58,6 +58,12 @@ application.
       delegate (warning). Tests `tests/test_reset_access.py` (six rows of the table with mutations, the straw-account
       attack end to end), browser test of the page.
 
+## Follow-up — panel hint
+
+- [x] The account page notes an unmanaged account that no application could take over (no role, or roles outside
+      every allowlist): `provisioning.no_app_can_adopt` over `adopt_refusal`, administrators only, no block.
+- [x] `--config` of the CLI documented for a `TinySesam` object as well (`accounts`, `roles`, `diagnose`).
+
 ## Later
 
 - [ ] Gateway variable `TINYSESAM_APPS` — together with the switches the gateway preset turns off (API keys, sign-in

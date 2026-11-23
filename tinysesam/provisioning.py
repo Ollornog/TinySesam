@@ -184,6 +184,18 @@ def adopt_refusal(app: dict, target, target_roles, delegate_roles=frozenset()) -
     return None
 
 
+def no_app_can_adopt(apps: dict, target, target_roles, delegate_roles=frozenset()) -> bool:
+    """Should the panel warn that NO configured application could take `target` over? True when applications with the
+    account API exist, the account is unmanaged, no administrator, owner or service account (those are no candidates
+    anyway), and `adopt_refusal` refuses it for every one of them — the same rule as the panel action and
+    `tinysesam accounts adopt`, so hint and behaviour cannot drift apart. A hint only, never a block. Pure."""
+    if not apps or target is None or target["managed_by"]:
+        return False
+    if any(target[w] for w in ("is_admin", "is_owner", "is_service")):
+        return False
+    return all(adopt_refusal(a, target, target_roles, delegate_roles) is not None for a in apps.values())
+
+
 def deletion_due(row, now: Optional[int] = None) -> bool:
     """Has the grace period of a deletion by an application run out? Then the account is gone for the application
     (404) even before the cleanup removes it."""

@@ -2089,6 +2089,7 @@ async def _provisioning_panel(p):
     orphan = t33.create_user("app-old", roles=["example-member"])
     st._exec("UPDATE users SET managed_by='retired' WHERE id=?", (orphan,))
     cand = t33.create_user("app-cand", roles=["example-editor"])
+    bare = t33.create_user("app-bare", roles=[])
     token, _ = t33.start_session(boss, "password")
     await p.cmd("Network.clearBrowserCookies")
     await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
@@ -2132,6 +2133,13 @@ async def _provisioning_panel(p):
     await open_admin(f"#user/{orphan}")
     await p.until("!!document.querySelector('dd.managed')", "no 'Managed by' for the retired application")
     assert "(not configured)" in await p.js("document.querySelector('dd.managed').innerText")
+    # The hint: an account without a role, no application can take it over (a note, no block); a fitting one has none.
+    await open_admin(f"#user/{bare}")
+    await p.until("!!document.querySelector('.appcard .noappfits')", "no hint for an account without a role")
+    assert "No application can take over" in await p.js("document.querySelector('.appcard .noappfits').innerText")
+    await open_admin(f"#user/{cand}")
+    await p.until("!!document.querySelector('.appcard [data-on=adopt]')", "no 'Take over for' for a fitting account")
+    assert await p.js("!document.querySelector('.appcard .noappfits')"), "a fitting account got the hint"
     # Take over for … and release.
     await open_admin(f"#user/{cand}")
     await p.until("!!document.querySelector('.appcard [data-on=adopt]')", "no 'Take over for'")
@@ -2147,7 +2155,7 @@ async def _provisioning_panel(p):
         await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=844, deviceScaleFactor=1, mobile=True)
         for theme in ("light", "dark"):
             await p.js(f"localStorage.setItem('themeMode','{theme}');true")
-            for where, name in (("", "list"), (f"#user/{managed}", "account")):
+            for where, name in (("", "list"), (f"#user/{managed}", "account"), (f"#user/{bare}", "hint")):
                 await open_admin(where)
                 await asyncio.sleep(0.3)
                 assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")

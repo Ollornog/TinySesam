@@ -299,6 +299,11 @@ assert any(a["event"] == "account_adopted" and a["username"] == "plain" and "sou
 code, out, err = run_cli(["adopt", "--db", auth.cfg.db_path, "--config", f"{cfg_file}:cfg", "--app", "example",
                           "--user", "bare"])
 assert "skipped" in out and "no_roles" in out and row(bare)["managed_by"] is None, out
+with open(cfg_file, "a", encoding="utf-8") as fh:
+    fh.write("wrong = 5\n")
+code, out, err = run_cli(["adopt", "--db", auth.cfg.db_path, "--config", f"{cfg_file}:wrong", "--app", "example",
+                          "--user", "bare"])
+assert code == 1 and "is a int" in err and "TinySesam" in err, (code, err)
 code, out, err = run_cli(["adopt", "--db", auth.cfg.db_path, "--config", f"{cfg_file}:cfg", "--app", "example"])
 assert code == 2 and "never takes every account" in err, (code, err)
 assert prov.adopt_refusal(prov.normalize_apps(auth.cfg)["example"], row(mixed), ["example-member", "staff"]) == \
@@ -328,6 +333,21 @@ lead_c = session(auth, app, team_lead)
 seen = [u["username"] for u in lead_c.get(f"{A}/api/users").json()]
 assert "scoped" in seen and "unscoped" not in seen and "plain" in seen and "mixed" not in seen, seen
 assert lead_c.get(A).text.count('const APPS=[];') == 1, "a delegate gets the application list"
+
+# The hint "no application could take this account over" (panel, administrators only): the rule of the Take-over action.
+lst = {u["username"]: u for u in admin_c.get(f"{A}/api/users").json()}
+assert lst["bare"]["no_app_fits"] is True, "an account without a role gets no hint"
+assert lst["mixed"]["no_app_fits"] is True and lst["lead"]["no_app_fits"] is True, "foreign role / delegate: no hint"
+assert lst["scoped"]["no_app_fits"] is False and lst["plain"]["no_app_fits"] is False, "a fitting/managed account is flagged"
+assert lst["boss"]["no_app_fits"] is False and lst["machine"]["no_app_fits"] is False, "admin/service are no candidates"
+assert lst["orphan"]["no_app_fits"] is False, "an account of a retired application is managed already"
+for u in lead_c.get(f"{A}/api/users").json():
+    assert u["no_app_fits"] is False, "a delegate must not get the hint"
+assert "no_app_fits" in page and "noappfits" in page
+assert prov.no_app_can_adopt({}, row(bare), []) is False, "no applications configured: no hint"
+assert prov.no_app_can_adopt(prov.normalize_apps(auth.cfg), row(bare), []) is True
+ok("6b: hint no_app_fits — no role, foreign role, delegate: yes; fitting, managed, admin, service, delegate view: no; "
+   "no applications: no")
 ok("6: the panel lists managed_by with the application's name, an unconfigured one as such; a delegate sees an "
    "application's account only when all its roles are in scope, and no application list")
 

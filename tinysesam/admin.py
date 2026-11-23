@@ -360,7 +360,7 @@ def build_admin_router(auth) -> APIRouter:
                                                                 pa.owner_protection, pa.log)
     other_active_admins, roles_from = pa.other_active_admins, pa.roles_from
 
-    def uview(u, apps=None):
+    def uview(u, apps=None, hint=False):
         managed = u["managed_by"] or None
         app = (apps or {}).get(managed) if managed else None
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -378,7 +378,11 @@ def build_admin_router(auth) -> APIRouter:
                 # configured, and the end of a pending deletion by it.
                 "managed_by": managed,
                 "managed_name": _provisioning.app_name(app, managed, cfg.lang) if managed else None,
-                "managed_known": app is not None, "delete_after": u["delete_after"]}
+                "managed_known": app is not None, "delete_after": u["delete_after"],
+                # Panel hint, administrators only (a delegate gets no application data): no configured application
+                # could take this account over (`provisioning.no_app_can_adopt`, the rule of the Take-over action).
+                "no_app_fits": bool(hint and _provisioning.no_app_can_adopt(apps or {}, u, auth.user_roles(u),
+                                                                           pa.delegate_roles()))}
 
     def kview(k):
         return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
@@ -392,7 +396,7 @@ def build_admin_router(auth) -> APIRouter:
         apps = auth._provisioning().apps()
         # A delegate sees only the accounts in scope — not the names and addresses of everyone else (T-74). An
         # application's account is no exception: in scope only when all its roles are (`may_manage`).
-        return [uview(u, apps) for u in auth.store.list_users() if scopes is None or visible(u, me, scopes)]
+        return [uview(u, apps, scopes is None) for u in auth.store.list_users() if scopes is None or visible(u, me, scopes)]
 
     @ar.post("/api/users")
     async def user_create(request: Request):
@@ -1021,7 +1025,7 @@ _KEYS = (
     "search filter_roles level_none incomplete incomplete_hint roles_other roles_unknown all_accounts "
     "sec.profile sec.access sec.signin sec.danger f.display_name created password set_password pw_hint "
     "issue_link link_hint disable_hint owner_hint delete_hint no_keys unavailable unavailable_reason "
-    "app_badge managed_by not_configured all_apps no_app app_section adopt adopt_hint release release_hint "
+    "app_badge managed_by not_configured all_apps no_app app_section adopt adopt_hint no_app_fits release release_hint "
     "confirm.release deleting deleting_until restore restore_hint "
     "roles_btn role_filter show_all roles_title roles_hint new_role role_add catalog_count src_config src_catalog "
     "src_both src_accounts accounts_n take_over delete_role why_in_use why_in_ladder role_invalid_mark entry_hint "
@@ -1396,6 +1400,7 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
   // The account API (stage B), administrators only: cancel a deletion by the application, release the account, or take
   // it over for an application (the server applies the rule and asks for a step-up).
   const appl=admin&&!svc?[
+    u.no_app_fits?`<div class="line noappfits" role=note><div class=what><div class=muted>${esc(L.no_app_fits)}</div></div></div>`:"",
     u.delete_after?line(L.deleting_until.replace("{date}",dt(u.delete_after)),L.restore_hint,`<button class=ok ${on("restore",u.id)}>${esc(L.restore)}</button>`):"",
     u.managed_by?line(L.release,L.release_hint,`<button class=sec ${on("release",u.id)}>${esc(L.release)}</button>`):"",
     !u.managed_by&&APPS.length&&!u.is_admin&&!u.is_owner?line(L.adopt,L.adopt_hint,`<span class=row><select id=ua aria-label="${esc(L.adopt)}">${APPS.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select><button class=sec ${on("adopt",u.id)}>${esc(L.adopt)}</button></span>`):""].join(""):"";
