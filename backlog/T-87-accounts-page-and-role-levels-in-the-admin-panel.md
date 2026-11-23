@@ -34,5 +34,6 @@ flat checkbox wall.
 
 ## Later
 
-- The role catalog (roles in the database) feeds `_role_levels.entries` with `available_roles` plus the catalog.
-- Role names without comma and control characters everywhere: [T-85](T-85-role-names-without-comma.md).
+- Done: the role catalog feeds `_role_levels.entries` with `available_roles` plus the catalog
+  ([T-92](T-92-role-catalog-roles-in-the-database-for-the-admin-panel.md)).
+- Done: role names without comma and control characters everywhere ([T-85](T-85-role-names-without-comma.md)).

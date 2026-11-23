@@ -1224,6 +1224,35 @@ handed out. The confirmation itself is never stored.
   if you go back for good. The approval key stays in `key_material` (`DELETE FROM key_material WHERE
   purpose='approval'` removes it; a version without stage B never reads it).
 
+## Role catalog: table and rollback (schema 25)
+
+Schema 25 **adds** the table `role_catalog` (`name`, `name_compare` = the casefold for the uniqueness check, `created_at`,
+`created_by`); nothing existing changes. Administrators fill it in the panel (*Accounts → Roles*), with
+`auth.create_role`, or from the command line; the panel then offers these roles next to `available_roles`. It grants
+nothing — accounts hold their roles in `users.roles` as before.
+
+- **Command line** (works on the database file, starts no TinySesam; changing needs the configuration, which says what
+  it owns):
+
+  ```
+  tinysesam roles list   --db auth.db [--config mod:attr]
+  tinysesam roles create --db auth.db --config mod:attr editor
+  tinysesam roles delete --db auth.db --config mod:attr editor
+  ```
+
+- **Deleting** is refused while anything holds or waits for the role: accounts, API key scopes (not revoked, not
+  expired), OAuth service scopes, open invitations and pairing codes, pending approvals that would add it. Remove it
+  there first; nothing cascades. A role that is one level of a role level entry goes with the whole entry (panel).
+- **Start messages:** a catalog row with a comma, a control character or surrounding spaces (written by hand; never
+  offered); a catalog role the configuration names too (redundant — delete the row, the role stays known); a role
+  level ladder without an entry or an entry missing a level role among the known roles.
+- **Audit events:** `role_created`, `role_deleted` (`name=` percent-encoded, `via=panel|cli|code`, `entry=` for a role
+  level entry) and `role_delete_refused` (`where=users|keys|services|links|approvals`).
+- **Rollback:** an older version opens the file with the "newer schema version" warning and ignores the table: its
+  panel no longer offers the catalog roles, accounts keep them and show them as roles outside the configuration.
+  Nothing is lost or granted. No SQL is needed; `DROP TABLE role_catalog` removes the rows if you go back for good
+  (list them first with `tinysesam roles list` and put the ones you need into `available_roles`).
+
 ## Sign-in methods and their strength
 
 **By default TinySesam is single-factor:** a password alone signs in completely. A second

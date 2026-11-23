@@ -1,7 +1,11 @@
 """Admin panel: access protection, user/service/key management, blocking/unblocking users,
 sessions, hardening, update, audit."""
 import os
+import sys
 import tempfile, os
+# The package of THIS tree, not one installed elsewhere (an editable install of another working tree): run directly, as
+# the pre-push hook does, the suite otherwise tested that tree's code.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tinysesam import TinySesam, TinySesamConfig
@@ -620,13 +624,21 @@ _hd.emit = lambda rec: _lines.append(rec.getMessage())
 _sec.seclog.addHandler(_hd)
 try:
     TinySesam(TinySesamConfig(db_path=_rdb, cookie_secure=False)).close()
-    assert any("available_roles is empty" in z and "editors, viewers" in z for z in _lines), _lines
+    assert any("available_roles and the role catalog are empty" in z and "editors, viewers" in z for z in _lines), _lines
     _lines.clear()
     TinySesam(TinySesamConfig(db_path=_rdb, cookie_secure=False, available_roles=["editors", "viewers"])).close()
-    assert not any("available_roles is empty" in z for z in _lines), _lines
+    assert not any("role catalog are empty" in z for z in _lines), _lines
+    # A filled role catalog counts as a list as well (T-92).
+    _rc = TinySesam(TinySesamConfig(db_path=_rdb, cookie_secure=False))
+    _rc.create_role("editors")
+    _rc.close()
+    _lines.clear()
+    TinySesam(TinySesamConfig(db_path=_rdb, cookie_secure=False)).close()
+    assert not any("role catalog are empty" in z for z in _lines), _lines
 finally:
     _sec.seclog.removeHandler(_hd)
-print("  ✓ roles stored in accounts, available_roles empty → one warning at start naming them; none with the list")
+print("  ✓ roles stored in accounts, available_roles and catalog empty → one warning at start naming them; none with a "
+      "list")
 
 os.remove(db)
 print("\nADMIN-PANEL OK ✅")

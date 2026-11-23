@@ -6,6 +6,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Role catalog (T-92, schema 25): administrators add roles in the panel (*Accounts → Roles*), with
+  `auth.create_role(name)` or `tinysesam roles create`, and the panel offers them next to `available_roles` — as
+  checkboxes and as role level entries ("add entry" creates every level role at once). It grants nothing; the
+  configuration stays the truth (a role it names, `admin` and `__admin__` cannot be added). A role is deleted only when
+  no account, key or service scope, open invitation or pairing code and no pending approval uses it — checked and
+  deleted in one transaction, nothing cascades. The account count links to the account list filtered by exactly that
+  role. New: `TinySesam.create_role`, `delete_role`, `known_roles`, `role_catalog`, `role_usage`, `RoleError` (tier B),
+  routes `<admin>/api/roles…`, audit events `role_created`, `role_deleted`, `role_delete_refused`. Rollback:
+  `docs/OPERATIONS.md`.
+
 - Approval helpers in every gate client (T-89 stage B part 2, `spec/approval-token.md`): Go
   `NewApprovalVerifier(…).Verify(ctx, token, ApprovalExpect, JTIStore)`, Rust `approval::ApprovalVerifier` (and
   `ApprovalJwksVerifier` with the feature `jwks`; `check_at` + `Checked::accept` for an async store), JS/TS
@@ -40,6 +50,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   changed at runtime skips such a target with a security line. An account that still holds such a role (older data, a
   raw write) is refused at the forward check (`403`, so no gate token either) instead of being passed on changed, and
   the start names the roles once. Nothing is rewritten.
+
+### Changed
+
+- The role level warnings "ladder without entry" and "entry missing a level role" moved from `config_check` to the
+  start, where the role catalog is known (`config_check.ladder_coverage`); `validate()` no longer reports them.
+- The start warning about roles on accounts without a list of known roles now counts the role catalog too.
 
 ### Changed — test kit 0.62
 

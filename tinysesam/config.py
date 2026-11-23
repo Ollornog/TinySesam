@@ -71,14 +71,16 @@ class TinySesamConfig:
     # "exact" (default, safe) or "substring" (the old substring comparison, on request only).
     # With "exact", LDAP compares a memberOf DN by its parts: the whole DN, "cn=staff" or "staff".
     group_match: str = "exact"
-    # Known roles/groups: the admin panel offers them as checkboxes (empty = free-text fallback).
+    # Known roles/groups: the admin panel offers them as checkboxes, together with the role catalog administrators fill
+    # in the panel (README "Role catalog"); both empty = free-text fallback. Every role the configuration refers to
+    # elsewhere (delegates, allowlists) belongs here. No comma, control character or surrounding spaces (T-85).
     available_roles: list[str] = field(default_factory=list)
     # Role levels: ladders the admin panel offers as ONE choice per entry instead of single checkboxes, e.g.
     # `[{"name": "collections", "label": "Collections", "levels": [
     #   {"name": "read", "role": "coll:{1}-read"}, {"name": "write", "role": "coll:{1}"}]}]`.
     # Levels lowest first, each adds one role template with `{1}`; a level stores its role and every role below it.
-    # The entries (`{1}`) come from `available_roles`. A way to pick roles, not a role hierarchy: headers, gate token
-    # and key scopes carry exactly the stored roles. See README, "Role levels".
+    # The entries (`{1}`) come from `available_roles` and the role catalog. A way to pick roles, not a role hierarchy:
+    # headers, gate token and key scopes carry exactly the stored roles. See README, "Role levels".
     role_levels: list = field(default_factory=list)
     # IdP group → local role (set on OIDC/SAML/LDAP login). Target "__admin__" = admin flag (grant only).
     # Compared according to `group_match` (default exact). Managed roles are synchronised on each login.

@@ -1800,20 +1800,49 @@ cfg = TinySesamConfig(
 
 - **Jede Stufe fügt eine Rollenvorlage** mit `{1}` hinzu; eine Stufe steht für ihre Rolle und alle Rollen darunter.
   *schreiben* für `photos` speichert `coll:photos-read` **und** `coll:photos`; *—* speichert keine.
-- **Die Einträge** (`photos`, `recipes`) kommen aus `available_roles`. Passt eine Rolle auf mehrere Vorlagen, gewinnt
+- **Die Einträge** (`photos`, `recipes`) kommen aus den bekannten Rollen: `available_roles` und dem
+  [Rollenkatalog](#rollenkatalog). Passt eine Rolle auf mehrere Vorlagen, gewinnt
   die spezifischste: `coll:photos-read` ist die Leserolle von `photos`.
 - **Eine Auswahlhilfe, keine Hierarchie.** Ein Konto hat weiter einfache Rollen: `Remote-Groups`, das Gate-Token,
   Key-Scopes und `has_role` tragen genau die gespeicherten Rollen — `coll:photos` allein schließt
   `coll:photos-read` nicht ein.
 - **Bestehende Konten werden nie still erweitert.** Ein Konto mit `coll:photos` ohne `coll:photos-read` erscheint als
   *unvollständig*; nichts ist vorausgewählt, und Speichern behält diese Rollen, bis ein Administrator eine Stufe wählt.
-- **Eine Stufe wird nur angeboten, wenn alle ihre Rollen bekannt sind**: in `available_roles` für Administratoren
+- **Eine Stufe wird nur angeboten, wenn alle ihre Rollen bekannt sind**: in `available_roles` oder im Katalog für
+  Administratoren
   (sonst durchgestrichen, die fehlende Rolle genannt), im Bereich für [Delegierte](#delegierte-verwaltung) (sonst
   ausgeblendet; ein Eintrag ohne vergebbare Stufe entfällt). Der Server prüft den Bereich wie bisher.
 - **Beim Start geprüft:** mindestens zwei Stufen, jede Vorlage mit genau einem `{1}` und einem festen Teil, keine
   Vorlage doppelt, kein Komma, keine zwei Leitern, deren Vorlagen dieselbe Rolle treffen können, keine gleich
-  spezifische Überschneidung in einer — Fehler; eine Leiter ohne Eintrag, ein Eintrag ohne die Rolle einer Stufe,
-  ein Delegierter mit nur einem Teil einer Stufe — Warnungen.
+  spezifische Überschneidung in einer — Fehler; ein Delegierter mit nur einem Teil einer Stufe — eine Warnung. Eine
+  Leiter ohne Eintrag und ein Eintrag ohne die Rolle einer Stufe sind Startwarnungen über die bekannten Rollen (die
+  Konfigurationsprüfung hat keine Datenbank und sieht den Katalog nicht).
+
+### Rollenkatalog
+
+Administratoren legen Rollen im Panel an (**Konten → Rollen**), ohne die Konfiguration anzufassen; das Panel bietet sie
+dann an wie `available_roles` — als Checkboxen und als Einträge der Rollenstufen. Ein Komfort, mehr nicht:
+
+- **Er gewährt nichts.** Header, Gate-Token, Key-Scopes und `has_role` lesen nur die Rollen, die ein Konto trägt; ein
+  Administrator konnte schon vorher jede Rolle setzen. Feine Rechte an Objekten einer Anwendung (eine Sammlung, ihre
+  Besitzer, Moderatoren) gehören in die Anwendung.
+- **Die Konfiguration bleibt die Wahrheit.** Eine Rolle, die die Konfiguration irgendwo nennt (`available_roles`, die
+  Gruppen-Maps, `admin_delegates`, `signup_default_roles`, Link-Sichtbarkeit, `apps`), `admin` und `__admin__` lassen
+  sich nicht anlegen. Nennt die Konfiguration eine Katalogrolle später, ist der Katalogeintrag überflüssig — der Start
+  sagt es, und er darf gelöscht werden. Worauf sich die Konfiguration bezieht (Rollen eines Delegierten, Allowlist
+  einer Anwendung), muss weiter in `available_roles` stehen.
+- **Namen:** kein Komma, kein Steuer- oder unsichtbares Zeichen, keine Leerzeichen am Rand, höchstens 64 Zeichen, keine
+  zweite Schreibweise (`Editors` neben `editors`). Kein Umbenennen: neue anlegen, Konten umstellen, alte löschen.
+- **Gelöscht wird nur, was niemand nutzt:** verweigert, solange ein Konto die Rolle trägt, ein API-Schlüssel oder
+  OAuth-Dienst sie im Scope hat, eine offene Einladung oder ein Kopplungscode sie trägt oder eine offene Freigabe sie
+  hinzufügen würde. Prüfen und Löschen sind eine Transaktion; nichts kaskadiert. Eine Rolle, die eine Stufe eines
+  Rollenstufen-Eintrags ist, geht mit ihrem Eintrag — das Panel legt einen Eintrag mit allen Stufenrollen auf einmal an
+  und löscht ihn so.
+- **Nur Administratoren** (CSRF und der Step-up des Panels); Delegierte und Anwendungen ändern den Katalog nicht.
+- **Im Code:** `auth.create_role("editor", actor=None)`, `auth.delete_role("editor")` (beide werfen `RoleError` mit
+  `e.code`: `invalid`, `exists`, `in_config`, `in_use`, `in_ladder`, `not_found`, `full`, `forbidden`),
+  `auth.known_roles()`, `auth.role_catalog()`, `auth.role_usage("editor")`. Auf der Kommandozeile:
+  `tinysesam roles list|create|delete --db auth.db --config mod:attr [<rolle>]` (ändern nur mit Konfiguration).
 
 **Montieren / einbetten / HTTPS:**
 - **Standard:** automatisch unter `config.admin_path` (Default `/auth/admin`) — frei änderbar.
@@ -2755,7 +2784,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   ([Dienste](#ein-dienst-ruft-eine-geschützte-app-auf)),
   `revoke_mfa_enrollment`, `list_resource_secrets`,
   `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
-  `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
+  `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`; der [Rollenkatalog](#rollenkatalog):
+  `create_role`, `delete_role`, `known_roles`, `role_catalog`, `role_usage`, `RoleError`.
 - **Mail- und Token-Abläufe:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url`
   → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link`
   (Einmal-Anmeldelink ohne Mail, Adresse aus `base_url`).
@@ -2858,7 +2888,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**130 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**131 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

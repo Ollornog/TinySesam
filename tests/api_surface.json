@@ -237,6 +237,10 @@
       "sig": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
       "tier": "B"
     },
+    "create_role": {
+      "sig": "(name: 'str', actor=None) -> 'dict'",
+      "tier": "B"
+    },
     "create_service": {
       "sig": "(username, roles=None, display_name=None) -> 'int'",
       "tier": "A"
@@ -260,6 +264,10 @@
     "current_user": {
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "A"
+    },
+    "delete_role": {
+      "sig": "(name: 'str', actor=None) -> 'dict'",
+      "tier": "B"
     },
     "delete_user": {
       "sig": "(user_id: 'int') -> 'bool'",
@@ -432,6 +440,10 @@
     },
     "json_body": {
       "sig": "(request: 'Request') -> 'dict'",
+      "tier": "B"
+    },
+    "known_roles": {
+      "sig": "() -> 'list'",
       "tier": "B"
     },
     "lifespan": {
@@ -637,6 +649,14 @@
     },
     "revoke_service_client": {
       "sig": "(client_id, user_id=None) -> 'bool'",
+      "tier": "B"
+    },
+    "role_catalog": {
+      "sig": "() -> 'list'",
+      "tier": "B"
+    },
+    "role_usage": {
+      "sig": "(name: 'str') -> 'dict'",
       "tier": "B"
     },
     "rotate_session": {
@@ -2042,6 +2062,9 @@
     "PasswordChangeResult": {
       "tier": "A"
     },
+    "RoleError": {
+      "tier": "B"
+    },
     "StateError": {
       "tier": "A"
     },
@@ -2752,6 +2775,10 @@
       "keys": [],
       "tier": "B"
     },
+    "GET <admin>/api/roles": {
+      "keys": [],
+      "tier": "B"
+    },
     "GET <admin>/api/security": {
       "keys": [],
       "tier": "B"
@@ -3105,6 +3132,22 @@
       "tier": "B"
     },
     "POST <admin>/api/resources/{name}/delete": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/roles": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/roles/delete": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/roles/entry": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/roles/entry/delete": {
       "keys": [],
       "tier": "B"
     },

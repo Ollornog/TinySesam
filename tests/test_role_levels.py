@@ -31,6 +31,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import _role_levels as R  # noqa: E402
+from tinysesam import config_check  # noqa: E402
 from tinysesam.admin import render_panel  # noqa: E402
 from voraussetzung import pflicht_werkzeug  # noqa: E402
 
@@ -108,14 +109,17 @@ e, _ = findings([{"name": "x", "levels": [{"name": "a", "role": "a{1}"}, {"name"
 assert any("equally specific" in x for x in e), e
 e, _ = findings([COLL], full + ["coll:a-read-read"])          # entry `a-read` would claim `coll:a-read` of `a`
 assert any("belongs to the entry 'a-read' and to another one" in x for x in e), e
-_, w = findings([COLL], ["editor"])
-assert any("has no entry in available_roles" in x for x in w), w
-_, w = findings([COLL], ["coll:c-read", "editor"])
-assert any("entry 'c': coll:c not in available_roles" in x for x in w), w
+# Coverage over the known roles (available_roles ∪ role catalog) is a start warning, no longer a config_check one:
+# without the database it would report entries that come from the catalog as missing (`config_check.ladder_coverage`).
+w = config_check.ladder_coverage(TinySesamConfig(db_path=":memory:", role_levels=[COLL]), ["editor"])
+assert any("has no entry among the known roles" in x for x in w), w
+w = config_check.ladder_coverage(TinySesamConfig(db_path=":memory:", role_levels=[COLL]), ["coll:c-read", "editor"])
+assert any("entry 'c': coll:c not among the known roles" in x for x in w), w
+assert findings([COLL], ["coll:c-read", "editor"])[1] == []                  # not in config_check any more
 _, w = findings([COLL], full + ["lead"], {"lead": {"roles": ["coll:a"]}})
 assert any("'lead' manages coll:a but not every role below" in x for x in w), w
-_, w_en = findings([COLL], ["coll:c-read", "editor"])
-_, w = findings([COLL], ["coll:c-read", "editor"], lang="de")
+w_en = config_check.ladder_coverage(TinySesamConfig(db_path=":memory:", role_levels=[COLL]), ["coll:c-read"])
+w = config_check.ladder_coverage(TinySesamConfig(db_path=":memory:", lang="de", role_levels=[COLL]), ["coll:c-read"])
 assert len(w) == len(w_en) == 1 and w != w_en and "'c'" in w[0] and "coll:c " in w[0], (w, w_en)   # translated
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "x.db"), available_roles=full,

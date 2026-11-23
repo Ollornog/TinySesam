@@ -555,7 +555,7 @@ raw.execute("PRAGMA user_version = 23")
 raw.commit()
 raw.close()
 s1 = Store(path)
-assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION == 24
+assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 24
 assert "nonce" in {r["name"] for r in s1.db.execute("PRAGMA table_info(approval)")}
 assert s1.get_approval("apv_old")["nonce"] is None and s1.get_approval("apv_old")["state"] == "pending"
 s1.db.close()

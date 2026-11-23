@@ -480,6 +480,25 @@ TinySesam's (the session ends), not the application's `forward_logout`.
   `Remote-Id`, answered with `no-store`. TinySesam cannot enforce them on that path; the gate client's fetch of
   `/.tinysesam/account.json` (spec §8a) keeps the check with TinySesam.
 
+## Role names and the role catalog
+
+**Role names** (T-85): `Remote-Groups` and `ts_groups` join roles with `,` without an escape, and gate clients trim
+the spaces around an entry. A comma, a control character or surrounding spaces in a role name are therefore refused
+everywhere roles are configured or written (`config_check`, `create_user`, `set_roles`, `create_invite`, the panel); a
+group map changed at runtime skips such a target with a security line. An account that still holds one from older
+data gets `403` at the forward check (no gate token) — never the stripped or split role — until an administrator
+removes it; the start names such roles.
+
+**The role catalog** (`auth.create_role`, the panel's *Roles*, `tinysesam roles`) is a list the panel offers, not a
+grant: headers, the gate token, key scopes and `has_role` read only the roles an account holds. Only administrators
+change it (CSRF and `admin_require_mfa` as every panel route; delegated admins, API keys and applications cannot). A
+role the configuration names, `admin` and `__admin__` are refused, so the catalog never touches what `config_check`
+guards (delegate roles, allowlists, `approver_role`); new names also refuse format characters (bidi, zero-width), so
+two roles cannot look alike in the panel. A role is deleted only when nothing holds or waits for it — accounts, key
+and service scopes, open invitations and pairing codes, pending approvals — checked and deleted in one transaction:
+an assignment running at the same time lands before (the delete is refused) or after (the account keeps a role the
+catalog no longer lists, shown as "only on accounts"), never in between. Nothing cascades.
+
 ## Vulnerable dependencies
 
 Deadlines for fixing a known vulnerability in a dependency of the package or the gateway image
