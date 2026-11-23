@@ -1,6 +1,6 @@
 ---
-# Nightly repeat run — built by `repokit wiederholung` from the kit template (tests/_kit/vorlage_wiederholung.yml.in).
-# Do not edit by hand: tests/test_repo.py rebuilds it and compares (manifest.pruefe). Free per repo is only the cron
+# Nightly repeat run — built by `repokit nightly-repeat` from the kit template (tests/_kit).
+# Do not edit by hand: tests/test_repo.py rebuilds it and compares (the manifest check). Free per repo is only the cron
 # line between the "per repo" markers; `repokit sync` rebuilds the rest and keeps it.
 #
 # Why (PO 2026-11-23): "scripts/check.sh twice green" is no longer required before a push, and the pre-push hook only
@@ -9,6 +9,11 @@
 # after the other, on fresh runners, and compares. One green and one red is a flaky test; both red is a red default
 # branch. Either way this run is red, and the CI watch reports a red run on the default branch like any other.
 # No retry, no `continue-on-error`: a flaky test is a finding, not noise.
+#
+# Only when needed (PO 2026-11-23): the scheduled run starts the two passes only if the default branch has a commit
+# the last green nightly-repeat run did not see (job `gate`: github.sha against the head_sha of the last successful
+# run of this workflow). Otherwise both passes are skipped and the run is green, "nothing new". Started by hand
+# (workflow_dispatch, e.g. at the end of a sprint) it always runs.
 name: nightly-repeat
 
 on:
@@ -26,19 +31,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      run: ${{ steps.news.outputs.run }}
+    steps:
+      - name: Is there anything new since the last green run?
+        id: news
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != schedule ]]; then
+            echo "Started by hand ($EVENT_NAME): runs always."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          response="$(curl -fsS --retry 3 --retry-delay 5 \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL:-https://api.github.com}/repos/$REPO/actions/workflows/nightly-repeat.yml/runs?branch=$BRANCH&status=success&per_page=1")"
+          last_sha="$(jq -r '.workflow_runs[0].head_sha // ""' <<< "$response")"
+          if [[ -n "$last_sha" && "$last_sha" == "$SHA" ]]; then
+            echo "Nothing new: the last green nightly-repeat run saw $SHA already."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New since the last green run (${last_sha:-none}): the two passes start on $SHA."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
   run-1:
-    uses: ./.github/workflows/ci.yml
+    needs: gate
+    if: ${{ needs.gate.outputs.run == 'true' }}
+    uses: ./.github/workflows/ci.yml  # zizmor: ignore[self-repository] — actionlint rejects the `$/` form (no `owner/repo/path@ref`, no `./path`); for a reusable workflow `./` resolves at the running commit as well
     permissions:
       contents: read
   run-2:
-    needs: run-1
+    needs: [gate, run-1]
     # Also after a red first run: only the second run tells a flaky test from a red branch.
-    if: ${{ !cancelled() }}
-    uses: ./.github/workflows/ci.yml
+    if: ${{ !cancelled() && needs.gate.outputs.run == 'true' }}
+    uses: ./.github/workflows/ci.yml  # zizmor: ignore[self-repository] — actionlint rejects the `$/` form (no `owner/repo/path@ref`, no `./path`); for a reusable workflow `./` resolves at the running commit as well
     permissions:
       contents: read
   compare:
-    needs: [run-1, run-2]
+    needs: [gate, run-1, run-2]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -46,22 +88,35 @@ jobs:
     steps:
       - name: Compare the two runs
         env:
+          GATE: ${{ needs.gate.result }}
+          GATE_RUN: ${{ needs.gate.outputs.run }}
           RUN_1: ${{ needs.run-1.result }}
           RUN_2: ${{ needs.run-2.result }}
         run: |
           set -euo pipefail
+          if [[ "$GATE" != success ]]; then
+            message="The check for new commits did not finish ($GATE): no run, and that is not green."
+            echo "::error title=nightly-repeat::$message"
+            printf '### nightly-repeat\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [[ "$GATE_RUN" != true ]]; then
+            echo "Nothing new on the default branch since the last green run: both passes skipped."
+            printf '### nightly-repeat\n\nNothing new since the last green run.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           echo "run 1: $RUN_1 · run 2: $RUN_2"
           if [[ "$RUN_1" == success && "$RUN_2" == success ]]; then
             echo "Both runs green: the suite gives the same answer twice on this commit."
             exit 0
           fi
           if [[ "$RUN_1" == success || "$RUN_2" == success ]]; then
-            meldung="FLAKY: one run green, one red ($RUN_1 / $RUN_2). The same commit gave two answers; find the test that depends on order, time, network or leftovers."
+            message="FLAKY: one run green, one red ($RUN_1 / $RUN_2). The same commit gave two answers; find the test that depends on order, time, network or leftovers."
           elif [[ "$RUN_1" == failure && "$RUN_2" == failure ]]; then
-            meldung="Both runs red: the default branch itself is red (see the CI run of the last push)."
+            message="Both runs red: the default branch itself is red (see the CI run of the last push)."
           else
-            meldung="A run did not finish ($RUN_1 / $RUN_2): no comparison, and that is not green."
+            message="A run did not finish ($RUN_1 / $RUN_2): no comparison, and that is not green."
           fi
-          echo "::error title=nightly-repeat::$meldung"
-          printf '### nightly-repeat\n\n%s\n' "$meldung" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=nightly-repeat::$message"
+          printf '### nightly-repeat\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
           exit 1

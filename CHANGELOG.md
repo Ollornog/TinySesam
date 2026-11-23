@@ -4,6 +4,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed — test kit 0.62
+
+- Test kit 0.62.0 (repokit): test scripts without a `__main__` guard run in the pre-push hook, and `nightly-repeat.yml` now comes
+  from the template with English names and no zizmor finding. The two interim measures of 0.59.1 are gone: the
+  `self-repository` ignore in `.github/zizmor.yml` and `nightly-repeat.yml` in the English-test exception list.
+
 ## [0.28.0] — 2026-11-23
 
 Who needs this release: applications that manage their own accounts (account API with deletion, adopt/release, an

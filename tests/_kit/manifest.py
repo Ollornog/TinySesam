@@ -95,6 +95,10 @@ def _wiederholung(root: str) -> list[str]:
     spec = importlib.util.spec_from_file_location("_kit_wiederholung_aus_dem_repo", pfad)
     modul = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modul)
+    if hasattr(modul, "warnungen"):    # since 0.60.0: no failure, but not silent either
+        import sys
+        for w in modul.warnungen(root):
+            print(f"WARNING (nightly-repeat): {w}", file=sys.stderr)
     return modul.pruefe(root)
 
 
