@@ -870,7 +870,8 @@ def _load_config(spec: str) -> Any:
     if hasattr(obj, "cfg") and isinstance(obj.cfg, TinySesamConfig):
         obj = obj.cfg
     if not isinstance(obj, TinySesamConfig):
-        raise TypeError("the object is no TinySesamConfig")
+        raise TypeError(f"{spec} is a {type(obj).__name__}: expected a TinySesamConfig, a TinySesam (its `cfg` is "
+                        "taken) or a function returning one")
     return obj
 
 

@@ -559,6 +559,8 @@ MESSAGES = {
         "admin.adopt": "Take over for",
         "admin.adopt_hint": "The application may then change its roles, lock and delete it by key. Only an account "
                             "whose roles all belong to the application.",
+        "admin.no_app_fits": "No application can take over this account: it needs roles from the account-API "
+                             "allowlist of one application, and only those.",
         "admin.release": "Release",
         "admin.release_hint": "The application no longer reaches this account; a pending deletion by it ends.",
         "admin.confirm.release": "Release this account from its application?",
@@ -1284,6 +1286,8 @@ MESSAGES = {
         "admin.adopt": "Übernehmen für",
         "admin.adopt_hint": "Die Anwendung darf dann per Schlüssel Rollen ändern, sperren und löschen. Nur ein Konto, "
                             "dessen Rollen alle der Anwendung gehören.",
+        "admin.no_app_fits": "Keine Anwendung kann dieses Konto übernehmen: es braucht Rollen aus der "
+                             "Konten-API-Allowlist einer Anwendung, und nur solche.",
         "admin.release": "Freigeben",
         "admin.release_hint": "Die Anwendung erreicht dieses Konto nicht mehr; eine offene Löschung durch sie endet.",
         "admin.confirm.release": "Dieses Konto von seiner Anwendung freigeben?",

@@ -248,7 +248,8 @@ def run(argv: list, *, prog: str, config_loader=None) -> int:
         p.add_argument("--db", default="", help="the database (default: db_path of the configuration)")
         if config_loader is None:
             p.add_argument("--config", default="", required=name != "list",
-                           help="your configuration as module:attr or file.py:attr (needed for create and delete)")
+                           help="your configuration as module:attr or file.py:attr — a TinySesamConfig or a TinySesam "
+                                "(its configuration is taken); needed for create and delete")
         if name != "list":
             p.add_argument("name", help="the role")
     a = ap.parse_args(argv)
