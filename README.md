@@ -190,6 +190,10 @@ rule, same `admin_implies=False` switch.
   `TINYSESAM_OIDC_SCOPES`). Without it `oidc_allowed_groups` turns everyone away and the role map
   assigns nothing; the start warns. TinySesam doesn't add the scope itself (Entra ID, for one,
   rejects it and sends groups as an optional claim).
+- **Role names** carry no comma, no control character and no surrounding spaces: `Remote-Groups` and the gate token
+  join roles with `,` without an escape, so `staff,admin` would arrive as two roles. The configuration check refuses
+  such a name in every field, `create_user`/`set_roles` raise `ConfigError` (`field="roles"`), and an account that
+  still holds one from older data gets `403` at the forward check until the role is removed.
 
 ## Accounts in code
 
@@ -2778,7 +2782,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**129 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**130 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

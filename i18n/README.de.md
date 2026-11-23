@@ -185,6 +185,10 @@ Admin-Regel, derselbe Schalter `admin_implies=False`.
   (Gateway: `TINYSESAM_OIDC_SCOPES`). Ohne ihn weist `oidc_allowed_groups` jeden ab, und das
   Rollen-Mapping vergibt nichts; der Start warnt. TinySesam fordert den Scope nicht selbst an
   (Entra ID etwa lehnt ihn ab und schickt Gruppen als „optional claim").
+- **Rollennamen** enthalten kein Komma, kein Steuerzeichen und keine Leerzeichen am Rand: `Remote-Groups` und das
+  Gate-Token verbinden Rollen mit `,` ohne Escape, `staff,admin` käme also als zwei Rollen an. Die Config-Prüfung
+  weist so einen Namen in jedem Feld ab, `create_user`/`set_roles` werfen `ConfigError` (`field="roles"`), und ein
+  Konto, das aus Altbestand noch so eine Rolle trägt, bekommt beim Forward-Check `403`, bis die Rolle entfernt ist.
 
 ## Konten im Code
 
@@ -2854,7 +2858,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**129 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**130 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

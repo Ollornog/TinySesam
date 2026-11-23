@@ -152,10 +152,10 @@ spaces; the admin flag appears as the group `admin`). To read it:
 3. Drop empty entries and repeated entries (keep the first occurrence, keep the order).
 
 There is **no escape mechanism**: a backslash, a quote or a percent sign is an ordinary character, and a role name that
-contains a comma cannot be represented (operators must not use commas in role names,
-[T-85](../backlog/T-85-role-names-without-comma.md)). `has_role(identity, role)` is `role ∈ groups`, exactly. A client
-MUST NOT imply other roles from `admin`; whether an admin passes every role check is the application's decision and
-not part of the identity.
+contains a comma cannot be represented (TinySesam refuses commas, control characters and surrounding spaces in role
+names, [T-85](../backlog/T-85-role-names-without-comma.md)). `has_role(identity, role)` is `role ∈ groups`, exactly.
+A client MUST NOT imply other roles from `admin`; whether an admin passes every role check is the application's
+decision and not part of the identity.
 
 ## 4. Token mode
 
