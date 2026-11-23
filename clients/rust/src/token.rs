@@ -19,7 +19,7 @@ pub const ALGORITHM: &str = "EdDSA";
 /// The `typ` of a gate token (compared ASCII case-insensitively).
 pub const TOKEN_TYPE: &str = "tinysesam-gate+jwt";
 
-const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+pub(crate) const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 const HEADER_MEMBERS: [&str; 3] = ["alg", "typ", "kid"];
 const IDENTITY_CLAIMS: [&str; 7] = [
     "ts_user",
@@ -185,9 +185,9 @@ impl TokenConfig {
 /// A token that passed steps 1–5: size, structure, header JSON, header members, signature length. Its payload is not
 /// parsed yet and its signature not verified — only the format-checked `kid` is readable.
 pub struct Unverified<'a> {
-    signing_input: &'a str,
-    payload: Vec<u8>,
-    signature: Signature,
+    pub(crate) signing_input: &'a str,
+    pub(crate) payload: Vec<u8>,
+    pub(crate) signature: Signature,
     kid: String,
 }
 
@@ -208,6 +208,12 @@ impl std::fmt::Debug for Unverified<'_> {
 
 /// Steps 1–5 of spec §4.4: everything that is decided before a key is chosen.
 pub fn precheck(jws: &str) -> Result<Unverified<'_>, TokenError> {
+    precheck_typ(jws, TOKEN_TYPE)
+}
+
+/// Steps 1–5 for a JWS of the given `typ`: a gate token (spec §4.4) or an approval confirmation
+/// (spec/approval-token.md §4, the same steps with its own `typ`).
+pub(crate) fn precheck_typ<'a>(jws: &'a str, typ: &str) -> Result<Unverified<'a>, TokenError> {
     if jws.len() > MAX_TOKEN_BYTES {
         return Err(TokenError::Malformed);
     }
@@ -233,7 +239,7 @@ pub fn precheck(jws: &str) -> Result<Unverified<'_>, TokenError> {
     if !head
         .get("typ")
         .and_then(Value::as_str)
-        .is_some_and(|t| t.eq_ignore_ascii_case(TOKEN_TYPE))
+        .is_some_and(|t| t.eq_ignore_ascii_case(typ))
     {
         return Err(TokenError::Header);
     }

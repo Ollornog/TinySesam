@@ -6,8 +6,10 @@ use common::*;
 use serde_json::Value;
 use std::cell::Cell;
 use std::collections::BTreeSet;
+use tinysesam_gate::approval::{ApprovalConfig, ApprovalExpect, ApprovalVerifier, StoreFailed};
 use tinysesam_gate::{
-    FetchOutcome, HeaderMode, JwksCache, KeySet, TokenConfig, TokenError, key_id, precheck, topbar,
+    FetchOutcome, HeaderMode, JwksCache, KeySet, TokenConfig, TokenError, account, key_id,
+    precheck, topbar,
 };
 
 #[test]
@@ -17,9 +19,8 @@ fn every_vector_file_has_a_runner() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .filter(|n| n.ends_with(".json"))
         .collect();
-    // `approval.json` (spec/approval-token.md) is another part of the specification: its runner comes with the
-    // approval helper (T-89 stage B, part 2). Listed, so that a new file still fails.
     let covered: BTreeSet<String> = [
+        "account.json",
         "approval.json",
         "headers.json",
         "jwks.json",
@@ -325,4 +326,139 @@ fn topbar() {
         }
     }
     report("topbar.json", vectors.len(), 5, failures);
+}
+
+#[test]
+fn account() {
+    let doc = load("account.json");
+    let vectors = doc["vectors"].as_array().unwrap();
+    let mut failures = Vec::new();
+    for v in vectors {
+        let id = str_of(v, "id");
+        let got = serde_json::to_value(account::normalize(&v["input"]["account"])).unwrap();
+        if got != v["expected"]["account"] {
+            failures.push(format!("{id}: {got} ≠ {}", v["expected"]["account"]));
+        }
+        let from_bytes =
+            account::normalize_json(&serde_json::to_vec(&v["input"]["account"]).unwrap());
+        if serde_json::to_value(from_bytes).unwrap() != got {
+            failures.push(format!("{id}: normalize_json differs"));
+        }
+    }
+    report("account.json", vectors.len(), 5, failures);
+}
+
+#[test]
+fn approval() {
+    let doc = load("approval.json");
+    assert_eq!(doc["spec"], "spec/approval-token.md");
+    let vectors = doc["vectors"].as_array().unwrap();
+    let mut failures = Vec::new();
+    for v in vectors {
+        let id = str_of(v, "id");
+        let input = &v["input"];
+        let keys = KeySet::from_jwks(&input["jwks"]).unwrap();
+        let config = ApprovalConfig::new(str_of(input, "issuer"), str_of(input, "app_id"))
+            .unwrap()
+            .with_leeway(u32::try_from(input["leeway"].as_u64().unwrap()).unwrap())
+            .unwrap();
+        let verifier = ApprovalVerifier::new(config, keys).unwrap();
+        let e = &input["expect"];
+        let mut expect = ApprovalExpect::new(str_of(e, "type"), str_of(e, "sub"))
+            .fields(e["fields"].as_object().unwrap().clone());
+        if let Some(nonce) = e.get("nonce").and_then(Value::as_str) {
+            expect = expect.nonce(nonce);
+        }
+        let seen: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(
+            input["seen"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_owned())
+                .collect(),
+        );
+        let store = |jti: &str, _until: i64| -> Result<bool, StoreFailed> {
+            Ok(seen.borrow_mut().insert(jti.to_owned()))
+        };
+        let now = input["now"].as_i64().unwrap();
+        let got = verifier.verify_at(str_of(input, "jws"), &expect, &store, now);
+        let expected = &v["expected"];
+        match (got, expected["ok"].as_bool().unwrap()) {
+            (Ok(claims), true) => {
+                if Value::Object(claims.as_map().clone()) != expected["claims"] {
+                    failures.push(format!("{id}: claims differ"));
+                }
+            }
+            (Ok(_), false) => failures.push(format!("{id}: accepted, want {}", expected["error"])),
+            (Err(e), true) => failures.push(format!("{id}: refused with {}", e.class())),
+            (Err(e), false) => {
+                if e.class() != str_of(expected, "error") {
+                    failures.push(format!("{id}: {} ≠ {}", e.class(), expected["error"]));
+                }
+            }
+        }
+    }
+    report("approval.json", vectors.len(), 40, failures);
+}
+
+/// One store for two checks: the first use passes, the second is `replay`; a failing store refuses (fails closed); a
+/// confirmation refused for another reason does not reach the store.
+#[test]
+fn approval_store() {
+    let doc = load("approval.json");
+    let v = doc["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["id"] == "valid-basic")
+        .unwrap();
+    let input = &v["input"];
+    let verifier = ApprovalVerifier::new(
+        ApprovalConfig::new(str_of(input, "issuer"), str_of(input, "app_id")).unwrap(),
+        KeySet::from_jwks(&input["jwks"]).unwrap(),
+    )
+    .unwrap();
+    let e = &input["expect"];
+    let expect = ApprovalExpect::new(str_of(e, "type"), str_of(e, "sub"))
+        .fields(e["fields"].as_object().unwrap().clone());
+    let now = input["now"].as_i64().unwrap();
+    let jws = str_of(input, "jws");
+    let seen = std::cell::RefCell::new(BTreeSet::new());
+    let once = |jti: &str, _until: i64| -> Result<bool, StoreFailed> {
+        Ok(seen.borrow_mut().insert(jti.to_owned()))
+    };
+    assert!(verifier.verify_at(jws, &expect, &once, now).is_ok());
+    assert_eq!(
+        verifier
+            .verify_at(jws, &expect, &once, now)
+            .unwrap_err()
+            .class(),
+        "replay"
+    );
+    let failing = |_: &str, _: i64| -> Result<bool, StoreFailed> { Err(StoreFailed) };
+    assert_eq!(
+        verifier
+            .verify_at(jws, &expect, &failing, now)
+            .unwrap_err()
+            .class(),
+        "internal"
+    );
+    let touched = Cell::new(false);
+    let spy = |_: &str, _: i64| -> Result<bool, StoreFailed> {
+        touched.set(true);
+        Ok(true)
+    };
+    let other = ApprovalExpect::new(str_of(e, "type"), "1002")
+        .fields(e["fields"].as_object().unwrap().clone());
+    assert_eq!(
+        verifier
+            .verify_at(jws, &other, &spy, now)
+            .unwrap_err()
+            .class(),
+        "subject"
+    );
+    assert!(
+        !touched.get(),
+        "the store was written for a refused confirmation"
+    );
 }

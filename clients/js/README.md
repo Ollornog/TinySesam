@@ -208,7 +208,54 @@ Every class means the same to the application: not authenticated.
 `parseTopbar(body)` reduces TinySesam's `topbar.json` to what an application may render (spec §8): signed out on any
 doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/` (in `links` and in
 `menu_links`, the account menu). Titles and names are text, never markup — set them with `textContent`. `fetchTopbar(url, cookieHeader)` fetches it server-side with only
-TinySesam's cookies, a 5-second deadline and a 64 KiB limit; do not cache the answer across sessions.
+TinySesam's cookies, a 5-second deadline and a 64 KiB limit; do not cache the answer across sessions. `approvals` is
+`{ pending, href }` when TinySesam has approvals switched on, otherwise `null`; show the number with a word, never a
+coloured dot alone.
+
+## Account overview
+
+`fetchAccount(url, cookieHeader)` fetches TinySesam's `account.json` (spec §8a) server-side for a settings page of
+your own — only TinySesam's cookies, 5 seconds, 64 KiB, no redirects; anything but a `200` with `signed_in: true` is
+`signedOutAccount()`. `parseAccount(body)` normalizes a body: every href safe or `null`, a member of the wrong type
+`null`, unknown members dropped. Every string is text — set it with `textContent`. Changes happen on TinySesam's
+account page, which `links` lead to.
+
+## Approval confirmations
+
+`createApprovalVerifier` checks the signed confirmation of one sensitive action (`spec/approval-token.md`) against what
+the application stored when it asked:
+
+```ts
+import { createApprovalVerifier, errorClassOf } from '@tinysesam/gate';
+
+const approvals = createApprovalVerifier({
+  issuer: 'https://auth.example.com',
+  appId: 'example',
+  jwksUrl: 'https://auth.example.com/auth/approvals/jwks.json', // never /auth/gate/jwks.json (refused)
+});
+
+// after GET /auth/api/approvals/{id}?wait=25 with the service account's key:
+try {
+  await approvals.verify(confirmation, {
+    type: 'example.collection.delete_permanently',
+    fields: { collection: 'c_81f2', name: 'Project Alpha' }, // exactly as sent: name, type, value
+    sub: storedRemoteId,
+    nonce: storedState, // browser entry only
+  }, async (jti, until) => {
+    // INSERT INTO approval_jti (jti, until) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING
+    return (await db.query(insertSql, [jti, until])).rowCount === 1;
+  });
+  // run your own rule again, then act
+} catch (err) {
+  console.warn('approval refused', errorClassOf(err)); // never log the confirmation
+}
+```
+
+`keys` (from `parseJwks`) takes a fixed approval key set instead of `jwksUrl`; `leewaySeconds` allows at most 30.
+Errors: the classes of the gate token plus `approval_type`, `approval_fields`, `subject`, `nonce`, `replay`, and
+`internal` for a failing store — every class means *do not carry the action out*. The `jti` is written last, so a
+confirmation refused for another reason does not use up its id. Because `JSON.parse` reads `1.0` as `1`, a number
+with a fraction or an exponent anywhere in a confirmation's payload refuses it (`claims`); TinySesam writes none.
 
 ## Libraries
 

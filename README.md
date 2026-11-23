@@ -2473,7 +2473,15 @@ except gate_client.UntrustedPeer:
   returns `None`, 401 or 403.
 - **Top bar** (optional): `parse_topbar(data)` reduces TinySesam's `/.tinysesam/topbar.json` to what may be rendered
   (`Topbar`, `TopbarLink`, with `links` and `menu_links`; unsafe links dropped, signed out on any doubt); `fetch_topbar(url, cookie_header)` fetches
-  it server-side with only TinySesam's cookies; `Topbar.to_dict()` gives the normalized form of spec §8.
+  it server-side with only TinySesam's cookies; `Topbar.to_dict()` gives the normalized form of spec §8. With
+  approvals switched on, `Topbar.approvals` is a `TopbarApprovals` (`pending`, `href`), otherwise `None`.
+- **Account overview** (optional, spec §8a): `fetch_account(url, cookie_header)` fetches `/auth/account.json` (or
+  `/.tinysesam/account.json` on the application's host) server-side with only TinySesam's cookies;
+  `parse_account(data)` normalizes an answer into a plain dict — `SIGNED_OUT_ACCOUNT` for anything but
+  `signed_in: true`, unsafe links and members of the wrong type `None`.
+- **Approval confirmations**: the check lives in `tinysesam.approval_token.verify` (also without FastAPI);
+  `approval_token.JWKSKeys("https://auth.example.com/auth/approvals/jwks.json")` fetches the approval key set for it
+  and refuses the gate key set. A complete application: `examples/approvals/app.py`.
 
 Flask, with a view decorator built on `guard_status`:
 
@@ -2770,7 +2778,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**128 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**129 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

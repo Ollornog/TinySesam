@@ -12,7 +12,8 @@ namespace TinySesam\Gate\Jwks;
  */
 final readonly class CurlFetcher implements Fetcher
 {
-    public function __construct(private string $url)
+    /** @param list<string> $headers further request header lines (the account overview: its Cookie line) */
+    public function __construct(private string $url, private array $headers = [])
     {
     }
 
@@ -34,7 +35,7 @@ final readonly class CurlFetcher implements Fetcher
             CURLOPT_NOSIGNAL => true,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+            CURLOPT_HTTPHEADER => ['Accept: application/json', ...$this->headers],
             CURLOPT_MAXFILESIZE => JwksCache::MAX_JWKS_BYTES,
             CURLOPT_HEADERFUNCTION => static function ($ch, string $line) use (&$cacheControl): int {
                 if (str_starts_with($line, 'HTTP/')) {

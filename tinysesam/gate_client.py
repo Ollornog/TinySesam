@@ -53,7 +53,8 @@ __all__ = [
     "NotYetValid", "Expired",
     "WSGIMiddleware", "ASGIMiddleware", "require_auth", "require_role", "require_session", "require_account_kind",
     "guard_status",
-    "current_identity", "Topbar", "TopbarLink", "parse_topbar", "fetch_topbar",
+    "current_identity", "Topbar", "TopbarLink", "TopbarApprovals", "parse_topbar", "fetch_topbar",
+    "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account",
 ]
 
 #: The gate cookie TinySesam sets (`gate_cookie_name`).
@@ -1183,6 +1184,14 @@ class TopbarLink:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class TopbarApprovals:
+    """How many approvals wait for this account and where to decide them (spec §8, with approvals switched on). Show
+    the number with a word ("Approvals (2)"), never as a coloured dot alone."""
+    pending: int
+    href: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Topbar:
     """TinySesam's top bar data reduced to what an application may render. Do not cache it across sessions."""
     brand: str = ""
@@ -1193,13 +1202,18 @@ class Topbar:
     account: Optional[str] = None
     admin_panel: Optional[str] = None
     logout: Optional[str] = None
+    approvals: Optional[TopbarApprovals] = None
 
     def to_dict(self) -> dict[str, Any]:
-        """The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`)."""
+        """The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`, `approvals` as
+        `{pending, href}` or None)."""
+        approvals = None if self.approvals is None else {"pending": self.approvals.pending,
+                                                         "href": self.approvals.href}
         return {"brand": self.brand, "signed_in": self.signed_in, "name": self.name,
                 "links": [{"title": link.title, "href": link.href} for link in self.links],
                 "menu_links": [{"title": link.title, "href": link.href} for link in self.menu_links],
-                "account": self.account, "admin_panel": self.admin_panel, "logout": self.logout}
+                "account": self.account, "admin_panel": self.admin_panel, "logout": self.logout,
+                "approvals": approvals}
 
 
 def _safe_href(href: Any) -> bool:
@@ -1232,7 +1246,23 @@ def parse_topbar(data: Any) -> Topbar:
         slots[slot] = entry["href"] if ok and isinstance(entry, dict) else None
     logout = data.get("logout")
     slots["logout"] = logout["href"] if isinstance(logout, dict) and _safe_href(logout.get("href")) else None
-    return Topbar(brand=brand, signed_in=True, name=data["name"], links=links, menu_links=menu_links, **slots)
+    return Topbar(brand=brand, signed_in=True, name=data["name"], links=links, menu_links=menu_links,
+                  approvals=_topbar_approvals(data.get("approvals")), **slots)
+
+
+def _count(value: Any) -> Optional[int]:
+    """A count or a time of the top bar and the account overview: a JSON integer from 0 to 2^53 − 1, else None."""
+    return value if _is_int(value) else None
+
+
+def _topbar_approvals(raw: Any) -> Optional[TopbarApprovals]:
+    """`approvals` of spec §8: a count of at least 0 and a safe `href`, or nothing at all."""
+    if not isinstance(raw, dict):
+        return None
+    pending, href = _count(raw.get("pending")), raw.get("href")
+    if pending is None or not isinstance(href, str) or not _safe_href(href):
+        return None
+    return TopbarApprovals(pending, href)
 
 
 def _tinysesam_cookies(cookie_header: str) -> str:
@@ -1244,19 +1274,108 @@ def _tinysesam_cookies(cookie_header: str) -> str:
     return "; ".join(keep)
 
 
-def fetch_topbar(url: str, cookie_header: str = "") -> Topbar:
-    """Fetch the top bar server-side, forwarding only TinySesam's cookies of the request (`tinysesam_*`,
-    `__Host-tinysesam_*`); 5-second deadline, 64 KiB. Signed out on any failure."""
-    target = _check_fetch_url(url, "fetch_topbar")
+def _fetch_json(url: str, what: str, cookie_header: str) -> Any:
+    """GET with only TinySesam's cookies of the request, 5-second deadline, 64 KiB; the strict JSON of a 200 answer,
+    or None on any failure."""
+    target = _check_fetch_url(url, what)
     headers = {"Accept": "application/json"}
     cookies = _tinysesam_cookies(cookie_header or "")
     if cookies:
         headers["Cookie"] = cookies
     result = _read_limited(target, headers, _FETCH_TIMEOUT, _MAX_JWKS_BYTES)
     if result.error or result.status != 200 or result.body is None:
-        return Topbar()
+        return None
     try:
-        return parse_topbar(_strict_json(result.body))
+        return _strict_json(result.body)
     except GateError:
-        return Topbar()
+        return None
+
+
+def fetch_topbar(url: str, cookie_header: str = "") -> Topbar:
+    """Fetch the top bar server-side, forwarding only TinySesam's cookies of the request (`tinysesam_*`,
+    `__Host-tinysesam_*`); 5-second deadline, 64 KiB. Signed out on any failure."""
+    data = _fetch_json(url, "fetch_topbar", cookie_header)
+    return Topbar() if data is None else parse_topbar(data)
+
+
+# ---------- the own account as data, spec §8a ----------
+
+#: The normalized result for a person who is not signed in (any answer but a 200 with `signed_in: true`).
+SIGNED_OUT_ACCOUNT: Mapping[str, Any] = {"signed_in": False, "account": None, "sign_in": None, "sessions": None,
+                                         "programs": None, "approvals": None, "links": None}
+_ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
+
+
+def _text(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) else None
+
+
+def _flag(value: Any) -> Optional[bool]:
+    return value if isinstance(value, bool) else None
+
+
+def _href(value: Any) -> Optional[str]:
+    return value if _safe_href(value) else None
+
+
+def _group(value: Any) -> dict[str, Any]:
+    """A member that is always an object in the answer: anything else reads as an empty one (every leaf None)."""
+    return value if isinstance(value, dict) else {}
+
+
+def _items(value: Any, fields: Mapping[str, Callable[[Any], Any]]) -> list[dict[str, Any]]:
+    """The object entries of a list, each reduced to `fields`; an entry that is no object is dropped."""
+    return [{k: read(e.get(k)) for k, read in fields.items()} for e in value if isinstance(e, dict)]
+
+
+_USED = {"name": _text, "created_at": _count, "last_used": _count}
+_APP_PASSWORD = {**_USED, "expires_at": _count}
+_SESSION = {"created_at": _count, "last_seen": _count, "method": _text, "device": _text, "current": _flag}
+
+
+def _offered_list(value: Any, fields: Mapping[str, Callable[[Any], Any]]) -> Optional[list[dict[str, Any]]]:
+    """A list that is None when the installation does not offer it."""
+    return _items(value, fields) if isinstance(value, list) else None
+
+
+def parse_account(data: Any) -> dict[str, Any]:
+    """Normalize the answer of `/.tinysesam/account.json` (or `/auth/account.json`), spec §8a: signed out
+    (`SIGNED_OUT_ACCOUNT`) unless it is an object with `signed_in` exactly True; otherwise every member of §8a is present,
+    a member of the wrong type reads as missing (None), an `href` that is no safe link becomes None, unknown members are
+    dropped. Every string is text, never markup. Do not cache it across sessions."""
+    if not isinstance(data, dict) or data.get("signed_in") is not True:
+        return dict(SIGNED_OUT_ACCOUNT)
+    account, sign_in = _group(data.get("account")), _group(data.get("sign_in"))
+    sessions, programs, links = _group(data.get("sessions")), _group(data.get("programs")), _group(data.get("links"))
+    totp, passkeys = sign_in.get("totp"), sign_in.get("passkeys")
+    approvals = data.get("approvals")
+    pending = _count(approvals.get("pending")) if isinstance(approvals, dict) else None
+    return {
+        "signed_in": True,
+        "account": {"username": _text(account.get("username")), "display_name": _text(account.get("display_name"))},
+        "sign_in": {
+            "password": _text(sign_in.get("password")),
+            "totp": {"enabled": _flag(totp.get("enabled")), "recovery_left": _count(totp.get("recovery_left")),
+                     "recovery_low": _flag(totp.get("recovery_low"))} if isinstance(totp, dict) else None,
+            "passkeys": {"count": _count(passkeys.get("count")),
+                         "items": _items(passkeys.get("items"), _USED) if isinstance(passkeys.get("items"), list)
+                         else []} if isinstance(passkeys, dict) else None,
+            "pin": _flag(sign_in.get("pin"))},
+        "sessions": {"count": _count(sessions.get("count")),
+                     "items": _items(sessions["items"], _SESSION) if isinstance(sessions.get("items"), list) else []},
+        "programs": {"oauth": _offered_list(programs.get("oauth"), _USED),
+                     "services": _offered_list(programs.get("services"), _USED),
+                     "app_passwords": _offered_list(programs.get("app_passwords"), _APP_PASSWORD),
+                     "api_keys_active": _count(programs.get("api_keys_active"))},
+        "approvals": None if pending is None else {"pending": pending},
+        "links": {name: _href(links.get(name)) for name in _ACCOUNT_LINKS},
+    }
+
+
+def fetch_account(url: str, cookie_header: str = "") -> dict[str, Any]:
+    """Fetch the own account overview server-side (`https://<auth host>/auth/account.json`, or
+    `/.tinysesam/account.json` on the application's host), forwarding only TinySesam's cookies of the request;
+    5-second deadline, 64 KiB. Signed out on any failure — a 401 (no full browser session), a 404, a 429 included."""
+    data = _fetch_json(url, "fetch_account", cookie_header)
+    return dict(SIGNED_OUT_ACCOUNT) if data is None else parse_account(data)
 

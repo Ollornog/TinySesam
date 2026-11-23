@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TinySesam\Gate;
 
 use TinySesam\Gate\Internal\Strict;
+use TinySesam\Gate\Internal\Token;
 
 /**
  * Top bar data (spec section 8): TinySesam's topbar.json reduced to what an application may render. Every href is an
@@ -26,6 +27,14 @@ final readonly class Topbar
         public ?string $account = null,
         public ?string $adminPanel = null,
         public ?string $logout = null,
+        /**
+         * The approvals waiting for this account, when TinySesam has approvals switched on and the answer carries a
+         * count of at least 0 and a safe link. Show the number with a word ("Approvals (2)"), never as a coloured
+         * dot alone.
+         *
+         * @var ?array{pending: int, href: string}
+         */
+        public ?array $approvals = null,
     ) {
     }
 
@@ -66,7 +75,27 @@ final readonly class Topbar
             $shown('account'),
             $shown('admin_panel'),
             \is_string($logoutHref) && self::isSafeHref($logoutHref) ? $logoutHref : null,
+            self::approvals(Strict::member($data, 'approvals')),
         );
+    }
+
+    /**
+     * `approvals` of spec section 8: a count of at least 0 and a safe href, or nothing at all.
+     *
+     * @return ?array{pending: int, href: string}
+     */
+    private static function approvals(mixed $raw): ?array
+    {
+        if (!$raw instanceof \stdClass) {
+            return null;
+        }
+        $pending = Strict::member($raw, 'pending');
+        $href = Strict::member($raw, 'href');
+        if (!\is_int($pending) || $pending < 0 || $pending > Token::MAX_SAFE) {
+            return null;
+        }
+
+        return \is_string($href) && self::isSafeHref($href) ? ['pending' => $pending, 'href' => $href] : null;
     }
 
     /**
@@ -122,6 +151,7 @@ final readonly class Topbar
      *     account: ?string,
      *     admin_panel: ?string,
      *     logout: ?string,
+     *     approvals: ?array{pending: int, href: string},
      * }
      */
     public function toArray(): array
@@ -135,6 +165,7 @@ final readonly class Topbar
             'account' => $this->account,
             'admin_panel' => $this->adminPanel,
             'logout' => $this->logout,
+            'approvals' => $this->approvals,
         ];
     }
 }

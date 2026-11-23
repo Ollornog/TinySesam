@@ -54,10 +54,17 @@ that "the app provides the UI" needs no switch: two building blocks and document
 - [x] Proxy templates: `/.tinysesam/*` already passes through Caddy (plain, gate, quickstart, home network), nginx
       (both) and Traefik; the template comments and the proxy suites name `account.json`.
 
+## Stage E3 — the account overview in every client (done)
+
+- [x] `spec/gate-client.md` §8a fixes the normalized result; `spec/vectors/account.json` comes from the real
+      `account_overview` of a probe installation (`scripts/_gate_vectors.py`).
+- [x] `FetchAccount`/`ParseAccount` (Go), `account::normalize`/`AccountFetcher` (Rust, the fetch behind `jwks`),
+      `parseAccount`/`fetchAccount` (JS/TS), `Account::parse`/`Account::fetch` (PHP), `parse_account`/`fetch_account`
+      (`tinysesam.gate_client`): only TinySesam's cookies, 5 s, 64 KiB, anything but a `200` with `signed_in: true` is
+      signed out, unsafe links `null`.
+
 ## Open
 
-- [ ] clients: `FetchAccount` in every gate client (Go, Rust, JS/TS, PHP, `tinysesam.gate_client`) with vectors, like
-      `FetchTopbar`/`parse_topbar` — next pull request, together with the approval helpers.
 - [ ] `current` for the wrapper path: the gate token carries no session reference; a claim for it needs a spec change
       of its own.
 - [ ] Ending a single session or program from the application (needs a session handle, schema, own draft).

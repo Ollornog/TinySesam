@@ -43,8 +43,9 @@ final class Vectors
         if (!$doc instanceof \stdClass) {
             throw new \RuntimeException("{$name}: not an object");
         }
-        // Spec version 2 (Remote-Kind, ts_kind, menu_links): vectors of another version must not pass unseen.
-        if (($doc->format ?? null) !== 2) {
+        // Spec version 2 (Remote-Kind, ts_kind, menu_links), approval version 1 (spec/approval-token.md): vectors of
+        // another version must not pass unseen.
+        if (($doc->format ?? null) !== ($name === 'approval.json' ? 1 : 2)) {
             throw new \RuntimeException("{$name}: unknown vector format");
         }
 
@@ -58,6 +59,24 @@ final class Vectors
     }
 
     /** Decoded JSON (or an array built from it) as plain arrays with sorted keys, for exact comparison. */
+    /**
+     * The expected fields of an approval vector, as the application would hold them.
+     *
+     * @return array<array-key, string|int|bool>
+     */
+    public static function fields(\stdClass $fields): array
+    {
+        $out = [];
+        foreach (get_object_vars($fields) as $name => $value) {
+            if (!\is_string($value) && !\is_int($value) && !\is_bool($value)) {
+                throw new \RuntimeException("field {$name}: not a string, an integer or a boolean");
+            }
+            $out[$name] = $value;
+        }
+
+        return $out;
+    }
+
     public static function normalize(mixed $value): mixed
     {
         if ($value instanceof \stdClass) {

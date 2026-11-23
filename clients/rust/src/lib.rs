@@ -11,6 +11,9 @@
 //! - **Token mode** ([`TokenVerifier`] with fixed keys, `JwksVerifier` with a fetched key set behind the feature
 //!   `jwks`): the client verifies the Ed25519 gate token itself.
 //!
+//! Optional parts: [`approval`] checks approval confirmations (`spec/approval-token.md`), [`topbar`] and [`account`]
+//! normalize TinySesam's top bar and account overview data (spec §8, §8a).
+//!
 //! ```
 //! use tinysesam_gate::{HeaderMode, Requirement, authorize};
 //! use http::{HeaderMap, HeaderValue};
@@ -27,6 +30,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod account;
+pub mod approval;
 mod cache;
 mod error;
 mod guard;
@@ -56,7 +61,8 @@ pub use identity::{AccountKind, Auth, Identity, Kind, parse_groups};
 pub use keys::{JWKS_MAX_KEYS, KeySet, PublicKey, key_id};
 #[cfg(feature = "jwks")]
 pub use remote::{
-    CacheClock, FETCH_DEADLINE, Fetch, HttpFetcher, JwksVerifier, MonotonicClock, RemoteKeys,
+    ApprovalJwksVerifier, CacheClock, FETCH_DEADLINE, Fetch, HttpFetcher, JwksVerifier,
+    MonotonicClock, RemoteKeys,
 };
 pub use source::{GATE_COOKIE, TokenSource};
 pub use token::{

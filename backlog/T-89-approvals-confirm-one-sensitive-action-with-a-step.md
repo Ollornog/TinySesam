@@ -47,12 +47,20 @@ Part 1, the server side (done):
 - [x] `spec/approval-token.md`, `spec/vectors/approval.json` from the real issuing path, Python reference with the
       one-defect guard (`tests/test_approval_vectors.py`).
 
-Part 2 (open, its own pull request — builds only against the vectors):
+Part 2, the client helpers (done):
 
-- [ ] Approval helpers in Go, Rust, JS/TS and PHP (`verify_approval`, JWKS of §3, `jti` store), each passing
-      `vectors/approval.json`; replace the "runner follows" entry of their vector guards with the runner.
-- [ ] An example application in the repository (ask, browser entry, pickup, check, act).
-- [ ] Clients normalize the topbar member `approvals` (spec §8); stage A only names it as optional.
+- [x] Approval helpers in Go (`ApprovalVerifier.Verify`), Rust (`approval::ApprovalVerifier`, `ApprovalJwksVerifier`
+      behind `jwks`), JS/TS (`createApprovalVerifier`) and PHP (`ApprovalVerifier::create`), each with a fixed approval
+      key set or the JWKS URL of §3 (a `…/gate/jwks.json` refused at start-up) and the `jti` store as an interface
+      (callback, Go interface, Rust trait or two-step `check`/`accept`, PHP interface or callable; examples with one
+      `INSERT`); every client runs every vector of `vectors/approval.json`, the "runner follows" entry of the vector
+      guards is gone. Python: `tinysesam.approval_token.verify` stays the reference, plus `JWKSKeys` for the fetched
+      key set (still importable without FastAPI).
+- [x] An example application: `examples/approvals/app.py` (ask, browser entry, pickup, check, `jti` with one `INSERT`,
+      the own rule again), `--demo` with a real TinySesam on loopback; `tests/test_example_approvals.py` drives it
+      against TinySesam's real approval page.
+- [x] Clients normalize the topbar member `approvals` (spec §8): first the evidence that all five tolerate it (the
+      vector `approvals-pending` passed every client unchanged), then `{pending, href}` or `null` in all five.
 
 Later, on demand:
 

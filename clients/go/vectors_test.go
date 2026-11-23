@@ -17,11 +17,12 @@ import (
 const vectorDir = "../../spec/vectors"
 
 // Every file in spec/vectors/ must be run by one of these; a new file without a runner fails the suite.
-var vectorFiles = []string{"headers.json", "jwks.json", "keys.json", "token.json", "topbar.json"}
+var vectorFiles = []string{"account.json", "approval.json", "headers.json", "jwks.json", "keys.json", "token.json",
+	"topbar.json"}
 
-// Vector files of another part of the specification whose runner comes with that part's helper: approval.json
-// (spec/approval-token.md) with the approval helper (T-89 stage B, part 2). Listed, so a new file still fails.
-var pendingVectorFiles = []string{"approval.json"}
+// The format each file must declare: approval.json belongs to spec/approval-token.md (version 1), the others to
+// spec/gate-client.md (version 2).
+var vectorFormats = map[string]string{"approval.json": "1"}
 
 func loadVectors(t testing.TB, name string) map[string]any {
 	t.Helper()
@@ -35,8 +36,13 @@ func loadVectors(t testing.TB, name string) map[string]any {
 	if err := dec.Decode(&doc); err != nil {
 		t.Fatalf("parse %s: %v", name, err)
 	}
-	// Spec version 2 (Remote-Kind, ts_kind, menu_links): vectors of another version must not pass unseen.
-	if doc["format"] != json.Number("2") {
+	// Spec version 2 (Remote-Kind, ts_kind, menu_links), approval version 1: vectors of another version must not pass
+	// unseen.
+	want := vectorFormats[name]
+	if want == "" {
+		want = "2"
+	}
+	if doc["format"] != json.Number(want) {
 		t.Fatalf("%s: unknown vector format %v", name, doc["format"])
 	}
 	return doc
@@ -85,7 +91,7 @@ func TestVectorFilesAllCovered(t *testing.T) {
 		}
 	}
 	sort.Strings(found)
-	want := append(append([]string{}, vectorFiles...), pendingVectorFiles...)
+	want := append([]string{}, vectorFiles...)
 	sort.Strings(want)
 	if !reflect.DeepEqual(found, want) {
 		t.Fatalf("vector files %v, runner knows %v — add a runner for the new file", found, want)
@@ -336,6 +342,92 @@ func TestTopbarVectors(t *testing.T) {
 		}
 	}
 	t.Logf("%d top bar vectors", len(vectors))
+}
+
+func TestAccountVectors(t *testing.T) {
+	doc := loadVectors(t, "account.json")
+	vectors := doc["vectors"].([]any)
+	if len(vectors) == 0 {
+		t.Fatal("no account vectors")
+	}
+	for _, raw := range vectors {
+		v := raw.(map[string]any)
+		id := v["id"].(string)
+		got := ParseAccount(mustJSON(t, v["input"].(map[string]any)["account"]))
+		want := v["expected"].(map[string]any)["account"]
+		if !reflect.DeepEqual(normalize(t, got), want) {
+			t.Errorf("%s: account %s, want %s", id, mustJSON(t, got), mustJSON(t, want))
+		}
+	}
+	t.Logf("%d account vectors", len(vectors))
+}
+
+// memoryStore is the jti store of a vector: the ids in input.seen are already in it.
+type memoryStore struct{ seen map[string]bool }
+
+func (m *memoryStore) Remember(_ context.Context, jti string, _ int64) (bool, error) {
+	if m.seen[jti] {
+		return false, nil
+	}
+	m.seen[jti] = true
+	return true, nil
+}
+
+// runApprovalVector checks one vector of approval.json; it returns the claims or the error class.
+func runApprovalVector(t testing.TB, in map[string]any) (*ApprovalClaims, error) {
+	t.Helper()
+	ks, err := ParseJWKS(mustJSON(t, in["jwks"]))
+	if err != nil {
+		t.Fatalf("vector key set: %v", err)
+	}
+	now := num(t, in["now"])
+	v := &ApprovalVerifier{issuer: in["issuer"].(string), appID: in["app_id"].(string),
+		leeway: num(t, in["leeway"]), static: ks, now: func() int64 { return now }}
+	e := in["expect"].(map[string]any)
+	want := ApprovalExpect{Type: e["type"].(string), Fields: e["fields"].(map[string]any), Subject: e["sub"].(string)}
+	if n, ok := e["nonce"].(string); ok {
+		want.Nonce = n
+	}
+	store := &memoryStore{seen: map[string]bool{}}
+	for _, s := range in["seen"].([]any) {
+		store.seen[s.(string)] = true
+	}
+	return v.Verify(context.Background(), in["jws"].(string), want, store)
+}
+
+func TestApprovalVectors(t *testing.T) {
+	doc := loadVectors(t, "approval.json")
+	if doc["spec"] != "spec/approval-token.md" {
+		t.Fatalf("approval.json belongs to %v", doc["spec"])
+	}
+	vectors := doc["vectors"].([]any)
+	if len(vectors) < 40 {
+		t.Fatalf("only %d approval vectors", len(vectors))
+	}
+	valid := 0
+	for _, raw := range vectors {
+		v := raw.(map[string]any)
+		id := v["id"].(string)
+		exp := v["expected"].(map[string]any)
+		c, err := runApprovalVector(t, v["input"].(map[string]any))
+		if exp["ok"] == true {
+			valid++
+			if err != nil {
+				t.Errorf("%s: refused with %v", id, err)
+				continue
+			}
+			if !reflect.DeepEqual(normalize(t, c.Raw), exp["claims"]) {
+				t.Errorf("%s: claims %v, want %v", id, normalize(t, c.Raw), exp["claims"])
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: accepted, want %v", id, exp["error"])
+		} else if got := ClassOf(err); string(got) != exp["error"] {
+			t.Errorf("%s: class %q, want %q", id, got, exp["error"])
+		}
+	}
+	t.Logf("%d approval vectors, %d valid", len(vectors), valid)
 }
 
 // The test keys: each public JWK matches its sign_key form, and the seed signs for that key.

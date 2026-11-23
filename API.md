@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 185 of 219
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 410 · B 292 · C 38 names.
+**Status:** A 410 · B 296 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -893,6 +893,10 @@ Before `nbf - leeway`.
 
 `'not_yet_valid'`
 
+### `SIGNED_OUT_ACCOUNT` — Constant
+
+`{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'links': None}`
+
 ### `SignatureError(detail: 'str' = '', *, kid: 'str' = '')` — class
 
 The signature has the wrong length or does not verify.
@@ -905,13 +909,17 @@ The signature has the wrong length or does not verify.
 
 Base of the token-mode classes below.
 
-### `Topbar(brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None` — class
+### `Topbar(brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None, approvals: 'Optional[TopbarApprovals]' = None) -> None` — class
 
 TinySesam's top bar data reduced to what an application may render. Do not cache it across sessions.
 
 ### `Topbar.to_dict() -> 'dict[str, Any]'`
 
-The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`).
+The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`, `approvals` as `{pending, href}` or None).
+
+### `TopbarApprovals(pending: 'int', href: 'str') -> None` — class
+
+How many approvals wait for this account and where to decide them (spec §8, with approvals switched on). Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
 
 ### `TopbarLink(title: 'str', href: 'str') -> None` — class
 
@@ -941,6 +949,10 @@ Identifies every request and stores the `Identity` (or `None`) in `environ["tiny
 
 The identity the middleware stored: from a WSGI environ or ASGI scope, from a request object that carries one (`.environ` in Flask, `.META` in Django, `.scope` in Starlette), or — without an argument — from the request being handled. `None` when nobody is signed in or no middleware ran.
 
+### `fetch_account(url: 'str', cookie_header: 'str' = '') -> 'dict[str, Any]'`
+
+Fetch the own account overview server-side (`https://<auth host>/auth/account.json`, or `/.tinysesam/account.json` on the application's host), forwarding only TinySesam's cookies of the request; 5-second deadline, 64 KiB. Signed out on any failure — a 401 (no full browser session), a 404, a 429 included.
+
 ### `fetch_topbar(url: 'str', cookie_header: 'str' = '') -> 'Topbar'`
 
 Fetch the top bar server-side, forwarding only TinySesam's cookies of the request (`tinysesam_*`, `__Host-tinysesam_*`); 5-second deadline, 64 KiB. Signed out on any failure.
@@ -948,6 +960,10 @@ Fetch the top bar server-side, forwarding only TinySesam's cookies of the reques
 ### `guard_status(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False, account_kind: 'Optional[str]' = None) -> 'Optional[int]'`
 
 None when the request may pass, else the status to answer: 401 without an identity, 403 when the role, the session or the account kind (`user`/`service`) is missing. For view decorators in any framework.
+
+### `parse_account(data: 'Any') -> 'dict[str, Any]'`
+
+Normalize the answer of `/.tinysesam/account.json` (or `/auth/account.json`), spec §8a: signed out (`SIGNED_OUT_ACCOUNT`) unless it is an object with `signed_in` exactly True; otherwise every member of §8a is present, a member of the wrong type reads as missing (None), an `href` that is no safe link becomes None, unknown members are dropped. Every string is text, never markup. Do not cache it across sessions.
 
 ### `parse_topbar(data: 'Any') -> 'Topbar'`
 

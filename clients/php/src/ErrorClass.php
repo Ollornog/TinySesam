@@ -36,6 +36,16 @@ enum ErrorClass: string
     case Expired = 'expired';
     /** A key set document of the wrong shape. */
     case JwksInvalid = 'jwks_invalid';
+    /** Approval check (spec/approval-token.md section 5): another action — do not carry it out. */
+    case ApprovalType = 'approval_type';
+    /** Approval check: other fields (a name, a JSON type or a value). */
+    case ApprovalFields = 'approval_fields';
+    /** Approval check: another account. */
+    case Subject = 'subject';
+    /** Approval check: another browser session (browser entry). */
+    case Nonce = 'nonce';
+    /** Approval check: the confirmation was used before. */
+    case Replay = 'replay';
     /** Beyond the specification — header mode: the request did not come from a trusted proxy. */
     case UntrustedPeer = 'untrusted_peer';
     /** Beyond the specification — an unexpected failure inside the client (fails closed). */

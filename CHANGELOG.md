@@ -4,6 +4,30 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+
+- Approval helpers in every gate client (T-89 stage B part 2, `spec/approval-token.md`): Go
+  `NewApprovalVerifier(…).Verify(ctx, token, ApprovalExpect, JTIStore)`, Rust `approval::ApprovalVerifier` (and
+  `ApprovalJwksVerifier` with the feature `jwks`; `check_at` + `Checked::accept` for an async store), JS/TS
+  `createApprovalVerifier(…).verify(token, expect, store)`, PHP `ApprovalVerifier::create(…)->verify(…)`. Each checks
+  against the APPROVAL key set (fixed, or fetched from `/auth/approvals/jwks.json` under the rules of spec §5 — a
+  `…/gate/jwks.json` stops the start), `typ`, `aud` as ONE application id, exactly one `authorization_details` entry,
+  the RFC 8785 digest, the stored type, fields (name, JSON type and value), account and `state`, a lifetime of at most
+  300 s and a leeway of at most 30 s, and writes the `jti` into the application's store last (an interface or callback;
+  a failing store refuses). Every client runs every vector of `spec/vectors/approval.json`; the "runner follows" entry
+  of the vector guards is gone. Python: `tinysesam.approval_token.JWKSKeys` fetches the approval key set for `verify`.
+- Account overview helpers (T-91, spec §8a): `FetchAccount`/`ParseAccount` (Go), `account::normalize` and
+  `AccountFetcher` (Rust, the fetch with `jwks`), `parseAccount`/`fetchAccount` (JS/TS), `Account::parse`/`::fetch`
+  (PHP), `tinysesam.gate_client.parse_account`/`fetch_account` — only TinySesam's cookies, 5 s, 64 KiB; anything but a
+  `200` with `signed_in: true` is signed out, a member of the wrong type `null`, an unsafe link `null`. The normalized
+  result is fixed in §8a; `spec/vectors/account.json` is generated from the real `account_overview`.
+- The top bar's `approvals` member is normalized in all five clients (spec §8): `{pending, href}` when `pending` is an
+  integer of at least 0 and `href` a safe link, otherwise `null`. Before the change a new vector showed that every
+  client tolerated the member unchanged.
+- `examples/approvals/app.py`: an application that asks, sends the browser to TinySesam, comes back, picks the
+  confirmation up, checks it, writes the `jti` with one `INSERT` and runs its own rule again; `--demo` starts a real
+  TinySesam and the app on loopback. `tests/test_example_approvals.py` drives it against TinySesam's approval page.
+
 ### Changed — test kit 0.62
 
 - Test kit 0.62.0 (repokit): test scripts without a `__main__` guard run in the pre-push hook, and `nightly-repeat.yml` now comes

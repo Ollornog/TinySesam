@@ -398,3 +398,149 @@ fn key_set_urls() {
     assert!(f.clone().with_deadline(Duration::ZERO).is_err());
     assert!(f.with_deadline(Duration::from_secs(1)).is_ok());
 }
+
+/// A loopback HTTP server that answers every request with `status` and `body` and records the request heads.
+async fn record(
+    path: &str,
+    status: &'static str,
+    body: Vec<u8>,
+) -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}{path}", listener.local_addr().unwrap());
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let seen = heads.clone();
+    tokio::spawn(async move {
+        while let Ok((mut conn, _)) = listener.accept().await {
+            let mut head = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match conn.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                }
+            }
+            seen.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&head).into_owned());
+            let extra = format!(
+                "Content-Type: application/json\r\nCache-Control: max-age=300\r\nContent-Length: {}\r\n",
+                body.len()
+            );
+            let _ = conn.write_all(&answer(status, &extra, &body)).await;
+        }
+    });
+    (url, heads)
+}
+
+fn approval_case() -> (Value, Value) {
+    let doc = load("approval.json");
+    let v = doc["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["id"] == "valid-basic")
+        .unwrap()
+        .clone();
+    (v["input"].clone(), v["expected"].clone())
+}
+
+#[tokio::test]
+async fn approval_key_set_fetched_once_never_the_gate_set() {
+    use tinysesam_gate::ApprovalJwksVerifier;
+    use tinysesam_gate::approval::{ApprovalConfig, ApprovalExpect};
+    let (input, expected) = approval_case();
+    let config = ApprovalConfig::new(str_of(&input, "issuer"), str_of(&input, "app_id")).unwrap();
+    for gate in [
+        "https://auth.example.com/auth/gate/jwks.json",
+        "https://auth.example.com/auth/gate/jwks.json/",
+    ] {
+        assert!(
+            ApprovalJwksVerifier::from_url(config.clone(), gate).is_err(),
+            "{gate} accepted"
+        );
+    }
+    assert!(
+        ApprovalJwksVerifier::from_url(
+            config.clone(),
+            "http://auth.example.com/auth/approvals/jwks.json"
+        )
+        .is_err()
+    );
+    let (url, heads) = record(
+        "/auth/approvals/jwks.json",
+        "200 OK",
+        serde_json::to_vec(&input["jwks"]).unwrap(),
+    )
+    .await;
+    let verifier = ApprovalJwksVerifier::from_url(config, &url).unwrap();
+    let e = &input["expect"];
+    let expect = ApprovalExpect::new(str_of(e, "type"), str_of(e, "sub"))
+        .fields(e["fields"].as_object().unwrap().clone());
+    let now = input["now"].as_i64().unwrap();
+    for first in [true, false] {
+        let checked = verifier
+            .check_at(str_of(&input, "jws"), &expect, now)
+            .await
+            .expect("a good confirmation");
+        assert_eq!(checked.jti(), expected["claims"]["jti"]);
+        assert_eq!(checked.until(), expected["claims"]["exp"].as_i64().unwrap());
+        let result = checked.accept(first);
+        if first {
+            let claims = result.unwrap();
+            assert_eq!(claims.actor(), "app:example");
+            assert_eq!(claims.kind(), "example.collection.delete_permanently");
+            assert_eq!(claims.fields()["collection"], "c_81f2");
+        } else {
+            assert_eq!(result.unwrap_err().class(), "replay");
+        }
+    }
+    assert_eq!(heads.lock().unwrap().len(), 1, "fetched more than once");
+}
+
+#[tokio::test]
+async fn account_fetch_forwards_only_tinysesam_cookies() {
+    use tinysesam_gate::account::AccountFetcher;
+    let full = load("account.json")["vectors"][0]["input"]["account"].clone();
+    let (url, heads) = record(
+        "/auth/account.json",
+        "200 OK",
+        serde_json::to_vec(&full).unwrap(),
+    )
+    .await;
+    let account = AccountFetcher::new(&url)
+        .unwrap()
+        .fetch(Some("app=private; tinysesam_session=abc; x=1"))
+        .await;
+    assert!(account.signed_in);
+    assert_eq!(serde_json::to_value(&account).unwrap(), full);
+    let head = heads.lock().unwrap()[0].to_ascii_lowercase();
+    assert!(head.contains("cookie: tinysesam_session=abc\r\n"), "{head}");
+    assert!(!head.contains("private"), "{head}");
+    for status in ["401 Unauthorized", "404 Not Found", "429 Too Many Requests"] {
+        let (url, _) = record(
+            "/auth/account.json",
+            status,
+            serde_json::to_vec(&full).unwrap(),
+        )
+        .await;
+        let account = AccountFetcher::new(&url)
+            .unwrap()
+            .fetch(Some("tinysesam_session=abc"))
+            .await;
+        assert!(!account.signed_in && account.links.is_none(), "{status}");
+    }
+    let (url, _) = record(
+        "/auth/account.json",
+        "200 OK",
+        vec![b' '; tinysesam_gate::JWKS_MAX_BODY + 1],
+    )
+    .await;
+    assert!(
+        !AccountFetcher::new(&url)
+            .unwrap()
+            .fetch(None)
+            .await
+            .signed_in
+    );
+    assert!(AccountFetcher::new("http://auth.example.com/auth/account.json").is_err());
+}

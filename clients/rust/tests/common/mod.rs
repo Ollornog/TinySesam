@@ -14,8 +14,10 @@ pub fn load(name: &str) -> Value {
     let path = vector_dir().join(name);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let doc: Value = serde_json::from_str(&text).unwrap();
-    // Spec version 2 (Remote-Kind, ts_kind, menu_links): vectors of another version must not pass unseen.
-    assert_eq!(doc["format"], 2, "{name}: unknown vector format");
+    // Spec version 2 (Remote-Kind, ts_kind, menu_links), approval version 1 (spec/approval-token.md): vectors of another
+    // version must not pass unseen.
+    let format = if name == "approval.json" { 1 } else { 2 };
+    assert_eq!(doc["format"], format, "{name}: unknown vector format");
     doc
 }
 

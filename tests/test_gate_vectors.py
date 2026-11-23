@@ -59,8 +59,8 @@ def load(name):
         return json.load(f)
 
 
-FILES = ("keys.json", "token.json", "headers.json", "jwks.json", "topbar.json")
-TOKEN, HEADERS, JWKS, TOPBAR = (load(n) for n in FILES[1:])
+FILES = ("keys.json", "token.json", "headers.json", "jwks.json", "topbar.json", "account.json")
+TOKEN, HEADERS, JWKS, TOPBAR, ACCOUNT = (load(n) for n in FILES[1:])
 
 #: The attack classes the vectors must cover (spec/gate-client.md, "Attack classes"). Keep both lists equal.
 ATTACK_CLASSES = {
@@ -72,7 +72,7 @@ ATTACK_CLASSES = {
     "remote-auth", "remote-kind", "groups-parsing", "header-missing-user", "header-duplicate", "header-injection", "header-encoding",
     "id-format",
     "jwks-entry", "jwks-shape", "jwks-cache",
-    "topbar-href", "topbar-types",
+    "topbar-href", "topbar-types", "account-href", "account-types",
 }
 
 # ---------- 1. current ----------
@@ -99,7 +99,7 @@ ok("the generator leaves gate.secrets and the clock as they were")
 # ---------- 2. complete ----------
 all_vectors = ([("token", v) for v in TOKEN["vectors"]] + [("headers", v) for v in HEADERS["vectors"]]
                + [("jwks", v) for v in JWKS["sets"]] + [("jwks", v) for v in JWKS["scenarios"]]
-               + [("topbar", v) for v in TOPBAR["vectors"]])
+               + [("topbar", v) for v in TOPBAR["vectors"]] + [("account", v) for v in ACCOUNT["vectors"]])
 ids = [f"{kind}/{v['id']}" for kind, v in all_vectors]
 assert len(ids) == len(set(ids)), "duplicate vector ids"
 for kind, v in all_vectors:
@@ -213,6 +213,11 @@ def run_topbar(v, relax=frozenset()):
         return {"ok": True, "topbar": gc.parse_topbar(v["input"]["topbar"]).to_dict()}
 
 
+def run_account(v, relax=frozenset()):
+    with relax_mod.relaxed(*relax):
+        return {"ok": True, "account": gc.parse_account(v["input"]["account"])}
+
+
 def mismatches(relax=frozenset()) -> list:
     bad = []
     for v in TOKEN["vectors"]:
@@ -230,6 +235,9 @@ def mismatches(relax=frozenset()) -> list:
     for v in TOPBAR["vectors"]:
         if run_topbar(v, relax) != v["expected"]:
             bad.append("topbar/" + v["id"])
+    for v in ACCOUNT["vectors"]:
+        if run_account(v, relax) != v["expected"]:
+            bad.append("account/" + v["id"])
     return bad
 
 
@@ -243,7 +251,8 @@ if failed:
             detail.append((v["id"], run_token(v), v["expected"].get("error")))
     raise AssertionError(f"the gate client misses {len(failed)} vectors: {failed[:10]} {detail[:5]}")
 ok(f"gate client: {len(TOKEN['vectors'])} token, {len(HEADERS['vectors'])} header, "
-   f"{len(JWKS['sets'])} key-set, {len(JWKS['scenarios'])} cache, {len(TOPBAR['vectors'])} top-bar vectors passed")
+   f"{len(JWKS['sets'])} key-set, {len(JWKS['scenarios'])} cache, {len(TOPBAR['vectors'])} top-bar, "
+   f"{len(ACCOUNT['vectors'])} account vectors passed")
 
 _token_cfg = {"mode": "token", "issuer": "https://auth.example.com", "audience": "app.example.com",
               "gate_keys": [load("keys.json")["keys"]["A"]["sign_key_base64"]]}

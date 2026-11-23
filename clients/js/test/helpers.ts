@@ -22,8 +22,9 @@ export function vectorFiles(): string[] {
 
 export function loadVectors(name: string): Json {
   const doc = JSON.parse(readFileSync(new URL(name, VECTOR_DIR), 'utf8'));
-  // Spec version 2 (Remote-Kind, ts_kind, menu_links): vectors of another version must not pass unseen.
-  if (doc.format !== 2) {
+  // Spec version 2 (Remote-Kind, ts_kind, menu_links), approval version 1 (spec/approval-token.md): vectors of another
+  // version must not pass unseen.
+  if (doc.format !== (name === 'approval.json' ? 1 : 2)) {
     throw new Error(`${name}: unknown vector format ${doc.format}`);
   }
   return doc;

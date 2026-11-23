@@ -14,6 +14,7 @@ import io
 import json
 import logging
 import os
+import pathlib
 import random
 import socket
 import subprocess
@@ -101,6 +102,8 @@ blocker = (
     "            raise ImportError('blocked ' + name)\n"
     "sys.meta_path.insert(0, Block())\n"
     "from tinysesam import gate_client as gc\n"
+    "from tinysesam import approval_token as at\n"
+    "assert at.TOKEN_TYPE == 'tinysesam-approval+jwt'\n"
     "i = gc.GateClient(mode='header').identify({'Remote-User': 'anna', 'Remote-Auth': 'session', 'Remote-Kind': 'user'})\n"
     "assert i.user == 'anna' and i.is_session()\n"
     "assert not any(m.split('.')[0] in ('fastapi', 'starlette') for m in sys.modules), sorted(sys.modules)\n"
@@ -114,7 +117,8 @@ r = subprocess.run([sys.executable, "-c", blocker], cwd=ROOT, capture_output=Tru
 assert r.returncode == 0 and r.stdout.strip() == "lazy", (r.returncode, r.stdout, r.stderr[-2000:])
 package = importlib.import_module("tinysesam")
 assert package.TinySesam.__name__ == "TinySesam" and "TinySesam" in dir(package)
-ok("tinysesam.gate_client imports and works without FastAPI; `tinysesam.TinySesam` loads on first use")
+ok("tinysesam.gate_client and tinysesam.approval_token import and work without FastAPI; `tinysesam.TinySesam` loads "
+   "on first use")
 
 # ---------- configuration errors stop the start ----------
 for bad in (
@@ -623,6 +627,34 @@ assert gc.fetch_topbar(s.url + "/auth/topbar.json") == gc.Topbar()
 s.close()
 assert gc.parse_topbar({"signed_in": True, "name": "A", "brand": 5}).brand == ""
 ok("top bar: fetched server-side with only TinySesam's cookies; an error status is signed out")
+
+# ---------- account overview fetch (spec §8a) ----------
+ACCOUNT_DOC = json.loads(pathlib.Path(ROOT, "spec", "vectors", "account.json").read_text(encoding="utf-8"))
+full_answer = next(v for v in ACCOUNT_DOC["vectors"] if v["id"] == "signed-in")["input"]["account"]
+
+
+def account(h, srv):
+    seen_cookie["value"] = h.headers.get("Cookie")
+    send_json(h, full_answer)
+
+
+s = Server(account)
+got = gc.fetch_account(s.url + "/auth/account.json", "other=1; tinysesam_session=abc; x=2")
+assert got["signed_in"] is True and got["account"]["username"] == "anna" and got == full_answer, got
+assert seen_cookie["value"] == "tinysesam_session=abc", seen_cookie
+s.close()
+for status, body in ((401, {"authenticated": False, "signed_in": False}), (404, {"detail": "not found"}),
+                     (429, {"detail": "too many"}), (500, full_answer), (203, full_answer)):
+    s = Server(lambda h, srv, st=status, b=body: send_json(h, b, status=st))
+    assert gc.fetch_account(s.url + "/auth/account.json", "tinysesam_session=abc") == gc.SIGNED_OUT_ACCOUNT, status
+    s.close()
+s = Server(lambda h, srv: send_json(h, full_answer, extra=b" " * (64 * 1024)))
+assert gc.fetch_account(s.url + "/auth/account.json") == gc.SIGNED_OUT_ACCOUNT, "a body above 64 KiB was read"
+s.close()
+assert raises(ConfigError, lambda: gc.fetch_account("http://auth.example.com/auth/account.json")), "plain http"
+assert gc.parse_account(full_answer) is not gc.parse_account(full_answer), "a shared result object"
+ok("account overview: fetched server-side with only TinySesam's cookies; 401, 404, 429, 500, 203 and a body above 64 KiB "
+   "are signed out; plain http to another host stops the start")
 
 # ---------- property test: mutated tokens ----------
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.=+/ \n\x00é"

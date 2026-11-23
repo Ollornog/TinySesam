@@ -16,6 +16,12 @@ export type ErrorClass =
   | 'not_yet_valid' // before nbf - leeway
   | 'expired' // at or after exp + leeway
   | 'jwks_invalid' // a key set document of the wrong shape
+  // Classes of the approval check (spec/approval-token.md section 5): do not carry the action out.
+  | 'approval_type' // another action
+  | 'approval_fields' // other fields: a name, a JSON type or a value
+  | 'subject' // another account
+  | 'nonce' // another browser session (browser entry)
+  | 'replay' // the confirmation was used before
   // Classes of this client beyond the specification:
   | 'untrusted_peer' // header mode: the request did not come from a trusted proxy
   | 'internal'; // an unexpected failure inside the client (fails closed)
@@ -35,6 +41,11 @@ export const ERROR_CLASSES: readonly ErrorClass[] = Object.freeze([
   'not_yet_valid',
   'expired',
   'jwks_invalid',
+  'approval_type',
+  'approval_fields',
+  'subject',
+  'nonce',
+  'replay',
   'untrusted_peer',
   'internal',
 ]);

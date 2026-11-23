@@ -43,6 +43,12 @@ type parsedToken struct {
 
 // parseToken runs steps 1-5 of spec section 4.4: size, structure, header JSON, header members, signature length.
 func parseToken(jws string) (*parsedToken, error) {
+	return parseJWS(jws, tokenType)
+}
+
+// parseJWS is steps 1-5 for a JWS of the given typ: a gate token (spec section 4.4) or an approval confirmation
+// (spec/approval-token.md section 4, the same steps with its own typ).
+func parseJWS(jws, typ string) (*parsedToken, error) {
 	if len(jws) > MaxTokenBytes {
 		return nil, refuse(ClassMalformed, "token too large")
 	}
@@ -73,7 +79,7 @@ func parseToken(jws string) (*parsedToken, error) {
 	if alg, ok := hdr["alg"].(string); !ok || alg != tokenAlgorithm {
 		return nil, refuse(ClassHeader, "alg is not EdDSA")
 	}
-	if typ, ok := hdr["typ"].(string); !ok || !asciiEqualFold(typ, tokenType) {
+	if got, ok := hdr["typ"].(string); !ok || !asciiEqualFold(got, typ) {
 		return nil, refuse(ClassHeader, "wrong typ")
 	}
 	kid, ok := hdr["kid"].(string)

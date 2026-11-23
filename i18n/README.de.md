@@ -2538,7 +2538,15 @@ except gate_client.UntrustedPeer:
   angezeigt werden darf (`Topbar`, `TopbarLink`, mit `links` und `menu_links`; unsichere Links fallen weg, im Zweifel
   abgemeldet);
   `fetch_topbar(url, cookie_header)` holt sie serverseitig nur mit TinySesams Cookies; `Topbar.to_dict()` liefert die
-  normalisierte Form aus §8.
+  normalisierte Form aus §8. Mit eingeschalteten Freigaben ist `Topbar.approvals` ein `TopbarApprovals` (`pending`,
+  `href`), sonst `None`.
+- **Kontoübersicht** (optional, Spec §8a): `fetch_account(url, cookie_header)` holt `/auth/account.json` (oder
+  `/.tinysesam/account.json` auf dem Host der Anwendung) serverseitig nur mit TinySesams Cookies;
+  `parse_account(data)` normalisiert eine Antwort zu einem einfachen dict — `SIGNED_OUT_ACCOUNT` für alles außer
+  `signed_in: true`, unsichere Links und Mitglieder falschen Typs `None`.
+- **Freigabe-Bestätigungen**: die Prüfung liegt in `tinysesam.approval_token.verify` (auch ohne FastAPI);
+  `approval_token.JWKSKeys("https://auth.example.com/auth/approvals/jwks.json")` holt dafür den Freigabe-Schlüsselsatz
+  und weist den Gate-Schlüsselsatz ab. Eine vollständige Anwendung: `examples/approvals/app.py`.
 
 Flask, mit einem View-Dekorator auf `guard_status`:
 
@@ -2846,7 +2854,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**128 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**129 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

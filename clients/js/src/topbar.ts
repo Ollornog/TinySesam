@@ -23,6 +23,17 @@ export interface Topbar {
   readonly account: string | null;
   readonly admin_panel: string | null;
   readonly logout: string | null;
+  /**
+   * The approvals waiting for this account, when TinySesam has approvals switched on and the answer carries a count of
+   * at least 0 and a safe link. Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
+   */
+  readonly approvals: TopbarApprovals | null;
+}
+
+/** How many approvals wait for this account and where to decide them. */
+export interface TopbarApprovals {
+  readonly pending: number;
+  readonly href: string;
 }
 
 /** The top bar of a signed-out request (also the answer to anything doubtful). */
@@ -36,6 +47,7 @@ export function signedOutTopbar(brand = ''): Topbar {
     account: null,
     admin_panel: null,
     logout: null,
+    approvals: null,
   };
 }
 
@@ -106,7 +118,21 @@ export function parseTopbar(body: string | Uint8Array): Topbar {
     account: shown('account'),
     admin_panel: shown('admin_panel'),
     logout: typeof logoutHref === 'string' && isSafeHref(logoutHref) ? logoutHref : null,
+    approvals: topbarApprovals(own(data, 'approvals')),
   };
+}
+
+/** `approvals` of spec section 8: a count of at least 0 and a safe href, or nothing at all. */
+function topbarApprovals(raw: unknown): TopbarApprovals | null {
+  if (!isObject(raw)) {
+    return null;
+  }
+  const pending = own(raw, 'pending');
+  const href = own(raw, 'href');
+  if (typeof pending !== 'number' || !Number.isSafeInteger(pending) || pending < 0) {
+    return null;
+  }
+  return typeof href === 'string' && isSafeHref(href) ? { pending, href } : null;
 }
 
 /** Only TinySesam's cookies of a Cookie header (`tinysesam_*`, `__Host-tinysesam_*`), joined again. */
