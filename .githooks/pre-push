@@ -347,6 +347,49 @@ naechster_mit() {
     done
 }
 
+# python_waehlen — the interpreter for hygiene AND tests of the changed files (one choice, kit 0.61.0). Order: $PYTHON
+# (binding), .venv of the checked-out tree, .venv of the tree the hook was started in, .venv of the repo's main working
+# tree (a fresh `git worktree add` has none), else system python3. Sets PY_WAHL and PY_ART (gesetzt|venv|system).
+# WHY: up to 0.60 the hygiene stage called a bare `python3`, only the tests of the changed files looked for .venv. A repo
+# whose hygiene imports a package (TinySesam: FastAPI, runs README code blocks) died with ModuleNotFoundError in every
+# fresh worktree, although the .venv was right there.
+python_waehlen() {
+    local c haupt
+    PY_WAHL=""; PY_ART=venv
+    if [[ -n "${PYTHON:-}" ]]; then PY_WAHL="$PYTHON"; PY_ART=gesetzt; return 0; fi
+    haupt="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    for c in "$PWD/.venv/bin/python" "$ROOT/.venv/bin/python" ${haupt:+"${haupt%/.git}/.venv/bin/python"}; do
+        if [[ -x "$c" ]]; then PY_WAHL="$c"; return 0; fi
+    done
+    PY_WAHL=python3; PY_ART=system
+}
+
+# hygiene — runs tests/test_repo.py with the chosen interpreter. A missing package with only the system python3 on offer
+# is not a finding in the repo but a missing venv: say so, with the way out, instead of a bare traceback.
+hygiene() {
+    local aus rc=0
+    python_waehlen
+    aus="$(mktemp)"
+    "$PY_WAHL" tests/test_repo.py >"$aus" 2>&1 || rc=$?
+    cat "$aus"
+    if [[ $rc -ne 0 && "$PY_ART" == system ]] && grep -q -E '^(ModuleNotFoundError|ImportError)' "$aus"; then
+        rm -f "$aus"
+        rot "repo hygiene could not import a package — venv missing (no .venv here, in the hook's tree or in the main tree). Build it: run scripts/check.sh once (repos with uv build .venv there) or \`uv venv .venv && uv pip install -e '.[all]'\`, or set PYTHON=<interpreter>, then push again."
+    fi
+    rm -f "$aus"
+    [[ $rc -eq 0 ]] || rot "repo hygiene is red (tests/test_repo.py)."
+}
+
+# skript_test <file> — is this test file a SCRIPT (run it with the interpreter) rather than a pytest/unittest module?
+# Yes if it has a `__main__` guard, or if it defines no test function and no test class at all: then its checks run at
+# module level and end in `raise SystemExit(...)` (kit 0.62.0; the guard-only rule called such a file "no __main__" and
+# skipped it in the fast push, TinySesam tests/test_english_code.py).
+skript_test() {
+    grep -q -E '^if __name__ == .__main__.:' "$1" && return 0
+    grep -q -E '^[[:space:]]*(async[[:space:]]+)?def test_|^class Test|unittest|import pytest|from pytest' "$1" && return 1
+    return 0
+}
+
 schnell() {
     local basis="$1" grund="" py f d
     local -a geaendert=() alle=() sh=() pyf=() tests=() go=() gopakete=() rs=() js=()
@@ -355,7 +398,7 @@ schnell() {
     if [[ -x scripts/_nur_text.sh && -f tests/test_repo.py ]]; then
         if grund="$(scripts/_nur_text.sh)"; then
             echo "pre-push: $grund"
-            python3 tests/test_repo.py || rot "repo hygiene is red (tests/test_repo.py)."
+            hygiene
             return 0
         fi
         echo "pre-push: $grund — fast checks instead (full suite: PR CI)."
@@ -364,7 +407,7 @@ schnell() {
     # 2. Hygiene: no private infrastructure, no secret patterns, kit manifest.
     stufe "Hygiene (tests/test_repo.py)"
     if [[ -f tests/test_repo.py ]]; then
-        python3 tests/test_repo.py || rot "repo hygiene is red (tests/test_repo.py)."
+        hygiene
     else
         hinweis "no tests/test_repo.py — the hygiene runs only in the PR CI"
     fi
@@ -454,18 +497,16 @@ for f in sys.argv[1:]:
         elif [[ ${#tests[@]} -eq 0 ]]; then
             hinweis "no test file belongs to the changed files by name — PR CI"
         else
-            py="${PYTHON:-}"
-            [[ -n "$py" ]] || { [[ -x "$ROOT/.venv/bin/python" ]] && py="$ROOT/.venv/bin/python"; } || true
-            [[ -n "$py" ]] || py=python3
+            python_waehlen; py="$PY_WAHL"
             for d in "${tests[@]}"; do
-                if grep -q -E '^if __name__ == .__main__.:' "$d"; then
+                if skript_test "$d"; then
                     echo "  $d"
                     "$py" "$d" || rot "$d is red"
                 elif "$py" -c 'import pytest' >/dev/null 2>&1; then
                     echo "  pytest $d"
                     "$py" -m pytest -q "$d" || rot "$d is red (pytest)"
                 else
-                    hinweis "$d: no __main__ and no pytest for $py — PR CI"
+                    hinweis "$d: not a script and no pytest for $py — PR CI"
                 fi
             done
         fi
