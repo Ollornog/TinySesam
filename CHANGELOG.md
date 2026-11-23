@@ -4,6 +4,15 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-11-23
+
+Check before upgrading: a configuration that names a role with a comma, a control character or surrounding spaces is
+now refused at construction (T-85), and an account still holding such a role is refused at the forward check — run
+`config_check` first. Who needs this release: administrators who want to add roles in the panel without editing the
+configuration (role catalog), and applications in Go, Rust, JS/TS, PHP or Python that verify approval confirmations
+or show TinySesam's account overview (gate client helpers). Schema 24 → 25 (additive; migration runs at start,
+rollback in `docs/OPERATIONS.md`) — back up the database before upgrading.
+
 ### Added
 
 - Role catalog (T-92, schema 25): administrators add roles in the panel (*Accounts → Roles*), with

@@ -7,7 +7,7 @@ TinySesam does **not update itself**. Whoever installs the library determines th
 pinned Git tag or a release's wheel. See README,
 section "Installation and updates".
 """
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 
 from typing import TYPE_CHECKING
 

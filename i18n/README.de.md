@@ -63,9 +63,9 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 TinySesam liegt auf **PyPI** (seit 0.19.0). Pinne die Version:
 
 ```bash
-pip install "tinysesam==0.28.0"
+pip install "tinysesam==0.29.0"
 # Kern: Passwort + TOTP. Alles: [all] — + argon2, QR, OIDC, Passkey
-pip install "tinysesam[all]==0.28.0"
+pip install "tinysesam[all]==0.29.0"
 # gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -74,7 +74,7 @@ Datei trägt eine PEP-740-Beglaubigung des Commits, aus dem sie gebaut ist. Dies
 installiert sich auch direkt vom Tag:
 
 ```bash
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.28.0"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.29.0"
 ```
 
 Ohne `@v…` kommt statt einer freigegebenen Fassung der bewegliche Hauptzweig — das gehört in ein
@@ -1226,7 +1226,7 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc]==0.28.0
+tinysesam[oidc]==0.29.0
 ```
 
 Eine veröffentlichte Version auf PyPI ändert sich nicht mehr: Dieselbe Zeile installiert morgen
@@ -1237,14 +1237,14 @@ Derselbe Pin über Git, wenn du so installierst — beachte, dass sich ein **Tag
 für echte Unveränderlichkeit pinne den Commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.28.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.29.0
 ```
 
 Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256SUMS`. Wer ohne Git
 und ohne Paketindex installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.28.0/tinysesam-0.28.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.29.0/tinysesam-0.29.0-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -1252,7 +1252,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.28.0/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.28.0
+ghcr.io/ollornog/tinysesam:v0.29.0
 ```
 
 **Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
@@ -1260,13 +1260,13 @@ hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigsto
 Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.28.0 --owner Ollornog
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.28.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.29.0 --owner Ollornog
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.29.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
 # Wheel und sdist (von PyPI oder der Release-Seite): der isolierte Builder, der Tag und ihre SBOM
-gh attestation verify tinysesam-0.28.0-py3-none-any.whl --owner Ollornog \
-    --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml --source-ref refs/tags/v0.28.0
-gh attestation verify tinysesam-0.28.0.tar.gz --owner Ollornog \
+gh attestation verify tinysesam-0.29.0-py3-none-any.whl --owner Ollornog \
+    --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml --source-ref refs/tags/v0.29.0
+gh attestation verify tinysesam-0.29.0.tar.gz --owner Ollornog \
     --signer-workflow Ollornog/TinySesam/.github/workflows/build-provenance.yml \
     --predicate-type https://spdx.dev/Document
 ```
@@ -1286,7 +1286,7 @@ gepinnt) mit dem Python-Interpreter der Build-Stufe `python:3.x-slim` darauf: ke
 Betriebsbefehle gehen wie bisher (`docker exec <c> tinysesam backup …`); zum Umsehen gibt es `docker exec -it <c> python`
 oder einen Beiwagen-Container mit Shell in den Namespaces des Containers — beides in `docs/OPERATIONS.md`, „The gateway
 image: no shell inside“.
-Der Proxy kommt mit: `ghcr.io/ollornog/tinysesam-caddy-gate:v0.28.0` ist Caddy mit dem Plugin caddy-jwt, gebaut,
+Der Proxy kommt mit: `ghcr.io/ollornog/tinysesam-caddy-gate:v0.29.0` ist Caddy mit dem Plugin caddy-jwt, gebaut,
 geprüft und attestiert vom selben Release (Prüfung wie oben). In fünf Minuten am Laufen: „Gateway und Caddy in
 5 Minuten“ weiter unten; der Referenz-Stack mit allen Optionen liegt in `deploy/forward-auth/docker-compose.yml`.
 
@@ -1587,7 +1587,7 @@ Umgebung des Dienstes — `docker exec <gateway> python -m tinysesam.gateway pai
 (`--resource`, `--roles`, `--name` wie oben). Auf dem Rechner des Dienstes:
 
 ```bash
-pip install "tinysesam[services]==0.28.0"
+pip install "tinysesam[services]==0.29.0"
 tinysesam-client pair https://auth.example.com ABCD-EFGH-JKMN-PQRS
 #   erzeugt ein Ed25519-Schlüsselpaar, schickt den öffentlichen Schlüssel mit einem Besitznachweis,
 #   schreibt $XDG_CONFIG_HOME/tinysesam/client.json (Modus 0600; wählbar mit --key-file oder TINYSESAM_CLIENT_KEY_FILE)
@@ -2473,7 +2473,7 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
 
 - **Proxy:** Caddy mit dem Plugin [caddy-jwt](https://github.com/ggicci/caddy-jwt) — Vorlage
   [`deploy/forward-auth/Caddyfile.gate`](../deploy/forward-auth/Caddyfile.gate), Abbild
-  `ghcr.io/ollornog/tinysesam-caddy-gate:v0.28.0` (gebaut aus
+  `ghcr.io/ollornog/tinysesam-caddy-gate:v0.29.0` (gebaut aus
   [`deploy/forward-auth/caddy-gate/`](../deploy/forward-auth/caddy-gate/)).
 - **Schlüssel:** ein eigener, zufälliger Ed25519-Schlüssel (seit T-48, ADR-12 — bis 0.25.x aus dem
   Tresor-Schlüssel abgeleitet): `TINYSESAM_GATE_KEY`, `gate_key_file`, sonst mit dem Tresor-Schlüssel verschlüsselt
