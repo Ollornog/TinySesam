@@ -350,7 +350,8 @@ CREATE TABLE IF NOT EXISTS oauth_code (      -- authorization code: single use, 
     created_at     INTEGER NOT NULL,
     expires_at     INTEGER NOT NULL,
     consumed_at    INTEGER,                  -- set atomically on the first exchange
-    grant_id       INTEGER                   -- the grant it was exchanged for: a second use revokes it
+    grant_id       INTEGER,                  -- the grant it was exchanged for: a second use revokes it
+    consent_via    TEXT                      -- NULL = the consent page, pairing = a pairing code (ADR-14)
 );
 CREATE TABLE IF NOT EXISTS oauth_grant (     -- one connected device: client registration + token family
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -364,7 +365,8 @@ CREATE TABLE IF NOT EXISTS oauth_grant (     -- one connected device: client reg
     last_ip        TEXT,
     expires_at     INTEGER,                  -- absolute maximum (oauth_refresh_max_days); NULL = none
     revoked_at     INTEGER,
-    revoked_reason TEXT
+    revoked_reason TEXT,
+    consent_via    TEXT                      -- copied from the code: how the person allowed it (ADR-14)
 );
 CREATE TABLE IF NOT EXISTS oauth_token (
     token_hash TEXT PRIMARY KEY,
@@ -1066,7 +1068,10 @@ class Store:
     #: 25 — `role_catalog` (the role catalog): roles an administrator added, offered by the panel next to
     #:      `available_roles`. Additive; an older version ignores the table — the roles stay on the accounts and its
     #:      panel shows them as roles outside the configuration, nothing is lost or granted.
-    SCHEMA_VERSION = 25
+    #: 26 — `oauth_code.consent_via`, `oauth_grant.consent_via` (ADR-14): how a connected program was allowed — NULL
+    #:      for the consent page, `pairing` for a pairing code. Additive; an older version ignores the columns (its
+    #:      device list shows such a program without the note, nothing else changes).
+    SCHEMA_VERSION = 26
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -1272,6 +1277,9 @@ class Store:
             "login_attempt": [("pending", "INTEGER NOT NULL DEFAULT 0")],
             # NULL for existing rows (schema 24): no request of stage A has a state of an application.
             "approval": [("nonce", "TEXT")],
+            # NULL for existing rows (schema 26): every program connected so far was allowed on the consent page.
+            "oauth_code": [("consent_via", "TEXT")],
+            "oauth_grant": [("consent_via", "TEXT")],
         }
         # `_writing`, not only `_lock`: the final commit below takes DELETE and stamp with it.
         # If something fails before that, without a rollback a transaction would stay open on the
@@ -5138,10 +5146,52 @@ class Store:
         return self._exec("DELETE FROM oauth_request WHERE id_hash=?", (id_hash,)).rowcount == 1
 
     def oauth_add_code(self, code_hash: str, client_id: str, user_id: int, redirect_uri: str,
-                       code_challenge: str, resource: str, scope: str, now: int, expires_at: int) -> None:
+                       code_challenge: str, resource: str, scope: str, now: int, expires_at: int,
+                       consent_via: Optional[str] = None) -> None:
         self._exec("INSERT INTO oauth_code(code_hash, client_id, user_id, redirect_uri, code_challenge, resource, "
-                   "scope, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                   (code_hash, client_id, user_id, redirect_uri, code_challenge, resource, scope, now, expires_at))
+                   "scope, created_at, expires_at, consent_via) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (code_hash, client_id, user_id, redirect_uri, code_challenge, resource, scope, now, expires_at,
+                    consent_via))
+
+    # ---------- pairing consent (ADR-14, rows in `magic_token`) ----------
+    #: A code fetched by the account, not yet redeemed — and the consent it armed once the setup script redeemed it.
+    CONSENT_PAIRING = "oauth_consent_pairing"
+    CONSENT_ARMED = "oauth_consent_armed"
+
+    def oauth_replace_consent_pairing(self, code_hash: str, user_id: int, now: int, expires_at: int,
+                                      payload: dict) -> None:
+        """A new pairing code for `user_id` — and every open one of the account (issued or armed) goes, in the same
+        transaction: an account has at most one pairing at a time, the latest it asked for."""
+        with self._writing():
+            self._begin_immediate()
+            self.db.execute("DELETE FROM magic_token WHERE user_id=? AND used_at IS NULL AND purpose IN (?, ?)",
+                            (int(user_id), self.CONSENT_PAIRING, self.CONSENT_ARMED))
+            self.db.execute("INSERT INTO magic_token(token_hash, purpose, user_id, email, payload, created_at, "
+                            "expires_at) VALUES (?, ?, ?, NULL, ?, ?, ?)",
+                            (code_hash, self.CONSENT_PAIRING, int(user_id), json.dumps(payload), now, expires_at))
+            self.db.commit()
+            self._written = time.monotonic()
+
+    def oauth_arm_consent_pairing(self, code_hash: str, now: int) -> bool:
+        """Redeem a pairing code: issued → armed, atomically. True for exactly one caller of an unused, unexpired
+        code — a second redemption (or one racing the first) finds no issued row any more."""
+        return self._exec("UPDATE magic_token SET purpose=? WHERE token_hash=? AND purpose=? AND used_at IS NULL "
+                          "AND expires_at>=?", (self.CONSENT_ARMED, code_hash, self.CONSENT_PAIRING, now)).rowcount == 1
+
+    def oauth_armed_consent_pairing(self, user_id: int, now: int) -> Optional[sqlite3.Row]:
+        """The armed, unused, unexpired pairing of the account — or None."""
+        return self._one("SELECT * FROM magic_token WHERE user_id=? AND purpose=? AND used_at IS NULL "
+                         "AND expires_at>=? ORDER BY created_at DESC LIMIT 1", (int(user_id), self.CONSENT_ARMED, now))
+
+    def oauth_use_consent_pairing(self, code_hash: str, now: int) -> bool:
+        """Spend the armed consent — atomically: True for exactly one authorization, also across processes."""
+        return self._exec("UPDATE magic_token SET used_at=? WHERE token_hash=? AND purpose=? AND used_at IS NULL "
+                          "AND expires_at>=?", (now, code_hash, self.CONSENT_ARMED, now)).rowcount == 1
+
+    def oauth_release_consent_pairing(self, code_hash: str, used_at: int) -> None:
+        """Give a spent consent back when the authorization it was spent on could not be answered after all."""
+        self._exec("UPDATE magic_token SET used_at=NULL WHERE token_hash=? AND purpose=? AND used_at=?",
+                   (code_hash, self.CONSENT_ARMED, used_at))
 
     # ---------- the role catalog (schema 25) ----------
     def catalog_roles(self) -> list:
@@ -5308,10 +5358,12 @@ class Store:
             if mark is not None and mark[0] is not None:
                 self.db.rollback()
                 return None
+            # How the person allowed it travels from the code (ADR-14): the device list says "via pairing code".
             cur = self.db.execute(
                 "INSERT INTO oauth_grant(client_id, user_id, resource, scope, created_at, created_ip, last_used, "
-                "last_ip, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (client_id, user_id, resource, scope, now, ip, now, ip, expires_at))
+                "last_ip, expires_at, consent_via) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "(SELECT consent_via FROM oauth_code WHERE code_hash=?))",
+                (client_id, user_id, resource, scope, now, ip, now, ip, expires_at, code_hash))
             grant_id = int(cur.lastrowid or 0)
             self._oauth_insert_tokens(grant_id, tokens, now)
             self.db.execute("UPDATE oauth_code SET grant_id=? WHERE code_hash=?", (grant_id, code_hash))

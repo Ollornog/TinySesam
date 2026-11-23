@@ -102,8 +102,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   (`details={"count": n, "reason": …}`, `reason` one of `password_reset`, `account_disabled`,
   `admin_password_reset`, `sessions_revoked`, `access_reset` — in bulk on a reset, a block, an admin password reset,
   `sessions/revoke` with `scope=all` or an access reset by an application's approver). Connected programs (OAuth, T-36): `oauth_device_connected`
-  (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — a program got its first
-  tokens after the consent), `oauth_device_revoked` (`details={"grant_id": n, "client_id": …, "reason": …}`,
+  (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …, "via": "page"|"pairing"}` — `pairing`
+  when a pairing code gave the consent, ADR-14 — a program got its first tokens after the consent), `oauth_device_revoked` (`details={"grant_id": n, "client_id": …, "reason": …}`,
   `reason` one of `user`, `admin`, `client` and the reasons of `api_keys_revoked` — since the attack round of
   2026-11-21 (A-1) a reset, an admin password reset and "sign out everywhere" end the connected programs too, not
   only a block) and `oauth_token_reuse`
@@ -209,6 +209,17 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   whoever copies it (mode 0600 by default) can get tokens until the key is rotated (`oauth_service_key_days`, the
   client rotates at half of it) or the service is revoked. An access token itself is a bearer token for its
   lifetime (15 min) at its resource; binding it to the key (DPoP, RFC 9449) is open as T-68.
+- **A pairing code gives the consent in advance (ADR-14, off by default).** With `oauth_pairing_consent_enabled` the
+  account fetches a one-time code in its own freshly confirmed browser session (CSRF; never an API key, an access
+  token, an administrator or an application on someone's behalf), and a setup script redeems it without a session.
+  Then exactly one authorization of that account skips the consent page — only when the person's browser opened it
+  itself (`Sec-Fetch-Site: none` at `/authorize`; a website's navigation carries `cross-site` and neither uses nor
+  spends it), the redirect is a loopback address, the client is a person's client, the resource matches the code's
+  and the window (`oauth_pairing_consent_minutes`, 15) is open, after the same sign-in and freshness checks as the
+  page. Anything else shows the page and spends nothing. The code has 80 bits, only its digest is stored, it is never
+  logged, works once (atomically), 20 redemptions per address and hour, each failure a fail2ban line. What remains: a
+  local program that starts its own authorization within the window gets that one connection — malware level; it is
+  listed "via pairing code" under *Connected programs* and in `oauth_device_connected` (`via: "pairing"`).
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that

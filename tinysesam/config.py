@@ -263,6 +263,16 @@ class TinySesamConfig:
     # expiry (only on purpose: config_check reports it).
     oauth_service_key_days: int = 90
     oauth_pairing_minutes: int = 10          # how long a pairing code can be redeemed
+    # Pairing code for people's programs (ADR-14): the consent given in advance. The account fetches a one-time code
+    # in its own fresh browser session (account page "Connect a program", or the application in the browser through
+    # POST /auth/oauth/pairing); a setup script redeems it right before `claude mcp login`. Then exactly ONE following
+    # authorization of that account — dynamically registered client, loopback redirect, matching resource, opened by
+    # the person's own browser (`Sec-Fetch-Site: none`), the same account signed in — goes through without the consent
+    # page. Without a code, after expiry or after `claude mcp logout` the consent page asks as always. Needs
+    # oauth_enabled. Recipe: README "OAuth for MCP clients".
+    oauth_pairing_consent_enabled: bool = False
+    # How long the code and the consent it arms last, counted from issuing (1–60 minutes).
+    oauth_pairing_consent_minutes: int = 15
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS redirect;
                                           # warn = also runs WITHOUT a certificate (with a warning in the panel)
     # Strict-Transport-Security on every HTTPS response while https_mode='force' (ASVS 3.4.1). The default is

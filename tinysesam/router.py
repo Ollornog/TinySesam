@@ -1787,6 +1787,12 @@ def build_router(auth) -> APIRouter:
                                                    if cfg.oauth_enabled else None),
                                     # Services (T-60) — the resources a pairing code may name; None leaves the
                                     # section out.
+                                    # Pairing code for a program (ADR-14) — None leaves the section out.
+                                    oauth_pairing=({"minutes": int(cfg.oauth_pairing_consent_minutes),
+                                                    "resources": [(r, auth._forward_app(r)["name"])
+                                                                  for r in auth._oauth_server().resources()]}
+                                                   if cfg.oauth_enabled and cfg.oauth_pairing_consent_enabled
+                                                   else None),
                                     service_resources=(auth._oauth_server().resources()
                                                        if cfg.oauth_enabled and cfg.oauth_service_clients
                                                        else None),

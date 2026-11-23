@@ -1575,6 +1575,78 @@ Was passiert und was es schützt:
   Server, der nur in deinem LAN steht; Claude Code schon. Claude Code kann kein DPoP — Rotation ist der Schutz der
   Refresh-Tokens. Dienste ohne Mensch (`client_credentials`): nächster Abschnitt.
 
+### Ohne Zustimmungsseite: der Kopplungscode
+
+Für Menschen, die keine Zustimmungsseite verstehen müssen sollen (ADR-14): Die Zustimmung kommt **vorab**, in der
+eigenen Browser-Sitzung, und ein Einrichtungsskript löst sie bei der nächsten Anmeldung des Programms ein. Es bleibt
+OAuth mit PKCE und Rotation; nichts Langlebiges landet auf dem Rechner.
+
+```python
+TinySesamConfig(
+    base_url="https://auth.example.com",
+    forward_auth_enabled=True,
+    oauth_enabled=True,
+    oauth_resources=["https://app.example.com/mcp"],
+    forward_apps={"app.example.com": {"name": "Doc Hub"}},  # der Name, den die Seiten zeigen
+    oauth_pairing_consent_enabled=True,                     # Vorgabe: aus
+    oauth_pairing_consent_minutes=15,                       # Fenster ab Ausstellung, 1–60
+)
+```
+
+1. Die Person holt einen Code — auf der Kontoseite (*Programm verbinden*), oder die Anwendung tut es im Browser auf
+   demselben Ursprung: `POST /auth/oauth/pairing` mit Sitzungs-Cookie und `X-CSRF-Token`, Body `{}` oder
+   `{"resource": "https://app.example.com/mcp"}`, Antwort `{code, expires_at, resource, redeem_url, issuer}`. Nur das
+   Konto selbst, nur mit **frischer** Bestätigung (sonst `403` mit `X-TinySesam-Reauth`); nie ein API-Key, ein
+   Access-Token, ein Administrator oder eine Anwendung im Auftrag. Ein offener Code je Konto, 10 je Stunde.
+2. Das Einrichtungsskript löst ihn direkt vor dem Login ein: `POST /auth/oauth/pairing/redeem` mit `{"code": "…"}` —
+   ohne Sitzung, nur JSON. `200 {"armed": true, …}` einmal; ein unbekannter, benutzter oder abgelaufener Code ist
+   immer dieselbe `400`.
+3. `claude mcp login` öffnet den Browser; die Person ist angemeldet, und die **nächste** Autorisierung dieses Kontos
+   geht direkt zurück an Claude Code — wenn der Browser sie selbst geöffnet hat (`Sec-Fetch-Site: none`; die
+   Navigation einer Website zählt nie), die Weiterleitung eine Loopback-Adresse ist, die Ressource passt und das
+   Fenster offen ist. Alles andere zeigt die Zustimmungsseite und lässt die Kopplung für die richtige Anfrage liegen.
+
+Die zweite Anmeldung, eine abgelaufene Verbindung und `claude mcp logout` bekommen wieder die Zustimmungsseite — ein
+großes *Erlauben*, der Name der Anwendung, die technischen Angaben eingeklappt. *Verbundene Programme* führt ein
+solches Programm „per Kopplungscode“ und trennt es wie jedes andere.
+
+Ein Einrichtungsskript, bash (Linux, macOS):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+AUTH=https://auth.example.com
+MCP=https://app.example.com/mcp
+read -rp "Kopplungscode aus 'Programm verbinden': " CODE
+[[ $CODE =~ ^[A-Za-z0-9\ -]{16,24}$ ]] || { echo "Das ist kein Kopplungscode." >&2; exit 1; }
+claude mcp get example >/dev/null 2>&1 || claude mcp add --scope user --transport http example "$MCP"
+curl -fsS -X POST "$AUTH/auth/oauth/pairing/redeem" -H 'Content-Type: application/json' \
+     --data "{\"code\":\"$CODE\"}" >/dev/null \
+  || { echo "Code unbekannt, benutzt oder abgelaufen — einen neuen erstellen." >&2; exit 1; }
+# Ohne Terminal wartet `claude mcp login` nach dem Browser stumm: eine eigene Konsole dafür.
+if [ -t 1 ]; then claude mcp login example
+elif command -v x-terminal-emulator >/dev/null; then x-terminal-emulator -e claude mcp login example
+else osascript -e 'tell application "Terminal" to do script "claude mcp login example"'
+fi
+```
+
+PowerShell (Windows):
+
+```powershell
+$Auth = "https://auth.example.com"; $Mcp = "https://app.example.com/mcp"
+$Code = Read-Host "Kopplungscode aus 'Programm verbinden'"
+claude mcp get example *> $null
+if ($LASTEXITCODE -ne 0) { claude mcp add --scope user --transport http example $Mcp }
+Invoke-RestMethod -Method Post -Uri "$Auth/auth/oauth/pairing/redeem" -ContentType "application/json" `
+  -Body (@{ code = $Code } | ConvertTo-Json) | Out-Null
+# Eine eigene Konsole: `claude mcp login` braucht ein Terminal.
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "claude mcp login example"
+```
+
+`claude mcp login --no-browser` (SSH, kein Browser auf dem Rechner) geht auch: Die in die Adresszeile eingefügte URL
+ist die eigene Navigation der Person. Was bleibt, ist ein lokales Programm, das im Fenster selbst eine Autorisierung
+startet — siehe `SECURITY.md` und ADR-14.
+
 Die Ende-zu-Ende-Prüfung gegen das echte Claude-Code-CLI ist `tools/oauth-e2e/e2e.py` (von Hand: braucht `claude`,
 Docker und Chrome).
 
@@ -2927,7 +2999,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**133 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**134 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

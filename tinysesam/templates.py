@@ -579,6 +579,7 @@ def _account(auth, ctx) -> str:
 
     # Connected programs (OAuth, T-36) and services (T-60)
     sections.append(_devices_section(auth, ctx))
+    sections.append(_pairing_section(auth, ctx))
     sections.append(_services_section(auth, ctx))
 
     # Own events (H-7): whoever sees that a sign-in happened at 3 a.m. from a foreign address
@@ -673,6 +674,8 @@ _ACCOUNT_TEXT = {
         "sv_last": "last token", "sv_unused": "no token yet", "sv_key_expires": "key expires",
         "sv_key_expired": "(key expired)", "sv_confirm": "Revoke this service? Its key is deleted, its access ends "
         "at once.", "sv_pick": "Choose at least one application.",
+        "pc_title": "Pairing code", "pc_note": "Enter it in the setup script now. It works once and for __MIN__ "
+        "minutes; never pass it on.",
     },
     "de": {
         "locale": "de-DE", "error": "Fehler", "mail_sent": "Link verschickt — bitte in der neuen Adresse bestätigen",
@@ -694,6 +697,8 @@ _ACCOUNT_TEXT = {
         "Dienst:", "sv_last": "letztes Token", "sv_unused": "noch kein Token", "sv_key_expires": "Schlüssel läuft ab",
         "sv_key_expired": "(Schlüssel abgelaufen)", "sv_confirm": "Diesen Dienst widerrufen? Sein Schlüssel wird "
         "gelöscht, sein Zugriff endet sofort.", "sv_pick": "Mindestens eine Anwendung wählen.",
+        "pc_title": "Kopplungscode", "pc_note": "Jetzt im Einrichtungsskript eingeben. Er gilt einmal und __MIN__ "
+        "Minuten; nie weitergeben.",
     },
 }
 
@@ -784,6 +789,13 @@ async function mksv(){const resources=[...document.querySelectorAll('input[name=
   const j=await r.json().catch(()=>({}));
   if(j.code){sv_name.value='';say('sv_msg','',true);await tsSecret(TXT.sv_title,j.code,TXT.sv_note+'\\ntinysesam-client pair '+j.issuer+' '+j.code);loadsv()}
   else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('sv_msg',j.detail||TXT.error,false)}
+// Pairing code for a program (ADR-14): shown once; the setup script redeems it right before the program signs in.
+async function mkpc(){const sel=document.getElementById('pc_res');
+  const r=await J('__TS_P__/auth/oauth/pairing',sel&&sel.value?{resource:sel.value}:{});
+  const j=await r.json().catch(()=>({}));
+  if(j.code){say('pc_msg','',true);await tsSecret(TXT.pc_title,j.code,TXT.pc_note.replace('__MIN__',
+    document.getElementById('pcsec').dataset.minutes))}
+  else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('pc_msg',j.detail||TXT.error,false)}
 async function revsv(id){if(!await tsConfirm(TXT.sv_confirm,{danger:true}))return;
   await J('__TS_P__/auth/oauth/services/'+encodeURIComponent(id)+'/revoke');loadsv()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
@@ -1420,10 +1432,27 @@ def _account_setup(auth, ctx) -> str:
     return _page(auth, t("onboard.renew_title" if renew else "onboard.title"), body, ctx=ctx)
 
 
+#: The consent page for laypeople (ADR-14, option e): one question, one large button, the technical part folded away.
+_CONSENT_CSS = """
+.tsmain .oalead{font-size:17px;line-height:1.45;margin:4px 0 6px}
+.tsmain .oalead bdi{font-weight:600}
+.tsmain .oaonly{color:var(--ts-muted);font-size:14px;margin:0 0 4px}
+.tsmain #oaallow{font-size:18px;padding:15px;min-height:52px}
+.tsmain #oadetails{margin-top:18px;border-top:1px solid var(--ts-line);padding-top:10px}
+.tsmain #oadetails summary{cursor:pointer;padding:12px 0;color:var(--ts-muted)}
+.tsmain #oadetails table{margin-top:6px}
+.tsmain #oadetails td{overflow-wrap:anywhere}
+"""
+
+
 def _oauth_consent(auth, ctx) -> str:
     """ctx: user, txn, client_name, client_id, redirect_host, resource, resource_name, scope (list), offline,
     access_minutes, idle_days, max_days (0 = no maximum). The consent of an OAuth client (T-36): which program
-    asks, where the answer goes, what it may do and for how long — before anything is allowed."""
+    asks, where the answer goes, what it may do and for how long — before anything is allowed.
+
+    Written for laypeople (ADR-14, option e): the question in one sentence with the application's name (from
+    `forward_apps`, the frame of T-91 around it), one large "Allow", and program, `client_id`, redirect host, address,
+    scope and duration in a `<details>` that opens on a click."""
     t = auth.t
     user = ctx.get("user") or {}
     target = ctx.get("resource_name") or ctx.get("resource") or ""
@@ -1433,21 +1462,41 @@ def _oauth_consent(auth, ctx) -> str:
             duration += " " + t("oauth.duration_max", days=ctx.get("max_days"))
     else:
         duration = t("oauth.duration_access", minutes=ctx.get("access_minutes", 60))
+    lead = _e(t("oauth.consent_lead", client="\x00c", resource="\x00r", user="\x00u")).replace(
+        "\x00c", f"<bdi>{_e(ctx.get('client_name', ''))}</bdi>").replace(
+        "\x00r", f"<bdi>{_e(target)}</bdi>").replace("\x00u", f"<bdi>{_e(user.get('username', ''))}</bdi>")
+    scope = " ".join(ctx.get("scope") or [])
     body = (f"<h1>{_e(t('oauth.consent_title'))}</h1>"
-            f"<div class=hint>{_e(t('oauth.consent_hint', client=ctx.get('client_name', ''), resource=target, user=user.get('username', '')))}</div>"
+            f"<p class=oalead id=oalead>{lead}</p>"
+            f"<p class=oaonly>{_e(t('oauth.consent_only'))}</p>"
+            f"<form method=post action='__TS_P__/auth/oauth/consent'>{_cf(ctx)}"
+            f"<input type=hidden name=txn value='{_e(ctx.get('txn', ''))}'>"
+            f"<button type=submit id=oaallow name=decision value=allow>{_e(t('oauth.allow'))}</button>"
+            f"<button type=submit id=oadeny class=btn2 name=decision value=deny>{_e(t('oauth.deny'))}</button></form>"
+            f"<details id=oadetails><summary>{_e(t('oauth.details'))}</summary>"
             f"<table class=qrinfo>"
             f"<tr><th>{_e(t('oauth.client'))}</th><td id=oaclient>{_e(ctx.get('client_name', ''))}<br>"
             f"<small>{_e(t('oauth.unverified'))} · <code>{_e(ctx.get('client_id', ''))}</code></small></td></tr>"
             f"<tr><th>{_e(t('oauth.redirect'))}</th><td id=oarhost class=mono>{_e(ctx.get('redirect_host', ''))}</td></tr>"
             f"<tr><th>{_e(t('oauth.resource'))}</th><td id=oaresource>{_e(target)}"
             + (f"<br><small>{_e(ctx.get('resource', ''))}</small>" if ctx.get("resource_name") else "")
-            + f"</td></tr><tr><th>{_e(t('oauth.duration'))}</th><td>{_e(duration)}</td></tr></table>"
-            f"<div class=warnbar>{_e(t('oauth.local_warning', host=ctx.get('redirect_host', '')))}</div>"
-            f"<form method=post action='__TS_P__/auth/oauth/consent'>{_cf(ctx)}"
-            f"<input type=hidden name=txn value='{_e(ctx.get('txn', ''))}'>"
-            f"<button type=submit id=oaallow name=decision value=allow>{_e(t('oauth.allow'))}</button>"
-            f"<button type=submit id=oadeny class=btn2 name=decision value=deny>{_e(t('oauth.deny'))}</button></form>")
-    return _page(auth, t("oauth.consent_title"), body, ctx=ctx)
+            + f"</td></tr><tr><th>{_e(t('oauth.scope'))}</th><td id=oascope class=mono>{_e(scope)}</td></tr>"
+            f"<tr><th>{_e(t('oauth.duration'))}</th><td>{_e(duration)}</td></tr></table>"
+            f"<div class=warnbar>{_e(t('oauth.local_warning', host=ctx.get('redirect_host', '')))}</div></details>")
+    return _page(auth, t("oauth.consent_title"), body, head=f"<style>{_CONSENT_CSS}</style>", ctx=ctx)
+
+
+def _oauth_return(auth, ctx) -> str:
+    """ctx: url (the program's loopback callback with code, state, iss), client_name. After a pairing code allowed
+    the request (ADR-14): straight back to the program by a meta refresh — a navigation, not a redirect, so the
+    `form-action` of a sign-in page earlier in the chain does not stop it — and a link for a browser that waits."""
+    t = auth.t
+    url = str(ctx.get("url") or "")
+    body = (f"<h1>{_e(t('oauth.return_title'))}</h1>"
+            f"<p class=hint id=oareturn>{_e(t('oauth.return_hint', client=ctx.get('client_name', '')))}</p>"
+            f"<p><a id=oareturnlink href='{_e(url)}'>{_e(t('oauth.return_link'))}</a></p>")
+    return _page(auth, t("oauth.return_title"), body, head=f"<meta http-equiv=refresh content='0;url={_e(url)}'>",
+                 ctx=ctx)
 
 
 _APPROVAL_CSS = """
@@ -1663,12 +1712,34 @@ def _devices_section(auth, ctx) -> str:
     lines = "".join(
         f"<li><b>{_e(d['client_name'])}</b> <small><code>{_e(d['client_id'])}</code></small><br>"
         f"<small class=msg>{_e(t('acc.device_created'))} {_e(when(d['created_at']))} · "
-        f"{_e(t('acc.device_last'))} {_e(when(d['last_used']))} · {_e(d['last_ip'] or '?')} · {_e(d['resource'])}</small>"
+        f"{_e(t('acc.device_last'))} {_e(when(d['last_used']))} · {_e(d['last_ip'] or '?')} · {_e(d['resource'])}"
+        + (f" · <span class=devvia>{_e(t('acc.device_via_pairing'))}</span>" if d.get("via") == "pairing" else "")
+        + "</small>"
         f"<form method=post class=devrevoke action='__TS_P__/auth/oauth/devices/{int(d['id'])}/revoke'>{_cf(ctx)}"
         f"<button type=submit class=warn>{_e(t('acc.device_revoke'))}</button></form></li>"
         for d in devices) or f"<li>{_e(t('acc.devices_none'))}</li>"
     return (f"<div class=sec><h2 id=devices>{_e(t('acc.devices'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.devices_hint'))}</p><ul id=devlist>{lines}</ul></div>")
+
+
+def _pairing_section(auth, ctx) -> str:
+    """Pairing code for a program (ADR-14) on the account page: the consent given in advance for ONE following
+    sign-in of a program such as Claude Code — fetched here, in the own session, redeemed by the setup script."""
+    pairing = ctx.get("oauth_pairing")
+    if not pairing:
+        return ""
+    t = auth.t
+    resources = pairing.get("resources") or []
+    choose = ""
+    if len(resources) > 1:
+        options = f"<option value=''>{_e(t('acc.pairing_any'))}</option>" + "".join(
+            f"<option value='{_e(r)}'>{_e(name or r)}</option>" for r, name in resources)
+        choose = f"<label class=apdays>{_e(t('acc.pairing_for'))} <select id=pc_res>{options}</select></label>"
+    return (f"<div class=sec id=pcsec data-minutes='{int(pairing.get('minutes') or 0)}'>"
+            f"<h2 id=pairing>{_e(t('acc.pairing'))}</h2>"
+            f"<p class='msg evhint'>{_e(t('acc.pairing_hint', minutes=int(pairing.get('minutes') or 0)))}</p>"
+            f"{choose}<button data-act=mkpc>{_e(t('acc.pairing_create'))}</button>"
+            f"<span id=pc_msg class=msg></span></div>")
 
 
 def _services_section(auth, ctx) -> str:
@@ -1731,6 +1802,7 @@ DEFAULTS = {
     "totp_setup": _totp_setup,
     "account_setup": _account_setup,
     "oauth_consent": _oauth_consent,
+    "oauth_return": _oauth_return,
     "approvals": _approvals,
     "approval": _approval,
 }

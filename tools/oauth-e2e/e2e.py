@@ -27,6 +27,9 @@ The acceptance list (each step prints ✅/❌ and lands with evidence in <work>/
 4. an old refresh token presented again → the family is revoked (audit) → a new sign-in is needed
 5. the account is locked → access gone
 6. `claude mcp logout` revokes the tokens at the server (RFC 7009)
+7. pairing code (ADR-14): a fresh session fetches a code (`POST /auth/oauth/pairing`), the "setup script" redeems it
+   (`POST /auth/oauth/pairing/redeem`), `claude mcp login` → sign-in WITHOUT the consent page, audit `via=pairing`
+8. the next `claude mcp login` after `claude mcp logout` shows the consent page again
 """
 from __future__ import annotations
 
@@ -443,7 +446,8 @@ def main():
     auth = TinySesam(TinySesamConfig(
         db_path=f"{work}/tinysesam.db", base_url=base, rp_name="TinySesam e2e", lang="en", passkey_enabled=False,
         login_chain=["password", "totp"], forward_auth_enabled=True, trusted_redirect_hosts=["127.0.0.1"],
-        oauth_enabled=True, oauth_resources=[resource], oauth_access_token_ttl_sec=60))
+        oauth_enabled=True, oauth_resources=[resource], oauth_access_token_ttl_sec=60,
+        oauth_pairing_consent_enabled=True))
     auth.set_security("password_min_length_single_factor", 8)
     uid = auth.create_user(USER, password=PASSWORD)
     auth.totp_begin(uid)
@@ -541,6 +545,40 @@ def main():
         after = sum(1 for e, d in audit() if e == "oauth_revoked" and "reason=client" in d)
         report.check("6 claude mcp logout revokes at the server (RFC 7009, public client)", ok and after > before,
                      f"oauth_revoked reason=client {before}→{after}")
+
+        # 7: the pairing code — fetched in a fresh session over HTTP, redeemed like the setup script does
+        # A full, fresh session (password + TOTP done) — as the person right after signing in on the account page.
+        tok = auth.store.create_session(uid, 3600, True, "password", factors=["password", "totp"])
+        page = urllib.request.urlopen(urllib.request.Request(
+            f"{base}/auth/account", headers={"Cookie": f"{auth.session_cookie_name}={tok}"}), context=ctx)
+        csrf = next(h.split(";")[0].split("=", 1)[1] for h in page.headers.get_all("Set-Cookie") or []
+                    if h.startswith(auth.csrf_cookie_name + "="))
+        made = json.loads(urllib.request.urlopen(urllib.request.Request(
+            f"{base}/auth/oauth/pairing", method="POST", data=json.dumps({"resource": resource}).encode(),
+            headers={"Content-Type": "application/json", "X-CSRF-Token": csrf, "Origin": base,
+                     "Cookie": f"{auth.session_cookie_name}={tok}; {auth.csrf_cookie_name}={csrf}"}),
+            context=ctx).read())
+        armed = json.loads(urllib.request.urlopen(urllib.request.Request(
+            f"{base}/auth/oauth/pairing/redeem", method="POST", data=json.dumps({"code": made["code"]}).encode(),
+            headers={"Content-Type": "application/json"}), context=ctx).read())
+        pages_before = read(report.path).count('"event": "consent_page"')
+        ok, out = cli.login(browser)
+        tool = cli.tool()
+        pages_after = read(report.path).count('"event": "consent_page"')
+        line = next((d for e, d in audit() if e == "oauth_consent"), "")
+        report.check("7 pairing code fetched + redeemed → mcp login signs in WITHOUT the consent page (via=pairing)",
+                     armed.get("armed") is True and ok and as_alice(tool) and pages_after == pages_before
+                     and "via=pairing" in line and "fetch_site=none" in line,
+                     f"login ok={ok}; consent pages {pages_before}→{pages_after}; audit: {line!r}")
+
+        # 8: logout, login again — the page asks again
+        cli.run("mcp", "logout", SERVER)
+        ok, out = cli.login(browser)
+        pages_again = read(report.path).count('"event": "consent_page"')
+        line = next((d for e, d in audit() if e == "oauth_consent"), "")
+        report.check("8 after mcp logout the next login shows the consent page again (via=page)",
+                     ok and pages_again == pages_after + 1 and "via=page" in line,
+                     f"login ok={ok}; consent pages {pages_after}→{pages_again}; audit: {line!r}")
     finally:
         subprocess.run(["sg", "docker", "-c", f"docker stop {caddy}"], capture_output=True)
         for s in servers:

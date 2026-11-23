@@ -978,6 +978,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _gate(config, error, warnings)
     _oauth(config, error, warnings)
     _oauth_services_without_oauth(config, error)
+    _oauth_pairing_consent_without_oauth(config, error)
     _approvals(config, error)
     _apps(config, error, warnings)
     _app_approvals(config, error)
@@ -1097,6 +1098,9 @@ NUMBER_LIMITS = {
     "oauth_service_token_ttl_sec": (60, 3600),
     "oauth_service_key_days": (0, 3650),
     "oauth_pairing_minutes": (1, 60),
+    # Pairing consent (ADR-14): the window in which a local process could take the armed consent first — an hour at
+    # most; below a minute nobody runs the setup script.
+    "oauth_pairing_consent_minutes": (1, 60),
     # Approvals (stage A): a request waits minutes, not hours — a link that stays valid for a day is one more link
     # lying around; below two minutes nobody can open it, step up and decide.
     "approval_pending_sec": (120, 1800),
@@ -2652,6 +2656,15 @@ def _oauth_services_without_oauth(config, error: list) -> None:
             "server — switch it on (with base_url, forward_auth_enabled and oauth_resources)."))
 
 
+def _oauth_pairing_consent_without_oauth(config, error: list) -> None:
+    """The pairing consent (ADR-14) arms a consent of the OAuth server — without it there is nothing to arm."""
+    if _an(config, "oauth_pairing_consent_enabled") and not _an(config, "oauth_enabled"):
+        error.append(_t(
+            config,
+            "oauth_pairing_consent_enabled=True without oauth_enabled=True: the pairing code arms one consent of the "
+            "OAuth server — switch it on (with base_url, forward_auth_enabled and oauth_resources)."))
+
+
 #: Where container and service managers put secrets — mode and directory are theirs, not the operator's choice
 #: (Docker/Podman `secrets:`, systemd `LoadCredential=`).
 _SECRET_MOUNTS = ("/run/secrets/", "/run/credentials/")
@@ -2900,6 +2913,10 @@ _DE: dict[str, str] = {
      "revokes the service. With a lifetime the reference client rotates the key on its own."):
         ("oauth_service_key_days=0: Ein Dienst-Schlüssel läuft nie ab — eine kopierte Schlüsseldatei bleibt "
          "nutzbar, bis jemand den Dienst widerruft. Mit Laufzeit wechselt der Referenz-Client den Schlüssel selbst."),
+    ("oauth_pairing_consent_enabled=True without oauth_enabled=True: the pairing code arms one consent of the "
+     "OAuth server — switch it on (with base_url, forward_auth_enabled and oauth_resources)."):
+        ("oauth_pairing_consent_enabled=True ohne oauth_enabled=True: Der Kopplungscode schaltet eine Zustimmung des "
+         "OAuth-Servers frei — ihn einschalten (mit base_url, forward_auth_enabled und oauth_resources)."),
     ("oauth_service_clients=True without oauth_enabled=True: services get their tokens from the OAuth "
      "server — switch it on (with base_url, forward_auth_enabled and oauth_resources)."):
         ("oauth_service_clients=True ohne oauth_enabled=True: Dienste bekommen ihre Tokens vom OAuth-Server — "

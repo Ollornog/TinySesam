@@ -132,6 +132,8 @@ FIELDS: dict[str, Any] = {
     "oauth_service_token_ttl_sec": SHOW,
     "oauth_service_key_days": SHOW,
     "oauth_pairing_minutes": SHOW,
+    "oauth_pairing_consent_enabled": SHOW,
+    "oauth_pairing_consent_minutes": SHOW,
     "https_mode": _one_of("off", "warn", "force"),
     "hsts": REDACT,
     "login_identifier": _one_of("username", "email", "both"),

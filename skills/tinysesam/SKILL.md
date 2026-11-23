@@ -338,6 +338,15 @@ Tokens: `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_
 `TINYSESAM_OAUTH_PEPPER` or `oauth_pepper_file`. Claude Desktop and Claude on the web call from Anthropic's
 network and cannot reach a LAN-only server. README: *OAuth for MCP clients*.
 
+Laypeople without the consent page (ADR-14): `oauth_pairing_consent_enabled=True` (window
+`oauth_pairing_consent_minutes`, 15). The person fetches a code on the account page (*Connect a program*) — or your
+app does it in the browser on the same origin: `POST /auth/oauth/pairing` with the session cookie and `X-CSRF-Token`
+(fresh confirmation needed, `403` + `X-TinySesam-Reauth` otherwise; never server-side on someone's behalf). Your setup
+script redeems it with `POST /auth/oauth/pairing/redeem {"code": …}` (no session) right before `claude mcp login` —
+started in a console of its own when the script has no terminal. The next matching sign-in then skips the page once;
+afterwards (re-login, `mcp logout`) the simplified page asks again. README: *Without the consent page: the pairing
+code*.
+
 ## Recipe 7a — a service calls a protected app (no person)
 
 A daemon or script gets short-lived tokens from the same OAuth server with client credentials with a private-key JWT (RFC 7523):

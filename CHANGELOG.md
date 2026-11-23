@@ -15,8 +15,23 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   `base_url` or in `trusted_redirect_hosts` (`config_check.link_next_ok`); anything else is `400 next_invalid` before
   anything is written. Stored with the token, never in the link; the audit names only the host. No schema change.
 
+- A pairing code for people's programs: the consent given in advance (T-95, ADR-14). With
+  `oauth_pairing_consent_enabled` (default off) the account fetches a one-time code in its own fresh browser session —
+  account page *Connect a program*, or `POST /auth/oauth/pairing` from the application in the browser — and a setup
+  script redeems it without a session (`POST /auth/oauth/pairing/redeem`) right before `claude mcp login`. Exactly one
+  following authorization of that account then skips the consent page: opened by the person's browser itself
+  (`Sec-Fetch-Site: none`, measured in Chrome 158 and Firefox 160), loopback redirect, matching resource, within
+  `oauth_pairing_consent_minutes` (15, 1–60); anything else shows the page and spends nothing. 80-bit code, stored as
+  a digest, never logged, atomic, 20 redemptions per address and hour. The browser returns to the program through a
+  short page (meta refresh), so a sign-in form on the way cannot stop it by its `form-action`. *Connected programs*, the panel, the audit log
+  (`via=pairing`, `fetch_site=`) and `oauth_device_connected` (`via`) name the way. Schema 26 (additive:
+  `consent_via` on `oauth_code` and `oauth_grant`); rollback in `docs/OPERATIONS.md`.
+
 ### Changed
 
+- The OAuth consent page is written for laypeople (ADR-14): one sentence with the application's name (in its app
+  frame, T-91), one large *Allow*, program, `client_id`, redirect host, permissions and duration folded into
+  *Details*.
 - `create_signin_link(next=…)` checks the target when the link is issued and raises `ValueError` for one outside the
   redirect circle; before, the door dropped it in silence and the person landed on `login_redirect` (T-94).
 

@@ -1018,7 +1018,7 @@ _KEYS = (
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening hardening_owner version installed update_note "
     "btn.link signin_link link_once prompt.link_ttl key_new "
-    "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect "
+    "tab.devices th.client th.resource th.last disconnect no_devices confirm.disconnect via_pairing "
     "tab.app_passwords no_app_passwords th.name th.apps expired confirm.revoke_app_password "
     "services no_services pair_service f.service_name pairing_code pairing_once th.key confirm.revoke_service "
     "delegate_note "
@@ -1523,7 +1523,7 @@ async function sessions(){const ss=await g("/api/sessions");
 async function revs(t){rejected(await p("/api/sessions/revoke",{token:t}));sessions()}
 async function devices(){const ds=await g("/api/oauth/devices");
   V(ds.length?`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.client"])}</th><th>${esc(L["th.resource"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.last"])}</th><th>${esc(L["th.ip"])}</th><th></th></tr>`+
-    ds.map(d=>`<tr><td><b>${esc(d.username)}</b></td><td>${esc(d.client_name)} <code>${esc(d.client_id)}</code></td><td>${esc(d.resource)}</td>
+    ds.map(d=>`<tr><td><b>${esc(d.username)}</b></td><td>${esc(d.client_name)} <code>${esc(d.client_id)}</code>${d.via==="pairing"?`<br><small class=muted>${esc(L.via_pairing)}</small>`:""}</td><td>${esc(d.resource)}</td>
       <td>${dt(d.created_at)}</td><td>${dt(d.last_used)}</td><td>${esc(d.last_ip)}</td>
       <td><button class=warn ${on("revdev",d.id)}>${esc(L.disconnect)}</button></td></tr>`).join("")+`</table>`
     :`<div class=muted>${esc(L.no_devices)}</div>`);

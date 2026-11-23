@@ -100,7 +100,7 @@ raw.execute("PRAGMA user_version = 24")
 raw.commit()
 raw.close()
 again = Store(path)
-assert Store.SCHEMA_VERSION == 25 and int(again.db.execute("PRAGMA user_version").fetchone()[0]) == 25
+assert Store.SCHEMA_VERSION >= 25 and int(again.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION
 assert again.catalog_roles() == []
 again.add_catalog_roles(["x"], None, 10)
 assert [r["name"] for r in Store(path).catalog_roles()] == ["x"]           # a second open changes nothing
