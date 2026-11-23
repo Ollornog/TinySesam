@@ -2011,11 +2011,14 @@ async def _role_catalog_page(p):
     await until_py(lambda: {"coll:w", "coll:w-r"} <= set(t33.known_roles()), "entry not added")
     await p.until("!!document.querySelector('[data-on=delentry]')", "entry not listed")
     await shot("roles-entry-1280.png")
-    await p.js("document.querySelector('[data-on=delentry]').click();true")
+    # Each change reloads the page: mark the old document, so the next step waits for the NEW one — the old page still
+    # shows the buttons, and a click there lands in a dialog the reload throws away (red in CI, 2026-11-23).
+    await p.js("window.__old=true;document.querySelector('[data-on=delentry]').click();true")
     await p.answer(True)
     await until_py(lambda: not {"coll:w", "coll:w-r"} & set(t33.known_roles()), "entry not deleted")
     # Delete a role after the own dialog.
-    await p.until("!!" + act("delrole", "rc-new"), "page not rebuilt")
+    await p.until("!window.__old && !document.querySelector('[data-on=delentry]') && !!" + act("delrole", "rc-new"),
+                  "page not rebuilt")
     await p.js(act("delrole", "rc-new") + ".click();true")
     await p.answer(True)
     await until_py(lambda: "rc-new" not in t33.known_roles(), "role not deleted")
