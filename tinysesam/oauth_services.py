@@ -33,7 +33,7 @@ from typing import Optional
 
 from .oauth import ACCESS_PREFIX, DEFAULT_SCOPE, MAX_NAME_LEN, OAuthError, _detail, new_token, normalize_resource
 # The one-time code is shared with the pairing consent of people's programs (ADR-14): one format, one digest.
-from .oauth import CODE_ALPHABET, CODE_LEN, code_digest, new_pairing_code, normalize_code  # noqa: F401
+from .oauth import code_digest, new_pairing_code, normalize_code
 from .store import now as _now
 
 #: RFC 7523 §2.2.
