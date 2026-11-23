@@ -82,6 +82,10 @@ straight from the tag:
 pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.29.0"
 ```
 
+The Go gate client is a module in a subdirectory, so Go needs a tag with that prefix: release.yml sets
+`clients/go/vX.Y.Z` on the same commit as `vX.Y.Z`, as its last step once everything else is green (the Go module
+proxy keeps a version forever; the tag is never moved).
+
 Drop the `@v…` when you want a **commit** rather than a released version — that pulls the moving
 default branch, so it belongs in an experiment, not in a deployment.
 
@@ -2455,7 +2459,8 @@ existing forward auth, so a request and its body are not lost.
   [`spec/vectors/`](https://github.com/Ollornog/TinySesam/tree/main/spec/vectors) are generated from TinySesam's own
   code. The **Go client** is in
   [`clients/go/`](https://github.com/Ollornog/TinySesam/tree/main/clients/go) (`net/http` middleware, header and
-  token mode, standard library only; not published yet, use it by commit), the **Rust client** in
+  token mode, standard library only; every release tags it as `clients/go/vX.Y.Z`:
+  `go get github.com/Ollornog/TinySesam/clients/go@v0.29.0`), the **Rust client** in
   [`clients/rust/`](https://github.com/Ollornog/TinySesam/tree/main/clients/rust) (crate `tinysesam-gate`: header and
   token mode, the key set fetch behind the feature `jwks`, framework-neutral via the `http` crate, an axum example; not
   published to the Rust crate registry, use it as a git dependency), the **JS/TS client** in
@@ -2843,7 +2848,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**131 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**132 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -4,14 +4,15 @@
     python3 scripts/_release.py 0.17.0          set the version, close the CHANGELOG
     python3 scripts/_release.py --check       check only, change nothing
 
-The version appears in seven places (package, module, two READMEs several times, two compose files) and
-in the CHANGELOG. By hand this has worked so far because a test enforces it — but "works because
+The version appears in eight places (package, module, two READMEs several times, two compose files, the `go get` of
+the Go client README) and in the CHANGELOG. By hand this has worked so far because a test enforces it — but "works because
 a test complains" is not a procedure, it is a loop of error and correction. Milestone 1.0
 explicitly requires that a release runs through without manual steps
 (`backlog/M-1-api-stable-1-0.md`).
 
 What this script deliberately does NOT do: tag and push. A human presses the button — the same
-separation as for rollout (delivery, not deployment). It prepares and says what follows.
+separation as for rollout (delivery, not deployment). It prepares and says what follows. The Go module tag
+`clients/go/vX.Y.Z` is not a second button: release.yml sets it from the release tag (scripts/_go_module_tag.py).
 """
 from __future__ import annotations
 
@@ -20,11 +21,14 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import _go_module_tag  # noqa: E402 — sibling script, stdlib-only
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Everywhere a version appears. The READMEs name it several times (git ref, wheel URL, image tag,
 # verification commands) — so we replace, rather than patch a fixed line number.
 FILES = ["pyproject.toml", "tinysesam/__init__.py", "README.md", "i18n/README.de.md",
-           "deploy/forward-auth/docker-compose.yml", "deploy/quickstart/docker-compose.yml"]
+           "deploy/forward-auth/docker-compose.yml", "deploy/quickstart/docker-compose.yml", "clients/go/README.md"]
 CHANGELOG = ROOT / "CHANGELOG.md"
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -48,9 +52,16 @@ def check() -> int:
         # An older version in an example is not a cosmetic flaw: it sends users to a state
         # that this release is just replacing.
         # `tinysesam-caddy-gate:v…` too: the quickstart pins both own images (since 2026-11-20).
-        old = {v for v in re.findall(r"tinysesam(?:-caddy-gate)?[:@/-]v?(\d+\.\d+\.\d+)", text)} - {version}
+        # `clients/go@v…`: the `go get` of the Go module (tag `clients/go/vX.Y.Z`, set by release.yml).
+        old = {v for v in re.findall(r"(?:tinysesam(?:-caddy-gate)?[:@/-]|clients/go@)v?(\d+\.\d+\.\d+)", text)} - {version}
         if old:
             error.append(f"{name} still refers to {', '.join(sorted(old))}")
+
+    # release.yml tags the Go module as `clients/go/vX.Y.Z` (job `go-module-plan` checks the same at the tag commit):
+    # a module path that no longer matches the directory would publish a version nobody can `go get`.
+    go_mod = (ROOT / _go_module_tag.MODULE_DIR / "go.mod").read_text(encoding="utf-8")
+    if _go_module_tag.module_path(go_mod) != _go_module_tag.MODULE_PATH:
+        error.append(f"{_go_module_tag.MODULE_DIR}/go.mod does not name module {_go_module_tag.MODULE_PATH}")
 
     text = CHANGELOG.read_text(encoding="utf-8")
     if not re.search(rf"^## \[{re.escape(version)}\] — \d{{4}}-\d{{2}}-\d{{2}}", text, re.M):
@@ -59,7 +70,8 @@ def check() -> int:
     for f in error:
         print(f"  ✗ {f}")
     if not error:
-        print(f"  ✓ everything on {version}: package, module, both READMEs, both compose files, CHANGELOG")
+        print(f"  ✓ everything on {version}: package, module, both READMEs, both compose files, Go client README, CHANGELOG, "
+              "Go module path")
     return len(error)
 
 
@@ -138,9 +150,11 @@ def set_value(new: str) -> int:
     print("       For a breaking change, the warning belongs in the first line.")
     print("    2. Run the suite, open the release PR against main, merge it.")
     print(f"    3. Set the tag: git tag -a v{new} -m \"…\" && git push origin v{new}")
+    print(f"       Only this one: release.yml sets the Go module tag {_go_module_tag.TAG_PREFIX}v{new} on the same")
+    print("       commit by itself, last, once everything else is green (jobs go-module-*). Do not tag it by hand.")
     print("    4. Then check the artifacts yourself — not the traffic light:")
     print("       gh release view · manifest (both architectures, no latest) ·")
-    print("       gh attestation verify")
+    print(f"       gh attestation verify · go list -m {_go_module_tag.MODULE_PATH}@v{new}")
     return 0
 
 

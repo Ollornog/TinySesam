@@ -512,6 +512,9 @@ PUBLIC_SERVICES = ["pypi.org", "raw.githubusercontent.com", "img.shields.io", "s
                                                 # Entra ID endpoint of the bundled preset — a real, fixed
                                                 # address of Microsoft, not an example address and nothing of our own.
                         "login.microsoftonline.com",
+                                                # The public Go module proxy, asked after the Go module tag
+                                                # (scripts/_go_module_tag.py, release.yml `go-module-verify`).
+                        "proxy.golang.org",
                                                 # H1: where the author of the password corpus behind
                                                 # tinysesam/common_passwords.txt released it to the public domain —
                                                 # cited as the license evidence.
@@ -562,6 +565,7 @@ BARE_ADDRESSES_OK = [
     "ghcr.io",                 # the registry the own image comes from (Dockerfile, compose)
     "gcr.io",                  # the public registry of the runtime base (gcr.io/distroless, Dockerfile, T-59)
     "pypi.org",                # the package index test_packaging checks against
+    "proxy.golang.org",        # the public Go module proxy release.yml asks after the Go module tag (go-module-verify)
     "python.org",              # source reference in the kit file python_matrix.json
     "devguide.python.org",     # ditto — the release calendar the matrix follows from
     "flaticon.com",            # source reference for the favicon (licence obligation, belongs in plain sight)
@@ -789,7 +793,10 @@ def _permissions_job(lines: list[str], inherited: set[str]) -> set[str]:
 PERMITTED_WITH_RIGHT = {"echo", "printf", "gh release", "gh attestation", "git log",
                      "gh pr merge", "gh pr comment", "gh workflow run",
                      "gh pr update-branch",  # auto-merge with app: stale branches via rebase (Kit 0.33)
-                     "sleep"}  # pause between attest attempts in `rehearsal-attest` (2026-11-22); runs no code
+                     "sleep",  # pause between attest attempts in `rehearsal-attest` (2026-11-22); runs no code
+                     # The Go module tag (release.yml `go-module-tag`, 2026-11-23): exactly these two endpoints — the
+                     # tag object and its ref —, never `gh api` wholesale.
+                     'gh api "repos/$GITHUB_REPOSITORY/git/tags"', 'gh api "repos/$GITHUB_REPOSITORY/git/refs"'}
 
 
 def _commands(line: str) -> list[str]:
@@ -1288,6 +1295,47 @@ for _sbom in ("sbom.spdx.json", "sbom-caddy-gate.spdx.json"):
         f"release.yml: image-attest does not generate AND attest {_sbom}"
 print("  release.yml: the dry run runs on every PR; release and image depend on checksums and start probe")
 
+# The Go module tag `clients/go/vX.Y.Z` (PO 2026-11-23). Proxy and checksum database keep a module version forever, so
+# the tag comes LAST: the plan waits for release, PyPI, images and their attestations; the job with `contents: write`
+# runs only what the plan decided, as the maintainer, with the tag form Go needs; the check follows it. The decision
+# logic (idempotence, never move, pre-release, module path) is measured in tests/test_go_module_tag.py.
+# (Mutation probes: drop `image-attest` from the plan's `needs`; drop the job `go-module-tag`; the step `if:` away;
+# `clients/go/` out of the tag name → each red.)
+def _needs(lines: list[str]) -> set[str]:
+    for z in lines:
+        m = re.match(r"^    needs:\s*(.*)$", z)
+        if m:
+            return {n.strip() for n in m.group(1).strip("[]").split(",") if n.strip()}
+    return set()
+
+
+_go_plan, _go_tag, _go_verify = (_rel_jobs.get(j, []) for j in ("go-module-plan", "go-module-tag", "go-module-verify"))
+assert _go_plan and _go_tag and _go_verify, "release.yml: a job of the Go module tag (go-module-plan/-tag/-verify) is missing"
+assert {"release", "pypi", "image", "image-attest"} <= _needs(_go_plan), \
+    f"release.yml: `go-module-plan` does not wait for release, pypi, image and image-attest: {sorted(_needs(_go_plan))}"
+assert _needs(_go_tag) == {"go-module-plan"} and _needs(_go_verify) == {"go-module-tag"}, \
+    "release.yml: the Go module tag does not run plan → tag → verify"
+for _j, _lines in (("go-module-plan", _go_plan), ("go-module-tag", _go_tag), ("go-module-verify", _go_verify)):
+    assert _AM_TAG in [z.strip() for z in _lines], f"release.yml: `{_j}` runs without a tag"
+    _w = _permissions_job(_lines, _permissions_above(rel))
+    assert _w == ({"contents"} if _j == "go-module-tag" else set()), f"release.yml: `{_j}` holds {sorted(_w)}"
+assert _command_list(_go_plan) == ['python3 scripts/_go_module_tag.py plan --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"'], \
+    "release.yml: `go-module-plan` does not run the plan of scripts/_go_module_tag.py"
+assert _command_list(_go_verify) == ['python3 scripts/_go_module_tag.py verify --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"'], \
+    "release.yml: `go-module-verify` does not check the tag"
+_go_st = [z.strip() for z in _go_tag]
+assert "if: needs.go-module-plan.outputs.create == 'true'" in _go_st, \
+    "release.yml: `go-module-tag` creates the tag without the plan's decision"
+_go_run = " ".join(_command_list(_go_tag))
+for _part in ('-f type=commit', '-f "tagger[name]=Ollornog"',
+              '-f "tagger[email]=168935741+Ollornog@users.noreply.github.com"', '-f ref="refs/tags/$NAME"'):
+    assert _part in _go_run, f"release.yml: `go-module-tag` does not pass {_part}"
+assert "NAME: ${{ needs.go-module-plan.outputs.name }}" in _go_st, "release.yml: the tag name does not come from the plan"
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import _go_module_tag  # noqa: E402
+assert _go_module_tag.module_tag("v1.2.3") == "clients/go/v1.2.3", "the Go module tag lost its directory prefix"
+print("  release.yml: Go module tag clients/go/vX.Y.Z last (after release, PyPI, images), plan → tag → verify")
+
 # B4-7 — The image installs what the lock list says, byte for byte. The digest pin in FROM
 # holds only the base image; a `pip install ".[gateway]"` resolved anew on every build.
 BLOCKLIST = "deploy/gateway/requirements.txt"
@@ -1696,20 +1744,27 @@ assert "[Unreleased]" not in _r.stderr, (_r.returncode, _r.stderr)   # got past 
 # The human path (a minor release) has no guard and still closes cleanly.
 with tempfile.TemporaryDirectory() as _tmp:
     _top = tempfile.mkdtemp(dir=_tmp)
-    for _d in ("scripts", "tinysesam", "i18n", "deploy/forward-auth", "deploy/quickstart"):
+    for _d in ("scripts", "tinysesam", "i18n", "deploy/forward-auth", "deploy/quickstart", "clients/go"):
         os.makedirs(os.path.join(_top, _d))
-    with open(os.path.join(_top, "scripts/_release.py"), "w", encoding="utf-8") as fh:
-        fh.write(read("scripts/_release.py"))
+    for _s in ("scripts/_release.py", "scripts/_go_module_tag.py"):
+        with open(os.path.join(_top, _s), "w", encoding="utf-8") as fh:
+            fh.write(read(_s))
     for name, text in {"pyproject.toml": 'version = "1.0.0"\n', "tinysesam/__init__.py": '__version__ = "1.0.0"\n',
                        "README.md": "tinysesam:v1.0.0\n", "i18n/README.de.md": "tinysesam:v1.0.0\n",
                        "deploy/forward-auth/docker-compose.yml": "image: tinysesam:v1.0.0\n",
                        "deploy/quickstart/docker-compose.yml": "image: tinysesam:v1.0.0\n",
+                       "clients/go/README.md": "go get github.com/Ollornog/TinySesam/clients/go@v1.0.0\n",
                        "CHANGELOG.md": _fit.replace("### Fixed", "### Added")}.items():
         with open(os.path.join(_top, name), "w", encoding="utf-8") as fh:
             fh.write(text)
     _r = subprocess.run([sys.executable, os.path.join(_top, "scripts/_release.py"), "1.1.0"], capture_output=True,
                         text=True, check=False)
     assert _r.returncode == 0, (_r.stdout, _r.stderr)
+    # The epilogue names the Go module tag as release.yml's job — never as a second command for the human.
+    assert "clients/go/v1.1.0" in _r.stdout and "release.yml sets the Go module tag" in _r.stdout and \
+        "git tag -a clients/go" not in _r.stdout, _r.stdout
+    with open(os.path.join(_top, "clients/go/README.md"), encoding="utf-8") as fh:
+        assert fh.read() == "go get github.com/Ollornog/TinySesam/clients/go@v1.1.0\n", "the Go client README was not bumped"
     with open(os.path.join(_top, "CHANGELOG.md"), encoding="utf-8") as fh:
         assert fh.read().startswith("# Changelog\n\n## [Unreleased]\n\n## [1.1.0] — "), "no reopened section"
 print("  Release script: the kit refuses a patch over Added/Changed/… (probe), a closing leaves [Unreleased] open")

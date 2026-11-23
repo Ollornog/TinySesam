@@ -14,14 +14,15 @@ vector in [`spec/vectors/`](../../spec/vectors/), read from this repository.
 
 ## Installation
 
-**Not published yet:** there is no release tag for this module and it is not announced to the Go module proxy (that
-needs a decision of the maintainer). Until then use a pseudo-version of a commit on `main`:
+Every TinySesam release tags this module as `clients/go/vX.Y.Z` on the same commit as `vX.Y.Z` (the release workflow
+sets it last, once everything else is green; a module version is never moved). Use the version of the TinySesam
+release you run:
 
 ```sh
-go get github.com/Ollornog/TinySesam/clients/go@main
+go get github.com/Ollornog/TinySesam/clients/go@v0.29.0
 ```
 
-`go` records a pseudo-version such as `v0.0.0-20261122120000-0123456789ab` in your `go.mod`; update it the same way.
+The first published version is `v0.29.0`. A commit between releases works as a pseudo-version (`@main`, `@<sha>`).
 The package name is `tinysesam`:
 
 ```go

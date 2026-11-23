@@ -77,6 +77,10 @@ installiert sich auch direkt vom Tag:
 pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.29.0"
 ```
 
+Der Go-Gate-Client ist ein Modul in einem Unterordner, Go braucht dafür einen Tag mit diesem Präfix: release.yml setzt
+`clients/go/vX.Y.Z` auf denselben Commit wie `vX.Y.Z`, als letzten Schritt, wenn alles andere grün ist (der
+Go-Modul-Proxy behält eine Version für immer; der Tag wird nie verschoben).
+
 Ohne `@v…` kommt statt einer freigegebenen Fassung der bewegliche Hauptzweig — das gehört in ein
 Experiment, nicht in einen Betrieb.
 
@@ -2500,8 +2504,8 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   Gate-Token selbst prüft, folgt der [Gate-Client-Spezifikation](../spec/gate-client.md) (englisch: Token-Format,
   Prüfreihenfolge, Gruppen, JWKS-Regeln, die nie hängen). Ihre sprachneutralen Test- und Angriffsvektoren in
   [`spec/vectors/`](../spec/vectors/) werden aus TinySesams eigenem Code erzeugt. Der **Go-Client** liegt in
-  [`clients/go/`](../clients/go/) (`net/http`-Middleware, Header- und Token-Modus, nur Standardbibliothek; noch nicht
-  veröffentlicht, Nutzung per Commit), der **Rust-Client** in [`clients/rust/`](../clients/rust/) (Crate
+  [`clients/go/`](../clients/go/) (`net/http`-Middleware, Header- und Token-Modus, nur Standardbibliothek; jedes Release taggt ihn
+  als `clients/go/vX.Y.Z`: `go get github.com/Ollornog/TinySesam/clients/go@v0.29.0`), der **Rust-Client** in [`clients/rust/`](../clients/rust/) (Crate
   `tinysesam-gate`: Header- und Token-Modus, der Abruf des Schlüsselsatzes hinter dem Feature `jwks`, unabhängig vom
   Web-Framework über die Crate `http`, ein axum-Beispiel; nicht in der Rust-Crate-Registry veröffentlicht, Nutzung als
   Git-Abhängigkeit), der **JS/TS-Client** in [`clients/js/`](../clients/js/) (TypeScript, ESM, ohne
@@ -2903,7 +2907,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**131 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**132 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

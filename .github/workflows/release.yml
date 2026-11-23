@@ -864,3 +864,65 @@ jobs:
           TAG: ${{ github.ref_name }}
           TARGET: ${{ github.repository_owner }}/${{ vars.PIN_REPO }}
         run: scripts/_release_automatik.py fc-pin --tag "$TAG" --target "$TARGET"
+
+  # ── Go module tag (PO 2026-11-23) ──────────────────────────────────────────────────────────────
+  # Go finds the module in `clients/go` only by a tag with the directory as prefix: `clients/go/vX.Y.Z` on the commit of
+  # `vX.Y.Z`. The Go module proxy and the checksum database keep a version FOREVER — a wrong tag cannot be taken back.
+  # So it comes last, once release, PyPI, images and their attestations are green, and in three jobs:
+  #   go-module-plan    — read only: go.mod at the tag commit names the module; does the tag exist (same commit → done,
+  #                       another commit → red, never moved); a pre-release gets none (scripts/_go_module_tag.py)
+  #   go-module-tag     — `contents: write`, no checkout, no repo code: two `gh api` calls (annotated tag object with
+  #                       the maintainer as tagger, then the ref), only when `plan` said so
+  #   go-module-verify  — read only: annotated, tagger, peeled to the release commit; then proxy.golang.org (warning only,
+  #                       the proxy can lag)
+  # `fc-pin` is not a prerequisite: the fleet pin is our deployment, not part of the release.
+  go-module-plan:
+    needs: [release, pypi, image, image-attest]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      create: ${{ steps.plan.outputs.create }}
+      name: ${{ steps.plan.outputs.name }}
+      commit: ${{ steps.plan.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Plan the Go module tag
+        id: plan
+        run: python3 scripts/_go_module_tag.py plan --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"
+
+  go-module-tag:
+    needs: go-module-plan
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write      # the tag object and its ref — nothing else
+    steps:
+      - name: Create the annotated tag clients/go/vX.Y.Z on the commit of vX.Y.Z
+        if: needs.go-module-plan.outputs.create == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NAME: ${{ needs.go-module-plan.outputs.name }}
+          COMMIT: ${{ needs.go-module-plan.outputs.commit }}
+        run: |
+          OBJECT="$(gh api "repos/$GITHUB_REPOSITORY/git/tags" -f tag="$NAME" -f object="$COMMIT" -f type=commit -f message="Go module $NAME, the commit of $GITHUB_REF_NAME" -f "tagger[name]=Ollornog" -f "tagger[email]=168935741+Ollornog@users.noreply.github.com" --jq .sha)"
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$NAME" -f sha="$OBJECT" --jq .ref
+
+  go-module-verify:
+    needs: go-module-tag
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the Go module tag, then ask the Go module proxy
+        run: python3 scripts/_go_module_tag.py verify --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA"

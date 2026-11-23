@@ -125,6 +125,17 @@ Lock files (`go.sum`, `Cargo.lock`, `package-lock.json`, `composer.lock`) are co
 
 ## Publishing
 
-**No client is published to a registry** (the Go module proxy, the Rust crate registry, npm, Packagist) without a decision
-of the product owner. Until then the clients are used from this repository by path or commit. Version numbers of the
-clients are independent of TinySesam's and start below 1.0.
+**No client is published to a registry** (the Rust crate registry, npm, Packagist) without a decision of the product
+owner. Until then those clients are used from this repository by path or commit, and their version numbers are
+independent of TinySesam's and start below 1.0.
+
+**Go is the exception (product owner, 2026-11-23):** a Go module needs no registry, only a tag. Every release tags
+`clients/go/vX.Y.Z` on the same commit as `vX.Y.Z`, so the Go client carries TinySesam's version (first `v0.29.0`):
+`go get github.com/Ollornog/TinySesam/clients/go@vX.Y.Z`. `.github/workflows/release.yml` sets the tag itself, as its
+last step — after the GitHub release, PyPI, both images and their attestations — in three jobs: `go-module-plan` (read
+only: `go.mod` at the tag commit names the module; tag already on that commit → done, on another → red; no tag for a
+pre-release), `go-module-tag` (`contents: write`, no checkout, two `gh api` calls: annotated tag object with the
+maintainer as tagger, then the ref) and `go-module-verify` (annotated, tagger, commit; then a probe of
+proxy.golang.org that only warns, the proxy can lag). The module proxy and the checksum database keep a version
+forever: a module tag is never moved and never set by hand. The logic is `scripts/_go_module_tag.py`, tested against
+a throwaway git repository in `tests/test_go_module_tag.py`.
