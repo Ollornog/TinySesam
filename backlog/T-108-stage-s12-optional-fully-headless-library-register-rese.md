@@ -4,7 +4,7 @@ type: Task
 title: "Stage S12 (optional) — fully headless library: register, reset password, setup status"
 status: offen
 milestone: M-4
-blocked_by: [T-96]
+blocked_by: [T-96, T-112]
 tags: [library, headless, optional]
 created: 2026-11-23
 ---
@@ -16,3 +16,8 @@ Building blocks `register`, `reset_password`, `setup_status`; JSON for TOTP star
 
 ## Acceptance
 - A variant of Ex2 with no built-in page except the consent pages.
+
+## Roadmap (2026-11-23)
+
+Waits for the module cut ([T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)): the new
+building blocks go into their feature module.

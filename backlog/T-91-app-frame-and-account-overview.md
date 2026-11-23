@@ -1,7 +1,7 @@
 ---
 type: Task
 title: 'Two ways to use TinySesam: app frame on TinySesam''s pages and the own account as data'
-status: in-arbeit
+status: erledigt
 id: T-91
 milestone: M-2
 tags: [topbar, account, frame, gateway, self-service, docs]
@@ -72,3 +72,9 @@ that "the app provides the UI" needs no switch: two building blocks and document
 ## Follow-up (2026-11-23)
 
 [ADR-19](ADR-19-gate-look-like-a-provider-sign-in-heading-and-icon-of-t.md): "one style for the gateway" stays valid; the gate adds the application's name and icon. The planned "look per host" (E9) is dropped. Shell at the side, hybrid and headless: [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md).
+
+## Closed 2026-11-23
+
+Stages E0 to E3 are done. `current` for the wrapper path moved to
+[T-120](T-120-leftovers-of-approvals-account-api-and-app-frame.md); ending a single session from the application to
+[T-105](T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md) (session handle).

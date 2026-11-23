@@ -2,7 +2,7 @@
 type: Task
 title: 'Approvals: confirm one sensitive action with a step-up (stage A: TinySesam actions; stage B: application
   actions)'
-status: in-arbeit
+status: erledigt
 id: T-89
 milestone: M-2
 tags: [approvals, step-up, admin, delegates, mcp]
@@ -69,3 +69,8 @@ Later, on demand:
 - [ ] A CLI import of an application's type snippet (an operator's action).
 
 Design: the accepted draft of 2026-11-22 (sections 0–12).
+
+## Closed 2026-11-23
+
+Stages A and B are done. The "later, on demand" items moved to
+[T-120](T-120-leftovers-of-approvals-account-api-and-app-frame.md).

@@ -18,11 +18,19 @@ Four surfaces (shell on top, shell at the side, hybrid, headless) x three origin
 
 ## Order: server first
 
-T-96 -> T-97 -> T-98 -> T-100 -> T-101 -> T-99 -> T-102 -> T-103 -> T-104 -> T-105 -> T-106 -> T-107 (T-108, T-109 on demand; T-110 any time)
+~~T-96 -> T-97 -> T-98 -> T-100 -> T-101 -> T-99 -> T-102 -> T-103 -> T-104 -> T-105 -> T-106 -> T-107 (T-108, T-109 on demand; T-110 any time)~~
+
+**Roadmap 2026-11-23 (maintainer decisions: baseline and modules first):** [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)
+(B-16 -> T-111 -> T-72, T-112) comes before this milestone continues; T-96 may run alongside M-5.
+
+T-112 -> T-97 -> (T-98, T-70) -> T-100 -> T-101 and, in parallel, T-99 -> T-102 -> T-103 -> T-104 -> T-105 -> T-106 -> T-107
+(T-108, T-109 on demand). T-99 runs beside T-100/T-101 because they touch different modules once T-112 is merged;
+schema changes of both go through one pull request at a time. T-110 moved to [M-6](M-6-trust-hardening-and-launch.md).
 
 ## Acceptance
 
 - One example application per surface, all with the same business logic ("documents" with `docs.read` / `docs.delete`): **Ex1** shell on top (Go, server, local and mixed), **Ex2** shell at the side (Python, library, local and IdP), **Ex3** hybrid (PHP or Node, server, IdP and mixed), **Ex4** headless (JavaScript single-page app, server, mixed).
+- Measured at the end: the CI matrix of [T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md) runs Ex1–Ex4 x (local, IdP, mixed) green in `nightly-repeat`; every cell of the concept's function matrix is green or marked "deliberately not"; Ex4 runs completely headless (no TinySesam page opened except the action pages); each example uses only its client, no Python in Ex1, Ex3, Ex4.
 - Parity test between library and server green ([T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)); acceptance matrix in CI ([T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md)).
 
 ## Tasks
@@ -43,9 +51,10 @@ T-96 -> T-97 -> T-98 -> T-100 -> T-101 -> T-99 -> T-102 -> T-103 -> T-104 -> T-1
 | S11 | [T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md) | acceptance matrix in CI: examples x origins | 8 | 10–14 |
 | S12 (optional) | [T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md) | fully headless library: register, reset password, setup status | 5 | 8–10 |
 | S13 (optional) | [T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md) | SCIM stage 2 for IdP role sync | 21 | 32–45 |
-| Diet | [T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md) | Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant | 5 | 8–12 |
+| S3 (SAML) | [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md) | SAML step-up: ForceAuthn / AuthnInstant (part of S3, counted there) | (5) | (8–12) |
+| ~~Diet~~ | [T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md) | moved to M-6 (2026-11-23) | – | – |
 
-Stages S0 to S11: 133 SP, 218–286 h (estimate, not measured; 1 SP is about one pull request of 2–3 h). With S12 and S13: 159 SP, 258–341 h. The dependency diet comes on top (5 SP).
+Stages S0 to S11: 133 SP, 218–286 h (estimate, not measured; 1 SP is about one pull request of 2–3 h). With S12 and S13: 159 SP, 258–341 h. ~~The dependency diet comes on top (5 SP).~~ The dependency diet moved to M-6; the module cut of M-5 (35 SP, 50–71 h) comes before.
 
 ## Existing entries
 

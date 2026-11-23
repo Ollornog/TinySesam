@@ -4,6 +4,7 @@ type: Task
 title: Stage S2 — reset a TOTP factor in the panel and CLI
 status: offen
 milestone: M-4
+blocked_by: [T-112]
 tags: [admin, totp]
 created: 2026-11-23
 ---
@@ -15,3 +16,8 @@ created: 2026-11-23
 
 ## Acceptance
 - An operator resets a TOTP in the panel and from the CLI; every rule has a mutation proof; English and German texts.
+
+## Roadmap (2026-11-23)
+
+Waits for the module cut ([T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)) only to avoid
+editing the panel and the CLI while they move; it does not need the server stage.

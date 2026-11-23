@@ -4,7 +4,7 @@ type: Task
 title: "Stage S1 — the server can do everything: TOML configuration, parity test"
 status: offen
 milestone: M-4
-blocked_by: [T-96]
+blocked_by: [T-96, T-112]
 tags: [gateway, server, config]
 created: 2026-11-23
 ---
@@ -26,3 +26,9 @@ The gateway is today an OIDC-only preset configured by environment variables (no
 ## Acceptance
 - Example **Ex1** (a Go application behind the server, local accounts): sign-in, panel and account API without a line of Python in the application.
 - Parity test green; a mutation (remove a server route) turns it red.
+
+## Roadmap (2026-11-23)
+
+Comes after the module cut ([T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)): the file
+fills `TinySesamConfig`, and the feature registry of T-112 loads only what it switches on. Run it in the same sprint
+right after T-112, by the same hands.
