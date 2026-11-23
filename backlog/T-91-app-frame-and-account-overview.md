@@ -68,3 +68,7 @@ that "the app provides the UI" needs no switch: two building blocks and document
 - [ ] `current` for the wrapper path: the gate token carries no session reference; a claim for it needs a spec change
       of its own.
 - [ ] Ending a single session or program from the application (needs a session handle, schema, own draft).
+
+## Follow-up (2026-11-23)
+
+[ADR-19](ADR-19-gate-look-like-a-provider-sign-in-heading-and-icon-of-t.md): "one style for the gateway" stays valid; the gate adds the application's name and icon. The planned "look per host" (E9) is dropped. Shell at the side, hybrid and headless: [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md).

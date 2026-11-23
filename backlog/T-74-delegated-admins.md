@@ -44,3 +44,7 @@ the whole installation.
 - **Unlocking** an account an administrator locked stays possible (the lock records no author) — documented.
 - The computation is pure (`config_check.delegation_graph`, `delegate_scopes`, `delegate_may_manage`) so a tenant
   (T-73) can later call it with its own delegation.
+
+## Naming (2026-11-23)
+
+[ADR-17](ADR-17-permission-layer-and-admin-levels.md) renames "delegates" to **area administrators** and lets them assign permissions inside their area.

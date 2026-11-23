@@ -66,7 +66,7 @@ application.
 
 ## Later
 
-- [ ] Gateway variable `TINYSESAM_APPS` — together with the switches the gateway preset turns off (API keys, sign-in
+- [ ] Gateway variable `TINYSESAM_APPS` (now part of [T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md), M-4) — together with the switches the gateway preset turns off (API keys, sign-in
       link, a way to set up a factor); alone it could never pass `config_check`.
 - [ ] `require_approval` per action (stage C), joining existing accounts with their consent.
 - [ ] The holder's account page names the application as the origin of a link or lock ("by Example", draft §8).
