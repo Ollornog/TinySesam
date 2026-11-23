@@ -100,3 +100,22 @@ jobs:
       - name: Every check of the client inside the image (clients/php/ci/in-docker.sh)
         if: steps.scope.outputs.run == 'true'
         run: clients/php/ci/in-docker.sh
+
+  # Aggregate for the branch protection (T-115): the PHP client on every PHP release and in the image.
+  # A matrix leg added or dropped needs no change of the protection — it names this job only.
+  # `always()`: the job also runs when a leg failed or was cancelled — then it is red itself; a skipped leg is not green
+  # either. Not skipped itself, so a required check never hangs.
+  client-php-ok:
+    name: client-php-ok
+    if: ${{ always() }}
+    needs: [test, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every job it needs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          printf '%s\n' "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
