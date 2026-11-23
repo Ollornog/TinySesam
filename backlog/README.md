@@ -10,6 +10,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 77/89 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
+* ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 0/15 erledigt
 
 ## Aufgaben
 
@@ -108,6 +109,21 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-93](T-93-follow-ups-to-0-29-0-kid-rule-proxy-duty-key-purposes.md)** Follow-ups to 0.29.0: kid rule, server-side top bar vs. proxy duty, key purposes both ways · M-2
 * ☑ **[T-94](T-94-first-sign-in-by-link-recovery-codes-off-totp-hint-target.md)** First sign-in by one-time link: recovery codes switchable, TOTP app hint, target after the setup · M-2
 * ☑ **[T-95](T-95-pairing-code-for-people-s-programs-and-a-simpler-consent-page.md)** Pairing code for people's programs (consent given in advance) and a consent page for laypeople · M-2
+* ☐ **[T-96](T-96-stage-s0-documentation-of-the-grid-surfaces-origins-dep.md)** Stage S0 — documentation of the grid: surfaces, origins, deployment · M-4
+* ☐ **[T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)** Stage S1 — the server can do everything: TOML configuration, parity test · M-4
+* ☐ **[T-98](T-98-stage-s2-reset-a-totp-factor-in-the-panel-and-cli.md)** Stage S2 — reset a TOTP factor in the panel and CLI · M-4
+* ☐ **[T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md)** Stage S3 — every origin is equal: source, step-up, linking local and IdP · M-4
+* ☐ **[T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md)** Stage S4 — permissions: app identity, registration, assignment, has_permission · M-4
+* ☐ **[T-101](T-101-stage-s5-permissions-at-the-server-and-in-the-clients.md)** Stage S5 — permissions at the server and in the clients · M-4
+* ☐ **[T-102](T-102-stage-s6-idp-role-sync-stage-1-import-groups-at-sign-in.md)** Stage S6 — IdP role sync stage 1: import groups at sign-in · M-4
+* ☐ **[T-103](T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)** Stage S7 — shell on top and at the side: one component, layout top or side · M-4
+* ☐ **[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md)** Stage S8 — hybrid: TinySesam area with name and icon, library layout slot · M-4
+* ☐ **[T-105](T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md)** Stage S9 — headless writing: action pages with a way back · M-4
+* ☐ **[T-106](T-106-stage-s10-headless-reading-events-keys-admin-data-insid.md)** Stage S10 — headless reading: events, keys, admin data inside the application"s area · M-4
+* ☐ **[T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md)** Stage S11 — acceptance matrix in CI: examples x origins · M-4
+* ☐ **[T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md)** Stage S12 (optional) — fully headless library: register, reset password, setup status · M-4
+* ☐ **[T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md)** Stage S13 (optional) — SCIM stage 2 for IdP role sync · M-4
+* ☐ **[T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)** Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant · M-4
 
 ## Fehler
 
@@ -143,3 +159,8 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[ADR-12](ADR-12-key-purposes-keyrings-and-rotation.md)** One key per purpose, each a keyring with key IDs — vault, gate signature, OAuth pepper; rotation without loss
 * ☑ **[ADR-13](ADR-13-oauth-for-services-private-key-jwt.md)** Services get tokens with client_credentials and private_key_jwt, paired by a one-time code — amends ADR-11
 * ☑ **[ADR-14](ADR-14-pairing-code-as-consent-given-in-advance.md)** A pairing code is a consent given in advance — one authorization of the account without the consent page, amends ADR-11
+* ☑ **[ADR-15](ADR-15-python-core-stays-clients-stay-thin-no-go-rewrite.md)** Python core stays, clients stay thin — no Go rewrite
+* ☑ **[ADR-16](ADR-16-server-configuration-by-toml-file-with-an-environment-o.md)** Server configuration by TOML file with an environment overlay, and library–server parity
+* ☑ **[ADR-17](ADR-17-permission-layer-and-admin-levels.md)** Permission layer and admin levels
+* ☑ **[ADR-18](ADR-18-idp-role-sync-and-linking-local-and-idp-accounts.md)** IdP role sync and linking local and IdP accounts
+* ☑ **[ADR-19](ADR-19-gate-look-like-a-provider-sign-in-heading-and-icon-of-t.md)** Gate look like a provider sign-in: heading and icon of the application, no look per host
