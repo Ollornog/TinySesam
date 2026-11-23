@@ -1,0 +1,67 @@
+---
+# Nightly repeat run — built by `repokit wiederholung` from the kit template (tests/_kit/vorlage_wiederholung.yml.in).
+# Do not edit by hand: tests/test_repo.py rebuilds it and compares (manifest.pruefe). Free per repo is only the cron
+# line between the "per repo" markers; `repokit sync` rebuilds the rest and keeps it.
+#
+# Why (PO 2026-11-23): "scripts/check.sh twice green" is no longer required before a push, and the pre-push hook only
+# runs the fast checks; the full suite runs in the PR CI. Whether the suite is repeatable — the same commit gives the
+# same answer — this run shows once a night on the default branch: it calls the CI workflow (@@SUITE@@) twice, one
+# after the other, on fresh runners, and compares. One green and one red is a flaky test; both red is a red default
+# branch. Either way this run is red, and the CI watch reports a red run on the default branch like any other.
+# No retry, no `continue-on-error`: a flaky test is a finding, not noise.
+name: nightly-repeat
+
+on:
+  schedule:
+    # @@ZEIT@@
+    # --- per repo: start
+@@JE_REPO@@
+    # --- per repo: end
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: nightly-repeat
+  cancel-in-progress: false
+
+jobs:
+  run-1:
+    uses: ./.github/workflows/@@SUITE@@
+@@RECHTE@@
+@@SECRETS@@
+  run-2:
+    needs: run-1
+    # Also after a red first run: only the second run tells a flaky test from a red branch.
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/@@SUITE@@
+@@RECHTE@@
+@@SECRETS@@
+  compare:
+    needs: [run-1, run-2]
+    if: ${{ !cancelled() }}
+    runs-on: @@RUNNER@@
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Compare the two runs
+        env:
+          RUN_1: ${{ needs.run-1.result }}
+          RUN_2: ${{ needs.run-2.result }}
+        run: |
+          set -euo pipefail
+          echo "run 1: $RUN_1 · run 2: $RUN_2"
+          if [[ "$RUN_1" == success && "$RUN_2" == success ]]; then
+            echo "Both runs green: the suite gives the same answer twice on this commit."
+            exit 0
+          fi
+          if [[ "$RUN_1" == success || "$RUN_2" == success ]]; then
+            meldung="FLAKY: one run green, one red ($RUN_1 / $RUN_2). The same commit gave two answers; find the test that depends on order, time, network or leftovers."
+          elif [[ "$RUN_1" == failure && "$RUN_2" == failure ]]; then
+            meldung="Both runs red: the default branch itself is red (see the CI run of the last push)."
+          else
+            meldung="A run did not finish ($RUN_1 / $RUN_2): no comparison, and that is not green."
+          fi
+          echo "::error title=nightly-repeat::$meldung"
+          printf '### nightly-repeat\n\n%s\n' "$meldung" >> "$GITHUB_STEP_SUMMARY"
+          exit 1

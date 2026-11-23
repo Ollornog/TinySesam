@@ -73,7 +73,7 @@
 # DOKU-SCHNELLSPUR (seit 0.52.0, PO 2026-11-22 „Doku-Änderungen sollen quasi sofort landen“): Ein PR von einem Zweig
 # `doku/<thema>` oder vom Sammelzweig `backlog` (dokutool backlog), der NUR Doku ändert, mergt selbst, sobald jeder
 # Pflicht-Workflow für genau diesen Kopf grün ist. Doku heißt eng: `README*.md`/`CHANGELOG*.md` in der Wurzel
-# (auch die deutsche Übersetzung), `docs/**`, `backlog/**`, jeweils nur Markdown — eine Teilmenge der Text-Erlaubnisliste von
+# (auch die deutsche Übersetzung), `docs/**`, `backlog/**`, `i18n/**` (since 0.59.1), jeweils nur Markdown — eine Teilmenge der Text-Erlaubnisliste von
 # `scripts/_nur_text.sh`, die in den Pflicht-Jobs entscheidet, dass nur die Schnellprüfung läuft (Hygiene, Links und
 # Anker, Frontmatter). Jede andere Datei (auch beim Umbenennen der alte Name) heißt: Kommentar, von Hand mergen. Dazu:
 # Autor mit Schreibrecht (OWNER/MEMBER/COLLABORATOR), kein Fork, kein Entwurf (ein Entwurf ist der Weg, einen Doku-PR
@@ -404,10 +404,11 @@ jobs:
             done
             echo "$n Anhänge geändert, ${#soll[@]} geprüft"
           }
-          # Doku-Pfad (seit 0.52.0)? Eng: README*/CHANGELOG* in der Wurzel, docs/**.md, backlog/**.md — kein Leer- oder
+          # Doku-Pfad (seit 0.52.0)? Eng: README*/CHANGELOG* in der Wurzel, docs/**.md, backlog/**.md, i18n/**.md (since
+          # 0.59.1: the translations of the root files, on the text list of _nur_text.sh since 0.57.0) — kein Leer- oder
           # Steuerzeichen. Eine Teilmenge der Erlaubnisliste von scripts/_nur_text.sh.
           doku_pfad() {
-            [[ "$1" =~ ^(README|CHANGELOG)(\.[a-z]{2})?\.md$ ]] || [[ "$1" =~ ^(docs|backlog)/[^[:space:][:cntrl:]]+\.md$ ]]
+            [[ "$1" =~ ^(README|CHANGELOG)(\.[a-z]{2})?\.md$ ]] || [[ "$1" =~ ^(docs|backlog|i18n)/[^[:space:][:cntrl:]]+\.md$ ]]
           }
           # Nur Doku? stdin = „<status>␟<datei>␟<alter name>“ je geänderter Datei (␟ = \x1f, der alte Name nur beim
           # Umbenennen). Exit 0, wenn jede Datei und jeder alte Name ein Doku-Pfad ist; sonst Ausgabe der ersten anderen.

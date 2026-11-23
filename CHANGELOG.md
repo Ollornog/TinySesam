@@ -157,6 +157,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - Rust build directories (about 1 GB per checkout) record their checkout in `.checkout`; the next run removes the
   directories whose checkout is gone and only reports older ones without the record.
 
+### Changed — test kit 0.59
+
+- Test kit 0.59.1 (repokit): fast pre-push (hygiene, format/lint, tests of the changed files; `PREPUSH_VOLL=1` for the full
+  run) and the nightly repeat run (`nightly-repeat.yml`, `ci.yml` is callable). Repeatability is checked there instead
+  of by running `scripts/check.sh` twice before every push.
+- The Caddy probe step in `release.yml` no longer pipes `caddy list-modules` into `grep -q` under `pipefail` (red by chance
+  on a broken pipe).
+
 ### Changed — test kit 0.55.0
 
 - Test kit 0.55.0 (repokit): the release automation checks the categories under `[Unreleased]` itself (see below).

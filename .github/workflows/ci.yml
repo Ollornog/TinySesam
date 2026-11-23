@@ -8,6 +8,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 # Least privilege. There is no safe default — the initial permission of the
 # GITHUB_TOKEN comes from the repo setting. As soon as ONE permission is explicitly

@@ -1,42 +1,56 @@
 #!/usr/bin/env bash
-# Letzte Bremse vor dem Push. Aktivieren: git config core.hooksPath .githooks
-# Notausgang (nur mit gutem Grund): git push --no-verify
+# The last brake before a push — from the shared kit (repokit), do not edit by hand.
+# Enable: git config core.hooksPath .githooks · Emergency exit (only with good reason): git push --no-verify
 #
-# Standardfall: `scripts/check.sh` läuft nativ. Wer die Suite lieber in einem Container
-# fährt (gleiche Toolchain wie die CI, unabhängig vom Rechner), legt sich ein `ci-local`
-# in den PATH — dann benutzt der Hook es von selbst.
+# FAST BY DEFAULT (kit 0.59.0, PO 2026-11-23): `ci-local` and "scripts/check.sh twice green" are no longer required
+# before a push. The full suite runs in the PR CI (self-hosted runners for private repos), and repeatability is shown
+# by the nightly repeat run (`repokit wiederholung`, workflow nightly-repeat). The hook only runs what answers in
+# seconds to a few minutes (target < 3 min) and catches what would otherwise cost a CI round:
 #
-# Ist `ci-local` vorhanden, aber Docker nicht ansprechbar, wird der Push auf
-# Feature-Branches ABGEBROCHEN: Wer den Container-Lauf eingerichtet hat, verlässt sich
-# darauf, und auf Feature-Branches läuft keine CI (on.push.branches: [main]). Ein stiller
-# Rückfall auf den Host würde genau dieses Netz entfernen. Beim Push auf `main` genügt der
-# native Lauf, weil dort anschließend die CI als Gate greift.
+#   text only (scripts/_nur_text.sh)  -> tests/test_repo.py (hygiene with the text check), nothing else
+#   otherwise                         -> tests/test_repo.py (no private infrastructure, secret patterns, kit manifest),
+#                                        format/lint of the changed files and the tests of the changed code:
+#                                        shell (bash -n, shellcheck), Python (py_compile, ruff where configured,
+#                                        affected tests/test_*.py), Go (gofmt, go vet + go test of the changed
+#                                        packages), Rust (cargo fmt --check, clippy, cargo test of the changed
+#                                        workspaces), JS/TS (biome check of the changed files)
+#   .githooks/pre-push.zusatz         -> the repo's own extra (kit 0.29.0), e.g. its own fast tests
 #
-# Der native Pfad prüft anschließend selbst, ob die Suite Rückstände hinterlassen hat
-# (das macht sonst `ci-local`, nicht `check.sh`). Ein Test, der schreibt, ist beim
-# zweiten Lauf nicht mehr wiederholbar.
+# A missing tool is a visible note, not a red push: the gate is the PR CI, which has every tool.
 #
-# Kein Schleifenrisiko: ci-local setzt CI_LOCAL_INSIDE=1 im Container und ruft dort
-# check.sh direkt auf, nicht diesen Hook.
+# FULL RUN ON REQUEST: `PREPUSH_VOLL=1 git push …` runs what the hook did up to kit 0.58: `ci-local` (container,
+# with CI_LOCAL_AUSWEICHEN=knoten) if it is installed, else scripts/check.sh natively plus the residue check. For
+# debugging, not a duty. `ci-local` itself stays callable by hand as before.
+#
+# EXACTLY THE PUSHED COMMIT (kit 0.59.0): Up to 0.58 the hook checked the working tree — `git push origin other`
+# from another branch, or a push with uncommitted changes, checked something that was not pushed. Now every pushed
+# commit is checked as it is: in place if it is HEAD and the working tree is clean, otherwise in a temporary
+# worktree (`git worktree add --detach`, removed afterwards). Limit: a Python package installed editable from the
+# main working tree (.venv) still points there; tests that import it by name see the working tree's code.
+#
+# Unchanged: a pure delete push and a pure tag push on commits that GitHub saw green skip everything (T-4, T-11).
+# The green mark of ci-local (kit 0.39.0) is no longer read: the fast path does not need it, and a full run on
+# request must not be skipped.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+# Git hands the hook GIT_DIR & co. In a temporary worktree they would point every git call at the wrong tree.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
+# Target time of the fast path in seconds; above it the hook says so (it never aborts a green check for being slow).
+FRIST="${PREPUSH_FRIST:-180}"
 
 # ---------------------------------------------------------------------------
-# Nativer Lauf + Rückstands-Check.
+# Nativer Lauf + Rückstands-Check (nur noch im vollen Lauf, PREPUSH_VOLL=1).
 #
-# `exec check.sh` wäre kürzer, ersetzt aber den Prozess — danach lässt sich nichts
-# mehr prüfen. Verglichen wird gegen den Zustand VOR dem Lauf, damit ein bereits
-# schmutziger Arbeitsbaum nicht fälschlich als Rückstand gilt.
-#
-# Die Prüfung selbst steht in `scripts/_residue_check.sh` — derselben Datei, die auch
-# die GitHub-CI fährt. Sie stand einmal fünffach im Umlauf, und die CI-Fassungen
-# ignorierten `.ci-allow-dirty`; das verbindliche Gate widersprach dem lokalen Netz.
+# Verglichen wird gegen den Zustand VOR dem Lauf, damit ein bereits schmutziger Arbeitsbaum nicht fälschlich als
+# Rückstand gilt. Die Prüfung selbst steht in `scripts/_residue_check.sh` — derselben Datei, die auch die GitHub-CI
+# fährt.
 # ---------------------------------------------------------------------------
 run_native_with_residue_check() {
     local vorher rc=0
 
-    if [[ ! -x "$ROOT/scripts/_residue_check.sh" ]]; then
+    if [[ ! -x scripts/_residue_check.sh ]]; then
         echo "pre-push: ABGEBROCHEN — scripts/_residue_check.sh fehlt." >&2
         echo "Ohne den Rückstands-Check ist der native Lauf kein Netz." >&2
         echo "Auf dem Tower: repokit sync" >&2
@@ -47,27 +61,21 @@ run_native_with_residue_check() {
     # shellcheck disable=SC2064
     trap "rm -f '$vorher'" RETURN
 
-    "$ROOT/scripts/_residue_check.sh" snapshot > "$vorher"
+    scripts/_residue_check.sh snapshot > "$vorher"
 
-    "$ROOT/scripts/check.sh" || rc=$?
+    scripts/check.sh || rc=$?
     [[ $rc -ne 0 ]] && return "$rc"
 
-    "$ROOT/scripts/_residue_check.sh" check --seit "$vorher"
+    scripts/_residue_check.sh check --seit "$vorher"
 }
 
 # ---------------------------------------------------------------------------
 # Warum antwortet Docker nicht? Die Frage beantworten, statt zu raten.
 #
-# `docker info` taugt als DIAGNOSE nicht: es scheitert, wenn die Gruppe fehlt, UND
-# in einer Shell, die älter ist als das `usermod` — dort ist die Mitgliedschaft längst
-# erteilt, nur dieser Prozess kennt sie nicht. Wer daraus „Gruppe fehlt" schließt,
-# vergibt ein root-äquivalentes Recht ein zweites Mal, ohne dass es nötig wäre.
-#
 #   id -nG "$me"  fragt die Gruppen-Datenbank   -> "darf der Benutzer?"
 #   id -nG        fragt diesen Prozess          -> "weiß diese Shell davon?"
 #
-# Kein `cmd | grep -q`: unter `set -o pipefail` kann SIGPIPE die Pipeline auf 141
-# setzen, obwohl grep 0 lieferte.
+# Kein `cmd | grep -q`: unter `set -o pipefail` kann SIGPIPE die Pipeline auf 141 setzen, obwohl grep 0 lieferte.
 # ---------------------------------------------------------------------------
 docker_diagnose() {
     local me; me="$(id -un)"
@@ -92,16 +100,14 @@ docker_diagnose() {
 
 # Läuft der Hook bereits im Container, nie erneut eskalieren.
 if [[ "${CI_LOCAL_INSIDE:-}" == "1" ]]; then
-    exec "$ROOT/scripts/check.sh"
+    exec scripts/check.sh
 fi
 
 # Git reicht auf stdin je Ref eine Zeile: <local ref> <local sha> <remote ref> <remote sha>
-# Daraus lesen wir, ob main betroffen ist. Kein stdin (manueller Aufruf) => wie Feature-Branch,
-# also die strenge Regel. Fail-closed ist hier die richtige Richtung.
-pushes_main=0
 refs_gesehen=0
 refs_geloescht=0
 refs_tag_geprueft=0
+pruefen=()          # pushed objects that carry content and need a check (deduplicated below)
 # Standardzweig der Gegenstelle (main, in älteren Repos master). Ohne Tracking-Ref
 # (Push an eine URL, nie gefetcht) bleibt es leer — dann gibt es keine Tag-Ausnahme.
 # Git übergibt den Namen der Gegenstelle als $1.
@@ -182,7 +188,6 @@ ci_gruen() {
 
 while read -r _local_ref local_sha remote_ref _remote_sha; do
     refs_gesehen=$((refs_gesehen + 1))
-    [[ "$remote_ref" == "refs/heads/main" ]] && pushes_main=1
     # Beim LOESCHEN eines Zweigs (`git push origin --delete <zweig>`) ist die lokale SHA
     # vierzig Nullen. Git sagt es also deutlich — man muss nur hinsehen.
     if [[ "$local_sha" =~ ^0+$ ]]; then
@@ -190,115 +195,401 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
         continue
     fi
     # Tag auf einen Commit, der schon auf dem Standardzweig der Gegenstelle liegt: Dort kam er
-    # nur über einen PR hin, und `pr-mergen` merged nur bei grüner CI am exakten Kopf. Die Suite
-    # prüfte hier denselben Inhalt ein zweites Mal (12 min je Release, TinySesam 2026-09-27).
+    # nur über einen PR hin, und `pr-mergen` merged nur bei grüner CI am exakten Kopf.
     # `merge-base` schält annotierte Tags selbst; zeigt ein Tag auf etwas anderes als einen
     # Commit, scheitert es — dann wird geprüft.
-    # Seit 0.50.0 zusätzlich: die Pflicht-Checks des Commits sind bei GitHub grün (ci_gruen). Ohne das
-    # gilt der Commit als ungeprüft und die Suite läuft.
+    # Seit 0.50.0 zusätzlich: die Pflicht-Checks des Commits sind bei GitHub grün (ci_gruen).
     if [[ "$remote_ref" == refs/tags/* && -n "$standard_ref" ]] \
         && git merge-base --is-ancestor "$local_sha" "$standard_ref" 2>/dev/null \
         && ci_gruen "$(git rev-parse "$local_sha^{commit}")" "${2:-}" "${standard_ref##*/}"; then
         refs_tag_geprueft=$((refs_tag_geprueft + 1))
+        continue
     fi
+    pruefen+=("$local_sha")
 done || true
 
-# Ein reiner Loesch-Push schiebt KEINEN Inhalt. Die Suite wuerde den lokalen HEAD pruefen —
-# also etwas, das mit diesem Push nichts zu tun hat — und das kostet Minuten fuer einen Push
-# ohne Inhalt. Gemessen in zwei Repos beim Aufraeumen gemergter Zweige (2026-09-24).
-#
-# Bedingung mit Bedacht: NUR wenn stdin ueberhaupt Zeilen hatte UND jede davon eine Loeschung
-# war. Ohne stdin (manueller Aufruf) bleibt es bei der strengen Regel — fail-closed ist hier
-# die richtige Richtung, und ein gemischter Push (loeschen + schieben) traegt Inhalt.
+# Ein reiner Loesch-Push schiebt KEINEN Inhalt. NUR wenn stdin ueberhaupt Zeilen hatte UND jede davon eine Loeschung
+# war; ohne stdin (manueller Aufruf) wird geprüft — fail-closed.
 if [[ "$refs_gesehen" -gt 0 && "$refs_gesehen" -eq "$refs_geloescht" ]]; then
     echo "pre-push: reiner Loesch-Push ($refs_geloescht Ref(s)) — kein Inhalt, keine Suite."
     exit 0
 fi
 
-# Reiner Tag-Push auf bereits geprüfte Commits: dieselbe Strenge wie oben — NUR wenn stdin
-# Zeilen hatte und JEDE davon entweder eine Löschung oder ein solcher Tag war. Ein Tag auf
-# einen Commit abseits des Standardzweigs, ein veralteter Tracking-Ref oder ein gemischter
-# Push mit Zweig fahren die Suite wie bisher.
+# Reiner Tag-Push auf bereits geprüfte Commits: NUR wenn stdin Zeilen hatte und JEDE davon entweder eine Löschung
+# oder ein solcher Tag war. Ein gemischter Push prüft die übrigen Refs (unten).
 if [[ "$refs_tag_geprueft" -gt 0 && "$refs_gesehen" -eq $((refs_tag_geprueft + refs_geloescht)) ]]; then
     echo "pre-push: reiner Tag-Push ($refs_tag_geprueft Tag(s)) auf Commits aus ${standard_ref#refs/remotes/} — dort laut GitHub grün (alle Pflicht-Checks), keine Suite."
     exit 0
 fi
 
-# ---- Repo-eigener Zusatz (Kit 0.29.0): `.githooks/pre-push.zusatz`, wenn das Repo einen hat.
-# Dieser Hook gehört dem Kit und wird bei jedem Sync überschrieben. Repos mit einer Prüfung, die nur an
-# DIESEM Rechner geht (LinuxTools: der Tower-Teil von check.sh — dragsnap mit cjs, die compose-Gegenprobe),
-# hatten deshalb einen eigenen Hook und konnten das Kit nicht syncen, ohne ihn zu verlieren (2026-10-11).
-# Der Zusatz läuft VOR der Suite und nach den Ausnahmen oben (ein Lösch- oder Tag-Push braucht ihn so wenig
-# wie die Suite). Liegt er da, ist aber nicht ausführbar, bricht der Push ab: ein still übersprungener Zusatz
-# wäre ein grüner Push ohne genau die Prüfung, für die es ihn gibt.
-ZUSATZ="$ROOT/.githooks/pre-push.zusatz"
-if [[ -e "$ZUSATZ" ]]; then
-    if [[ ! -x "$ZUSATZ" ]]; then
-        echo "pre-push: ABGEBROCHEN — $ZUSATZ liegt da, ist aber nicht ausführbar (chmod +x)." >&2
-        exit 1
-    fi
-    echo "pre-push: repo-eigener Zusatz (.githooks/pre-push.zusatz)"
-    ( cd "$ROOT" && "$ZUSATZ" </dev/null ) || { echo "pre-push: ABGEBROCHEN — der Zusatz ist rot." >&2; exit 1; }
+# No stdin (manual call): check HEAD — fail-closed, as before.
+if [[ "$refs_gesehen" -eq 0 ]]; then
+    echo "pre-push: no refs on stdin (manual call) — checking HEAD."
+    pruefen=(HEAD)
 fi
 
-# Spiegelt den Autodetect von ci-local: erst direkt, dann passwortloses sudo.
-# Ein interaktiver sudo-Prompt wäre hier falsch — der Hook darf nicht nach einem
-# Passwort fragen, deshalb nur 'sudo -n'.
-#
-# Als FUNKTIONSTEST ist `docker info` richtig: gefragt ist nur „Container startbar?".
-# Für die MELDUNG danach siehe docker_diagnose().
+# Pushed objects -> commits, deduplicated in push order. A tag on a tree or blob has no commit to check out; then the
+# working tree's HEAD is checked, as before 0.59.0 (fail-closed: something is always checked).
+commits=()
+declare -A schon=()
+for obj in "${pruefen[@]}"; do
+    if ! c="$(git rev-parse -q --verify "$obj^{commit}" 2>/dev/null)"; then
+        echo "pre-push: ${obj:0:12} is not a commit — checking HEAD instead."
+        c="$(git rev-parse HEAD)"
+    fi
+    [[ -n "${schon[$c]+x}" ]] && continue
+    schon[$c]=1
+    commits+=("$c")
+done
+
+# Base for "what changed": merge-base with the default branch of the remote (as scripts/_nur_text.sh finds it).
+gegenstelle="${1:-origin}"
+standard_basis=""
+for k in "$standard_ref" "refs/remotes/$gegenstelle/HEAD" "refs/remotes/$gegenstelle/main" \
+         "refs/remotes/$gegenstelle/master" refs/remotes/origin/HEAD refs/remotes/origin/main refs/remotes/origin/master; do
+    [[ -n "$k" ]] || continue
+    if git rev-parse -q --verify "$k^{commit}" >/dev/null 2>&1; then standard_basis="$k"; break; fi
+done
+
+# ---------------------------------------------------------------------------
+# A checkout of exactly the pushed commit: in place if it is HEAD and the working tree is clean, else a temporary
+# worktree. Sets DIR and WO. The temporary directory carries the repo's name (ci-local reads it in a full run).
+# ---------------------------------------------------------------------------
+temp_verz=()
+aufraeumen() {
+    local v
+    for v in "${temp_verz[@]}"; do
+        git -C "$ROOT" worktree remove --force "$v/${ROOT##*/}" >/dev/null 2>&1 || true
+        rm -rf "$v"
+    done
+    git -C "$ROOT" worktree prune >/dev/null 2>&1 || true
+}
+trap aufraeumen EXIT
+
+bereitstellen() {
+    local c="$1" v
+    if [[ "$c" == "$(git rev-parse HEAD)" ]] && git diff --quiet HEAD -- 2>/dev/null \
+        && [[ -z "$(git ls-files --others --exclude-standard)" ]]; then
+        DIR="$ROOT"; WO="working tree (HEAD ${c:0:9}, clean)"
+        return 0
+    fi
+    v="$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX")"
+    temp_verz+=("$v")
+    DIR="$v/${ROOT##*/}"
+    if ! git worktree add -q --detach "$DIR" "$c" >/dev/null 2>&1; then
+        echo "pre-push: ABGEBROCHEN — temporary worktree of ${c:0:9} could not be created (git worktree add)." >&2
+        return 1
+    fi
+    WO="temporary worktree of ${c:0:9} (not HEAD, or the working tree has changes that are not pushed)"
+}
+
+# Spiegelt den Autodetect von ci-local: erst direkt, dann passwortloses sudo (nie ein Passwort-Prompt im Hook).
+# Als FUNKTIONSTEST ist `docker info` richtig: gefragt ist nur „Container startbar?". Für die MELDUNG docker_diagnose().
 docker_ok() {
     command -v docker >/dev/null 2>&1 || return 1
     docker info >/dev/null 2>&1 && return 0
     sudo -n docker info >/dev/null 2>&1
 }
 
-# Text-Schnellweg VOR ci-local (Kit 0.40.0, 2026-10-31, Plan „Tempo“): check.sh fährt bei reinem Text nur die Hygiene —
-# aber nur, wenn es die Liste der Änderungen kennt. Im Container von ci-local fehlt die Historie, und ci-local reicht
-# CI_AENDERUNGEN nicht herein; ein Doku-Commit fuhr dort die volle Suite (FleetCommander: 8,5 min für eine Zeile).
-# Hier, auf dem Rechner, ist der Standardzweig bekannt: _nur_text.sh entscheidet, test_repo.py prüft. Nur bei sauberem
-# Arbeitsbaum — sonst prüfte die Hygiene einen anderen Stand als den gepushten, und es geht weiter wie bisher.
-if [[ -x "$ROOT/scripts/_nur_text.sh" && -f "$ROOT/tests/test_repo.py" ]] \
-    && ( cd "$ROOT" && git diff --quiet HEAD -- && [[ -z "$(git ls-files --others --exclude-standard)" ]] ) \
-    && grund="$(cd "$ROOT" && scripts/_nur_text.sh)"; then
-    echo "pre-push: $grund"
-    ( cd "$ROOT" && python3 tests/test_repo.py ) || { echo "pre-push: ABGEBROCHEN — Repo-Hygiene rot." >&2; exit 1; }
-    exit 0
-fi
-
-if command -v ci-local >/dev/null 2>&1; then
-    if docker_ok; then
-        # Grün-Marke (2026-10-29, Register „Rebase-Karussell“): lief GENAU dieser Baum (Tree-Hash)
-        # mit derselben ci-local-Fassung und demselben Abbild schon grün — von Hand oder durch
-        # einen früheren Push —, ist die Suite ein zweites Mal verschenkte Zeit (über eine Stunde
-        # je Rebase im FleetCommander). Ein Rebase ohne Inhaltsänderung lässt den Baum gleich;
-        # jede Inhaltsänderung, ein anderes ci-local oder ein neues Abbild macht ihn ungültig.
-        # Die Marke legt nur ein GRÜNER Standard-/--full-Lauf von ci-local an; ein ci-local ohne
-        # `--gruen-pruefen` (älter) scheitert hier und fährt die Suite wie bisher. Kein Ersatz für
-        # die CI auf GitHub, nur für den identischen zweiten lokalen Lauf.
-        if ( cd "$ROOT" && ci-local --gruen-pruefen ); then
-            echo "pre-push: Suite entfällt — genau dieser Stand war schon grün (Grün-Marke von ci-local)."
-            exit 0
+# ---------------------------------------------------------------------------
+# Full run on request (PREPUSH_VOLL=1): ci-local if installed, else check.sh natively with the residue check.
+# Runs in the checkout of the pushed commit (cwd). No silent fallback: ci-local installed but Docker down aborts.
+# ---------------------------------------------------------------------------
+voll() {
+    if command -v ci-local >/dev/null 2>&1; then
+        if docker_ok; then
+            echo "pre-push: PREPUSH_VOLL=1 — full suite in the container (ci-local)."
+            # Ausweichen (Kit 0.56.0): ist hier kein ci-local-Platz frei, darf ci-local auf einen freien CI-Knoten
+            # ausweichen. Abschalten für einen Push: CI_LOCAL_AUSWEICHEN=aus PREPUSH_VOLL=1 git push …
+            CI_LOCAL_AUSWEICHEN="${CI_LOCAL_AUSWEICHEN:-knoten}" ci-local
+            return
         fi
-        echo "pre-push: Testsuite läuft im Container (ci-local) — das dauert, und das ist gut so."
-        # Ein einfacher Lauf. Den Doppellauf (--full), der die Wiederholbarkeit beweist,
-        # fährt die CI bzw. der Release — nicht die kurze Schleife vor jedem Push.
-        exec ci-local
-    fi
-    if [[ "$pushes_main" -eq 0 ]]; then
         {
             echo
-            echo "pre-push: ABGEBROCHEN — ci-local ist eingerichtet, aber Docker antwortet nicht."
-            echo
-            echo "Auf Feature-Branches läuft keine CI. Der Container-Lauf ist hier die"
-            echo "einzige Prüfung; ein Rückfall auf den Host würde ungeprüften Code durchlassen."
+            echo "pre-push: ABGEBROCHEN — PREPUSH_VOLL=1 and ci-local is installed, but Docker does not answer."
             echo
             docker_diagnose
         } >&2
-        exit 1
+        return 1
     fi
-    echo "pre-push: Docker antwortet nicht → nativer Lauf." >&2
-    echo "          Erlaubt, weil auf main anschließend die CI greift." >&2
-fi
+    echo "pre-push: PREPUSH_VOLL=1 — full suite natively (scripts/check.sh + residue check)."
+    run_native_with_residue_check
+}
 
-run_native_with_residue_check
+# ---------------------------------------------------------------------------
+# The fast path. Runs in the checkout of the pushed commit (cwd); $1 = base commit (empty: none known).
+# ---------------------------------------------------------------------------
+hinweis() { echo "  – $1"; }
+stufe() { printf '\n▸ %s\n' "$1"; }
+rot() { echo "pre-push: ABGEBROCHEN — $1" >&2; exit 1; }
+
+# Does the repo's own suite use this tool? Lint tools run only then — a repo that never adopted ruff or shellcheck
+# must not turn red on a changed legacy file because the tool happens to be installed here.
+nutzt() {
+    local f
+    for f in scripts/check.sh .github/workflows/*.yml .github/workflows/*.yaml; do
+        [[ -f "$f" ]] || continue
+        # The name as a word before any `#` on its line (a comment that names the tool is no use of it). One grep, no
+        # pipe: `grep -v … | grep -q` under pipefail can turn a hit into 141 (SIGPIPE) and read as "not used".
+        if grep -q -E -e "^[^#]*(^|[^[:alnum:]_-])$1([^[:alnum:]_-]|\$)" "$f"; then return 0; fi
+    done
+    return 1
+}
+
+# nearest_with <file> <name> — the nearest directory (from the file's folder up to the repo root) holding <name>.
+naechster_mit() {
+    local d
+    d="$(dirname "$1")"
+    while :; do
+        if [[ -e "$d/$2" ]]; then printf '%s' "$d"; return 0; fi
+        [[ "$d" == "." ]] && return 1
+        d="$(dirname "$d")"
+    done
+}
+
+schnell() {
+    local basis="$1" grund="" py f d
+    local -a geaendert=() alle=() sh=() pyf=() tests=() go=() gopakete=() rs=() js=()
+
+    # 1. Text only: hygiene with the text check, nothing else (kit 0.40.0).
+    if [[ -x scripts/_nur_text.sh && -f tests/test_repo.py ]]; then
+        if grund="$(scripts/_nur_text.sh)"; then
+            echo "pre-push: $grund"
+            python3 tests/test_repo.py || rot "repo hygiene is red (tests/test_repo.py)."
+            return 0
+        fi
+        echo "pre-push: $grund — fast checks instead (full suite: PR CI)."
+    fi
+
+    # 2. Hygiene: no private infrastructure, no secret patterns, kit manifest.
+    stufe "Hygiene (tests/test_repo.py)"
+    if [[ -f tests/test_repo.py ]]; then
+        python3 tests/test_repo.py || rot "repo hygiene is red (tests/test_repo.py)."
+    else
+        hinweis "no tests/test_repo.py — the hygiene runs only in the PR CI"
+    fi
+
+    if [[ -z "$basis" ]]; then
+        hinweis "no default branch known (no base) — the changed files are unknown; tests of the changes: PR CI"
+        return 0
+    fi
+    # Changed files since the merge-base: `geaendert` the ones that still exist, `alle` with deletions (Go packages).
+    mapfile -d '' -t alle < <(git diff -z --name-only --no-renames "$basis" HEAD)
+    for f in "${alle[@]}"; do
+        [[ -f "$f" && ! -L "$f" ]] && geaendert+=("$f")
+    done
+    if [[ ${#alle[@]} -eq 0 ]]; then
+        hinweis "no change against ${basis:0:9} — nothing more to check"
+        return 0
+    fi
+    for f in "${geaendert[@]}"; do
+        case "$f" in
+            *.sh) sh+=("$f") ;;
+            *.py) pyf+=("$f") ;;
+            *.go) go+=("$f") ;;
+            *.rs) rs+=("$f") ;;
+            *.js|*.mjs|*.cjs|*.jsx|*.ts|*.mts|*.cts|*.tsx) js+=("$f") ;;
+            *.md|*.json|*.yml|*.yaml|*.toml|*.txt|*.html|*.css) ;;
+            *)  # a script without extension: by its shebang
+                if [[ "$(head -c 64 "$f" 2>/dev/null | head -n 1)" =~ ^#!.*[/[:space:]](ba)?sh([[:space:]]|$) ]]; then
+                    sh+=("$f")
+                fi ;;
+        esac
+    done
+
+    # 3. Shell: syntax always, shellcheck where the repo uses it.
+    if [[ ${#sh[@]} -gt 0 ]]; then
+        stufe "Shell (${#sh[@]} file(s))"
+        for f in "${sh[@]}"; do bash -n "$f" || rot "$f: bash -n (syntax)"; done
+        if nutzt shellcheck; then
+            if command -v shellcheck >/dev/null 2>&1; then
+                shellcheck "${sh[@]}" || rot "shellcheck"
+                echo "  shellcheck clean"
+            else
+                hinweis "shellcheck is not installed here — PR CI"
+            fi
+        fi
+    fi
+
+    # 4. Python: syntax (no .pyc written), ruff where configured.
+    if [[ ${#pyf[@]} -gt 0 ]]; then
+        stufe "Python (${#pyf[@]} file(s))"
+        python3 -c 'import ast, sys
+for f in sys.argv[1:]:
+    ast.parse(open(f, "rb").read(), f)' "${pyf[@]}" || rot "Python syntax"
+        if nutzt ruff; then
+            if command -v ruff >/dev/null 2>&1; then
+                ruff check "${pyf[@]}" || rot "ruff check"
+                ruff format --check "${pyf[@]}" || rot "ruff format --check"
+            else
+                hinweis "ruff is not installed here — PR CI"
+            fi
+        fi
+    fi
+
+    # 4b. Affected Python tests: a changed test file itself (test_*.py anywhere, check_*.py under a tests/ folder), and
+    # for a changed Python or shell file <name>.py/<name>.sh/<name>: **/test_<name>.py and **/tests/**/check_<name>.py
+    # ("-" in the name read as "_"). Two naming schemes the repos use; a repo with another one adds its own fast tests
+    # in .githooks/pre-push.zusatz. `PREPUSH_TESTS=aus git push` skips this stage for one push (with a note).
+    local -A gesehen=()
+    for f in "${pyf[@]}" "${sh[@]}"; do
+        local -a kandidaten=()
+        local name="${f##*/}"
+        if [[ "$name" == test_*.py ]] || [[ "$name" == check_*.py && "$f" =~ (^|/)tests/ ]]; then
+            kandidaten=("$f")
+        else
+            name="${name%.py}"; name="${name%.sh}"; name="${name//-/_}"
+            mapfile -t kandidaten < <(git ls-files -- ":(glob)**/test_${name}.py" ":(glob)**/tests/**/check_${name}.py")
+        fi
+        for d in "${kandidaten[@]}"; do
+            [[ "$d" == tests/test_repo.py || "$d" == tests/_kit/* || -n "${gesehen[$d]+x}" || ! -f "$d" ]] && continue
+            gesehen[$d]=1
+            tests+=("$d")
+        done
+    done
+    if [[ ${#pyf[@]} -gt 0 || ${#sh[@]} -gt 0 ]]; then
+        stufe "Tests of the changed files (${#tests[@]})"
+        if [[ "${PREPUSH_TESTS:-}" == aus ]]; then
+            hinweis "PREPUSH_TESTS=aus — skipped for this push; the PR CI runs them"
+        elif [[ ${#tests[@]} -eq 0 ]]; then
+            hinweis "no test file belongs to the changed files by name — PR CI"
+        else
+            py="${PYTHON:-}"
+            [[ -n "$py" ]] || { [[ -x "$ROOT/.venv/bin/python" ]] && py="$ROOT/.venv/bin/python"; } || true
+            [[ -n "$py" ]] || py=python3
+            for d in "${tests[@]}"; do
+                if grep -q -E '^if __name__ == .__main__.:' "$d"; then
+                    echo "  $d"
+                    "$py" "$d" || rot "$d is red"
+                elif "$py" -c 'import pytest' >/dev/null 2>&1; then
+                    echo "  pytest $d"
+                    "$py" -m pytest -q "$d" || rot "$d is red (pytest)"
+                else
+                    hinweis "$d: no __main__ and no pytest for $py — PR CI"
+                fi
+            done
+        fi
+    fi
+
+    # 5. Go: gofmt of the changed files, go vet + go test of the changed packages of the root module.
+    local gomod=0
+    for f in "${alle[@]}"; do [[ "$f" == go.mod || "$f" == go.sum ]] && gomod=1; done
+    if [[ -f go.mod && ( ${#go[@]} -gt 0 || $gomod -eq 1 || " ${alle[*]} " == *".go "* ) ]]; then
+        stufe "Go"
+        if command -v go >/dev/null 2>&1; then
+            if [[ ${#go[@]} -gt 0 ]]; then
+                local unformatiert
+                unformatiert="$(gofmt -l "${go[@]}")"
+                [[ -z "$unformatiert" ]] || rot "not gofmt-formatted:"$'\n'"$unformatiert"
+                echo "  gofmt clean (${#go[@]} file(s))"
+            fi
+            if [[ $gomod -eq 1 ]]; then
+                gopakete=(./...)
+            else
+                declare -A pk=()
+                for f in "${alle[@]}"; do
+                    [[ "$f" == *.go ]] || continue
+                    d="$(dirname "$f")"
+                    # Only packages of the root module: no other go.mod on the way up (.github/audit is its own module).
+                    [[ "$(naechster_mit "$f" go.mod)" == "." ]] || continue
+                    if [[ ! -d "$d" ]] || ! compgen -G "$d/*.go" >/dev/null; then continue; fi
+                    [[ -n "${pk[$d]+x}" ]] && continue
+                    pk[$d]=1
+                    if [[ "$d" == . ]]; then gopakete+=(.); else gopakete+=("./$d"); fi
+                done
+            fi
+            if [[ ${#gopakete[@]} -gt 0 ]]; then
+                echo "  go vet + go test: ${gopakete[*]}"
+                go vet "${gopakete[@]}" || rot "go vet"
+                go test "${gopakete[@]}" || rot "go test"
+            fi
+        else
+            hinweis "no go toolchain here — PR CI"
+        fi
+    fi
+
+    # 6. Rust: cargo fmt --check in the workspaces of the changed files (sources only, works for every target).
+    if [[ ${#rs[@]} -gt 0 ]]; then
+        stufe "Rust (${#rs[@]} file(s))"
+        if command -v cargo >/dev/null 2>&1; then
+            declare -A ws=()
+            for f in "${rs[@]}"; do
+                d="$(naechster_mit "$f" Cargo.lock)" || d="$(naechster_mit "$f" Cargo.toml)" || continue
+                [[ -n "${ws[$d]+x}" ]] && continue
+                ws[$d]=1
+                echo "  cargo fmt --check ($d)"
+                (cd "$d" && cargo fmt --all -- --check) || rot "cargo fmt --check in $d"
+            done
+            hinweis "clippy and cargo test: PR CI"
+        else
+            hinweis "no cargo here — PR CI"
+        fi
+    fi
+
+    # 7. JS/TS: biome check of the changed files, with the biome of the workspace (node_modules, no npm ci here).
+    if [[ ${#js[@]} -gt 0 ]]; then
+        stufe "JS/TS (${#js[@]} file(s))"
+        declare -A nb=()
+        for f in "${js[@]}"; do
+            d="$(naechster_mit "$f" package.json)" || d="."
+            nb[$d]+="${f#"$d"/}"$'\n'
+        done
+        for d in "${!nb[@]}"; do
+            local biome=""
+            for b in "$d/node_modules/.bin/biome" "$ROOT/$d/node_modules/.bin/biome"; do
+                [[ -x "$b" ]] && { biome="$(cd "$(dirname "$b")" && pwd)/biome"; break; }
+            done
+            if [[ -z "$biome" ]]; then
+                hinweis "$d: no node_modules/.bin/biome (npm ci not run) — PR CI"
+                continue
+            fi
+            local -a dateien=()
+            mapfile -t dateien < <(printf '%s' "${nb[$d]}")
+            echo "  biome check ($d): ${#dateien[@]} file(s)"
+            (cd "$d" && "$biome" check --no-errors-on-unmatched "${dateien[@]}") || rot "biome check in $d"
+        done
+        hinweis "tsc and npm test: PR CI"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Check every pushed commit.
+# ---------------------------------------------------------------------------
+start=$SECONDS
+for c in "${commits[@]}"; do
+    bereitstellen "$c" || exit 1
+    echo "pre-push: checking ${c:0:9} in the $WO"
+    basis=""
+    if [[ -n "$standard_basis" ]]; then
+        basis="$(git merge-base "$c" "$standard_basis" 2>/dev/null)" || basis=""
+    fi
+    (
+        cd "$DIR"
+        # ---- Repo-eigener Zusatz (Kit 0.29.0): `.githooks/pre-push.zusatz` des gepushten Stands, VOR den Prüfungen.
+        # Liegt er da, ist aber nicht ausführbar, bricht der Push ab: ein still übersprungener Zusatz wäre ein grüner
+        # Push ohne genau die Prüfung, für die es ihn gibt.
+        ZUSATZ=".githooks/pre-push.zusatz"
+        if [[ -e "$ZUSATZ" ]]; then
+            [[ -x "$ZUSATZ" ]] || rot "$ZUSATZ liegt da, ist aber nicht ausführbar (chmod +x)."
+            echo "pre-push: repo-eigener Zusatz (.githooks/pre-push.zusatz)"
+            "./$ZUSATZ" </dev/null || rot "der Zusatz ist rot."
+        fi
+        if [[ "${PREPUSH_VOLL:-}" == 1 ]]; then
+            voll || exit 1
+        else
+            schnell "$basis"
+        fi
+    ) || exit 1
+done
+
+dauer=$((SECONDS - start))
+if [[ "${PREPUSH_VOLL:-}" == 1 ]]; then
+    echo "pre-push: full run green in ${dauer} s."
+else
+    echo
+    echo "pre-push: fast checks green in ${dauer} s — the full suite runs in the PR CI (full run here: PREPUSH_VOLL=1 git push)."
+    if [[ "$dauer" -gt "$FRIST" ]]; then
+        echo "pre-push: note — slower than the target of ${FRIST} s; a repo extra (.githooks/pre-push.zusatz) or many affected tests? Worth a look." >&2
+    fi
+fi

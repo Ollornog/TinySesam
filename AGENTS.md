@@ -44,8 +44,10 @@ scripts/check.sh                         # all suites + browser test + hygiene +
 python tests/run_all.py test_core.py     # one suite while you work
 ```
 
-- **Run `scripts/check.sh` twice; both runs green.** A test that fails on the second run is broken. Every suite runs
-  in its own throwaway directory and must not write into the tree.
+- **Repeatability is checked by the nightly repeat run** (`nightly-repeat`: the CI suite twice on `main`, a red or flaky
+  night is a finding), no longer by running `scripts/check.sh` twice before every push. The pre-push hook is fast
+  (hygiene, format/lint, tests of the changed files); `PREPUSH_VOLL=1 git push` runs the full gate. A test that fails on
+  the second run is broken. Every suite runs in its own throwaway directory and must not write into the tree.
 - `tests/test_browser.py` drives headless Chrome against the showcase (console errors, CSP, dialogs, light/dark).
   Without Chrome it skips — a skip is not a green; run it before a UI change goes out.
 - `tests/test_repo.py` is the hygiene test: versions agree, no secrets, no private infrastructure, generated files

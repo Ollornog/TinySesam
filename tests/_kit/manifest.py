@@ -81,7 +81,21 @@ def pruefe(root: str) -> list[str]:
     # Er hängt HIER, weil jedes Repo diese Prüfung schon in seiner Suite fährt — ohne eigene
     # Verdrahtung, die in einem von zehn Repos vergessen würde.
     abweichungen.extend(_automerge(root))
+    # Since kit 0.59.0 the nightly repeat run (PO 2026-11-23), here for the same reason: opt-in, but once a repo has
+    # it, a hand edit or a CI workflow without `workflow_call` must turn the repo's own suite red.
+    abweichungen.extend(_wiederholung(root))
     return abweichungen
+
+
+def _wiederholung(root: str) -> list[str]:
+    pfad = os.path.join(root, "tests", "_kit", "wiederholung.py")
+    if not os.path.exists(pfad):
+        return []              # kit before 0.59.0
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_kit_wiederholung_aus_dem_repo", pfad)
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    return modul.pruefe(root)
 
 
 def _automerge(root: str) -> list[str]:

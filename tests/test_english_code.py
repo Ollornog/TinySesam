@@ -49,6 +49,7 @@ Explicit and small exceptions (everything else is a finding):
   `tests/voraussetzung.py`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`,
   `scripts/_release_automatik.py` (release automation, kit 0.47.0),
   `.githooks/pre-push`, `backlog/README-KONVENTION.md`, `.github/workflows/dependabot-auto-merge.yml`,
+  `.github/workflows/nightly-repeat.yml` (kit 0.59.0),
   `.github/release-automatik.json` (its keys are the kit script's interface), and the names the
   Python ones define or read (computed, not listed); what the repo takes from them stays quoted in `backticks`;
 * the migration code that has to name the OLD names: `Store._english_names` and the tables `Store.RENAMED_*`,
@@ -88,6 +89,7 @@ DIRS = ("tinysesam", "web", "examples", "scripts", "tests")
 KIT_FILES = ("scripts/_backlog.py", "scripts/_nur_text.sh", "scripts/_residue_check.sh", "scripts/_release_automatik.py",
              "tests/voraussetzung.py",
              ".githooks/pre-push", "backlog/README-KONVENTION.md", ".github/workflows/dependabot-auto-merge.yml",
+             ".github/workflows/nightly-repeat.yml",     # built by `repokit wiederholung` (kit 0.59.0), never by hand
              # the keys of this file are the interface of the kit script scripts/_release_automatik.py (kit 0.47.0)
              ".github/release-automatik.json")
 KIT_DIRS = ("tests/_kit/",)

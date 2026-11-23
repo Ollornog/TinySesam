@@ -5,3 +5,9 @@ rules:
   dependabot-cooldown:
     config:
       days: 3
+  # nightly-repeat.yml is built by the shared test kit (`repokit wiederholung`, 0.59.x) and calls `./.github/workflows/ci.yml`;
+  # tests/test_repo.py compares it with the template, so it is not edited here. Remove this entry when the kit template
+  # uses the `$/…` form (reported to the kit).
+  self-repository:
+    ignore:
+      - nightly-repeat.yml
