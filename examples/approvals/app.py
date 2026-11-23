@@ -242,16 +242,17 @@ def demo() -> None:  # pragma: no cover — started by hand
                         ("c_0b5e", "Bert's notes", people["bert"])])
 
     def with_demo_login(environ, start_response):
-        who = parse_qs(environ.get("QUERY_STRING", "")).get("as", [""])[0]
-        if environ.get("PATH_INFO") == "/" and who:
-            start_response("303 See Other", [("Location", "/"), ("Set-Cookie", f"example_demo_user={who}; Path=/")])
+        asked = parse_qs(environ.get("QUERY_STRING", "")).get("as", [""])[0]
+        chosen = next((uid for uid in people.values() if uid == asked), None)   # one of the demo people, nothing else
+        if environ.get("PATH_INFO") == "/" and chosen is not None:
+            start_response("303 See Other", [("Location", "/"), ("Set-Cookie", f"example_demo_user={chosen}; Path=/")])
             return [b""]
         if environ.get("PATH_INFO") == "/" and demo_identify(environ) is None:
             links = " · ".join(f"<a href='/?as={uid}'>{name}</a>" for name, uid in people.items())
             return page(start_response, "200 OK", f"Demo: continue as {links} (a stand-in for the gate).")
         return app(environ, start_response)
 
-    print(f"TinySesam: {auth_url}   the application: {app_url}   password: {DEMO_PASSWORD}")
+    print(f"TinySesam: {auth_url}   the application: {app_url}   (the password is DEMO_PASSWORD in this file)")
     make_server("127.0.0.1", 8001, with_demo_login).serve_forever()
 
 
