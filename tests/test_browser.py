@@ -769,6 +769,7 @@ async def run():
         await top_bar(p)
         await delegate_panel(p)
         await accounts_panel(p)
+        await provisioning_panel(p)
         await approvals_page(p)
 
 
@@ -1915,6 +1916,119 @@ async def _accounts_panel(p):
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  accounts panel: slim list, search, account page by address, levels (incomplete kept, legacy role kept, "
           "full set, neutral „—“, reason for a missing level), new account, 390px light/dark (strict CSP)")
+
+
+async def provisioning_panel(_first):
+    """Account API, stage B, in a real browser on the T-33 app (strict CSP, real CSRF), as administrator: the type column
+    marks an application's account ("App: Example"), the filter by application, the account page names the managing
+    application (also "(not configured)") and the end of a pending deletion; "Cancel deletion", "Take over for …" and
+    "Release" work; light and dark at 375 and 390 px without sideways scrolling. `TINYSESAM_SCREENSHOTS=<dir>` keeps
+    screenshots."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
+        before = (t33.cfg.available_roles, t33.cfg.apps)
+        t33.cfg.available_roles = list(t33.cfg.available_roles) + ["example-member", "example-editor"]
+        t33.cfg.apps = {"example": {"account": "svc-example", "name": {"en": "Example", "de": "Beispiel"},
+                                    "provisioning": {"roles": ["example-member", "example-editor"],
+                                                     "scopes": ["users:read", "users:delete"]}}}
+        try:
+            await _provisioning_panel(p)
+        finally:
+            t33.cfg.available_roles, t33.cfg.apps = before
+            await p.cmd("Emulation.clearDeviceMetricsOverride")
+
+
+async def _provisioning_panel(p):
+    import base64
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+    st = t33.store
+    boss = st.get_user_by_name("boss")["id"]
+    managed = t33.create_user("app-lena", roles=["example-member"])
+    st.adopt_account(managed, "example")
+    st.schedule_deletion(managed, int(time.time()) + 7 * 86400)
+    orphan = t33.create_user("app-old", roles=["example-member"])
+    st._exec("UPDATE users SET managed_by='retired' WHERE id=?", (orphan,))
+    cand = t33.create_user("app-cand", roles=["example-editor"])
+    token, _ = t33.start_session(boss, "password")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+
+    async def shot(name):
+        if not shots:
+            return
+        os.makedirs(shots, exist_ok=True)
+        data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+        with open(os.path.join(shots, name), "wb") as fh:
+            fh.write(base64.b64decode(data))
+
+    async def open_admin(where=""):
+        await p.cmd("Page.navigate", url=T33 + "/auth/admin" + where)
+        await p.until("!!document.querySelector('table.ulist') || !!document.querySelector('h2.uname')", "not built")
+
+    await open_admin()
+    row = f"document.querySelector('table.ulist a[href=\"#user/{managed}\"]').closest('tr')"
+    await p.until(f"!!document.querySelector('table.ulist a[href=\"#user/{managed}\"]')", "list without the account")
+    assert await p.js(f"{row}.querySelector('td.type').innerText.includes('App: Example')"), "no application mark"
+    assert "deleted on" in await p.js(f"{row}.innerText"), "no end of the deletion in the list"
+    # The filter by application: configured ones, a retired one marked, and "no application".
+    options = await p.js("[...document.querySelectorAll('#uf option')].map(o=>o.value+'='+o.textContent).join('|')")
+    assert "example=App: Example" in options and "retired=App: retired (not configured)" in options, options
+    assert "=No application" in options and "*=All applications" in options, options
+    visible = "[...document.querySelectorAll('table.ulist tbody tr')].filter(t=>!t.hidden).map(t=>t.dataset.app)"
+    await p.js("{const f=document.getElementById('uf');f.value='example';f.dispatchEvent(new Event('change',"
+               "{bubbles:true}))}true")
+    assert await p.js(f"{visible}.join(',')") == "example", await p.js(f"{visible}.join(',')")
+    await p.js("{const f=document.getElementById('uf');f.value='';f.dispatchEvent(new Event('change',{bubbles:true}))}"
+               "true")
+    assert await p.js(f"!{visible}.some(a=>a) && {visible}.length>1"), "the filter 'no application' shows app accounts"
+    # The account page: managed by, the deletion and its cancellation.
+    await open_admin(f"#user/{managed}")
+    await p.until("!!document.querySelector('dd.managed')", "no 'Managed by' on the account page")
+    assert "Example" in await p.js("document.querySelector('dd.managed').innerText")
+    assert await p.js("!!document.querySelector('.appcard [data-on=restore]')"), "no 'Cancel deletion'"
+    await p.js("document.querySelector('.appcard [data-on=restore]').click();true")
+    await until_py(lambda: st.get_user(managed)["delete_after"] is None, "„Cancel deletion“ without effect")
+    await p.until("!document.querySelector('.appcard [data-on=restore]')", "the page did not reload after cancelling")
+    await open_admin(f"#user/{orphan}")
+    await p.until("!!document.querySelector('dd.managed')", "no 'Managed by' for the retired application")
+    assert "(not configured)" in await p.js("document.querySelector('dd.managed').innerText")
+    # Take over for … and release.
+    await open_admin(f"#user/{cand}")
+    await p.until("!!document.querySelector('.appcard [data-on=adopt]')", "no 'Take over for'")
+    await p.js("document.querySelector('.appcard [data-on=adopt]').click();true")
+    await until_py(lambda: st.get_user(cand)["managed_by"] == "example", "„Take over for“ without effect")
+    await p.until("!!document.querySelector('.appcard [data-on=release]')", "no 'Release' after taking over")
+    await p.js("document.querySelector('.appcard [data-on=release]').click();true")
+    await p.answer()
+    await until_py(lambda: st.get_user(cand)["managed_by"] is None, "„Release“ without effect")
+    st.schedule_deletion(managed, int(time.time()) + 7 * 86400)
+    # Phone widths, light and dark: no sideways scrolling on the list and the account page.
+    for width in (375, 390):
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=844, deviceScaleFactor=1, mobile=True)
+        for theme in ("light", "dark"):
+            await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+            for where, name in (("", "list"), (f"#user/{managed}", "account")):
+                await open_admin(where)
+                await asyncio.sleep(0.3)
+                assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")
+                over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+                assert over <= 0, f"{theme} {name} at {width}px scrolls sideways ({over}px)"
+                await shot(f"provisioning-{name}-{theme}-{width}.png")
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation in the accounts panel: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  account API in the panel: „App: Example“, filter by application, „Managed by“ (also not configured), "
+          "cancel deletion, take over, release; 375/390 px light/dark (strict CSP)")
 
 
 async def top_bar(_first):

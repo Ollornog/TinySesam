@@ -1096,7 +1096,8 @@ rest keeps working. No SQL is needed either way; `DROP TABLE approval` removes t
 Schema 23 (account API, stage A) **adds** three columns to `users` — `managed_by` (the id of the application that
 created the account, indexed), `last_login_at` (the last complete sign-in) and `delete_after` (deletion with a grace
 period, used from stage B on) — and a fourth value of `users.disabled`: `3` = locked by the application that manages the
-account. Existing rows get `NULL` and keep their lock values.
+account. Existing rows get `NULL` and keep their lock values. Stage B (deletion, take over, release) needs **no further
+schema change**: it writes `delete_after` and `managed_by`.
 
 - **Rollback:** an older version opens the file with the "newer schema version" warning and has no account API routes
   (the application gets 404). It ignores the three columns: accounts created by an application stay, `last_login_at`
@@ -1117,20 +1118,60 @@ account. Existing rows get `NULL` and keep their lock values.
   call is refused (403) — fail-closed.
 - **Revoke an application at once:** revoke the key of its service account (panel). The API is shut from that moment;
   the accounts stay.
-- **An application disappears from `apps`:** its accounts stay as they are, `managed_by` keeps its id; adopting and
-  releasing accounts comes with stage B.
+- **An application disappears from `apps`:** its accounts stay as they are, `managed_by` keeps its id. The start log
+  says so once per application (`N account(s) are managed by the application X, which is not configured`), the panel
+  shows "Managed by X (not configured)". Configure it again, or release them: `tinysesam accounts release --db auth.db
+  --app X` (or "Release" on the account page).
+- **Deletion with a grace period (stage B, scope `users:delete`):** an account that never signed in is deleted at once
+  (`user_delete`, through the panel's path). Any other is locked (`disabled=3`, the effect of every lock) and gets
+  `delete_after` = now + `delete_grace_days` (default 7; 0 = at once; at most 30); the name stays taken. **The cleanup
+  deletes it:** `auth.gc()` or `tinysesam gc` (the systemd timer of `deploy/` runs it daily) — result key
+  `provisioning_deleted`, audit `user_delete` with `reason=delete_after app=<id>`, the account's audit lines anonymised
+  (`deleted#<id>`). Without a regular cleanup, accounts past their deadline stay locked in the database (the application
+  already sees them as gone, `404`). An account that is no longer the application's at the deadline (released, made
+  administrator, owner or service account) is not deleted: the mark goes (`provision_delete_cancelled`), a lock stays.
+- **Way back for a deletion** (until the cleanup has run): the application restores within the period
+  (`POST /auth/api/users/{id}/restore`); the operator at any time before the cleanup — panel "Cancel deletion",
+  `tinysesam accounts restore --db auth.db <user>`, or unlocking the account (which also ends the deletion). All three
+  lift the application's lock (`3`); a lock of the operator stays. After the cleanup only a backup brings the account
+  back (`tinysesam restore`, whole database). A deletion request under Art. 17 GDPR that must take effect at once is the
+  operator's: panel "Delete" (no grace period). A grace period of 7 days stays far below the one-month deadline of
+  Art. 12(3) GDPR (a hint for the documentation, not legal advice).
+- **Rollback to a version without stage B:** take `users:delete`, `delete_grace_days`, `delete_per_hour` and
+  `delete_per_day` out of the configuration first (the older `config_check` refuses them). Accounts in their grace
+  period stay locked (`3`) there and are never deleted (the older cleanup knows no `delete_after`); unlock them in the
+  panel, or delete them there. `managed_by` set by "Take over" stays and counts like an account the application created.
+- **Taking accounts over, releasing them:** an application owns only what it created or what the operator hands it.
+  Panel (administrators, step-up): "Take over for …" on the account page — refused with the reason unless every role of
+  the account lies in the application's allowlist (at least one; never an administrator, owner, service account or
+  delegate) — and "Release". CLI, on the database file (no running service needed):
+  `tinysesam accounts adopt --db auth.db --config myapp:cfg --app example --with-role example-member --dry-run` (then
+  without `--dry-run`; `--user NAME` repeatable; it never takes every account without a selector),
+  `tinysesam accounts release --db auth.db --app example [--user NAME] [--dry-run]`,
+  `tinysesam accounts list --db auth.db [--app example] [--config myapp:cfg]`. Audit `account_adopted` /
+  `account_released` under the account (`source=cli` or `actor=<admin>`). Releasing ends a pending deletion.
+- **The application's sign-in links** (creation, `signin-link`, access reset) carry the application's id: the door
+  refuses one once the account holds a role outside the allowlist, has become administrator or delegate, is released,
+  or someone signed in to it after the link was issued — audit `magic_app_link_refused` under the account. So making
+  an application account an approver (or granting it any foreign role) never leaves the application a way in through a
+  link it still holds. A link the operator issues is not affected.
 - **Audit events:** the panel's names where the panel has the action — `user_create`, `user_roles` (before → after),
   `user_disable`/`user_enable`, `signin_link_issue` — each with `app=<id> actor_claimed=<name>#<id>` (or
   `actor_claimed=-` for a job), under the service account (`actor=`, the only proven actor). Only the account API's own:
-  `provision_display_name`, `provision_name_taken` (`field=`), `provision_throttled` (`action=create|disable|link|taken`,
-  plus a security-log warning), `provision_denied` (`reason=not_a_provisioning_app|scope|role|not_found`). Never the
-  link, the token or field values beyond the name.
+  `provision_display_name`, `provision_name_taken` (`field=`), `provision_throttled`
+  (`action=create|disable|link|taken|delete window=hour|day`, plus a security-log warning), `provision_denied`
+  (`reason=not_a_provisioning_app|scope|role|not_found`), `provision_delete_scheduled` (`delete_after=`),
+  `provision_restore` (`by=operator` from the panel, CLI or an unlock), `provision_delete_cancelled`,
+  `account_adopted`, `account_released`, `magic_app_link_refused`. Never the link, the token or field values beyond the
+  name.
 - **Signals of a leaked key:** a rate of `provision_name_taken` or `provision_denied reason=not_found` lines, `429`
   answers (`provision_throttled`), and the hourly `apikey_use` line of the service account's key from a new address.
 - **Limits** count per application and hour in the `flow` table (shared by every worker on the file, cleared by the
   flow cleanup): `create_per_hour` 60, `disable_per_hour` 60 (lock and unlock), `link_per_hour` 30, `taken_per_hour` 30
-  (answers "taken" and `actor_invalid`; beyond it even a free name answers 429). `max_accounts` (1000) caps the accounts
-  with `managed_by` = the application.
+  (answers "taken" and `actor_invalid`; beyond it even a free name answers 429), `delete_per_hour` 20 and
+  `delete_per_day` 100 (every `DELETE` that deletes or schedules; asking again during the period is free).
+  `max_accounts` (1000) caps the accounts with `managed_by` = the application — an account in its grace period still
+  counts.
 - **Access reset (approval `tinysesam.account.reset_access`):** no schema change — it uses the `approval` table of
   schema 22 (`requester_kind='app'`, `requester_ref` = the service account's id, `app_id` = the application). Switch:
   the scope `users:reset` plus `provisioning.approver_role` plus `approvals_enabled=True`; `config_check` refuses an
@@ -1142,6 +1183,12 @@ account. Existing rows get `NULL` and keep their lock values.
   for the link's lifetime plus an hour). Never the link. **Rollback:** an older version has no `users:reset` (its `config_check` refuses the unknown
   scope and member, so take them out first); open requests of this type expire there, and a request left in `approved`
   (executed, not picked up) is cleaned up as `expired` — the factors stay deleted, the person asks the operator.
+- **Many team admins of one application:** the approval limits count per asking key, and every request of an
+  application counts against its service account — `approval_open_per_token` (default 3) open resets of the whole
+  application at once, and `approval_reject_limit` (3) rejections of the type within an hour block the application from
+  asking for that type for an hour. With many team admins who may reset at the same time, raise
+  `approval_open_per_token` (up to 50); `approval_open_per_account` and `approval_requests_per_hour` still bound each
+  confirming person.
 
 ## Sign-in methods and their strength
 

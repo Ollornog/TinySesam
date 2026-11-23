@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
 from .router import _key_kind, _mail_base, hardened_route
-from . import _role_levels, config_check, security
+from . import _role_levels, config_check, provisioning as _provisioning, security
 from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, valid_email
 from . import dialog as _dialog
@@ -252,6 +252,52 @@ class PanelActions:
         now = store.get_user(uid)
         return "operator" if now is not None and now["disabled"] else "unchanged"
 
+    # ---------- the operator and the account API: take over, release, take a deletion back (stage B) ----------
+
+    def _app_target(self, uid: int):
+        destination = self.auth.store.get_user(uid)
+        if destination is None:
+            raise HTTPException(404, self.auth.t("api.not_found"))
+        return destination
+
+    def adopt(self, request: Request, uid: int, app_id) -> dict:
+        """Hand an account to an application (`managed_by`) — the operator's deliberate act instead of a side effect
+        of roles. The one rule (`provisioning.adopt_refusal`, shared with `tinysesam accounts adopt`): no application
+        manages it yet, no administrator, owner, service account or delegate, at least one role, all in the
+        application's allowlist. Audit `account_adopted` under the account, the admin as `actor=`."""
+        app = self.auth._provisioning().apps().get(app_id) if isinstance(app_id, str) else None
+        if app is None:
+            raise HTTPException(400, self.auth.t("api.invalid", reason="app"))
+        destination = self._app_target(uid)
+        why = _provisioning.adopt_refusal(app, destination, self.auth.user_roles(destination), self.delegate_roles())
+        if why is not None or not self.auth.store.adopt_account(uid, app["id"]):
+            raise HTTPException(409, self.auth.t("api.adopt_refused",
+                                                 reason=self.auth.t(f"api.adopt_why.{why or 'managed'}")))
+        self.auth.audit("account_adopted", str(destination["username"]), self.auth.client_ip(request),
+                        f"uid={uid} app={app['id']}")
+        return {"ok": True}
+
+    def release(self, request: Request, uid: int) -> dict:
+        """Take an account away from its application (`managed_by = NULL`), also from one that is no longer
+        configured; a pending deletion by the application ends with it. Audit `account_released`."""
+        destination = self._app_target(uid)
+        app_id = destination["managed_by"]
+        if not app_id or not self.auth.store.release_account(uid, app_id):
+            raise HTTPException(409, self.auth.t("api.not_managed"))
+        self.auth.audit("account_released", str(destination["username"]), self.auth.client_ip(request),
+                        f"uid={uid} app={app_id}")
+        return {"ok": True}
+
+    def restore(self, request: Request, uid: int) -> dict:
+        """Take a deletion by the application back ("cancel deletion") — also after its deadline, as long as the
+        cleanup has not run. The application's lock is lifted, the operator's stays. Audit `provision_restore`."""
+        destination = self._app_target(uid)
+        if not destination["delete_after"] or not self.auth.store.cancel_deletion(uid):
+            raise HTTPException(409, self.auth.t("api.not_deleting"))
+        self.auth.audit("provision_restore", str(destination["username"]), self.auth.client_ip(request),
+                        f"uid={uid} by=operator")
+        return {"ok": True}
+
     def revoke_key(self, me, kid: int) -> dict:
         """Revoke someone's API key as administrator — `POST <admin>/api/keys/{kid}/revoke` and the approval type
         `tinysesam.apikey.revoke` for a key of another account (an own key the holder revokes without the panel)."""
@@ -309,7 +355,9 @@ def build_admin_router(auth) -> APIRouter:
                                                                 pa.owner_protection, pa.log)
     other_active_admins, roles_from = pa.other_active_admins, pa.roles_from
 
-    def uview(u):
+    def uview(u, apps=None):
+        managed = u["managed_by"] or None
+        app = (apps or {}).get(managed) if managed else None
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
                 "email": u["email"], "is_admin": bool(u["is_admin"]), "is_owner": bool(u["is_owner"]),
                 "is_service": bool(u["is_service"]),
@@ -320,7 +368,12 @@ def build_admin_router(auth) -> APIRouter:
                 # confirmation waited for a link that never releases anything.
                 # 3 = the application that manages the account (account API, schema 23).
                 "disabled_by": {1: "confirmation", 2: "operator", 3: "app"}.get(int(u["disabled"] or 0)),
-                "created_at": u["created_at"]}
+                "created_at": u["created_at"],
+                # The account API (stage B): which application manages the account, whether that application is still
+                # configured, and the end of a pending deletion by it.
+                "managed_by": managed,
+                "managed_name": _provisioning.app_name(app, managed, cfg.lang) if managed else None,
+                "managed_known": app is not None, "delete_after": u["delete_after"]}
 
     def kview(k):
         return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
@@ -331,8 +384,10 @@ def build_admin_router(auth) -> APIRouter:
     @ar.get("/api/users")
     def users(request: Request):
         me, scopes = team(request)
-        # A delegate sees only the accounts in scope — not the names and addresses of everyone else (T-74).
-        return [uview(u) for u in auth.store.list_users() if scopes is None or visible(u, me, scopes)]
+        apps = auth._provisioning().apps()
+        # A delegate sees only the accounts in scope — not the names and addresses of everyone else (T-74). An
+        # application's account is no exception: in scope only when all its roles are (`may_manage`).
+        return [uview(u, apps) for u in auth.store.list_users() if scopes is None or visible(u, me, scopes)]
 
     @ar.post("/api/users")
     async def user_create(request: Request):
@@ -446,6 +501,29 @@ def build_admin_router(auth) -> APIRouter:
         me, scope = team(request)
         b = await auth.json_body(request)
         return pa.set_roles(request, me, scope, uid, b)
+
+    # ---------- Accounts of applications (account API, stage B): take over, release, cancel a deletion ----------
+    # Administrators only. Taking over and releasing change who may lock and delete the account by key, so they ask for
+    # a fresh confirmation (step-up) — also with `admin_require_mfa=False`.
+    @ar.post("/api/users/{uid}/adopt")
+    async def user_adopt(request: Request, uid: int):
+        person = guard(request)
+        owner_protection(person, uid)
+        auth._require_fresh(request, person)
+        b = await auth.json_body(request)
+        return pa.adopt(request, uid, b.get("app"))
+
+    @ar.post("/api/users/{uid}/release")
+    def user_release(request: Request, uid: int):
+        person = guard(request)
+        owner_protection(person, uid)
+        auth._require_fresh(request, person)
+        return pa.release(request, uid)
+
+    @ar.post("/api/users/{uid}/restore")
+    def user_restore(request: Request, uid: int):
+        owner_protection(guard(request), uid)
+        return pa.restore(request, uid)
 
     # ---------- Passkeys of other accounts / delete account (B5-08) ----------
     # Previously only the holder could remove a passkey. If the device is stolen and the
@@ -860,7 +938,9 @@ _KEYS = (
     "delegate_note "
     "search filter_roles level_none incomplete incomplete_hint roles_other roles_unknown all_accounts "
     "sec.profile sec.access sec.signin sec.danger f.display_name created password set_password pw_hint "
-    "issue_link link_hint disable_hint owner_hint delete_hint no_keys unavailable unavailable_reason"
+    "issue_link link_hint disable_hint owner_hint delete_hint no_keys unavailable unavailable_reason "
+    "app_badge managed_by not_configured all_apps no_app app_section adopt adopt_hint release release_hint "
+    "confirm.release deleting deleting_until restore restore_hint"
 ).split()
 
 
@@ -919,6 +999,9 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
                      .replace("<", "\\u003c"))
             .replace("__SCOPE__", "null" if view is None else json.dumps(view).replace("<", "\\u003c"))
             .replace("__LADDERS__", json.dumps(ladders, ensure_ascii=False).replace("<", "\\u003c"))
+            .replace("__APPS__", json.dumps([] if view is not None else [
+                {"id": a, "name": _provisioning.app_name(e, a, cfg.lang)}
+                for a, e in sorted(auth._provisioning().apps().items())], ensure_ascii=False).replace("<", "\\u003c"))
             .replace("__ME__", json.dumps(me).replace("<", "\\u003c"))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")
@@ -976,6 +1059,7 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin .badge.red{background:var(--ts-err-bg);color:var(--ts-err-ink)}
 .tsadmin .badge.grn{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
 .tsadmin .badge.svc{background:var(--ts-info-bg);color:var(--ts-info-ink)}
+.tsadmin .badge.app{background:var(--ts-chip);color:var(--ts-ink);border:1px solid var(--ts-line)}
 .tsadmin .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
 .tsadmin .card{background:var(--ts-surface);border:1px solid var(--ts-line);
   border-radius:calc(var(--ts-radius) - 2px);padding:14px;margin-bottom:14px}
@@ -1069,6 +1153,7 @@ const B="__BASE__";                                    // mount point (freely ch
 const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles; a delegate: their list)
 const SCOPE=__SCOPE__;                                 // null = administrator; {roles,can} = delegated admin (T-74) — a view only, the server decides
 const LADDERS=__LADDERS__;                             // config.role_levels over the roles this viewer may grant: [{label,levels,entries:[{key,own,offer}]}]
+const APPS=__APPS__;                                   // applications with the account API: [{id,name}] (administrators only; [] for a delegate)
 const ME=__ME__;                                       // the viewer: {id, owner} — hides what the server would refuse anyway
 const CAN=a=>!SCOPE||SCOPE.can.includes(a);            // may the viewer do this action (`can` of their delegate roles)?
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (e-mail required)
@@ -1122,8 +1207,9 @@ const OTHERS=ROLES.filter(r=>!COVERED.has(r));
 // those roles as they are until the admin picks one — the picker never widens rights on its own.
 function stateOf(e,held){const f=e.own.map(r=>held.has(r)),top=f.lastIndexOf(true);
   return {level:top,complete:f.every((x,i)=>x===(i<=top))}}
-const badges=u=>`${u.is_owner?'<span class="badge grn">owner</span> ':''}${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}`;
-const state=u=>u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:u.disabled_by==="app"?L.disabled_app:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`;
+const badges=u=>`${u.is_owner?'<span class="badge grn">owner</span> ':''}${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}${u.managed_by?` <span class="badge app">${esc(L.app_badge.replace("{name}",u.managed_name||u.managed_by))}</span>`:''}`;
+// The account API (stage B): an account being deleted by its application says so, with the date it goes for good.
+const state=u=>u.delete_after?`<span class="badge red">${esc(L.deleting_until.replace("{date}",dt(u.delete_after)))}</span>`:u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:u.disabled_by==="app"?L.disabled_app:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`;
 // Roles as chips: one per ladder entry ("a · write"), an incomplete one marked in words, then the other roles.
 function chips(u,max){const held=new Set(u.roles||[]),out=[];
   for(const l of LADDERS)for(const e of l.entries){const s=stateOf(e,held);if(s.level<0)continue;
@@ -1143,9 +1229,9 @@ function route(){if(cur!=="users")return;const m=location.hash.match(/^#user\/(\
 function list(){
   V(`${SCOPE?`<div class="muted small">${esc(L.delegate_note)} ${esc(SCOPE.roles.join(", "))}</div>`:""}
     <div class="row bar"><input id=us type=search class=grow data-filter=rows aria-label="${esc(L.search)}" placeholder="${esc(L.search)}">
-    ${CAN("create")?`<button ${on("nav","#new")}>${esc(L.new_user)}</button>`:""}</div>
+    ${appfilter()}${CAN("create")?`<button ${on("nav","#new")}>${esc(L.new_user)}</button>`:""}</div>
     <table class=ulist><thead><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th></tr></thead><tbody>`+
-    US.map(u=>`<tr class=click data-q="${esc([u.username,u.email,u.display_name,...(u.roles||[])].join(" ").toLowerCase())}" ${on("nav","#user/"+u.id)}>
+    US.map(u=>`<tr class=click data-app="${esc(u.managed_by||"")}" data-q="${esc([u.username,u.email,u.display_name,...(u.roles||[])].join(" ").toLowerCase())}" ${on("nav","#user/"+u.id)}>
       <td><a href="#user/${u.id}"><b>${esc(u.username)}</b></a>${u.email?`<div class="muted small">${esc(u.email)}</div>`:""}</td>
       <td class=type>${badges(u)}</td><td class=roles>${chips(u,6)}</td><td>${state(u)}</td></tr>`).join("")+`</tbody></table>`)}
 // The role picker: per ladder a table with one row per entry and a radio per level; the other roles as checkboxes
@@ -1186,12 +1272,22 @@ function collect(pid,roles){const held=new Set(roles||[]),box=document.getElemen
     out.push(...e.own.slice(0,parseInt(c.value,10)+1))}));
   box.querySelectorAll("input[type=checkbox]:checked").forEach(c=>out.push(c.value));
   return [...new Set(out)]}
+// The filter by application (stage B): the configured ones and every other value an account carries (an application
+// that is no longer configured), plus "no application". Only when there is anything to choose.
+function appfilter(){const ids=[...new Set(APPS.map(a=>a.id).concat(US.map(u=>u.managed_by).filter(Boolean)))];
+  if(!ids.length)return "";
+  const name=id=>{const a=APPS.find(x=>x.id===id),u=US.find(x=>x.managed_by===id);return a?a.name:((u&&u.managed_name)||id)+" ("+L.not_configured+")"};
+  return `<select id=uf data-filter=rows aria-label="${esc(L.all_apps)}"><option value="*">${esc(L.all_apps)}</option>`+
+    ids.map(id=>`<option value="${esc(id)}">${esc(L.app_badge.replace("{name}",name(id)))}</option>`).join("")+
+    `<option value="">${esc(L.no_app)}</option></select>`}
 const FILTER={
-  rows:f=>{const q=f.value.trim().toLowerCase();document.querySelectorAll("table.ulist tbody tr").forEach(t=>{t.hidden=!!q&&!t.dataset.q.includes(q)})},
+  rows:()=>{const q=((document.getElementById("us")||{}).value||"").trim().toLowerCase(),f=document.getElementById("uf"),a=f?f.value:"*";
+    document.querySelectorAll("table.ulist tbody tr").forEach(t=>{t.hidden=(!!q&&!t.dataset.q.includes(q))||(a!=="*"&&t.dataset.app!==a)})},
   roles:f=>{const q=f.value.trim().toLowerCase(),box=document.getElementById(f.dataset.p);
     box.querySelectorAll("[data-q]").forEach(t=>{t.hidden=!!q&&!t.dataset.q.includes(q)});
     box.querySelectorAll("fieldset").forEach(s=>{s.hidden=!s.querySelector("[data-q]:not([hidden])")})}};
 document.addEventListener("input",e=>{const f=e.target.closest&&e.target.closest("[data-filter]");if(f&&FILTER[f.dataset.filter])FILTER[f.dataset.filter](f)});
+document.addEventListener("change",e=>{const f=e.target.closest&&e.target.closest("select[data-filter]");if(f&&FILTER[f.dataset.filter])FILTER[f.dataset.filter](f)});
 const line=(what,hint,act,sub)=>`<div class=line><div class=what><b>${esc(what)}</b>${hint?`<div class=muted>${esc(hint)}</div>`:""}</div>${act||""}${sub||""}</div>`;
 function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
   const signin=[
@@ -1203,17 +1299,25 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
     CAN("disable")&&!self&&!(u.is_owner&&!u.disabled)?line(u.disabled?L.enable:L.disable,u.disabled?"":L.disable_hint,`<button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>`):"",
     admin&&ME.owner?line(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"],L.owner_hint,`<button class=sec ${on("own",u.id,!u.is_owner)}>${esc(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"])}</button>`):"",
     admin&&!self&&!u.is_owner?line(L["btn.delete"],L.delete_hint,`<button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>`):""].join("");
+  // The account API (stage B), administrators only: cancel a deletion by the application, release the account, or take
+  // it over for an application (the server applies the rule and asks for a step-up).
+  const appl=admin&&!svc?[
+    u.delete_after?line(L.deleting_until.replace("{date}",dt(u.delete_after)),L.restore_hint,`<button class=ok ${on("restore",u.id)}>${esc(L.restore)}</button>`):"",
+    u.managed_by?line(L.release,L.release_hint,`<button class=sec ${on("release",u.id)}>${esc(L.release)}</button>`):"",
+    !u.managed_by&&APPS.length&&!u.is_admin&&!u.is_owner?line(L.adopt,L.adopt_hint,`<span class=row><select id=ua aria-label="${esc(L.adopt)}">${APPS.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</select><button class=sec ${on("adopt",u.id)}>${esc(L.adopt)}</button></span>`):""].join(""):"";
   V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
     <div class=dhead><h2 class=uname>${esc(u.username)}</h2>${badges(u)} ${state(u)}</div>
     <section class=card><h2>${esc(L["sec.profile"])}</h2><dl class=kv>
       <dt>${esc(L["f.username"])}</dt><dd><b>${esc(u.username)}</b>${admin?`<button class=sec ${on("ren",u.id,u.username)}>${esc(L["btn.rename"])}</button>`:""}</dd>
       <dt>${esc(L["f.display_name"])}</dt><dd>${esc(u.display_name)||'<span class=muted>—</span>'}</dd>
       <dt>${esc(L["f.email"])}</dt><dd>${esc(u.email)||'<span class=muted>—</span>'}</dd>
-      <dt>${esc(L.created)}</dt><dd>${dt(u.created_at)}</dd></dl></section>
+      <dt>${esc(L.created)}</dt><dd>${dt(u.created_at)}</dd>
+      ${u.managed_by?`<dt>${esc(L.managed_by)}</dt><dd class=managed><span class="badge app">${esc(u.managed_name||u.managed_by)}</span>${u.managed_known?"":` <span class=muted>(${esc(L.not_configured)})</span>`}</dd>`:""}</dl></section>
     <section class=card><h2>${esc(L["sec.access"])}</h2>${CAN("roles")?picker("pk",u.roles)+`
       <div class=row>${admin&&!svc?`<label class=mr12><input type=checkbox id=ra${u.is_admin?" checked":""}> ${esc(L["f.admin"])}</label>`:""}
       <button ${on("saveroles",u.id)}>${esc(L.save)}</button><span id=rs class="muted small" role=status aria-live=polite></span></div>`:chips(u)}</section>
     ${signin?`<section class=card><h2>${esc(L["sec.signin"])}</h2>${signin}</section>`:""}
+    ${appl?`<section class="card appcard"><h2>${esc(L.app_section)}</h2>${appl}</section>`:""}
     ${danger?`<section class="card danger"><h2>${esc(L["sec.danger"])}</h2>${danger}</section>`:""}`);
   if(admin){keys(u.id);if(!svc)pks(u.id)}}
 function newform(){
@@ -1271,6 +1375,9 @@ async function link(id,name){const v=await tsPrompt(L["prompt.link_ttl"],String(
 async function copylink(id){const f=document.getElementById("lk"+id),s=document.getElementById("lks"+id);
   const ok=await tsCopy(f.value,f);s.textContent=ok?L.copied:L.copy_manual;s.className="lkstate"+(ok?"":" manual")}
 async function delpk(uid,cid){if(await tsConfirm(L["confirm.pk_delete"],{danger:true})){rejected(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid)}}
+async function adopt(id){const s=document.getElementById("ua");if(!s)return;if(!rejected(await p(`/api/users/${id}/adopt`,{app:s.value})))refresh()}
+async function release(id){if(!await tsConfirm(L["confirm.release"]))return;if(!rejected(await p(`/api/users/${id}/release`)))refresh()}
+async function restore(id){if(!rejected(await p(`/api/users/${id}/restore`)))refresh()}
 async function deluser(id){if(!await tsConfirm(L["confirm.delete"],{danger:true}))return;if(!rejected(await p(`/api/users/${id}/delete`))){US=await g("/api/users");nav("")}}
 async function revk(kid,uid){if(await tsConfirm(L["confirm.revoke"],{danger:true})){rejected(await p(`/api/keys/${kid}/revoke`));keys(uid)}}
 
@@ -1318,7 +1425,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,copylink};
+const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,adopt,release,restore,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 // Back/forward to an account or the new-account form also from another tab.

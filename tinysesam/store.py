@@ -2687,10 +2687,77 @@ class Store:
                           (self.LOCKED_APP, user_id)).rowcount == 1
 
     def unlock_by_app(self, user_id) -> bool:
-        """Lift the application's lock — and only that one: `UPDATE … WHERE disabled=3`. True if this call
-        unlocked."""
-        return self._exec("UPDATE users SET disabled=0 WHERE id=? AND disabled=?",
+        """Lift the application's lock — and only that one: `UPDATE … WHERE disabled=3`, never during a deletion's
+        grace period (`delete_after`: an unlocked account the cleanup deletes). True if this call unlocked."""
+        return self._exec("UPDATE users SET disabled=0 WHERE id=? AND disabled=? AND delete_after IS NULL",
                           (user_id, self.LOCKED_APP)).rowcount == 1
+
+    def schedule_deletion(self, user_id, until: int) -> bool:
+        """Mark an account for deletion by its application (account API, stage B): `delete_after = until`, and the
+        application's lock on an active account — a lock of the operator or of a pending confirmation stays what it
+        is. Only once (`WHERE delete_after IS NULL`). True if this call marked it."""
+        return self._exec("UPDATE users SET delete_after=?, disabled=CASE WHEN disabled=0 THEN ? ELSE disabled END "
+                          "WHERE id=? AND delete_after IS NULL", (int(until), self.LOCKED_APP, user_id)).rowcount == 1
+
+    def cancel_deletion(self, user_id, now: Optional[int] = None) -> bool:
+        """Take a deletion back: `delete_after` goes and the application's lock (3) is lifted; another lock stays.
+        With `now` (the application) only before the deadline; without (the operator: panel, CLI) also after it, as
+        long as the cleanup has not run. True if this call took it back."""
+        sql = ("UPDATE users SET delete_after=NULL, disabled=CASE WHEN disabled=? THEN 0 ELSE disabled END "
+               "WHERE id=? AND delete_after IS NOT NULL")
+        args: tuple = (self.LOCKED_APP, user_id)
+        if now is not None:
+            sql += " AND delete_after > ?"
+            args += (int(now),)
+        return self._exec(sql, args).rowcount == 1
+
+    def adopt_account(self, user_id, app_id: str) -> bool:
+        """Hand an account to an application (`managed_by = app_id`) — only one no application manages yet. The caller
+        has checked the rule (`provisioning.adopt_refusal`). True if this call handed it over."""
+        return self._exec("UPDATE users SET managed_by=? WHERE id=? AND managed_by IS NULL",
+                          (app_id, user_id)).rowcount == 1
+
+    def release_account(self, user_id, app_id: str) -> bool:
+        """Take an account away from its application (`managed_by = NULL`); a pending deletion by the application ends
+        with it (its lock stays until the operator lifts it). True if this call released it."""
+        return self._exec("UPDATE users SET managed_by=NULL, delete_after=NULL WHERE id=? AND managed_by=?",
+                          (user_id, app_id)).rowcount == 1
+
+    def managed_counts(self) -> dict:
+        """`{app_id: number of accounts}` for every value of `users.managed_by` — the start check names applications
+        that hold accounts but are no longer configured."""
+        return {str(r["managed_by"]): int(r["n"]) for r in self._all(
+            "SELECT managed_by, COUNT(*) AS n FROM users WHERE managed_by IS NOT NULL AND managed_by <> '' "
+            "GROUP BY managed_by ORDER BY managed_by")}
+
+    def gc_provisioning(self, now: int) -> int:
+        """Delete the accounts whose grace period after a deletion by their application has run out — through the
+        one deletion path (`remove_account`, the audit anonymised, H-13), audit `user_delete` with
+        `reason=delete_after`. An account that is no longer the application's (released, or made administrator,
+        owner or service account meanwhile) is not deleted: its mark goes (audit `provision_delete_cancelled`), a lock
+        stays. Shared by `TinySesam.gc()` and `tinysesam gc`. Returns the number deleted."""
+        n = 0
+        for row in self._all("SELECT id, managed_by, is_admin, is_owner, is_service FROM users "
+                             "WHERE delete_after IS NOT NULL AND delete_after <= ? ORDER BY id", (int(now),)):
+            uid = int(row["id"])
+            if not row["managed_by"] or row["is_admin"] or row["is_owner"] or row["is_service"]:
+                if self._exec("UPDATE users SET delete_after=NULL WHERE id=? AND delete_after IS NOT NULL",
+                              (uid,)).rowcount:
+                    who = self._one("SELECT username FROM users WHERE id=?", (uid,))
+                    self.audit_log("provision_delete_cancelled", who["username"] if who else None, None,
+                                   f"uid={uid} reason=not_app_account")
+                continue
+            app_id = str(row["managed_by"])
+            # Not `address_unlimited`: the deletion came from an application key, not from the operator — a verified
+            # address counts as the account's own only from its creation on (`remove_account`).
+            removed = self.remove_account(uid)
+            if removed is None:
+                continue
+            replacement, count = removed
+            self.audit_log("user_delete", replacement, None,
+                           f"uid={uid} audit_anonymized={count} reason=delete_after app={app_id}")
+            n += 1
+        return n
 
     def merge_roles(self, user_id, allowlist, wanted) -> Optional[tuple]:
         """Replace the roles of `allowlist` on an account with `wanted` and keep every other role:
@@ -2774,7 +2841,9 @@ class Store:
                 raise StateError(f"Account {user_id} is an owner and cannot be locked — hand over the "
                                  "owner role first.")
         if not disabled:
-            self._exec("UPDATE users SET disabled=0 WHERE id=?", (user_id,))
+            # Unlocking by the operator also ends a deletion by the application (`delete_after`): otherwise the cleanup
+            # would delete the account the operator has just opened again.
+            self._exec("UPDATE users SET disabled=0, delete_after=NULL WHERE id=?", (user_id,))
         elif through_operator:
             self._exec("UPDATE users SET disabled=? WHERE id=?", (self.LOCKED_OPERATOR, user_id))
         else:

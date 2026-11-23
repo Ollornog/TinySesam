@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 184 of 214
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 408 · B 282 · C 38 names.
+**Status:** A 408 · B 285 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -1186,6 +1186,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `<admin>/api/sessions/revoke` | — |
 | GET | `<admin>/api/users` | — |
 | POST | `<admin>/api/users` | — |
+| POST | `<admin>/api/users/{uid}/adopt` | — |
 | POST | `<admin>/api/users/{uid}/delete` | — |
 | POST | `<admin>/api/users/{uid}/disable` | — |
 | GET | `<admin>/api/users/{uid}/keys` | — |
@@ -1194,6 +1195,8 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `<admin>/api/users/{uid}/passkeys` | — |
 | POST | `<admin>/api/users/{uid}/passkeys/{cid}/delete` | — |
 | POST | `<admin>/api/users/{uid}/password` | — |
+| POST | `<admin>/api/users/{uid}/release` | — |
+| POST | `<admin>/api/users/{uid}/restore` | — |
 | POST | `<admin>/api/users/{uid}/roles` | — |
 | POST | `<admin>/api/users/{uid}/service-pairing` | — |
 | POST | `<admin>/api/users/{uid}/signin-link` | — |

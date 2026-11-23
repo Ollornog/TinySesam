@@ -1844,9 +1844,10 @@ cfg = TinySesamConfig(
         "name": {"en": "Example", "de": "Example"},
         "provisioning": {
             "roles": ["example-member", "example-editor"],                       # allowlist
-            "scopes": ["users:read", "users:invite", "users:update", "users:disable"],
-            "link_ttl_min": 60, "max_accounts": 1000,
-            "limits": {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30},
+            "scopes": ["users:read", "users:invite", "users:update", "users:disable", "users:delete"],
+            "link_ttl_min": 60, "max_accounts": 1000, "delete_grace_days": 7,
+            "limits": {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30,
+                       "delete_per_hour": 20, "delete_per_day": 100},
         },
     }},
 )
@@ -1872,7 +1873,9 @@ TinySesam-On-Behalf-Of: 17
 | `PATCH /auth/api/users/{id}` | `users:update` | `display_name` and `roles` (the whole wanted set within the allowlist; other roles stay) |
 | `POST /auth/api/users/{id}/disable`, `/enable` | `users:disable` | the application's own lock; `enable` lifts only that one |
 | `POST /auth/api/users/{id}/signin-link` | `users:invite` | a new one-time link, only before the first sign-in; older links die |
-| `GET /auth/api/provisioning` | — | what the key may do: app, scopes, roles, quota, limits and what is left |
+| `DELETE /auth/api/users/{id}` | `users:delete` | never signed in: gone for good (`204`); otherwise locked and deleted after `delete_grace_days` (`202` `{"state": "deleting", "delete_after": …}`) |
+| `POST /auth/api/users/{id}/restore` | `users:delete` | take a deletion back within the grace period; afterwards `404` |
+| `GET /auth/api/provisioning` | — | what the key may do: app, scopes, roles, quota, grace period, limits and what is left |
 
 - **Calls go to TinySesam directly**, with an automation key of the service account (`X-Api-Key` or
   `Authorization: Bearer tsk_…`). A session cookie does not count. Writes carry `TinySesam-On-Behalf-Of`: the id of the
@@ -1887,7 +1890,7 @@ TinySesam-On-Behalf-Of: 17
 - **Errors** are `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
   `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
   email_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
-  disabled_by_operator`, `429 limit` with `Retry-After`. Write routes may answer `202` later (approvals); treat it as
+  disabled_by_operator|account_deleting|not_deleting`, `429 limit` with `Retry-After`. Write routes may answer `202` later (approvals); treat it as
   "not done yet".
 - The first sign-in through the link leads an account without factors through the setup pass (`/auth/setup`). After
   that the person helps themselves (sign-in link to their address, password reset), the operator does — or the
@@ -1929,9 +1932,33 @@ without `output`. Who lacks the role when confirming gets `result: "forbidden"` 
 codes: [`spec/provisioning-api.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/provisioning-api.md) §5; why the role never comes from the application:
 `SECURITY.md`.
 
+### Deleting, taking over, releasing
+
+- **Deleting** (`users:delete`): an account that never signed in goes at once — nothing to protect, and a typo is taken
+  back cleanly. Any other is locked like `disable` (sessions, keys, app passwords and open links end) and gets
+  `delete_after` = now + `delete_grace_days` (default 7, 0 = at once, at most 30); its name stays taken. The regular
+  cleanup (`auth.gc()` or `tinysesam gc`) then deletes it through the same path as the panel — its audit lines stay,
+  anonymised. During the period the application may restore it (`POST …/restore`), everything else answers
+  `409 account_deleting`; afterwards the account answers `404`. `delete_per_hour` (20) and `delete_per_day` (100) bound
+  what a leaked key deletes. A deletion request under Art. 17 GDPR that must take effect at once goes through the
+  operator (panel "Delete").
+- **Taking over existing accounts:** an application owns only what it created, or what the **operator** hands it — in
+  the panel ("Take over for …", administrators only, with a step-up) or by CLI:
+  `tinysesam accounts adopt --db auth.db --config myapp:cfg --app example --with-role example-member --dry-run`.
+  Only accounts whose roles all lie in the application's allowlist (at least one), never an administrator, owner,
+  service account or delegate. `tinysesam accounts release --app example [--user …]` takes accounts back,
+  `tinysesam accounts restore <user>` cancels a deletion (also in the panel: "Cancel deletion"),
+  `tinysesam accounts list [--app example]` shows them with their state.
+- **The panel** marks an application's account in the type column ("App: Example") and filters by application; the
+  account page says "Managed by …" — "(not configured)" when the application is gone from `apps`, and the start log
+  then names it with the number of its accounts. A delegate sees an application's account only when all its roles lie
+  in the delegate's scope.
+- **The application's link is only for the way in:** once an account holds a role outside the allowlist (the operator
+  or a delegate gave it one, an `approver_role` for instance), becomes administrator or delegate, is released, or
+  someone signs in to it after the link was issued, a sign-in link the application still holds signs nobody in.
+
 What a leaked application key can do at most, and what not:
-[`SECURITY.md`, "Account API"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#account-api-for-applications-stage-a).
-Deleting with a grace period, adopting existing accounts and the panel's marks come with stage B.
+[`SECURITY.md`, "Account API"](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md#account-api-for-applications).
 
 ## New in 0.5 — quick reference
 
@@ -2606,7 +2633,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**123 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**124 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

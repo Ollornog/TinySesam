@@ -1826,16 +1826,20 @@ def _approvals(config, error: list) -> None:
 APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 #: The members of one `apps` entry (stage A of the account API; the approvals of applications add theirs later).
 APP_KEYS = ("account", "name", "provisioning")
-#: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stage A).
-PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role")
+#: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stages A and B).
+PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role", "delete_grace_days")
 #: `users:reset` asks for the approval type `tinysesam.account.reset_access` — a person holding `approver_role`
-#: confirms it; the scope alone resets nothing.
-PROVISIONING_SCOPES = ("users:read", "users:invite", "users:update", "users:disable", "users:reset")
-#: Default and upper bound of the per-application limits (per hour); `taken` counts answers "name/address taken".
-PROVISIONING_LIMITS = {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30}
+#: confirms it; the scope alone resets nothing. `users:delete` deletes (with a grace period) and restores.
+PROVISIONING_SCOPES = ("users:read", "users:invite", "users:update", "users:disable", "users:delete", "users:reset")
+#: Default and upper bound of the per-application limits (per hour, `delete_per_day` per day); `taken` counts answers
+#: "name/address taken".
+PROVISIONING_LIMITS = {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30,
+                       "delete_per_hour": 20, "delete_per_day": 100}
 PROVISIONING_LIMIT_MAX = 100000
-PROVISIONING_DEFAULTS = {"link_ttl_min": 60, "max_accounts": 1000}
+PROVISIONING_DEFAULTS = {"link_ttl_min": 60, "max_accounts": 1000, "delete_grace_days": 7}
 PROVISIONING_MAX_ACCOUNTS = 100000
+#: The longest grace period of a deletion by an application (days); 0 = at once and for good.
+PROVISIONING_GRACE_MAX = 30
 
 
 def _plain_int(value) -> bool:
@@ -1957,6 +1961,10 @@ def _apps(config, error: list, warnings: list) -> None:
         if not _plain_int(quota) or not 1 <= quota <= PROVISIONING_MAX_ACCOUNTS:
             error.append(_t(config, "apps[{app!r}].provisioning.max_accounts={v!r} — 1 to {max}",
                             app=app_id, v=quota, max=PROVISIONING_MAX_ACCOUNTS))
+        grace = block.get("delete_grace_days", PROVISIONING_DEFAULTS["delete_grace_days"])
+        if not _plain_int(grace) or not 0 <= grace <= PROVISIONING_GRACE_MAX:
+            error.append(_t(config, "apps[{app!r}].provisioning.delete_grace_days={v!r} — 0 (at once) to {max} days",
+                            app=app_id, v=grace, max=PROVISIONING_GRACE_MAX))
         limits = block.get("limits", {})
         if not isinstance(limits, dict) or set(limits) - set(PROVISIONING_LIMITS) or not all(
                 _plain_int(v) and 1 <= v <= PROVISIONING_LIMIT_MAX for v in limits.values()):
@@ -3148,6 +3156,8 @@ _DE: dict[str, str] = {
          "({max})"),
     "apps[{app!r}].provisioning.max_accounts={v!r} — 1 to {max}":
         "apps[{app!r}].provisioning.max_accounts={v!r} — 1 bis {max}",
+    "apps[{app!r}].provisioning.delete_grace_days={v!r} — 0 (at once) to {max} days":
+        "apps[{app!r}].provisioning.delete_grace_days={v!r} — 0 (sofort) bis {max} Tage",
     "apps[{app!r}].provisioning.limits: {v!r} — numbers from 1 to {max} for {keys}":
         "apps[{app!r}].provisioning.limits: {v!r} — Zahlen von 1 bis {max} für {keys}",
     ("apps with provisioning and apikey_enabled=False: an application calls the account "

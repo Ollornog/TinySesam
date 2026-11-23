@@ -235,9 +235,10 @@ for f in LIB:
     permitted = set()
     # The `main()` of a command line (the gateway, the reference client `tinysesam-client`, T-60) prints on purpose,
     # and so does the gateway's subcommand `pair` (its `_pair`, called only from `main`) — and `run` of `diagnose`
-    # (T-79), the command both CLIs call; the report builders of that module return text and print nothing.
+    # (T-79), the command both CLIs call; the report builders of that module return text and print nothing. Likewise
+    # `run` of `tinysesam accounts` (T-90, stage B), called only from the CLI's `main`.
     commands = {"tinysesam/gateway.py": ("main", "_pair"), "tinysesam/client.py": ("main",),
-                "tinysesam/_diagnose.py": ("run",)}.get(f, ())
+                "tinysesam/_diagnose.py": ("run",), "tinysesam/_accounts.py": ("run",)}.get(f, ())
     for node in _ast.walk(tree):
         if isinstance(node, _ast.FunctionDef) and node.name in commands:
             permitted |= set(range(node.lineno, (node.end_lineno or node.lineno) + 1))

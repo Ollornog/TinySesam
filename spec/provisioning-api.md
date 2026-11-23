@@ -1,4 +1,4 @@
-# Account API for applications — client specification (stage A, with the access reset)
+# Account API for applications — client specification (stages A and B, with the access reset)
 
 Language-neutral description of `/auth/api/users` for clients in any language. The server side, its configuration
 (`apps[…].provisioning`) and its security rules are in the README ("Accounts for applications") and `SECURITY.md`
@@ -9,7 +9,7 @@ Language-neutral description of `/auth/api/users` for clients in any language. T
 - **Base:** the TinySesam instance itself (its `base_url`), not the reverse proxy of the application.
 - **Credential:** an automation key of the application's service account, as `X-Api-Key: tsk_…` or
   `Authorization: Bearer tsk_…`. No cookie, no CSRF token.
-- **Actor:** every write (`POST`, `PATCH`) carries `TinySesam-On-Behalf-Of: <account id>` — the TinySesam account of
+- **Actor:** every write (`POST`, `PATCH`, `DELETE`) carries `TinySesam-On-Behalf-Of: <account id>` — the TinySesam account of
   the person the application acts for — or `TinySesam-On-Behalf-Of: -` for a job without a person. TinySesam records
   it as a claim; it does not check that the person may do the action.
 - **Bodies** are JSON objects; an unknown member is refused (`400 invalid`), never ignored.
@@ -26,7 +26,9 @@ Language-neutral description of `/auth/api/users` for clients in any language. T
 | `POST /auth/api/users/{id}/disable` | `users:disable` | `200` account |
 | `POST /auth/api/users/{id}/enable` | `users:disable` | `200` account |
 | `POST /auth/api/users/{id}/signin-link` | `users:invite` | `200` `{"id", "signin_url", "expires_at", "qr"}` |
-| `GET /auth/api/provisioning` | — | `200` `{"app", "name", "scopes", "roles", "approver_role", "link_ttl_min", "max_accounts", "accounts", "limits", "remaining"}` |
+| `DELETE /auth/api/users/{id}` | `users:delete` | `204` (never signed in: gone) or `202` `{"id", "state": "deleting", "delete_after"}` |
+| `POST /auth/api/users/{id}/restore` | `users:delete` | `200` account |
+| `GET /auth/api/provisioning` | — | `200` `{"app", "name", "scopes", "roles", "approver_role", "link_ttl_min", "max_accounts", "delete_grace_days", "accounts", "limits", "remaining"}` |
 | `POST /auth/api/approvals` (type `tinysesam.account.reset_access`) | `users:reset` | `201` `{"id", "state", "match_code", "approve_url", "expires_at"}` — §5 |
 | `GET /auth/api/approvals/{id}?wait=` | — | `200` status; once, after the confirmation, with `output` — §5 |
 | `DELETE /auth/api/approvals/{id}` | — | `200` status (`withdrawn`) while still `pending` |
@@ -43,7 +45,17 @@ Language-neutral description of `/auth/api/users` for clients in any language. T
   nothing (state `disabled_operator`); enabling it answers `409 disabled_by_operator`.
 - **Sign-in link:** only while the account has never signed in (`first_login_at` is null); every older open link of the
   account dies. The link and the QR code (a PNG data URI, or null) exist only in the answer — store them nowhere,
-  hand them to the person.
+  hand them to the person. A link the application holds stops working once the account holds a role outside the
+  allowlist, becomes administrator or delegate, is released by the operator, or someone has signed in to it since the
+  link was issued — the person then gets a link from the operator or helps themselves.
+- **Delete:** an account that never signed in is deleted at once (`204`, no body). Any other is locked and deleted for
+  good after the grace period (`delete_grace_days`, default 7 days; `0` = at once, then also `204`): `202` with
+  `delete_after` (Unix seconds). Its name stays taken until then. Deleting again during the period answers the same
+  `202` without moving the date. During the period every write except `restore` and `DELETE` answers
+  `409 account_deleting`. After `delete_after` the account answers `404` everywhere, also before the server's cleanup
+  has removed it. Counted against `delete_per_hour` and `delete_per_day`.
+- **Restore:** only during the period (`409 not_deleting` otherwise); the account is active again (the application's
+  lock is lifted, a lock of the operator stays) and `delete_after` is null.
 
 ## 3. The account
 
@@ -56,7 +68,7 @@ Language-neutral description of `/auth/api/users` for clients in any language. T
 - `roles`: only the roles of the application's allowlist. `other_roles: true` says the account also holds others
   (granted by the operator) — then `display_name`, disable/enable and the sign-in link answer `409 account_shared`.
 - `state`: `active` · `disabled` (by the application) · `disabled_operator` (by the operator or a pending confirmation;
-  only the operator lifts it) · `deleting` (stage B, with `delete_after`).
+  only the operator lifts it) · `deleting` (with `delete_after`, the moment it goes for good).
 - Times are Unix seconds (UTC) or null.
 
 ## 4. Errors
@@ -80,10 +92,14 @@ status.
 | 409 | `already_signed_in` | sign-in link after the first sign-in |
 | 409 | `account_disabled` | sign-in link for a locked account |
 | 409 | `disabled_by_operator` | enable on a lock that is not the application's |
-| 429 | `limit` | an hourly limit (`error_description` names it); wait `Retry-After` seconds |
+| 409 | `account_deleting` | a write on an account in its grace period (restore it first) |
+| 409 | `not_deleting` | restore on an account that is not being deleted |
+| 409 | `conflict` | the account cannot be deleted now |
+| 429 | `limit` | an hourly or daily limit (`error_description` names it, e.g. `delete_per_day`); wait `Retry-After` seconds |
 
 **Reserved:** a write route may answer `202` with `{"approval": {"id", "approve_url", "match_code"}}` once approvals
-for these actions exist. A client treats `202` as "not done yet" from the start.
+for these actions exist. A client treats `202` as "not done yet" from the start — `DELETE` already answers `202` with
+`{"state": "deleting"}`; a client tells the two apart by the member (`approval` or `state`).
 
 ## 5. Resetting the access of an account (approval `tinysesam.account.reset_access`)
 
@@ -154,4 +170,6 @@ subject without it sees the page with "your right: missing", and confirming ends
 - After a network error on create, look the account up in the list (`GET /auth/api/users`) and issue a new link with
   `POST …/signin-link` instead of creating again (that answers `409 username_taken`).
 - Never log `signin_url` or `qr` — also not the `output` of an approval.
+- Show an account in `deleting` with its date and offer "restore" until then; after `delete_after` treat a `404` as
+  "deleted". Do not retry a `DELETE` that answered `429` in a loop — wait `Retry-After`.
 - Poll an access reset with `?wait=25` and keep the first answer that carries `output`; there is no second.

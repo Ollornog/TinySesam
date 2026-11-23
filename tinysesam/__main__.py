@@ -12,6 +12,8 @@
     rename --db auth.db <old> <new>  rename an account (resolve an identifier collision)
     delete --db auth.db <user>       delete an account (asks; --yes for scripts; not an owner)
     gate-key --db auth.db            public key of the gate tokens (for the proxy, ADR-9); --jwks: the key set
+    accounts list|adopt|release|restore --db auth.db [--app X] [--config mod:attr]
+                                     accounts of applications (account API): take over, release, cancel a deletion
     keys list|rotate|reencrypt|retire --db auth.db [--purpose vault|gate|oauth-pepper]
                                      the installation's keys (T-48, ADR-12): rotation without data loss
     diagnose [--config mod:attr] [--log F]  a redacted report and a prefilled bug-form link (T-79):
@@ -281,6 +283,9 @@ def _gc(argv) -> int:
     # OAuth (T-36): the same step as `TinySesam.gc()` — the systemd timer runs this command.
     from . import oauth as _oauth
     numbers.update(store.gc_oauth(int(_t.time()), _oauth.IDLE_CLIENT_SEC, _oauth.REVOKED_KEEP_SEC))
+    # Account API (stage B): the same step as `TinySesam.gc()` — accounts whose grace period after a deletion by their
+    # application has run out, through the one deletion path (audit anonymised).
+    numbers["provisioning_deleted"] = store.gc_provisioning(int(_t.time()))
     if a.audit_days > 0:
         numbers["audit"] = store.gc_audit(int(_t.time()) - a.audit_days * 86400)
     print(" ".join(f"{k}={v}" for k, v in numbers.items()))
@@ -823,6 +828,9 @@ def main(argv=None):
         sys.exit(_gate_key(argv[1:]))
     elif cmd == "keys":
         sys.exit(_keys(argv[1:]))
+    elif cmd == "accounts":
+        from ._accounts import run as _accounts_run
+        sys.exit(_accounts_run(argv[1:], prog="tinysesam accounts"))
     elif cmd == "diagnose":
         from ._diagnose import run
         sys.exit(run(argv[1:], mode="library", prog="tinysesam diagnose"))
@@ -842,6 +850,7 @@ def main(argv=None):
               "       python -m tinysesam delete --db <file> <user> [--yes]\n"
               "       python -m tinysesam gate-key --db <file> [--jwks]\n"
               "       python -m tinysesam keys list|rotate|reencrypt|retire --db <file> [--purpose P]\n"
+              "       python -m tinysesam accounts list|adopt|release|restore --db <file> [--app X]\n"
               "       python -m tinysesam diagnose [--config module:attr] [--db <file>] [--log <file>]",
               file=sys.stdout if help_text else sys.stderr)
         sys.exit(0 if help_text else 2)

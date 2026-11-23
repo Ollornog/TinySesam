@@ -464,9 +464,10 @@ assert any("apikey_enabled=False" in e for e in errors(apikey_enabled=False))
 assert any("'staff' does not begin with 'example-'" in w for w in findings(apps=apps(roles=["staff"]))[1])
 assert not [w for w in findings()[1] if "does not begin with" in w]
 for bad in ({"Example": apps()["example"]}, {"example": {"account": ""}}, {"example": {"account": "svc", "x": 1}},
-            apps(scopes=["users:delete"]), apps(scopes=[]), apps(roles=[]), apps(link_ttl_min=0),
+            apps(scopes=["users:remove"]), apps(scopes=[]), apps(roles=[]), apps(link_ttl_min=0),
             apps(link_ttl_min=24 * 60 + 1), apps(max_accounts=0), apps(limits={"create_per_hour": 0}),
-            apps(limits={"delete_per_hour": 5}), apps(roles=["example-a,b"]), "nope"):
+            apps(limits={"delete_per_week": 5}), apps(delete_grace_days=31), apps(delete_grace_days=-1),
+            apps(delete_grace_days=True), apps(roles=["example-a,b"]), "nope"):
     assert any(e.startswith("apps") for e in errors(apps=bad)), bad
 de = config_check.check_config(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "c.db"), lang="de",
                                                base_url=BASE, available_roles=list(ROLES), apps=apps()))[0]
