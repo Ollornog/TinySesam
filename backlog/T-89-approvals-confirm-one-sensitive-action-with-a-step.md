@@ -29,15 +29,35 @@ tokens) stays: the token only writes a row, the session decides with its rights 
 - [x] Badge "Approvals (n)" in the account menu, `topbar_data.approvals` (optional member of spec §8), limits,
       rejection lock, audit without values, `approval_approved` security event, gc.
 
-## Stage B — application actions (open)
+## Stage B — application actions
 
-- [ ] Keyring `approval` (ADR-12) and JWKS `/auth/approvals/jwks.json`.
-- [ ] `approval_apps`, `approval_types` (+ `approval_types_file`) with `config_check`; requests by the application's
-      service account for an account (`subject`), own prefix only.
-- [ ] Signed one-time confirmation (`typ=tinysesam-approval+jwt`, RFC 9396 `authorization_details`), picked up once.
-- [ ] Browser entry with `return_url`/`state`; optional `POST …/executed`.
-- [ ] `spec/approval-token.md`, `vectors/approval.json`; client helpers in Go, Rust, JS, Python and PHP.
+Part 1, the server side (done):
+
+- [x] Keyring `approval` (ADR-12, `TINYSESAM_APPROVAL_KEY`, `approval_key_file`, `keys rotate|retire --purpose
+      approval`) and JWKS `/auth/approvals/jwks.json` — never the gate key.
+- [x] Types in the one application register: `apps[…].approvals.types` (or `types_file`), `return_urls`, `types_from`
+      for a second channel — instead of the draft's own `approval_apps`/`approval_types`; `config_check` with English
+      and German findings. Requests by the application's service account for a `subject`, own prefix only (`403
+      forbidden_type`), schema checked (`400`), `approval_app_requests_per_hour`.
+- [x] Signed one-time confirmation (`tinysesam.approval_token`, `typ=tinysesam-approval+jwt`, RFC 9396
+      `authorization_details`, `ts_payload_sha256` over RFC 8785), signed at the pickup, handed out once (the pickup of
+      the access reset generalized), never in the audit, a log or a URL.
+- [x] Browser entry with `return_url`/`state` (back with `approval`, `state`, `result`; `state` as `nonce`), schema 24
+      (`approval.nonce`).
+- [x] `spec/approval-token.md`, `spec/vectors/approval.json` from the real issuing path, Python reference with the
+      one-defect guard (`tests/test_approval_vectors.py`).
+
+Part 2 (open, its own pull request — builds only against the vectors):
+
+- [ ] Approval helpers in Go, Rust, JS/TS and PHP (`verify_approval`, JWKS of §3, `jti` store), each passing
+      `vectors/approval.json`; replace the "runner follows" entry of their vector guards with the runner.
+- [ ] An example application in the repository (ask, browser entry, pickup, check, act).
 - [ ] Clients normalize the topbar member `approvals` (spec §8); stage A only names it as optional.
+
+Later, on demand:
+
+- [ ] Optional `POST /auth/api/approvals/{id}/executed` (audit only, draft §4.2).
 - [ ] `Idempotency-Key` for requests.
+- [ ] A CLI import of an application's type snippet (an operator's action).
 
 Design: the accepted draft of 2026-11-22 (sections 0–12).

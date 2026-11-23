@@ -23,9 +23,12 @@ import {
 
 // Every file in spec/vectors/ must be run by one of these tests; a new file without a runner fails the suite.
 const RUNNERS = ['headers.json', 'jwks.json', 'keys.json', 'token.json', 'topbar.json'];
+// Vector files of another part of the specification whose runner comes with that part's helper: approval.json
+// (spec/approval-token.md) with the approval helper (T-89 stage B, part 2). Listed, so a new file still fails.
+const PENDING = ['approval.json'];
 
 test('every vector file has a runner', () => {
-  assert.deepEqual(vectorFiles(), RUNNERS, 'add a runner for the new vector file');
+  assert.deepEqual(vectorFiles(), [...RUNNERS, ...PENDING].sort(), 'add a runner for the new vector file');
 });
 
 /** Compares an identity (and has_role) with the expected value of a vector; returns the differences. */

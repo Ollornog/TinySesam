@@ -116,6 +116,10 @@
       "sig": "(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)",
       "tier": "B"
     },
+    "approval_jwks": {
+      "sig": "() -> 'dict'",
+      "tier": "B"
+    },
     "audit": {
       "sig": "(event, username=None, ip=None, detail=None)",
       "tier": "B"
@@ -1179,6 +1183,14 @@
       "field": "int = 365",
       "tier": "B"
     },
+    "approval_app_requests_per_hour": {
+      "field": "int = 120",
+      "tier": "B"
+    },
+    "approval_key_file": {
+      "field": "str = ''",
+      "tier": "B"
+    },
     "approval_open_per_account": {
       "field": "int = 5",
       "tier": "B"
@@ -1191,12 +1203,20 @@
       "field": "int = 600",
       "tier": "B"
     },
+    "approval_pickup_sec": {
+      "field": "int = 300",
+      "tier": "B"
+    },
     "approval_reject_limit": {
       "field": "int = 3",
       "tier": "B"
     },
     "approval_requests_per_hour": {
       "field": "int = 20",
+      "tier": "B"
+    },
+    "approval_token_ttl_sec": {
+      "field": "int = 120",
       "tier": "B"
     },
     "approvals_enabled": {

@@ -959,6 +959,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _oauth_services_without_oauth(config, error)
     _approvals(config, error)
     _apps(config, error, warnings)
+    _app_approvals(config, error)
     _keys(config, warnings)
     _forward_apps(config, error, warnings)
 
@@ -1079,6 +1080,11 @@ NUMBER_LIMITS = {
     "approval_open_per_token": (1, 50),
     "approval_requests_per_hour": (1, 500),
     "approval_reject_limit": (1, 20),
+    # Stage B (application actions): a confirmed action waits minutes for its pickup; the confirmation itself lives at
+    # most five minutes — it carries one action, once (`approval_token.MAX_LIFETIME`).
+    "approval_pickup_sec": (60, 900),
+    "approval_token_ttl_sec": (30, 300),
+    "approval_app_requests_per_hour": (1, 10000),
     # Waiting time on the "Signed out" page before it leads back to the application. Above five minutes
     # nobody waits any more, for that there is 0 (leave standing).
     "forward_logged_out_sec": (0, 300),
@@ -1824,8 +1830,9 @@ def _approvals(config, error: list) -> None:
 
 #: The id of an application in `apps` — the same rule as the first segment of an approval type.
 APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-#: The members of one `apps` entry (stage A of the account API; the approvals of applications add theirs later).
-APP_KEYS = ("account", "name", "provisioning")
+#: The members of one `apps` entry: the account API (`provisioning`) and the approvals of the application's own
+#: actions (`approvals`, stage B).
+APP_KEYS = ("account", "name", "provisioning", "approvals")
 #: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stages A and B).
 PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role", "delete_grace_days")
 #: `users:reset` asks for the approval type `tinysesam.account.reset_access` — a person holding `approver_role`
@@ -2058,6 +2065,252 @@ def _approver_roles(config, raw: dict, known: set, error: list, warnings: list) 
             error.append(_t(config, "apps[{app!r}]: the scope users:reset needs base_url — the one-time link is "
                                     "built from it, never from the Host header", app=app_id))
 
+#: The members of `apps[…].approvals` (approvals of the application's own actions, stage B).
+APPROVAL_KEYS = ("types", "types_file", "return_urls", "types_from")
+#: An application action type: ASCII, dot namespace, at least three segments, the first the application's id.
+APPROVAL_TYPE = re.compile(r"^[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){2,5}$")
+APPROVAL_TYPE_MAX = 100
+#: The members of one type and the name rule of its fields (`type` is the entry's own member, RFC 9396).
+APPROVAL_TYPE_KEYS = ("fields", "title", "summary", "irreversible")
+APPROVAL_FIELD = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+#: Field kinds and their members; a string field must name its longest value.
+APPROVAL_FIELD_KEYS = {"string": ("type", "max", "pattern"), "integer": ("type", "min", "max"), "boolean": ("type",)}
+APPROVAL_STRING_MAX = 500
+APPROVAL_PATTERN_MAX = 200
+APPROVAL_FIELDS_MAX = 16
+APPROVAL_TYPES_MAX = 100
+APPROVAL_TITLE_MAX = 120
+APPROVAL_SUMMARY_MAX = 1000
+APPROVAL_RETURN_URLS_MAX = 20
+APPROVAL_URL_MAX = 2000
+#: JSON-safe integers in every language (±(2^53 − 1)).
+APPROVAL_INT_LIMIT = 2 ** 53 - 1
+_LANG = re.compile(r"^[a-z]{2}$")
+
+
+def _bad_text(text) -> bool:
+    return not isinstance(text, str) or not text.strip() or any(ord(z) < 32 or 127 <= ord(z) < 160 for z in text)
+
+
+def _placeholders(template: str):
+    """The field names a template names — or None when it is no plain `{name}` template (a format spec, a
+    conversion, an attribute or index, an unbalanced brace)."""
+    import string
+    names = []
+    try:
+        for _literal, name, spec, conversion in string.Formatter().parse(template):
+            if name is None:
+                continue
+            if spec or conversion or not APPROVAL_FIELD.match(name):
+                return None
+            names.append(name)
+    except ValueError:
+        return None
+    return names
+
+
+#: The findings of `approval_type_findings` — key → English template (German in `_DE`).
+APPROVAL_FINDINGS = {
+    "type_name": (
+        "apps[{app!r}].approvals.types: {type!r} — ASCII, at least three segments separated by dots, the "
+        "first one the application's id ({app}.<thing>.<action>), at most 100 characters"),
+    "type_members": (
+        "apps[{app!r}].approvals.types[{type!r}]: allowed members are {keys}; \"fields\", \"title\" and "
+        "\"summary\" are required"),
+    "fields_shape": (
+        "apps[{app!r}].approvals.types[{type!r}].fields: a mapping field name → schema, at most {max} fields"),
+    "field_name": (
+        "apps[{app!r}].approvals.types[{type!r}].fields: {field!r} — lower-case letters, digits and _ , "
+        "starting with a letter, at most 32 characters, never \"type\""),
+    "field_schema": (
+        "apps[{app!r}].approvals.types[{type!r}].fields[{field!r}]: {{\"type\": \"string\", \"max\": …, \"pattern\": "
+        "…}}, {{\"type\": \"integer\", \"min\": …, \"max\": …}} or {{\"type\": \"boolean\"}}"),
+    "string_max": (
+        "apps[{app!r}].approvals.types[{type!r}].fields[{field!r}].max: the longest value, 1 to {max} "
+        "characters"),
+    "pattern": (
+        "apps[{app!r}].approvals.types[{type!r}].fields[{field!r}].pattern: a regular expression of at most "
+        "{max} characters (it must match the whole value)"),
+    "integer_range": (
+        "apps[{app!r}].approvals.types[{type!r}].fields[{field!r}]: min and max are integers within ±(2^53 − "
+        "1), min not above max"),
+    "texts_shape": (
+        "apps[{app!r}].approvals.types[{type!r}].{member}: a mapping language → text with at least \"en\" "
+        "({{\"en\": …, \"de\": …}})"),
+    "text": (
+        "apps[{app!r}].approvals.types[{type!r}].{member}[{lang!r}]: a text of at most {max} characters "
+        "without control characters"),
+    "title_placeholder": (
+        "apps[{app!r}].approvals.types[{type!r}].title[{lang!r}]: the title is fixed text — no placeholder"),
+    "summary_placeholders": (
+        "apps[{app!r}].approvals.types[{type!r}].summary[{lang!r}]: only {{field}} placeholders (no format, "
+        "no attribute; a literal brace is written {{{{ or }}}})"),
+    "unknown_placeholder": (
+        "apps[{app!r}].approvals.types[{type!r}].summary[{lang!r}]: the placeholder {{{name}}} is no field "
+        "of the type"),
+    "irreversible": (
+        "apps[{app!r}].approvals.types[{type!r}].irreversible: true or false"),
+}
+
+
+def approval_type_findings(app_id: str, name, spec) -> list:
+    """Why the action type `name` of application `app_id` is unusable — a list of (key of `APPROVAL_FINDINGS`, values), empty
+    when it is fine. Pure: `config_check` turns each into a message, `approvals.normalize_app_approvals` leaves a type
+    with findings out (fail-closed for a configuration changed at runtime)."""
+    out: list = []
+    if (not isinstance(name, str) or len(name) > APPROVAL_TYPE_MAX or not APPROVAL_TYPE.match(name)
+            or name.split(".", 1)[0] != app_id):
+        out.append(("type_name", {}))
+        return out
+    if not isinstance(spec, dict) or set(spec) - set(APPROVAL_TYPE_KEYS) or "fields" not in spec:
+        out.append(("type_members", {"keys": ", ".join(APPROVAL_TYPE_KEYS)}))
+        return out
+    fields = spec.get("fields")
+    if not isinstance(fields, dict) or len(fields) > APPROVAL_FIELDS_MAX:
+        out.append(("fields_shape", {"max": APPROVAL_FIELDS_MAX}))
+        fields = {}
+    for field_name, schema in fields.items():
+        kind = schema.get("type") if isinstance(schema, dict) else None
+        if not isinstance(field_name, str) or not APPROVAL_FIELD.match(field_name) or field_name == "type":
+            out.append(("field_name", {"field": field_name}))
+            continue
+        if kind not in APPROVAL_FIELD_KEYS or set(schema) - set(APPROVAL_FIELD_KEYS[kind]):
+            out.append(("field_schema", {"field": field_name}))
+            continue
+        if kind == "string":
+            top = schema.get("max")
+            if not _plain_int(top) or not 1 <= top <= APPROVAL_STRING_MAX:
+                out.append(("string_max", {"field": field_name, "max": APPROVAL_STRING_MAX}))
+            if "pattern" in schema:
+                pattern = schema["pattern"]
+                compiled = None
+                if isinstance(pattern, str) and 0 < len(pattern) <= APPROVAL_PATTERN_MAX:
+                    try:
+                        compiled = re.compile(pattern)
+                    except re.error:
+                        compiled = None
+                if compiled is None:
+                    out.append(("pattern",
+                                {"field": field_name, "max": APPROVAL_PATTERN_MAX}))
+        elif kind == "integer":
+            low, high = schema.get("min", -APPROVAL_INT_LIMIT), schema.get("max", APPROVAL_INT_LIMIT)
+            if (not _plain_int(low) or not _plain_int(high) or not -APPROVAL_INT_LIMIT <= low <= high <= APPROVAL_INT_LIMIT):
+                out.append(("integer_range", {"field": field_name}))
+    names = {f for f in fields if isinstance(f, str)}
+    for member, limit in (("title", APPROVAL_TITLE_MAX), ("summary", APPROVAL_SUMMARY_MAX)):
+        texts = spec.get(member)
+        if (not isinstance(texts, dict) or "en" not in texts
+                or not all(isinstance(k, str) and _LANG.match(k) for k in texts)):
+            out.append(("texts_shape", {"member": member}))
+            continue
+        for lang, text in texts.items():
+            if _bad_text(text) or len(text) > limit:
+                out.append(("text", {"member": member, "lang": lang, "max": limit}))
+                continue
+            used = _placeholders(text)
+            if member == "title" and ("{" in text or "}" in text):
+                out.append(("title_placeholder", {"lang": lang}))
+            elif used is None:
+                out.append(("summary_placeholders", {"lang": lang}))
+            else:
+                for placeholder in used:
+                    if placeholder not in names:
+                        out.append(("unknown_placeholder", {"lang": lang, "name": placeholder}))
+    if "irreversible" in spec and not isinstance(spec["irreversible"], bool):
+        out.append(("irreversible", {}))
+    return out
+
+
+def approval_return_url_ok(url) -> bool:
+    """A registered return address of the browser entry: absolute `https` (plain `http` only to a loopback host), no
+    user info, no query, no fragment, no whitespace or control character, at most 2000 characters. Compared exactly."""
+    from urllib.parse import urlsplit
+    if not isinstance(url, str) or not url or len(url) > APPROVAL_URL_MAX or any(ord(z) <= 32 or ord(z) >= 127 for z in url):
+        return False
+    try:
+        p = urlsplit(url)
+        host = p.hostname or ""
+        port = p.port  # noqa: F841 — raises on a malformed port
+    except ValueError:
+        return False
+    if p.scheme == "http":
+        if host not in ("127.0.0.1", "::1", "localhost"):
+            return False
+    elif p.scheme != "https":
+        return False
+    return bool(host) and "@" not in p.netloc and not p.query and not p.fragment and "?" not in url and "#" not in url
+
+
+def read_approval_types_file(path) -> tuple:
+    """(types, None) from a `types_file` — a JSON object type name → definition — or (None, reason)."""
+    import json
+    if not isinstance(path, str) or not path.strip():
+        return None, "not a path"
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        return None, type(e).__name__
+    if not isinstance(data, dict):
+        return None, "not a JSON object"
+    return data, None
+
+
+def _app_approvals(config, error: list) -> None:
+    """`apps[…].approvals` (approvals of application actions, stage B): the operator's action types with their fixed
+    texts and field schemas, the exact return addresses of the browser entry, and `types_from` for a second channel.
+
+    The texts are the protection against phishing: what the person reads comes from the operator, never from the
+    application, which only sends field values (shown escaped and bidi-isolated). Hence types only from this
+    configuration (or a file the operator names), never registered through an API."""
+    raw = getattr(config, "apps", None)
+    if not isinstance(raw, dict):
+        return
+    blocks = {a: e["approvals"] for a, e in raw.items()
+              if isinstance(a, str) and APP_ID.match(a) and isinstance(e, dict) and "approvals" in e}
+    for app_id, block in sorted(blocks.items()):
+        if not isinstance(block, dict) or set(block) - set(APPROVAL_KEYS):
+            error.append(_t(config, "apps[{app!r}].approvals: {v!r} — allowed members are {keys}",
+                            app=app_id, v=block, keys=", ".join(APPROVAL_KEYS)))
+            continue
+        if not _an(config, "approvals_enabled"):
+            error.append(_t(config, "apps[{app!r}].approvals needs approvals_enabled=True", app=app_id))
+        if app_id == "tinysesam":
+            error.append(_t(config, "apps: the id 'tinysesam' is reserved for TinySesam's own approval types — name "
+                                    "the application differently"))
+        sources = [k for k in ("types", "types_file", "types_from") if k in block]
+        if len(sources) != 1:
+            error.append(_t(config, "apps[{app!r}].approvals: exactly one of types, types_file and types_from",
+                            app=app_id))
+        types = block.get("types")
+        if "types_file" in block:
+            types, why = read_approval_types_file(block["types_file"])
+            if types is None:
+                error.append(_t(config, "apps[{app!r}].approvals.types_file {path!r} cannot be read as a JSON object "
+                                        "type name → definition ({why})", app=app_id, path=block["types_file"],
+                                why=why))
+        if "types" in block or ("types_file" in block and types is not None):
+            if not isinstance(types, dict) or len(types) > APPROVAL_TYPES_MAX:
+                error.append(_t(config, "apps[{app!r}].approvals.types: a mapping type name → definition, at most "
+                                        "{max}", app=app_id, max=APPROVAL_TYPES_MAX))
+            else:
+                for name, spec in types.items():
+                    for key, values in approval_type_findings(app_id, name, spec):
+                        error.append(_t(config, APPROVAL_FINDINGS[key], app=app_id, type=name, **values))
+        if "types_from" in block:
+            other = block["types_from"]
+            target = blocks.get(other) if isinstance(other, str) else None
+            if other == app_id or not isinstance(target, dict) or not ({"types", "types_file"} & set(target)):
+                error.append(_t(config, "apps[{app!r}].approvals.types_from={v!r} — the id of another application "
+                                        "whose approvals block has types or types_file", app=app_id, v=other))
+        urls = block.get("return_urls", [])
+        if (not isinstance(urls, list) or len(urls) > APPROVAL_RETURN_URLS_MAX
+                or not all(approval_return_url_ok(u) for u in urls)):
+            error.append(_t(config, "apps[{app!r}].approvals.return_urls: at most {max} absolute https addresses "
+                                    "(http only to 127.0.0.1, ::1 or localhost) without query, fragment or user info — "
+                                    "compared exactly", app=app_id, max=APPROVAL_RETURN_URLS_MAX))
+
+
 def _oauth(config, error: list, warnings: list) -> None:
     """OAuth 2.1 authorization server (T-36, ADR-11): the resource side is forward auth, the issuer is base_url."""
     if not _an(config, "oauth_enabled"):
@@ -2268,6 +2521,81 @@ def _combinations(config, error: list, warnings: list) -> None:
 # REQUIRES_MAILER / REQUIRES_BASE_URL / BASE_URL_RECOMMENDED must be a key of `_DE`, and every
 # key must be used (`config_check._DE`).
 _DE: dict[str, str] = {
+    ("apps: the id 'tinysesam' is reserved for TinySesam's own approval types — name the application "
+     "differently"):
+        ("apps: Die Kennung 'tinysesam' ist für TinySesams eigene Freigabe-Typen reserviert — die Anwendung "
+         "anders benennen"),
+    ("apps[{app!r}].approvals needs approvals_enabled=True"):
+        ("apps[{app!r}].approvals braucht approvals_enabled=True"),
+    ("apps[{app!r}].approvals.return_urls: at most {max} absolute https addresses (http only to "
+     "127.0.0.1, ::1 or localhost) without query, fragment or user info — compared exactly"):
+        ("apps[{app!r}].approvals.return_urls: höchstens {max} absolute https-Adressen (http nur zu "
+         "127.0.0.1, ::1 oder localhost) ohne Query, Fragment und Benutzerangabe — sie werden exakt verglichen"),
+    ("apps[{app!r}].approvals.types: a mapping type name → definition, at most {max}"):
+        ("apps[{app!r}].approvals.types: eine Zuordnung Typname → Definition, höchstens {max}"),
+    ("apps[{app!r}].approvals.types: {type!r} — ASCII, at least three segments separated by dots, the "
+     "first one the application's id ({app}.<thing>.<action>), at most 100 characters"):
+        ("apps[{app!r}].approvals.types: {type!r} — ASCII, mindestens drei durch Punkte getrennte Teile, der "
+         "erste die Kennung der Anwendung ({app}.<ding>.<aktion>), höchstens 100 Zeichen"),
+    ("apps[{app!r}].approvals.types[{type!r}].fields: a mapping field name → schema, at most {max} fields"):
+        ("apps[{app!r}].approvals.types[{type!r}].fields: eine Zuordnung Feldname → Schema, höchstens {max} "
+         "Felder"),
+    ("apps[{app!r}].approvals.types[{type!r}].fields: {field!r} — lower-case letters, digits and _ , "
+     "starting with a letter, at most 32 characters, never \"type\""):
+        ("apps[{app!r}].approvals.types[{type!r}].fields: {field!r} — Kleinbuchstaben, Ziffern und _ , "
+         "beginnend mit einem Buchstaben, höchstens 32 Zeichen, nie \"type\""),
+    ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}].max: the longest value, 1 to {max} "
+     "characters"):
+        ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}].max: der längste Wert, 1 bis {max} Zeichen"),
+    ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}].pattern: a regular expression of at most "
+     "{max} characters (it must match the whole value)"):
+        ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}].pattern: ein regulärer Ausdruck mit "
+         "höchstens {max} Zeichen (er muss den ganzen Wert treffen)"),
+    ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}]: min and max are integers within ±(2^53 − "
+     "1), min not above max"):
+        ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}]: min und max sind ganze Zahlen innerhalb "
+         "±(2^53 − 1), min nicht über max"),
+    ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}]: {{\"type\": \"string\", \"max\": …, \"pattern\": "
+     "…}}, {{\"type\": \"integer\", \"min\": …, \"max\": …}} or {{\"type\": \"boolean\"}}"):
+        ("apps[{app!r}].approvals.types[{type!r}].fields[{field!r}]: {{\"type\": \"string\", \"max\": …, \"pattern\": "
+         "…}}, {{\"type\": \"integer\", \"min\": …, \"max\": …}} oder {{\"type\": \"boolean\"}}"),
+    ("apps[{app!r}].approvals.types[{type!r}].irreversible: true or false"):
+        ("apps[{app!r}].approvals.types[{type!r}].irreversible: true oder false"),
+    ("apps[{app!r}].approvals.types[{type!r}].summary[{lang!r}]: only {{field}} placeholders (no format, "
+     "no attribute; a literal brace is written {{{{ or }}}})"):
+        ("apps[{app!r}].approvals.types[{type!r}].summary[{lang!r}]: nur Platzhalter {{feld}} (kein Format, "
+         "kein Attribut; eine Klammer selbst schreibt man {{{{ oder }}}})"),
+    ("apps[{app!r}].approvals.types[{type!r}].summary[{lang!r}]: the placeholder {{{name}}} is no field "
+     "of the type"):
+        ("apps[{app!r}].approvals.types[{type!r}].summary[{lang!r}]: Der Platzhalter {{{name}}} ist kein Feld "
+         "des Typs"),
+    ("apps[{app!r}].approvals.types[{type!r}].title[{lang!r}]: the title is fixed text — no placeholder"):
+        ("apps[{app!r}].approvals.types[{type!r}].title[{lang!r}]: Der Titel ist fester Text — kein "
+         "Platzhalter"),
+    ("apps[{app!r}].approvals.types[{type!r}].{member}: a mapping language → text with at least \"en\" "
+     "({{\"en\": …, \"de\": …}})"):
+        ("apps[{app!r}].approvals.types[{type!r}].{member}: eine Zuordnung Sprache → Text mit mindestens \"en\" "
+         "({{\"en\": …, \"de\": …}})"),
+    ("apps[{app!r}].approvals.types[{type!r}].{member}[{lang!r}]: a text of at most {max} characters "
+     "without control characters"):
+        ("apps[{app!r}].approvals.types[{type!r}].{member}[{lang!r}]: ein Text mit höchstens {max} Zeichen "
+         "ohne Steuerzeichen"),
+    ("apps[{app!r}].approvals.types[{type!r}]: allowed members are {keys}; \"fields\", \"title\" and "
+     "\"summary\" are required"):
+        ("apps[{app!r}].approvals.types[{type!r}]: erlaubte Einträge sind {keys}; \"fields\", \"title\" und "
+         "\"summary\" sind Pflicht"),
+    ("apps[{app!r}].approvals.types_file {path!r} cannot be read as a JSON object type name → definition "
+     "({why})"):
+        ("apps[{app!r}].approvals.types_file {path!r} lässt sich nicht als JSON-Objekt Typname → Definition "
+         "lesen ({why})"),
+    ("apps[{app!r}].approvals.types_from={v!r} — the id of another application whose approvals block has "
+     "types or types_file"):
+        ("apps[{app!r}].approvals.types_from={v!r} — die Kennung einer anderen Anwendung, deren "
+         "approvals-Block types oder types_file hat"),
+    ("apps[{app!r}].approvals: exactly one of types, types_file and types_from"):
+        ("apps[{app!r}].approvals: genau eines von types, types_file und types_from"),
+    ("apps[{app!r}].approvals: {v!r} — allowed members are {keys}"):
+        ("apps[{app!r}].approvals: {v!r} — erlaubte Einträge sind {keys}"),
     ("approvals_enabled=True with apikey_enabled=False: an approval is requested with an API key of the "
      "account — without keys nobody can ask."):
         ("approvals_enabled=True mit apikey_enabled=False: Eine Freigabe wird mit einem API-Key des Kontos "

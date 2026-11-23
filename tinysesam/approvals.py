@@ -32,6 +32,23 @@ grant (`config_check`), so a leaked key cannot confirm through a straw account i
 sign-in factor of the account deleted, sessions and standing credentials revoked; the row then waits in `approved`
 until the application picks up the new one-time link — exactly once (`approved` → `consumed`), only in that answer,
 never in the audit, a log or a URL.
+
+Stage B — actions of an APPLICATION (class b). An application in `apps` with an `approvals` block asks for one of the
+action types the operator lists there (`apps[…].approvals.types`, fixed texts in English and German, a field schema,
+names that begin with the application's id) — with its service account's automation key, for a `subject`:
+
+    POST /auth/api/approvals   {"type": "example.collection.delete_permanently", "subject": "42",
+    X-Api-Key: tsk_…             "fields": {"collection": "c_81f2", "name": "Project Alpha"},
+                                 "return_url": "https://app.example.com/approvals/return", "state": "k3J…"}
+
+The person confirms on the same page (the operator's text, every value escaped and bidi-isolated, the match code, a
+step-up of THIS approval); TinySesam carries nothing out. The application then picks up ONE signed confirmation
+(`tinysesam.approval_token`): the first status read after the confirmation moves `approved` → `consumed` and signs it
+then — so it exists in that one answer only, never in the audit, a log or the return URL — and the application checks
+it against `/auth/approvals/jwks.json` (purpose `approval`, never the gate key) before it acts. With `return_url` and
+`state` the person started in the application (browser entry, like RFC 9126): the page sends the browser back to
+exactly that registered address with `?approval=<id>&state=<state>` (and `&result=rejected|expired`), never with the
+confirmation.
 """
 from __future__ import annotations
 
@@ -47,7 +64,7 @@ from typing import Any, Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
-from . import security
+from . import config_check, security
 
 #: The class (a) types of stage A and their fields (`str_id` = a positive decimal id as a string, `roles` = a list of
 #: role names). `tinysesam.` is reserved for these; application types (class b) come with stage B.
@@ -71,6 +88,17 @@ RESET_SCOPE = "users:reset"
 OPTIONAL_FIELDS = {"tinysesam.account.set_roles": {"add", "remove"}}
 #: Types whose effect cannot be undone — the page says so with a symbol AND a word, never with colour alone.
 IRREVERSIBLE = frozenset({"tinysesam.apikey.revoke", RESET_ACCESS})
+
+#: Members of a request by an application for one of its own action types (class b).
+APP_ACTION_MEMBERS = ("type", "subject", "fields", "return_url", "state")
+#: The `state` of the browser entry: printable ASCII without spaces, at most 128 characters (it becomes `nonce`).
+_STATE = re.compile(r"^[\x21-\x7e]{1,128}$")
+#: What a string field value of an application action may not contain: C0 and C1 control characters, DEL, the bidi
+#: controls and the line and paragraph separators — refused, never removed (the page isolates every value in `<bdi>`,
+#: but a value must not reorder or break its own text either).
+_FORBIDDEN_IN_VALUE = re.compile("[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069\ud800-\udfff]")
+#: JSON-safe integers in every language.
+_INT_LIMIT = 2 ** 53 - 1
 
 STATES = ("pending", "approved", "consumed", "rejected", "expired", "withdrawn")
 #: Outcome of a class (a) action (`result`): what the panel code answered, in one word.
@@ -174,6 +202,142 @@ def normalize(type_: Any, fields: Any) -> dict:
     return out
 
 
+# ---------- application action types (class b, stage B) ----------
+
+_TYPES_FILE_CACHE: dict = {}
+
+
+def _types_from_file(path: str) -> Optional[dict]:
+    """The types of a `types_file`, read again only when the file changed (size or modification time) — None when it
+    cannot be read (fail-closed: no types)."""
+    import os
+    try:
+        st = os.stat(path)
+    except (OSError, TypeError, ValueError):
+        return None
+    key = (path, st.st_mtime_ns, st.st_size)
+    hit = _TYPES_FILE_CACHE.get(path)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    types, _why = config_check.read_approval_types_file(path)
+    _TYPES_FILE_CACHE[path] = (key, types)
+    return types
+
+
+def _compile_type(spec: dict) -> dict:
+    fields = {}
+    for name, schema in spec["fields"].items():
+        f = {"type": schema["type"]}
+        if schema["type"] == "string":
+            f["max"] = schema["max"]
+            f["pattern"] = re.compile(schema["pattern"]) if "pattern" in schema else None
+        elif schema["type"] == "integer":
+            f["min"] = schema.get("min", -_INT_LIMIT)
+            f["max"] = schema.get("max", _INT_LIMIT)
+        fields[name] = f
+    return {"fields": fields, "title": dict(spec["title"]), "summary": dict(spec["summary"]),
+            "irreversible": bool(spec.get("irreversible", False))}
+
+
+def normalize_app_approvals(cfg) -> dict:
+    """The applications of `cfg.apps` with an `approvals` block, normalized — `{app_id: {"id", "account", "name",
+    "source", "types", "return_urls"}}`; `source` is the id whose types it asks for (its own, or `types_from`).
+
+    Fail-closed for a configuration changed at runtime (construction already refused a broken one,
+    `config_check._app_approvals`): an entry with a bad or reserved id, without a service account or with a broken
+    block is left out; a type with any finding (`config_check.approval_type_findings`) is left out; a return address
+    that is not exact and absolute is dropped."""
+    raw = getattr(cfg, "apps", None) or {}
+    if not isinstance(raw, dict):
+        return {}
+
+    def own_types(app_id: str, block: dict) -> Optional[dict]:
+        if "types" in block and "types_file" not in block:
+            types = block["types"]
+        elif "types_file" in block and "types" not in block:
+            types = _types_from_file(block["types_file"])
+        else:
+            return None
+        if not isinstance(types, dict) or len(types) > config_check.APPROVAL_TYPES_MAX:
+            return None
+        return {name: _compile_type(spec) for name, spec in types.items()
+                if not config_check.approval_type_findings(app_id, name, spec)}
+
+    out: dict = {}
+    for app_id, entry in raw.items():
+        if (not isinstance(app_id, str) or not config_check.APP_ID.match(app_id) or app_id == "tinysesam"
+                or not isinstance(entry, dict)):
+            continue
+        block, account = entry.get("approvals"), entry.get("account")
+        if (not isinstance(block, dict) or set(block) - set(config_check.APPROVAL_KEYS)
+                or not isinstance(account, str) or not account.strip()):
+            continue
+        source = app_id
+        if "types_from" in block:
+            source = block["types_from"]
+            target = raw.get(source) if isinstance(source, str) else None
+            tblock = target.get("approvals") if isinstance(target, dict) else None
+            if ("types" in block or "types_file" in block or source == app_id or not isinstance(tblock, dict)
+                    or "types_from" in tblock):
+                continue
+            types = own_types(source, tblock)
+        else:
+            types = own_types(app_id, block)
+        if types is None:
+            continue
+        urls = block.get("return_urls", [])
+        name = entry.get("name")
+        out[app_id] = {"id": app_id, "account": account, "name": name if isinstance(name, (str, dict)) else None,
+                       "source": source, "types": types,
+                       "return_urls": [u for u in (urls if isinstance(urls, list) else [])
+                                       if config_check.approval_return_url_ok(u)]}
+    return out
+
+
+def validate_fields(spec: dict, fields: Any) -> dict:
+    """The fields of a request for an application action against its type's schema — returned unchanged, or
+    `ApprovalError("invalid_request", 400)` naming the field. Unknown, missing and wrongly typed fields are refused,
+    never dropped or converted (`1` is no string, `true` no integer); forbidden characters (`_FORBIDDEN_IN_VALUE`) are
+    refused, never removed; a string must match its `pattern` as a whole."""
+    if not isinstance(fields, dict):
+        raise ApprovalError("invalid_request", 400, "fields")
+    unknown = sorted(str(k) for k in set(fields) - set(spec["fields"]))
+    if unknown:
+        raise ApprovalError("invalid_request", 400, f"unknown field {unknown[0][:40]}")
+    out: dict = {}
+    for name, schema in spec["fields"].items():
+        if name not in fields:
+            raise ApprovalError("invalid_request", 400, f"missing field {name}")
+        value = fields[name]
+        kind = schema["type"]
+        if kind == "string":
+            good = (isinstance(value, str) and len(value) <= schema["max"] and not _FORBIDDEN_IN_VALUE.search(value)
+                    and (schema["pattern"] is None or schema["pattern"].fullmatch(value) is not None))
+        elif kind == "integer":
+            good = (isinstance(value, int) and not isinstance(value, bool)
+                    and schema["min"] <= value <= schema["max"])
+        else:
+            good = isinstance(value, bool)
+        if not good:
+            raise ApprovalError("invalid_request", 400, f"field {name}")
+        out[name] = value
+    return out
+
+
+def render_summary(template: str, values: dict) -> list:
+    """The operator's summary as parts `(text, is_value)` — the values stay data: the page escapes every part and puts
+    each value in `<bdi>`. `{{`/`}}` are literal braces; a placeholder without a value stays visible as itself."""
+    import string
+    parts: list = []
+    for literal, name, _spec, _conv in string.Formatter().parse(template):
+        if literal:
+            parts.append((literal, False))
+        if name is not None:
+            value = values.get(name, "{" + name + "}")
+            parts.append(("true" if value is True else "false" if value is False else str(value), True))
+    return parts
+
+
 def challenge(nonce: bytes, approval_id: str, digest: str) -> bytes:
     """The passkey challenge of one approval: SHA-256(prefix ‖ nonce ‖ id ‖ payload_hash). The nonce lies on the
     server and is used once — so the gesture is bound to exactly this action and cannot be replayed."""
@@ -214,19 +378,44 @@ class Approvals:
         return u, row
 
     def caller(self, request: Request) -> tuple[dict, dict, Optional[dict]]:
-        """`requester`, but the service account of an application in `apps` with `provisioning` passes too — with an
-        automation key, resolved like the account API resolves it (`Provisioning.caller`). Returns (account, key
-        row, application or None); any other service account gets `no_approver`."""
+        """`requester`, but the service account of an application in `apps` with `provisioning` or `approvals` passes
+        too — with an automation key, resolved like the account API resolves it (`Provisioning.caller`). Returns
+        (account, key row, application or None); any other service account gets `no_approver`.
+
+        The application is one dict: its `provisioning` settings (`Provisioning.apps`, empty scopes without that
+        block) and under `"approvals"` its normalized approvals block (`normalize_app_approvals`) or None."""
         u, row = self._key_holder(request)
         if not u.get("is_service"):
             return u, row, None
         app = None
         if self.auth._key_kind(row) == "automation" and u.get("is_service") == 1:
             name = str(u.get("username") or "").lower()
-            app = next((a for a in self.auth._provisioning().apps().values() if a["account"].lower() == name), None)
+            prov = next((a for a in self.auth._provisioning().apps().values() if a["account"].lower() == name), None)
+            mine = next((a for a in self.app_approvals().values() if a["account"].lower() == name), None)
+            base: Optional[dict] = None
+            if prov is not None:
+                base = prov
+            elif mine is not None:
+                base = {"id": mine["id"], "account": mine["account"], "scopes": [], "provisioning": False}
+            if base is not None:
+                # One service account, two entries: `config_check` refuses it; at runtime nobody speaks for either.
+                if mine is None or mine["id"] == base["id"]:
+                    app = dict(base, approvals=mine)
         if app is None:
             self._no_approver(request, u, row)
         return u, row, app
+
+    def app_approvals(self) -> dict:
+        """`normalize_app_approvals` of the running configuration — computed again when it changes at runtime."""
+        try:
+            key = json.dumps(getattr(self.cfg, "apps", None), sort_keys=True, default=repr)
+        except (TypeError, ValueError):
+            return {}
+        cached = getattr(self, "_apv_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, normalize_app_approvals(self.cfg))
+            self._apv_cache = cached
+        return cached[1]
 
     def _no_approver(self, request: Request, u: dict, row) -> None:
         self.auth.audit("approval_denied", u["username"], self.auth.client_ip(request),
@@ -275,7 +464,11 @@ class Approvals:
         if not isinstance(body, dict):
             raise ApprovalError("invalid_request", 400, "body")
         if app is not None:
-            return self._create_for_app(request, u, app, body)
+            if body.get("type") in APP_TYPES:
+                if app.get("provisioning") is False:
+                    raise ApprovalError("scope_missing", 403, RESET_SCOPE)
+                return self._create_for_app(request, u, app, body)
+            return self._create_app_action(request, u, app, body)
         if "subject" in body:
             # Class (a) always concerns the account of the token; naming another one is an application's request
             # (class b, stage B) — refused, not ignored.
@@ -360,6 +553,68 @@ class Approvals:
         return {"id": row["id"], "state": "pending", "match_code": row["match_code"],
                 "approve_url": self.approve_url(row["id"]), "expires_at": row["expires_at"]}
 
+    def _create_app_action(self, request: Request, u: dict, app: dict, body: dict) -> dict:
+        """`POST /auth/api/approvals` by an application for one of ITS OWN action types (class b, stage B). Checked
+        here, in this order, before anything is stored: the members; the application's hourly budget (every request
+        counts, so the answer `invalid_subject` cannot be used to map the active persons); the type's prefix — only
+        the application's own id, or that of `types_from` (403 `forbidden_type`); the type registered by the operator
+        (400 `invalid_type`); the fields against its schema (400 `invalid_request`); `return_url` exactly one of the
+        registered addresses and `state` with it (400); the subject an active person (400 `invalid_subject`); the
+        limits per account. Nothing about the action itself is checked: whether it is allowed is the application's
+        rule, before it asks and again before it acts."""
+        auth = self.auth
+        ip = auth.client_ip(request)
+        mine = app.get("approvals")
+        extra = sorted(set(body) - set(APP_ACTION_MEMBERS))
+        if extra:
+            raise ApprovalError("invalid_request", 400, f"unknown member {str(extra[0])[:40]}")
+        if mine is None:
+            raise ApprovalError("invalid_type", 400, "the application has no approval types (apps[…].approvals)")
+        now = _now()
+        hour = now // 3600
+        if not self.store.count_up(f"apv:app:{app['id']}:{hour}", int(self.cfg.approval_app_requests_per_hour), 3700):
+            auth.audit("approval_throttled", None, ip, f"app={app['id']} reason=per_app_hour")
+            raise ApprovalError("too_many_requests", 429, "per_app_hour")
+        type_ = body.get("type")
+        if not isinstance(type_, str) or type_.split(".", 1)[0] != mine["source"]:
+            auth.audit("approval_denied", None, ip, f"app={app['id']} reason=foreign_type type={_detail(type_)}")
+            raise ApprovalError("forbidden_type", 403, f"an application asks only for types beginning with "
+                                                       f"{mine['source']}.")
+        spec = mine["types"].get(type_)
+        if spec is None:
+            raise ApprovalError("invalid_type", 400, "not a type of apps[…].approvals")
+        fields = validate_fields(spec, body.get("fields"))
+        return_url, state = body.get("return_url"), body.get("state")
+        if return_url is not None and (not isinstance(return_url, str) or return_url not in mine["return_urls"]):
+            raise ApprovalError("invalid_return_url", 400, "return_url: exactly one of apps[…].approvals.return_urls")
+        if state is not None and (not isinstance(state, str) or not _STATE.match(state)):
+            raise ApprovalError("invalid_request", 400, "state: 1 to 128 printable ASCII characters")
+        if return_url is not None and state is None:
+            raise ApprovalError("invalid_request", 400, "state is required with return_url")
+        subject = body.get("subject")
+        if not isinstance(subject, str) or not _STR_ID.match(subject):
+            raise ApprovalError("invalid_request", 400, "subject: the id of the person who confirms, as a string")
+        person = self.store.get_user(int(subject))
+        if person is None or person["disabled"] or person["is_service"]:
+            raise ApprovalError("invalid_subject", 400, "subject: an active person's id")
+        ref = str(int(u["id"]))
+        why = self._throttled(int(person["id"]), ref, type_, now, kind="app")
+        if why:
+            auth.audit("approval_throttled", person["username"], ip, f"type={type_} app={app['id']} reason={why}")
+            raise ApprovalError("too_many_requests", 429, why)
+        text = canonical({"type": type_, **fields})
+        row = {"id": new_id(), "class": "app", "type": type_, "app_id": app["id"],
+               "subject_id": int(person["id"]), "requester_kind": "app", "requester_ref": ref,
+               "payload": text, "payload_hash": payload_hash(text), "match_code": new_match_code(),
+               "return_url": return_url, "nonce": state, "state": "pending", "created_at": now,
+               "expires_at": now + int(self.cfg.approval_pending_sec), "ip_request": ip}
+        self.store.add_approval(row)
+        auth.audit("approval_requested", person["username"], ip,
+                   f"id={row['id']} type={type_} app={app['id']} hash={row['payload_hash']}"
+                   f"{' entry=browser' if return_url else ''}")
+        return {"id": row["id"], "state": "pending", "match_code": row["match_code"],
+                "approve_url": self.approve_url(row["id"]), "expires_at": row["expires_at"]}
+
     def approve_url(self, approval_id: str) -> str:
         base = (security.normalize_base(str(self.cfg.base_url or "").strip()) or "").rstrip("/")
         return f"{base}/auth/approvals/{approval_id}"
@@ -391,28 +646,70 @@ class Approvals:
     @staticmethod
     def status(row) -> dict:
         out = {"id": row["id"], "state": row["state"], "type": row["type"], "expires_at": row["expires_at"]}
-        if row["state"] == "consumed" and row["class"] == "tinysesam":
+        if row["state"] == "consumed" and (row["class"] == "tinysesam" or row["result"]):
             out["result"] = row["result"]
         if row["decided_at"]:
             out["decided_at"] = row["decided_at"]
         return out
 
     def pickup(self, row) -> dict:
-        """The status for the requester — and, for a confirmed `PICKUP_TYPES` row, its output exactly once: the one
-        atomic transition `approved` → `consumed` decides who gets it (two parallel reads: one output), and the
-        output is made only after that transition — so it exists nowhere but in this one answer. Every later read,
+        """The status for the requester — and, for a confirmed row that waits for its pickup, its output exactly
+        once: the access reset's new link (`output`), an application action's signed confirmation (`confirmation`).
+        The one atomic transition `approved` → `consumed` decides who gets it (two parallel reads: one output), and
+        the output is made only after that transition — so it exists nowhere but in this one answer. Every later read,
         or one that lost the race, sees `consumed` without it."""
-        if row["state"] != "approved" or row["type"] not in PICKUP_TYPES or row["result"] != "ok":
+        if row["state"] != "approved":
+            return self.status(row)
+        if row["class"] == "app":
+            member = "confirmation"
+        elif row["type"] in PICKUP_TYPES and row["result"] == "ok":
+            member = "output"
+        else:
             return self.status(row)
         if not self.store.approval_transition(row["id"], "approved", "consumed"):
             return self.status(self.store.get_approval(row["id"]))
-        output, result = self._reset_link(row)
+        output: Any
+        output, result = self._confirmation(row) if member == "confirmation" else self._reset_link(row)
         if result != "ok":
             self.store.set_approval_fields(row["id"], "consumed", result=result)
         out = self.status(self.store.get_approval(row["id"]))
         if output:
-            out["output"] = output
+            out[member] = output
         return out
+
+    def _app_scope(self, row) -> tuple[Optional[dict], Optional[dict], str]:
+        """(application, type, "ok") when an application action may still be confirmed or handed out NOW — otherwise
+        (None, None, "forbidden"): the application still in the register with an approvals block whose types hold
+        this type, the requester still its service account, the subject still an active person."""
+        app = self.app_approvals().get(str(row["app_id"] or ""))
+        spec = app["types"].get(row["type"]) if app is not None else None
+        requester = self.store.get_user(int(row["requester_ref"])) if _STR_ID.match(str(row["requester_ref"])) else None
+        person = self.store.get_user(int(row["subject_id"]))
+        if (app is None or spec is None or requester is None or requester["is_service"] != 1
+                or str(requester["username"]).lower() != app["account"].lower()
+                or person is None or person["disabled"] or person["is_service"]):
+            return None, None, "forbidden"
+        return app, spec, "ok"
+
+    def _confirmation(self, row) -> tuple[Optional[str], str]:
+        """The signed one-time confirmation of a confirmed application action — (token, "ok") or (None, "forbidden").
+        Made here, after the transition to `consumed`, and returned in the one answer only: it is never stored, never
+        in the audit (`approval_issued` names id, type and application), never in a log or a URL."""
+        from . import approval_token
+        auth = self.auth
+        app, _spec, word = self._app_scope(row)
+        if word != "ok" or app is None:
+            return None, word
+        now = _now()
+        token = approval_token.issue(
+            auth._approval_private(), iss=auth.gate_issuer(), aud=app["id"], sub=str(int(row["subject_id"])),
+            jti=row["id"], entry=json.loads(row["payload"]), auth_time=int(row["auth_time"]),
+            amr=json.loads(row["stepup_amr"]), act=app["id"], now=now,
+            ttl=int(self.cfg.approval_token_ttl_sec), nonce=row["nonce"] or None)
+        self.store.set_approval_fields(row["id"], "consumed", issued_at=now)
+        auth.audit("approval_issued", auth._account_name(row["subject_id"]), None,
+                   f"id={row['id']} type={row['type']} app={app['id']} hash={row['payload_hash']}")
+        return token, "ok"
 
     def _reset_link(self, row) -> tuple[Optional[dict], str]:
         """The new one-time link of a confirmed access reset — (output, "ok") or (None, a word of `RESULTS`). Checked
@@ -502,6 +799,8 @@ class Approvals:
         """What the page shows of an approval — built from the payload AND the current database state, every value
         as data (the templates escape it). A target the viewer may not manage right now is named by its id only:
         the page must not tell a token holder the names of accounts it could not see in the panel."""
+        if row["class"] == "app":
+            return self._app_view(row)
         auth = self.auth
         payload = json.loads(row["payload"])
         scopes = None if auth.is_admin(viewer) else auth._delegate_scopes(viewer)
@@ -583,6 +882,55 @@ class Approvals:
                 "irreversible": type_ in IRREVERSIBLE, "warning": warning, "match_code": row["match_code"], "via": via,
                 "state": row["state"], "result": row["result"], "payload_hash": row["payload_hash"],
                 "expires_at": row["expires_at"], "minutes_left": max(0, (row["expires_at"] - _now() + 59) // 60)}
+
+    def _app_view(self, row) -> dict:
+        """The page of an application action: the application's name and the type's title and summary — the
+        operator's fixed texts in the page's language (English when it has none) — with the field values as data
+        (`summary_parts`: the page escapes each part and isolates each value in `<bdi>`), below them every field with
+        its raw value. Nothing of it comes from the application except the values."""
+        auth = self.auth
+        t = auth.t
+        payload = json.loads(row["payload"])
+        values = {k: v for k, v in payload.items() if k != "type"}
+        app = self.app_approvals().get(str(row["app_id"] or ""))
+        spec = app["types"].get(row["type"]) if app is not None else None
+        entry = (getattr(self.cfg, "apps", None) or {}).get(row["app_id"]) if isinstance(
+            getattr(self.cfg, "apps", None), dict) else None
+        app_name = self._app_name(entry, row["app_id"])
+        lang = str(getattr(self.cfg, "lang", "en") or "en")
+        if spec is not None:
+            title = spec["title"].get(lang) or spec["title"]["en"]
+            parts = render_summary(spec["summary"].get(lang) or spec["summary"]["en"], values)
+        else:
+            # The type is no longer configured: name it by its id only, never guess a text.
+            title, parts = row["type"], [(t("apv.app_type_gone"), False)]
+        rows = [(t("apv.f.app"), app_name), (t("apv.f.type"), row["type"])]
+        rows += [(k, "true" if v is True else "false" if v is False else str(v)) for k, v in sorted(values.items())]
+        out = {"id": row["id"], "type": row["type"], "title": title, "app_name": app_name,
+               "summary": "".join(text for text, _ in parts), "summary_parts": parts, "rows": rows,
+               "irreversible": bool(spec and spec["irreversible"]), "warning": None, "match_code": row["match_code"],
+               "via": t("apv.via_app", app=app_name), "state": row["state"],
+               "result": row["result"] or ("confirmed" if row["state"] in ("approved", "consumed") else None),
+               "payload_hash": row["payload_hash"], "expires_at": row["expires_at"],
+               "minutes_left": max(0, (row["expires_at"] - _now() + 59) // 60), "app_action": True,
+               "return_to": None, "return_origin": None}
+        if row["return_url"] and row["nonce"]:
+            word = {"rejected": "rejected", "expired": "expired"}.get(row["state"])
+            if row["state"] in ("pending", "approved", "consumed", "rejected", "expired"):
+                out["return_to"] = self.return_to(row, word)
+            out["return_origin"] = _origin(row["return_url"])
+        return out
+
+    @staticmethod
+    def return_to(row, result: Optional[str] = None) -> str:
+        """Where the browser goes back after the decision (browser entry): the registered `return_url` exactly, with
+        `approval` and `state` — and `result=rejected|expired` — never the confirmation (an address ends up in logs
+        and in the Referer; the application picks the confirmation up in its back end)."""
+        from urllib.parse import urlencode
+        query = {"approval": row["id"], "state": row["nonce"]}
+        if result:
+            query["result"] = result
+        return f"{row['return_url']}?{urlencode(query)}"
 
     def _app_name(self, entry, app_id) -> str:
         """The operator's name of an application in the page's language (`apps[…].name`), else its id."""
@@ -726,9 +1074,11 @@ class Approvals:
         if not self.store.approval_transition(row["id"], "pending", "approved", decided_at=now, ip_decision=ip,
                                               stepup_amr=json.dumps(amr), auth_time=at):
             return 409, "closed", self.view(self.store.get_approval(row["id"]), u)
+        asker = f"app={row['app_id']}" if row["class"] == "app" else f"key={row['requester_ref']}"
         auth.audit("approval_approved", u["username"], ip,
-                   f"id={row['id']} type={row['type']} key={row['requester_ref']} amr={','.join(amr)} "
-                   f"hash={row['payload_hash']}")
+                   f"id={row['id']} type={row['type']} {asker} amr={','.join(amr)} hash={row['payload_hash']}")
+        if row["class"] == "app":
+            return self._decided_app_action(u, row, now, ip)
         result = self.execute(request, u, json.loads(row["payload"]), row)
         if result == "ok" and row["type"] in PICKUP_TYPES:
             # Executed; the output waits for the requester (`pickup`), at most `approval_pending_sec` from now.
@@ -738,6 +1088,18 @@ class Approvals:
             self.store.approval_transition(row["id"], "approved", "consumed", result=result)
         auth.audit("approval_executed", u["username"], ip, f"id={row['id']} type={row['type']} result={result}")
         auth._security_event("approval_approved", u["id"], approval_id=row["id"], type=row["type"], result=result)
+        return 200, "done", self.view(self.store.get_approval(row["id"]), u)
+
+    def _decided_app_action(self, u: dict, row, now: int, ip) -> tuple[int, str, dict]:
+        """An application action was confirmed (class b): TinySesam carries nothing out. The application, its type and
+        the subject are checked once more; then the row waits in `approved` for the pickup of its confirmation, at
+        most `approval_pickup_sec` from now. Otherwise it ends in `consumed` with `result=forbidden`."""
+        _app, _spec, word = self._app_scope(row)
+        if word != "ok":
+            self.store.approval_transition(row["id"], "approved", "consumed", result=word)
+            self.auth.audit("approval_denied", u["username"], ip, f"id={row['id']} reason=app_gone")
+            return 200, "done", self.view(self.store.get_approval(row["id"]), u)
+        self.store.set_approval_fields(row["id"], "approved", expires_at=now + int(self.cfg.approval_pickup_sec))
         return 200, "done", self.view(self.store.get_approval(row["id"]), u)
 
     def _step_up(self, request: Request, u: dict, row, form: dict):
@@ -828,12 +1190,27 @@ class Approvals:
 
 # ---------- routes ----------
 
-def _no_framing(resp: Response) -> Response:
+def _origin(url: str) -> Optional[str]:
+    from urllib.parse import urlsplit
+    try:
+        p = urlsplit(url)
+    except ValueError:
+        return None
+    return f"{p.scheme}://{p.netloc}" if p.scheme in ("http", "https") and p.netloc else None
+
+
+def _no_framing(resp: Response, form_origin: Optional[str] = None) -> Response:
     """The approval pages are never framed (clickjacking) — `frame-ancestors 'none'` and `X-Frame-Options: DENY`
-    whatever `csp` says: with `csp="off"` (the proxy sets the policy) and with an own policy as well."""
+    whatever `csp` says: with `csp="off"` (the proxy sets the policy) and with an own policy as well.
+
+    `form_origin`: the origin of a registered return address (browser entry). The decision is a form POST that
+    redirects there, and Chrome checks that redirect against the page's `form-action` — so exactly that origin is
+    added to an existing `form-action`, nothing else."""
     policy = resp.headers.get("content-security-policy", "")
     parts = [d.strip() for d in policy.split(";") if d.strip()]
     out = [d for d in parts if d.split(None, 1)[0].lower() != "frame-ancestors"]
+    if form_origin:
+        out = [f"{d} {form_origin}" if d.split(None, 1)[0].lower() == "form-action" else d for d in out]
     out.append("frame-ancestors 'none'")
     resp.headers["Content-Security-Policy"] = "; ".join(out)
     resp.headers["X-Frame-Options"] = "DENY"
@@ -855,6 +1232,12 @@ def register_routes(r, auth) -> None:
 
     def ok_json(data: dict, status: int = 200) -> JSONResponse:
         return JSONResponse(data, status_code=status, headers={"Cache-Control": "no-store"})
+
+    # --- the applications' side: the public keys of the confirmations (purpose `approval`, never the gate keys) ---
+    # Registered before `/auth/approvals/{approval_id}`, which would otherwise take "jwks.json" for an id.
+    @r.get("/auth/approvals/jwks.json")
+    def approval_jwks():
+        return JSONResponse(auth.approval_jwks(), headers={"Cache-Control": "public, max-age=300"})
 
     # --- the token's side ---
     @r.post("/auth/api/approvals")
@@ -922,12 +1305,17 @@ def register_routes(r, auth) -> None:
         error_text = auth.t("err.oidc_reauth_stale") if stepup == "stale" else ""
         return _no_framing(auth.render_page("approval", request=request, outcome="open", approval=view,
                                             methods=svc.methods(u), provider_ready=svc.provider_ready(u, row),
-                                            error=error_text))
+                                            error=error_text), view.get("return_origin"))
 
     @r.post("/auth/approvals/{approval_id}")
     async def approval_decide(request: Request, approval_id: str):
         form = {k: v for k, v in (await request.form()).items() if isinstance(v, str)}
         status, outcome, view = svc.decide(request, approval_id, form)
+        # Browser entry of an application action: back to exactly the registered address — confirmed, rejected or
+        # expired — with the id and the application's state, never the confirmation (it is picked up in the back end).
+        back = view.get("return_to") if view.get("app_action") else None
+        if back and (outcome in ("done", "rejected") or (outcome == "closed" and view.get("state") == "expired")):
+            return _no_framing(RedirectResponse(back, 303))
         ctx: dict = {"outcome": outcome, "approval": view}
         if outcome == "stepup":
             u = auth.session_user(request)
@@ -938,7 +1326,8 @@ def register_routes(r, auth) -> None:
             u = auth.session_user(request)
             ctx.update(outcome="open", methods=svc.methods(u) if u else [], error=auth.t("apv.changed"),
                        provider_ready=False)
-        return _no_framing(auth.render_page("approval", status=status, request=request, **ctx))
+        return _no_framing(auth.render_page("approval", status=status, request=request, **ctx),
+                           view.get("return_origin"))
 
     if auth.webauthn is not None:
         @r.post("/auth/approvals/{approval_id}/passkey")

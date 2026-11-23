@@ -668,7 +668,7 @@ raw.execute("PRAGMA user_version = 22")
 raw.commit()
 raw.close()
 s1 = Store(path)
-assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION == 23
+assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 23
 cols = {r["name"] for r in s1.db.execute("PRAGMA table_info(users)")}
 assert {"managed_by", "last_login_at", "delete_after"} <= cols
 assert "ix_users_managed_by" in {r["name"] for r in s1.db.execute("PRAGMA index_list(users)")}
