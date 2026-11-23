@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 185 of 219
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 410 · B 296 · C 38 names.
+**Status:** A 410 · B 307 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -487,6 +487,10 @@ Create an app password (T-66) for HTTP clients that speak only Basic auth — We
 
 Create a one-time token (plaintext return). Only the sha256 hash is in the DB.
 
+### `create_role(name: 'str', actor=None) -> 'dict'`
+
+Add a role to the catalog, so the admin panel offers it without a change of the configuration. A convenience: it grants nothing (the role still has to be given to accounts). `actor` (an account row or dict) must be an administrator; None is your own code. Refused with `RoleError` (`e.code`): `invalid` (a comma, a control or format character, surrounding spaces, empty, more than 64 characters, an ambiguous role level entry), `in_config` (the configuration names it, or `admin`), `exists` (also as another case), `full`, `forbidden`. Audit `role_created`. Returns `{"name"}`.
+
 ### `create_service_pairing(user_id, name=None, resources=None, roles=None) -> 'dict'`
 
 A one-time pairing code for a service that will act as `user_id` (a service account or a person's own account — never with the admin flag). The service redeems it with `tinysesam-client pair <base_url> <code>`.
@@ -494,6 +498,10 @@ A one-time pairing code for a service that will act as `user_id` (a service acco
 ### `create_signin_link(user_id, ttl_min=None, next='/') -> 'dict'`
 
 Issue a one-time sign-in link for an account — without mail, to hand over by any channel.
+
+### `delete_role(name: 'str', actor=None) -> 'dict'`
+
+Remove an unused role from the catalog. Refused with `RoleError` (`e.code`) while it is held or waiting anywhere (`in_use`, `e.usage` as in `role_usage`), when it is one level of a role level entry whose other roles are still known (`in_ladder`), `not_found`, `forbidden`. Check and delete run in one transaction; nothing cascades — remove the role from accounts and keys first. Audit `role_deleted`. Returns `{"name", "in_config"}` (`in_config`: the configuration names it, so it stays known).
 
 ### `delete_user(user_id: 'int') -> 'bool'`
 
@@ -546,6 +554,10 @@ Does this login identifier already belong to an account — in EITHER of the two
 ### `json_body(request: 'Request') -> 'dict'`
 
 Read the JSON body robustly: invalid/empty body → 400 instead of 500. Enforces CSRF (header X-CSRF-Token) for cookie-based clients; API-key requests are exempt.
+
+### `known_roles() -> 'list'`
+
+The roles the admin panel offers an administrator: `available_roles` ∪ the role catalog, sorted. Only a list to choose from — it grants nothing, and `set_roles` stores any valid role as before.
 
 ### `lift_lockout(user_id, methods=None) -> 'int'`
 
@@ -634,6 +646,14 @@ Close an open enrollment window immediately.
 ### `revoke_service_client(client_id, user_id=None) -> 'bool'`
 
 Revoke a service at once: its keys are deleted, its tokens stop working with the next request. With `user_id` only a service of that account. True if one was live.
+
+### `role_catalog() -> 'list'`
+
+The roles administrators added (panel, `tinysesam roles`, `create_role`), sorted by name: `[{"name", "created_at", "created_by", "in_config"}]` — `in_config` = the configuration names the role too (then the configuration owns it, and the catalog row may be deleted).
+
+### `role_usage(name: 'str') -> 'dict'`
+
+Where a role is held or waits to be: `{"users", "keys", "services", "links", "approvals"}` — accounts, API key scopes (not revoked, not expired), OAuth service scopes, open invitations and pairing codes, pending approvals of `tinysesam.account.set_roles`. What `delete_role` checks.
 
 ### `send_mail(to, subject, text, html=None)`
 
@@ -750,6 +770,14 @@ Does a PIN sign in as the FIRST factor — on the login page and via `/auth/pin`
 ### `TinySesamConfig.validate() -> 'list[str]'`
 
 Check the configuration again — for the case that it was changed after setup.
+
+## B · Error types
+
+Exported from `tinysesam`. Each additionally inherits from the built-in type it replaces — existing `except ValueError` / `except RuntimeError` keeps catching, it only becomes distinguishable. **Nobody checks the message text:** it is translated and may change; the types here and the attributes on them are the promise.
+
+### `RoleError` (inherits from `TinySesamError`, `ValueError`)
+
+A catalog action that does not go through. `code` says why — the text is for people, `code` for programs:
 
 ## B · Further exports of `tinysesam`
 
@@ -1206,6 +1234,11 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `<admin>/api/resources` | — |
 | POST | `<admin>/api/resources` | — |
 | POST | `<admin>/api/resources/{name}/delete` | — |
+| GET | `<admin>/api/roles` | — |
+| POST | `<admin>/api/roles` | — |
+| POST | `<admin>/api/roles/delete` | — |
+| POST | `<admin>/api/roles/entry` | — |
+| POST | `<admin>/api/roles/entry/delete` | — |
 | GET | `<admin>/api/security` | — |
 | POST | `<admin>/api/security` | — |
 | GET | `<admin>/api/sessions` | — |
@@ -1299,4 +1332,4 @@ These names are not part of the promise. Since 0.22.0 the implementation is call
 
 ---
 
-166 methods, 3 properties, 12 constants, 7 methods of `TinySesamConfig`, 10 exports, of which 5 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+171 methods, 3 properties, 12 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

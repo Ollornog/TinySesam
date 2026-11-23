@@ -843,6 +843,9 @@ def main(argv=None):
     elif cmd == "accounts":
         from ._accounts import run as _accounts_run
         sys.exit(_accounts_run(argv[1:], prog="tinysesam accounts"))
+    elif cmd == "roles":
+        from ._role_catalog import run as _roles_run
+        sys.exit(_roles_run(argv[1:], prog="tinysesam roles"))
     elif cmd == "diagnose":
         from ._diagnose import run
         sys.exit(run(argv[1:], mode="library", prog="tinysesam diagnose"))
@@ -863,6 +866,7 @@ def main(argv=None):
               "       python -m tinysesam gate-key --db <file> [--jwks]\n"
               "       python -m tinysesam keys list|rotate|reencrypt|retire --db <file> [--purpose P]\n"
               "       python -m tinysesam accounts list|adopt|release|restore --db <file> [--app X]\n"
+              "       python -m tinysesam roles  list|create|delete --db <file> [--config mod:attr] [<role>]\n"
               "       python -m tinysesam diagnose [--config module:attr] [--db <file>] [--log <file>]",
               file=sys.stdout if help_text else sys.stderr)
         sys.exit(0 if help_text else 2)

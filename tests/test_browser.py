@@ -769,6 +769,7 @@ async def run():
         await top_bar(p)
         await delegate_panel(p)
         await accounts_panel(p)
+        await role_catalog_page(p)
         await provisioning_panel(p)
         await approvals_page(p)
         await app_frame(p)
@@ -1917,6 +1918,132 @@ async def _accounts_panel(p):
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  accounts panel: slim list, search, account page by address, levels (incomplete kept, legacy role kept, "
           "full set, neutral „—“, reason for a missing level), new account, 390px light/dark (strict CSP)")
+
+
+async def role_catalog_page(_first):
+    """The role catalog (T-92) in a real browser on the T-33 app (strict CSP, real CSRF), as administrator, in a tab of
+    its own: "Roles" from the account list, add a role (it appears in the role picker after the reload), a refused name
+    answered in the own dialog, a role in use cannot be deleted and says why, the account count leads to the list
+    filtered by exactly that role, a role level entry added and deleted as a whole, a role deleted after the dialog —
+    and 390 px light and dark without sideways scrolling. `TINYSESAM_SCREENSHOTS=<dir>` keeps screenshots."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
+        before = (t33.cfg.available_roles, t33.cfg.role_levels)
+        t33.cfg.available_roles = ["editor"] + LADDER_ROLES
+        t33.cfg.role_levels = [LADDER]
+        try:
+            await _role_catalog_page(p)
+        finally:
+            t33.cfg.available_roles, t33.cfg.role_levels = before
+            await p.cmd("Emulation.clearDeviceMetricsOverride")
+
+
+async def _role_catalog_page(p):
+    import base64
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+
+    async def shot(name):
+        if not shots:
+            return
+        os.makedirs(shots, exist_ok=True)
+        data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+        with open(os.path.join(shots, name), "wb") as fh:
+            fh.write(base64.b64decode(data))
+
+    def act(name, *args):
+        """The button with `data-on=name` and exactly these arguments (JSON in `data-a`), as a JS expression."""
+        return (f"[...document.querySelectorAll('[data-on={name}]')]"
+                f".find(b=>b.dataset.a==={json.dumps(json.dumps(list(args)))})")
+
+    boss = t33.store.get_user_by_name("boss")["id"]
+    holder = t33.create_user("rc90", password="rc90-pw-123456", roles=["editor"])
+    t33.create_role("rc-used")
+    t33.set_roles(holder, ["editor", "rc-used"])
+    other = t33.create_user("rc91", password="rc91-pw-123456", roles=["rc-used-more"])
+    token, _ = t33.start_session(boss, "password")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+    await p.cmd("Page.navigate", url=T33 + "/auth/admin")
+    await p.until("!!document.querySelector('table.ulist')", "list not built")
+    await p.js(act("nav", "#roles") + ".click();true")
+    await p.until("location.hash==='#roles' && !!document.getElementById('nr')", "„Roles“ did not open the page")
+    text = await p.js("document.getElementById('view').innerText")
+    assert "from the configuration" in text and "catalog" in text and "In use" in text, text[:400]
+    # A role only accounts hold is offered for the catalog; a configured one has no delete button.
+    assert await p.js("!!" + act("mkrole", "rc-used-more"))
+    assert not await p.js("!!" + act("delrole", "editor"))
+    assert not await p.js("!!" + act("delrole", "rc-used"))
+    await shot("roles-1280.png")
+    # Add a role: the page reloads, the role is listed and the role picker of an account offers it.
+    await p.js("document.getElementById('nr').value='rc-new';document.querySelector('[data-on=mkrole]').click();true")
+    await until_py(lambda: "rc-new" in t33.known_roles(), "role not added")
+    await p.until("!!" + act("delrole", "rc-new"), "new role not listed")
+    # A refused name: the reason in the own dialog, nothing added.
+    await p.js("document.getElementById('nr').value='a,b';document.querySelector('[data-on=mkrole]').click();true")
+    await p.until("!!document.querySelector('dialog.tsdlg[open]')", "no dialog for a refused name")
+    said = await p.js("document.querySelector('dialog.tsdlg[open]').innerText")
+    assert "Role name not allowed" in said and "a,b" in said, said
+    await p.answer(True)
+    assert "a,b" not in t33.known_roles()
+    # The account count leads to the list filtered by exactly that role (`rc-used`, not `rc-used-more`).
+    await p.js("document.querySelector('a[href=\"#role/rc-used\"]').click();true")
+    await p.until("location.hash==='#role/rc-used' && !!document.querySelector('table.ulist')", "no filtered list")
+    shown = await p.js("[...document.querySelectorAll('table.ulist tbody tr')].filter(t=>!t.hidden)"
+                       ".map(t=>t.querySelector('b').textContent)")
+    assert shown == ["rc90"], shown
+    await p.js(f"location.hash='#user/{holder}';true")
+    await p.until("!!document.getElementById('pk')", "account page did not open")
+    assert await p.js("!!document.querySelector('#pk input[type=checkbox][value=\"rc-new\"]')"), \
+        "the role picker does not offer the new catalog role"
+    # A role level entry: added with both level roles, offered in the picker, deleted as a whole.
+    await p.js("location.hash='#roles';true")
+    await p.until("!!document.getElementById('ek_coll')", "no entry field for the ladder")
+    await p.js("document.getElementById('ek_coll').value='w';document.querySelector('[data-on=mkentry]').click();true")
+    await until_py(lambda: {"coll:w", "coll:w-r"} <= set(t33.known_roles()), "entry not added")
+    await p.until("!!document.querySelector('[data-on=delentry]')", "entry not listed")
+    await shot("roles-entry-1280.png")
+    await p.js("document.querySelector('[data-on=delentry]').click();true")
+    await p.answer(True)
+    await until_py(lambda: not {"coll:w", "coll:w-r"} & set(t33.known_roles()), "entry not deleted")
+    # Delete a role after the own dialog.
+    await p.until("!!" + act("delrole", "rc-new"), "page not rebuilt")
+    await p.js(act("delrole", "rc-new") + ".click();true")
+    await p.answer(True)
+    await until_py(lambda: "rc-new" not in t33.known_roles(), "role not deleted")
+    # Phone width, light and dark: no sideways scrolling.
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
+    for theme in ("light", "dark"):
+        await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+        await p.cmd("Page.navigate", url="about:blank")             # the same address with a hash would not reload
+        await asyncio.sleep(0.2)
+        await p.cmd("Page.navigate", url=T33 + "/auth/admin#roles")
+        await p.until("!!document.getElementById('nr')", "roles page not built")
+        await asyncio.sleep(0.3)
+        assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")
+        width = await p.js("document.documentElement.scrollWidth")
+        assert width <= 390, f"{theme} roles: {width}px wide at 390px"
+        await shot(f"roles-390-{theme}.png")
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation on the roles page: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    # The refused name is the one expected failure (409/400 from the catalog route).
+    unexpected = [f for f in p.failed[failed_before:] if not f[1].endswith("/api/roles")]
+    assert unexpected == [], f"broken requests: {unexpected[:3]}"
+    t33.set_roles(holder, ["editor"])
+    t33.set_roles(other, [])
+    t33.delete_role("rc-used")
+    print("  role catalog: add (picker offers it), refused name in the own dialog, in use says why, count → list "
+          "filtered by exactly that role, role level entry added and deleted whole, delete after the dialog, 390px "
+          "light/dark (strict CSP)")
 
 
 async def provisioning_panel(_first):

@@ -12,7 +12,7 @@ __version__ = "0.28.0"
 from typing import TYPE_CHECKING
 
 from .config import TinySesamConfig
-from .errors import ConfigError, MailNotConfigured, MissingExtra, StateError, TinySesamError
+from .errors import ConfigError, MailNotConfigured, MissingExtra, RoleError, StateError, TinySesamError
 from .login_result import LoginResult
 from .password_change_result import PasswordChangeResult
 
@@ -45,4 +45,5 @@ def current_version() -> str:
 
 
 __all__ = ["TinySesam", "TinySesamConfig", "LoginResult", "PasswordChangeResult", "current_version",
-           "TinySesamError", "ConfigError", "MissingExtra", "MailNotConfigured", "StateError"]
+           "TinySesamError", "ConfigError", "MissingExtra", "MailNotConfigured", "StateError",
+           "RoleError"]

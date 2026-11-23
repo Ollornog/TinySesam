@@ -492,6 +492,27 @@ Sitzung endet), nicht das `forward_logout` der Anwendung.
   `Remote-Id` dieser Anfrage, mit `no-store` beantwortet. TinySesam kann sie auf diesem Weg nicht erzwingen; der Abruf
   von `/.tinysesam/account.json` durch den Gate-Client (Spec §8a) lässt die Prüfung bei TinySesam.
 
+## Rollennamen und der Rollenkatalog
+
+**Rollennamen** (T-85): `Remote-Groups` und `ts_groups` verbinden Rollen mit `,` ohne Escape, und Gate-Clients
+schneiden die Leerzeichen um einen Eintrag ab. Ein Komma, ein Steuerzeichen oder Leerzeichen am Rand eines
+Rollennamens werden deshalb überall abgewiesen, wo Rollen konfiguriert oder geschrieben werden (`config_check`,
+`create_user`, `set_roles`, `create_invite`, das Panel); eine zur Laufzeit geänderte Gruppen-Map überspringt so ein Ziel
+mit einer Sicherheitszeile. Ein Konto, das aus Altbestand noch so eine Rolle trägt, bekommt beim Forward-Check `403`
+(kein Gate-Token) — nie die gekürzte oder geteilte Rolle —, bis ein Administrator sie entfernt; der Start nennt solche
+Rollen.
+
+**Der Rollenkatalog** (`auth.create_role`, *Rollen* im Panel, `tinysesam roles`) ist eine Liste, die das Panel anbietet,
+keine Berechtigung: Header, Gate-Token, Key-Scopes und `has_role` lesen nur die Rollen, die ein Konto trägt. Nur
+Administratoren ändern ihn (CSRF und `admin_require_mfa` wie jede Panel-Route; Delegierte, API-Schlüssel und
+Anwendungen können es nicht). Eine Rolle, die die Konfiguration nennt, `admin` und `__admin__` werden abgewiesen; der
+Katalog berührt also nie, was `config_check` bewacht (Delegiertenrollen, Allowlists, `approver_role`). Neue Namen weisen
+auch Formatzeichen ab (Bidi, Nullbreite), damit zwei Rollen im Panel nicht gleich aussehen. Gelöscht wird eine Rolle
+nur, wenn nichts sie trägt oder auf sie wartet — Konten, Key- und Dienst-Scopes, offene Einladungen und Kopplungscodes,
+offene Freigaben —, geprüft und gelöscht in einer Transaktion: eine gleichzeitige Zuweisung landet davor (das Löschen
+wird abgewiesen) oder danach (das Konto behält eine Rolle, die der Katalog nicht mehr führt, angezeigt als „nur an
+Konten“), nie dazwischen. Nichts kaskadiert.
+
 ## Verwundbare Abhängigkeiten
 
 Fristen, in denen eine bekannte Schwachstelle in einer Abhängigkeit des Pakets oder des

@@ -1760,19 +1760,65 @@ cfg = TinySesamConfig(
 
 - **Each level adds one role template** with `{1}`; a level stands for its role and every role below it. Choosing
   *write* for `photos` stores `coll:photos-read` **and** `coll:photos`; *—* stores neither.
-- **The entries** (`photos`, `recipes`) come from `available_roles`. When a role matches several templates, the most
-  specific one wins: `coll:photos-read` is the read role of `photos`.
+- **The entries** (`photos`, `recipes`) come from the known roles: `available_roles` and the
+  [role catalog](#role-catalog). When a role matches several templates, the most specific one wins: `coll:photos-read`
+  is the read role of `photos`.
 - **A way to pick roles, not a hierarchy.** An account holds plain roles as before: `Remote-Groups`, the gate token,
   key scopes and `has_role` carry exactly the stored roles — `coll:photos` alone does not imply `coll:photos-read`.
 - **Existing accounts are never widened silently.** An account holding `coll:photos` without `coll:photos-read` is
   shown as *incomplete*; nothing is preselected, and saving keeps those roles until an administrator picks a level.
-- **A level is offered only when all its roles are known**: in `available_roles` for an administrator (otherwise it
+- **A level is offered only when all its roles are known**: in `available_roles` or the catalog for an administrator
+  (otherwise it
   is struck through, with the missing role named), in their scope for a [delegated admin](#delegated-administration)
   (otherwise it is not shown; an entry without a grantable level is left out). The server checks the scope as before.
 - **Checked at start:** at least two levels, every template with exactly one `{1}` and a literal part, no template
   twice, no comma, no two ladders whose templates can match the same role, no equally specific overlap inside one —
-  errors; a ladder without entry, an entry missing the role of a level, a delegate holding only part of a level —
-  warnings.
+  errors; a delegate holding only part of a level — a warning. A ladder without entry and an entry missing the role of
+  a level are start warnings over the known roles (the configuration check has no database and cannot see the catalog).
+
+### Role catalog
+
+Administrators add roles in the panel (**Accounts → Roles**) without touching the configuration; the panel then offers
+them like `available_roles` — as checkboxes and as entries of the role levels. A convenience, nothing more:
+
+- **It grants nothing.** Headers, the gate token, key scopes and `has_role` read only the roles an account holds; an
+  administrator could set any role before. Fine-grained rights on an application's objects (a collection, its owners,
+  moderators) belong in the application.
+- **The configuration stays the truth.** A role the configuration names anywhere (`available_roles`, the group maps,
+  `admin_delegates`, `signup_default_roles`, link visibility, `apps`), `admin` and `__admin__` cannot be added. A
+  catalog role the configuration names later is redundant — the start says so, and it may be deleted. Whatever the
+  configuration refers to (a delegate's roles, an application's allowlist) still has to stand in `available_roles`.
+- **Names:** no comma, no control or invisible character, no surrounding spaces, at most 64 characters, no second
+  spelling (`Editors` next to `editors`). No renaming: add the new one, move the accounts, delete the old one.
+- **Deleting only what nobody uses:** refused while an account holds the role, an API key or OAuth service scope names
+  it, an open invitation or pairing code carries it, or a pending approval would add it. The check and the delete are
+  one transaction; nothing cascades. A role that is one level of a role level entry goes with its entry — the panel
+  adds and deletes an entry with all its level roles at once.
+- **Administrators only** (CSRF and the panel's step-up); delegated admins and applications do not change the catalog.
+- **In code:** `auth.create_role("editor", actor=None)`, `auth.delete_role("editor")` (both raise `RoleError` with
+  `e.code`: `invalid`, `exists`, `in_config`, `in_use`, `in_ladder`, `not_found`, `full`, `forbidden`),
+  `auth.known_roles()`, `auth.role_catalog()`, `auth.role_usage("editor")`. On the command line:
+  `tinysesam roles list|create|delete --db auth.db --config mod:attr [<role>]` (the configuration is required to
+  change the catalog).
+
+```python
+import os
+import tempfile
+
+from tinysesam import RoleError, TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "roles.db"), available_roles=["staff"]))
+auth.create_role("editor")
+assert auth.known_roles() == ["editor", "staff"]
+try:
+    auth.create_role("staff")
+except RoleError as e:
+    assert e.code == "in_config"
+uid = auth.create_user("lena", password="a long probe password 4711", roles=["editor"])
+assert auth.role_usage("editor")["users"] == 1
+auth.set_roles(uid, [])
+assert auth.delete_role("editor") == {"name": "editor", "in_config": False}
+```
 
 **Mount / embed / HTTPS:**
 - **Default:** automatically under `config.admin_path` (default `/auth/admin`) — freely changeable.
@@ -2684,7 +2730,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   ([App passwords](#app-passwords-webdav-caldav-git-behind-tinysesam)), `create_service_pairing`,
   `list_service_clients`, `revoke_service_client` ([services](#a-service-calls-a-protected-app)), `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
   `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
-  `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
+  `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`; the [role catalog](#role-catalog): `create_role`, `delete_role`,
+  `known_roles`, `role_catalog`, `role_usage`, `RoleError`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
   `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link` (one-time
   sign-in link without mail, address from `base_url`).
@@ -2782,7 +2829,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**130 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**131 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

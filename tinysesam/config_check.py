@@ -1594,9 +1594,6 @@ def _role_level_ladders(config, error: list, warnings: list) -> None:
     known_set = set(known)
     graph = delegation_graph(getattr(config, "admin_delegates", None))
     for ladder, rows in zip(good, _role_levels.entries(good, known)):
-        if not rows:
-            warnings.append(_t(config, "role_levels: {ladder!r} has no entry in available_roles — the panel shows no "
-                                       "levels for it", ladder=ladder["name"]))
         for row in rows:
             for i, role in enumerate(row["own"]):
                 hit = _role_levels.assign(good, role) if role in known_set else None
@@ -1604,17 +1601,33 @@ def _role_level_ladders(config, error: list, warnings: list) -> None:
                     error.append(_t(config, "role_levels: {ladder!r}: the role {role!r} belongs to the entry {key!r} "
                                             "and to another one — rename the role or the template",
                                     ladder=ladder["name"], role=role, key=row["key"]))
-            missing = [r for r in row["own"] if r not in known_set]
-            if missing:
-                warnings.append(_t(config, "role_levels: {ladder!r} entry {key!r}: {roles} not in available_roles — "
-                                           "the levels from there up are not offered",
-                                   ladder=ladder["name"], key=row["key"], roles=", ".join(missing)))
             for delegate, node in sorted(graph.items()):
                 held = [r for r in row["own"] if r in node["eff"]]
                 if held and any(r not in node["eff"] for r in row["own"][:row["own"].index(held[-1]) + 1]):
                     warnings.append(_t(config, "role_levels: the delegate role {delegate!r} manages {held} but not "
                                                "every role below — it cannot grant that level of {key!r}",
                                        delegate=delegate, held=", ".join(held), key=row["key"]))
+
+
+def ladder_coverage(config, known) -> list:
+    """What the panel could not offer of the role levels, over the roles it knows (`available_roles` ∪ the role
+    catalog): a ladder without an entry, an entry missing the role of a level. Warnings TinySesam logs at start — not
+    part of `check_config`, which has no database and would report entries that come from the catalog as missing."""
+    good = _role_levels.usable(getattr(config, "role_levels", None) or [])
+    known = [r for r in known or [] if isinstance(r, str)]
+    known_set = set(known)
+    out = []
+    for ladder, rows in zip(good, _role_levels.entries(good, known)):
+        if not rows:
+            out.append(_t(config, "role_levels: {ladder!r} has no entry among the known roles (available_roles, role "
+                                  "catalog) — the panel shows no levels for it", ladder=ladder["name"]))
+        for row in rows:
+            missing = [r for r in row["own"] if r not in known_set]
+            if missing:
+                out.append(_t(config, "role_levels: {ladder!r} entry {key!r}: {roles} not among the known roles — the "
+                                      "levels from there up are not offered",
+                              ladder=ladder["name"], key=row["key"], roles=", ".join(missing)))
+    return out
 
 
 def _open_gates(config, warnings: list) -> None:
@@ -3604,17 +3617,17 @@ _DE: dict[str, str] = {
      "and are equally specific — which entry a role belongs to would be a guess"):
         ("role_levels: {ladder!r}: Die Vorlagen {a!r} und {b!r} können dieselbe Rolle treffen "
          "und sind gleich spezifisch — zu welchem Eintrag eine Rolle gehört, wäre geraten"),
-    ("role_levels: {ladder!r} has no entry in available_roles — the panel shows no "
-     "levels for it"):
-        ("role_levels: {ladder!r} hat keinen Eintrag in available_roles — das Panel zeigt dafür "
-         "keine Stufen"),
+    ("role_levels: {ladder!r} has no entry among the known roles (available_roles, role "
+     "catalog) — the panel shows no levels for it"):
+        ("role_levels: {ladder!r} hat keinen Eintrag unter den bekannten Rollen (available_roles, "
+         "Rollenkatalog) — das Panel zeigt dafür keine Stufen"),
     ("role_levels: {ladder!r}: the role {role!r} belongs to the entry {key!r} "
      "and to another one — rename the role or the template"):
         ("role_levels: {ladder!r}: Die Rolle {role!r} gehört zum Eintrag {key!r} "
          "und zu einem anderen — Rolle oder Vorlage umbenennen"),
-    ("role_levels: {ladder!r} entry {key!r}: {roles} not in available_roles — "
-     "the levels from there up are not offered"):
-        ("role_levels: {ladder!r} Eintrag {key!r}: {roles} nicht in available_roles — "
+    ("role_levels: {ladder!r} entry {key!r}: {roles} not among the known roles — the "
+     "levels from there up are not offered"):
+        ("role_levels: {ladder!r} Eintrag {key!r}: {roles} nicht unter den bekannten Rollen — "
          "die Stufen ab dort werden nicht angeboten"),
     ("role_levels: the delegate role {delegate!r} manages {held} but not "
      "every role below — it cannot grant that level of {key!r}"):

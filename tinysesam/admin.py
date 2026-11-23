@@ -17,9 +17,9 @@ import secrets
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
-from .errors import ConfigError, StateError
+from .errors import ConfigError, RoleError, StateError
 from .router import _key_kind, _mail_base, hardened_route
-from . import _role_levels, config_check, provisioning as _provisioning, security
+from . import _role_catalog, _role_levels, config_check, provisioning as _provisioning, security
 from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, role_invalid, valid_email
 from . import dialog as _dialog
@@ -507,6 +507,83 @@ def build_admin_router(auth) -> APIRouter:
         b = await auth.json_body(request)
         return pa.set_roles(request, me, scope, uid, b)
 
+    # ---------- The role catalog (schema 25): roles administrators add without a change of the configuration ----------
+    # Administrators only (`guard`: CSRF, `admin_require_mfa`). No extra fresh confirmation: adding or removing a
+    # catalog role gives nobody access — granting it goes through the roles route above with its rules.
+    _ROLE_STATUS = {"invalid": 400, "forbidden": 403, "not_found": 404}
+
+    def role_refused(e: RoleError) -> HTTPException:
+        where = ", ".join(auth.t(f"admin.usage_{k}") for k in _role_catalog.usage_kinds(e.usage))
+        text = auth.t(f"api.catalog_{e.code}", role=repr(e.role), where=where, limit=_role_catalog.LIMIT)
+        return HTTPException(_ROLE_STATUS.get(e.code, 409), text)
+
+    def role_name(b: dict, key: str = "name") -> str:
+        value = b.get(key)
+        if not isinstance(value, str):
+            raise HTTPException(400, auth.t("api.invalid", reason=key))
+        return value
+
+    @ar.get("/api/roles")
+    def roles_list(request: Request):
+        guard(request)
+        return _role_catalog.listing(cfg, auth.store, auth.store.roles_in_use())
+
+    @ar.post("/api/roles")
+    async def role_create(request: Request):
+        me = guard(request)
+        name = role_name(await auth.json_body(request))
+        try:
+            _role_catalog.create(cfg, auth.store, name, str(me["username"]))
+        except RoleError as e:
+            raise role_refused(e) from None
+        log(request, "role_created", f"name={_role_catalog.detail(name)} via=panel")
+        return {"ok": True, "name": name}
+
+    @ar.post("/api/roles/delete")
+    async def role_delete(request: Request):
+        guard(request)
+        name = role_name(await auth.json_body(request))
+        try:
+            res = _role_catalog.delete(cfg, auth.store, name)
+        except RoleError as e:
+            if e.code == "in_use":
+                log(request, "role_delete_refused", f"name={_role_catalog.detail(name)} "
+                                                    f"where={','.join(_role_catalog.usage_kinds(e.usage))}")
+            raise role_refused(e) from None
+        log(request, "role_deleted", f"name={_role_catalog.detail(name)} via=panel")
+        return {"ok": True, **res}
+
+    @ar.post("/api/roles/entry")
+    async def role_entry_create(request: Request):
+        me = guard(request)
+        b = await auth.json_body(request)
+        ladder, key = role_name(b, "ladder"), role_name(b, "key")
+        try:
+            res = _role_catalog.create_entry(cfg, auth.store, ladder, key, str(me["username"]))
+        except RoleError as e:
+            raise role_refused(e) from None
+        for name in res["added"]:
+            log(request, "role_created",
+                f"name={_role_catalog.detail(name)} via=panel entry={_role_catalog.detail(key)}")
+        return {"ok": True, **res}
+
+    @ar.post("/api/roles/entry/delete")
+    async def role_entry_delete(request: Request):
+        guard(request)
+        b = await auth.json_body(request)
+        ladder, key = role_name(b, "ladder"), role_name(b, "key")
+        try:
+            res = _role_catalog.delete_entry(cfg, auth.store, ladder, key)
+        except RoleError as e:
+            if e.code == "in_use":
+                log(request, "role_delete_refused", f"entry={_role_catalog.detail(key)} "
+                                                    f"where={','.join(_role_catalog.usage_kinds(e.usage))}")
+            raise role_refused(e) from None
+        for name in res["removed"]:
+            log(request, "role_deleted",
+                f"name={_role_catalog.detail(name)} via=panel entry={_role_catalog.detail(key)}")
+        return {"ok": True, **res}
+
     # ---------- Accounts of applications (account API, stage B): take over, release, cancel a deletion ----------
     # Administrators only. Taking over and releasing change who may lock and delete the account by key, so they ask for
     # a fresh confirmation (step-up) — also with `admin_require_mfa=False`.
@@ -945,7 +1022,11 @@ _KEYS = (
     "sec.profile sec.access sec.signin sec.danger f.display_name created password set_password pw_hint "
     "issue_link link_hint disable_hint owner_hint delete_hint no_keys unavailable unavailable_reason "
     "app_badge managed_by not_configured all_apps no_app app_section adopt adopt_hint release release_hint "
-    "confirm.release deleting deleting_until restore restore_hint"
+    "confirm.release deleting deleting_until restore restore_hint "
+    "roles_btn role_filter show_all roles_title roles_hint new_role role_add catalog_count src_config src_catalog "
+    "src_both src_accounts accounts_n take_over delete_role why_in_use why_in_ladder role_invalid_mark entry_hint "
+    "entry_key entry_add entry_delete confirm.role_delete confirm.entry_delete usage_users usage_keys usage_services "
+    "usage_links usage_approvals"
 ).split()
 
 
@@ -978,8 +1059,9 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
                                        "can": sorted({a for _, _, can in scope for a in can})}
     # The role levels over the roles THIS viewer may grant: a delegate is offered a level only when every role of it
     # lies in their scope (`_role_levels.entries`) — a view, the roles route checks the scope itself.
-    ladders = _role_levels.view(getattr(cfg, "role_levels", None) or [],
-                                list(cfg.available_roles) if view is None else view["roles"], cfg.lang)
+    # An administrator is offered `available_roles` ∪ the role catalog (`auth.known_roles`), a delegate their scope.
+    offered = auth.known_roles() if view is None else view["roles"]
+    ladders = _role_levels.view(getattr(cfg, "role_levels", None) or [], offered, cfg.lang)
     seen = dict(viewer) if viewer else {}
     me = {"id": seen.get("id"), "owner": bool(seen.get("is_owner"))}
     bar = ""
@@ -1000,7 +1082,7 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
             .replace('"__BASE__"', json.dumps(base).replace("<", "\\u003c"))
             .replace("__ICON__", favicon_link(getattr(cfg, "brand_icon", "")))
             .replace("__WARN__", warn).replace("__CSRFCK__", auth.csrf_cookie_name)
-            .replace("__ROLES__", json.dumps(list(cfg.available_roles) if view is None else view["roles"])
+            .replace("__ROLES__", json.dumps(list(offered))
                      .replace("<", "\\u003c"))
             .replace("__SCOPE__", "null" if view is None else json.dumps(view).replace("<", "\\u003c"))
             .replace("__LADDERS__", json.dumps(ladders, ensure_ascii=False).replace("<", "\\u003c"))
@@ -1155,7 +1237,7 @@ __WARN__
 __DIALOG__
 <script>
 const B="__BASE__";                                    // mount point (freely chosen) → relative API calls
-const ROLES=__ROLES__;                                 // known roles/groups (config.available_roles; a delegate: their list)
+const ROLES=__ROLES__;                                 // known roles (available_roles ∪ role catalog; a delegate: their list)
 const SCOPE=__SCOPE__;                                 // null = administrator; {roles,can} = delegated admin (T-74) — a view only, the server decides
 const LADDERS=__LADDERS__;                             // config.role_levels over the roles this viewer may grant: [{label,levels,entries:[{key,own,offer}]}]
 const APPS=__APPS__;                                   // applications with the account API: [{id,name}] (administrators only; [] for a delegate)
@@ -1204,6 +1286,7 @@ const V=h=>document.getElementById("view").innerHTML=h;
 
 // ---------- Accounts: a slim list, a detail page per account (`#user/<id>`), a form for a new one (`#new`) ----------
 let US=[];                                             // the account list as last loaded
+let RF="";                                             // the role filter of the list (`#role/<name>`), "" = none
 // The roles a ladder covers (every role an entry's levels add) — the rest of ROLES is grouped by prefix.
 const COVERED=new Set(LADDERS.flatMap(l=>l.entries.flatMap(e=>e.own)));
 const OTHERS=ROLES.filter(r=>!COVERED.has(r));
@@ -1230,15 +1313,19 @@ function nav(h){if(location.hash===h)route();else location.hash=h}
 function route(){if(cur!=="users")return;const m=location.hash.match(/^#user\/(\d+)$/);
   const u=m&&US.find(x=>x.id===+m[1]);if(u)return detail(u);
   if(location.hash==="#new"&&CAN("create"))return newform();
+  if(location.hash==="#roles"&&!SCOPE)return rolesview();
+  const rm=location.hash.match(/^#role\/(.+)$/);RF=rm?decodeURIComponent(rm[1]):"";
   list()}
 function list(){
   V(`${SCOPE?`<div class="muted small">${esc(L.delegate_note)} ${esc(SCOPE.roles.join(", "))}</div>`:""}
     <div class="row bar"><input id=us type=search class=grow data-filter=rows aria-label="${esc(L.search)}" placeholder="${esc(L.search)}">
-    ${appfilter()}${CAN("create")?`<button ${on("nav","#new")}>${esc(L.new_user)}</button>`:""}</div>
+    ${appfilter()}${SCOPE?"":`<button class=sec ${on("nav","#roles")}>${esc(L.roles_btn)}</button>`}${CAN("create")?`<button ${on("nav","#new")}>${esc(L.new_user)}</button>`:""}</div>
+    ${RF?`<div class="row rfilter"><span class=chip>${esc(L.role_filter.replace("{role}",RF))}</span><a href="#" ${on("nav","")}>${esc(L.show_all)}</a></div>`:""}
     <table class=ulist><thead><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th></tr></thead><tbody>`+
-    US.map(u=>`<tr class=click data-app="${esc(u.managed_by||"")}" data-q="${esc([u.username,u.email,u.display_name,...(u.roles||[])].join(" ").toLowerCase())}" ${on("nav","#user/"+u.id)}>
+    US.map(u=>`<tr class=click data-app="${esc(u.managed_by||"")}" data-roles="${esc(JSON.stringify(u.roles||[]))}" data-q="${esc([u.username,u.email,u.display_name,...(u.roles||[])].join(" ").toLowerCase())}" ${on("nav","#user/"+u.id)}>
       <td><a href="#user/${u.id}"><b>${esc(u.username)}</b></a>${u.email?`<div class="muted small">${esc(u.email)}</div>`:""}</td>
-      <td class=type>${badges(u)}</td><td class=roles>${chips(u,6)}</td><td>${state(u)}</td></tr>`).join("")+`</tbody></table>`)}
+      <td class=type>${badges(u)}</td><td class=roles>${chips(u,6)}</td><td>${state(u)}</td></tr>`).join("")+`</tbody></table>`);
+  FILTER.rows()}
 // The role picker: per ladder a table with one row per entry and a radio per level; the other roles as checkboxes
 // grouped by prefix (`xyz:`); roles the account holds that nobody configured stay ticked under their own heading, so
 // saving never drops them unseen. Without known roles: the free-text field as before. `pid` names the container.
@@ -1287,7 +1374,9 @@ function appfilter(){const ids=[...new Set(APPS.map(a=>a.id).concat(US.map(u=>u.
     `<option value="">${esc(L.no_app)}</option></select>`}
 const FILTER={
   rows:()=>{const q=((document.getElementById("us")||{}).value||"").trim().toLowerCase(),f=document.getElementById("uf"),a=f?f.value:"*";
-    document.querySelectorAll("table.ulist tbody tr").forEach(t=>{t.hidden=(!!q&&!t.dataset.q.includes(q))||(a!=="*"&&t.dataset.app!==a)})},
+    // The role filter (`#role/<name>`, from the roles page): exactly that role, not every role containing the text.
+    document.querySelectorAll("table.ulist tbody tr").forEach(t=>{t.hidden=(!!q&&!t.dataset.q.includes(q))||(a!=="*"&&t.dataset.app!==a)
+      ||(!!RF&&!JSON.parse(t.dataset.roles||"[]").includes(RF))})},
   roles:f=>{const q=f.value.trim().toLowerCase(),box=document.getElementById(f.dataset.p);
     box.querySelectorAll("[data-q]").forEach(t=>{t.hidden=!!q&&!t.dataset.q.includes(q)});
     box.querySelectorAll("fieldset").forEach(s=>{s.hidden=!s.querySelector("[data-q]:not([hidden])")})}};
@@ -1325,6 +1414,42 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
     ${appl?`<section class="card appcard"><h2>${esc(L.app_section)}</h2>${appl}</section>`:""}
     ${danger?`<section class="card danger"><h2>${esc(L["sec.danger"])}</h2>${danger}</section>`:""}`);
   if(admin){keys(u.id);if(!svc)pks(u.id)}}
+// ---------- Roles (`#roles`, administrators only): the role catalog — roles added here are offered like those of the
+// configuration. Adding grants nothing; only an unused catalog role can be deleted (the server checks again). After a
+// change the page reloads, so the role picker and the role levels know the new list.
+async function rolesview(){const R=await g("/api/roles"),by={};R.roles.forEach(r=>by[r.name]=r);
+  const used=u=>Object.keys(u).filter(k=>u[k]).map(k=>L["usage_"+k]+": "+u[k]).join(", ");
+  const why=r=>r.reason==="in_use"?L.why_in_use.replace("{where}",used(r.usage)):r.reason==="in_ladder"?L.why_in_ladder:"";
+  const act=r=>{if(r.invalid)return `<span class="badge red">⚠ ${esc(L.role_invalid_mark)}</span>`;
+    if(r.source==="accounts")return `<button class=sec ${on("mkrole",r.name)}>${esc(L.take_over)}</button>`;
+    if(r.source==="config")return "";
+    return r.deletable?`<button class=warn ${on("delrole",r.name)}>${esc(L.delete_role)}</button>`:`<span class="muted small">${esc(why(r))}</span>`};
+  const n=r=>r.usage.users?`<a href="#role/${encodeURIComponent(r.name)}">${esc(L.accounts_n.replace("{n}",r.usage.users))}</a>`:esc(L.accounts_n.replace("{n}",0));
+  const rows=R.roles.map(r=>line(r.name,L["src_"+r.source],`<span class="small">${n(r)}</span> ${act(r)}`)).join("");
+  const cat=R.roles.filter(r=>r.source==="catalog"||r.source==="both").length;
+  // Role levels: a new entry adds every level role at once; an entry whose roles are all unused catalog roles goes as
+  // a whole (a single level would leave half an entry).
+  const lad=R.ladders.map(l=>{const sh=LADDERS.find(x=>x.name===l.name),ents=sh?sh.entries:[];
+    const ent=e=>{const rs=e.own.map(x=>by[x]).filter(Boolean),gone=rs.length===e.own.length&&rs.every(r=>r.source==="catalog"&&!Object.values(r.usage).some(Boolean));
+      return line(e.key,e.own.join(", "),gone?`<button class=warn ${on("delentry",l.name,e.key,e.own)}>${esc(L.entry_delete)}</button>`:"")};
+    return `<section class=card><h2>${esc(l.label)}</h2><div class="muted small">${esc(L.entry_hint.replace("{roles}",l.templates.join(", ")))}</div>
+      <div class="row"><input id="ek_${esc(l.name)}" class=grow aria-label="${esc(L.entry_key)}" placeholder="${esc(L.entry_key)}">
+      <button ${on("mkentry",l.name)}>${esc(L.entry_add)}</button></div>${ents.map(ent).join("")}</section>`}).join("");
+  V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
+    <section class="card rolecard"><h2>${esc(L.roles_title)}</h2><div class="muted small">${esc(L.roles_hint)}</div>
+    <div class="row"><input id=nr class=grow maxlength=64 aria-label="${esc(L.new_role)}" placeholder="${esc(L.new_role)}">
+    <button ${on("mkrole")}>${esc(L.role_add)}</button></div>
+    <div class="muted small">${esc(L.catalog_count.replace("{n}",cat).replace("{limit}",R.limit))}</div>
+    ${rows||`<span class=muted>${esc(L.no_roles)}</span>`}</section>${lad}`)}
+const reloadRoles=()=>{location.hash="#roles";location.reload()};
+async function mkrole(name){const v=name||((document.getElementById("nr")||{}).value||"");
+  if(!v.trim())return;if(!rejected(await p("/api/roles",{name:v})))reloadRoles()}
+async function delrole(name){if(!await tsConfirm(L["confirm.role_delete"].replace("{role}",name),{danger:true}))return;
+  if(!rejected(await p("/api/roles/delete",{name})))reloadRoles()}
+async function mkentry(ladder){const v=(document.getElementById("ek_"+ladder)||{}).value||"";
+  if(!v.trim())return;if(!rejected(await p("/api/roles/entry",{ladder,key:v})))reloadRoles()}
+async function delentry(ladder,key,roles){if(!await tsConfirm(L["confirm.entry_delete"].replace("{key}",key).replace("{roles}",roles.join(", ")),{danger:true}))return;
+  if(!rejected(await p("/api/roles/entry/delete",{ladder,key})))reloadRoles()}
 function newform(){
   V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
     <section class=card><h2>${esc(L.new_user)}</h2><div class=form>
@@ -1430,12 +1555,12 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,adopt,release,restore,copylink};
+const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 // Back/forward to an account or the new-account form also from another tab.
 window.addEventListener("hashchange",()=>{if(cur==="users")return route();
-  if(/^#(user\/\d+|new)$/.test(location.hash)){cur="users";tabs();users()}});
+  if(/^#(user\/\d+|new|roles|role\/.+)$/.test(location.hash)){cur="users";tabs();users()}});
 tabs();users();
 </script>
 </div>__FOOTER__</body></html>"""

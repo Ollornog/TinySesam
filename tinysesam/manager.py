@@ -552,13 +552,15 @@ class TinySesam:
                 "Accounts carry role names with a comma, a control character or surrounding spaces: %s. Forward auth "
                 "refuses these accounts (403) until the role is removed in the admin panel.",
                 security.for_log(", ".join(repr(r) for r in broken)))
-        if config.admin_enabled and not config.available_roles:
+        if config.admin_enabled and not self.known_roles():
             stored = self.store.roles_in_use()
             if stored:
                 security.seclog.warning(
-                    "Accounts carry the roles %s, but available_roles is empty: the admin panel offers a free-text "
-                    "field instead of checkboxes. List the roles in available_roles.",
+                    "Accounts carry the roles %s, but available_roles and the role catalog are empty: the admin panel "
+                    "offers a free-text field instead of checkboxes. List the roles in available_roles or add them "
+                    "to the catalog (admin panel, Roles).",
                     security.for_log(", ".join(stored)))
+        self._check_role_catalog()
         # The account API (`apps`): an application whose service account is missing or is a person stays shut — the
         # API checks the key's account on every request (fail-closed); here it is said once, at start.
         self._check_app_accounts()
@@ -914,6 +916,65 @@ class TinySesam:
         another role or as several."""
         self._refuse_role_names(roles)
         self.store.set_roles(user_id, roles)
+
+    # ---------- the role catalog (schema 25) ----------
+    def known_roles(self) -> list:
+        """The roles the admin panel offers an administrator: `available_roles` ∪ the role catalog, sorted. Only a
+        list to choose from — it grants nothing, and `set_roles` stores any valid role as before."""
+        from . import _role_catalog
+        return _role_catalog.known(self.cfg, self.store)
+
+    def role_catalog(self) -> list:
+        """The roles administrators added (panel, `tinysesam roles`, `create_role`), sorted by name:
+        `[{"name", "created_at", "created_by", "in_config"}]` — `in_config` = the configuration names the role too
+        (then the configuration owns it, and the catalog row may be deleted)."""
+        from . import _role_catalog
+        owned = _role_catalog.config_names(self.cfg)
+        return [dict(r, in_config=r["name"] in owned) for r in self.store.catalog_roles()]
+
+    def role_usage(self, name: str) -> dict:
+        """Where a role is held or waits to be: `{"users", "keys", "services", "links", "approvals"}` — accounts,
+        API key scopes (not revoked, not expired), OAuth service scopes, open invitations and pairing codes, pending
+        approvals of `tinysesam.account.set_roles`. What `delete_role` checks."""
+        return self.store.role_usage([name])[name]
+
+    def _catalog_actor(self, actor) -> Optional[str]:
+        """The name the catalog records for `actor` — None for the operator's own code; `RoleError("forbidden")` for
+        an actor that is no administrator (delegated admins do not change the catalog)."""
+        from .errors import RoleError
+        if actor is None:
+            return None
+        try:
+            if actor["is_admin"]:
+                return str(actor["username"])
+        except (KeyError, IndexError, TypeError):
+            pass
+        raise RoleError("forbidden", "Only an administrator changes the role catalog")
+
+    def create_role(self, name: str, actor=None) -> dict:
+        """Add a role to the catalog, so the admin panel offers it without a change of the configuration. A
+        convenience: it grants nothing (the role still has to be given to accounts). `actor` (an account row or
+        dict) must be an administrator; None is your own code. Refused with `RoleError` (`e.code`): `invalid` (a
+        comma, a control or format character, surrounding spaces, empty, more than 64 characters, an ambiguous role
+        level entry), `in_config` (the configuration names it, or `admin`), `exists` (also as another case),
+        `full`, `forbidden`. Audit `role_created`. Returns `{"name"}`."""
+        from . import _role_catalog
+        by = self._catalog_actor(actor)
+        result = _role_catalog.create(self.cfg, self.store, name, by)
+        self.audit("role_created", by, None, f"name={_role_catalog.detail(name)} via=code")
+        return result
+
+    def delete_role(self, name: str, actor=None) -> dict:
+        """Remove an unused role from the catalog. Refused with `RoleError` (`e.code`) while it is held or waiting
+        anywhere (`in_use`, `e.usage` as in `role_usage`), when it is one level of a role level entry whose other
+        roles are still known (`in_ladder`), `not_found`, `forbidden`. Check and delete run in one transaction; nothing
+        cascades — remove the role from accounts and keys first. Audit `role_deleted`. Returns `{"name",
+        "in_config"}` (`in_config`: the configuration names it, so it stays known)."""
+        from . import _role_catalog
+        by = self._catalog_actor(actor)
+        result = _role_catalog.delete(self.cfg, self.store, name)
+        self.audit("role_deleted", by, None, f"name={_role_catalog.detail(name)} via=code")
+        return result
 
     @staticmethod
     def _refuse_role_names(roles) -> None:
@@ -7506,6 +7567,28 @@ class TinySesam:
                 "configure it again or release them: tinysesam accounts release --app %s",
                 n, security.for_log(app_id), security.for_log(app_id))
         return orphaned
+
+    def _check_role_catalog(self) -> None:
+        """The role catalog against the configuration, once at start: a catalog row whose name breaks T-85 (a foreign
+        writer; it is never offered), a catalog row the configuration names as well (redundant — the configuration
+        owns the role), and the role levels over every known role (`available_roles` ∪ catalog): a ladder without an
+        entry, an entry missing a level role. The last two were `config_check` warnings until the catalog — without the
+        database they would be false alarms for entries that come from the catalog."""
+        from . import _role_catalog
+        log = logging.getLogger("tinysesam")
+        rows = [r["name"] for r in self.store.catalog_roles()]
+        broken = [r for r in rows if role_invalid(r)]
+        if broken:
+            security.seclog.warning("The role catalog holds names with a comma, a control character or surrounding "
+                                    "spaces: %s. The panel does not offer them; delete them (tinysesam roles delete).",
+                                    security.for_log(", ".join(repr(r) for r in broken)))
+        owned = _role_catalog.config_names(self.cfg)
+        twice = [r for r in rows if r in owned]
+        if twice:
+            log.warning("The configuration names the catalog roles %s too — the configuration owns them; the catalog "
+                        "rows are redundant and may be deleted.", security.for_log(", ".join(twice)))
+        for line in config_check.ladder_coverage(self.cfg, self.known_roles()):
+            log.warning("%s", line)
 
     def _check_app_accounts(self) -> list:
         """The applications of `apps` with `provisioning` whose service account is missing or is no service account —

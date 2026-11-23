@@ -9,7 +9,12 @@ import logging
 import os
 import re
 import stat
+import sys
 import tempfile
+
+# The package of THIS tree, not one installed elsewhere (an editable install of another working tree): run directly, as
+# the pre-push hook does, the suite otherwise tested that tree's code.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -289,7 +294,7 @@ _command_list = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_mai
 # no account, no identifier, not even a write. `accounts` (T-90, stage B) hands existing accounts to an application or
 # takes them back (`managed_by`) and cancels a deletion — it creates no account and changes no identifier.
 assert _command_list == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner",
-                      "rename", "delete", "keys", "diagnose", "accounts"}, \
+                      "rename", "delete", "keys", "diagnose", "accounts", "roles"}, \
     (f"CLI commands changed: {sorted(_command_list)} — if one of them can now create accounts "
      "or change identifiers, the operator messages must be changed along")
 ok("first-admin warning names ensure_admin instead of the CLI (which creates no accounts)")

@@ -465,6 +465,15 @@ CREATE TABLE IF NOT EXISTS approval (
     ip_request     TEXT,
     ip_decision    TEXT
 );
+-- The role catalog (schema 25): roles an administrator added in the panel or with `tinysesam roles`, so the panel offers
+-- them next to `available_roles`. It grants nothing: headers, tokens and `has_role` read only the roles an account
+-- holds. A role the configuration names is no catalog role (the configuration stays the truth).
+CREATE TABLE IF NOT EXISTS role_catalog (
+    name         TEXT PRIMARY KEY,         -- the role exactly as stored on accounts
+    name_compare TEXT NOT NULL UNIQUE,     -- casefold(name): no "Editors" next to "editors"
+    created_at   INTEGER NOT NULL,
+    created_by   TEXT                      -- account name of the actor, "cli", or NULL (own code)
+);
 CREATE INDEX IF NOT EXISTS idx_approval_subject ON approval(subject_id, state);
 CREATE INDEX IF NOT EXISTS idx_approval_requester ON approval(requester_kind, requester_ref, created_at);
 CREATE INDEX IF NOT EXISTS idx_app_password_user ON app_password(user_id);
@@ -1054,7 +1063,10 @@ class Store:
     #: 24 — `approval.nonce` (approvals, stage B): the `state` an application sends with the browser entry; it goes back
     #:      in the return address and into the confirmation as `nonce`. Additive; an older version ignores the column
     #:      (and has no application actions: their requests get 400 there, open ones expire).
-    SCHEMA_VERSION = 24
+    #: 25 — `role_catalog` (the role catalog): roles an administrator added, offered by the panel next to
+    #:      `available_roles`. Additive; an older version ignores the table — the roles stay on the accounts and its
+    #:      panel shows them as roles outside the configuration, nothing is lost or granted.
+    SCHEMA_VERSION = 25
 
     #: Old table name → new table name (schema 16).
     RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
@@ -5130,6 +5142,109 @@ class Store:
         self._exec("INSERT INTO oauth_code(code_hash, client_id, user_id, redirect_uri, code_challenge, resource, "
                    "scope, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                    (code_hash, client_id, user_id, redirect_uri, code_challenge, resource, scope, now, expires_at))
+
+    # ---------- the role catalog (schema 25) ----------
+    def catalog_roles(self) -> list:
+        """The catalog, sorted by name: `[{"name", "created_at", "created_by"}]`."""
+        return [dict(r) for r in self._all("SELECT name, created_at, created_by FROM role_catalog ORDER BY name")]
+
+    def add_catalog_roles(self, names, created_by: Optional[str], limit: int) -> str:
+        """Add `names` to the catalog in ONE transaction: all or none. `"ok"`, `"exists"` when one of them (or its
+        casefold) is there already — the UNIQUE indexes decide, also against a concurrent writer — or `"full"` when
+        the catalog would grow past `limit`."""
+        names = list(dict.fromkeys(names))
+        with self._writing():
+            self._begin_immediate()
+            count = int(self.db.execute("SELECT COUNT(*) AS n FROM role_catalog").fetchone()["n"])
+            if count + len(names) > limit:
+                self.db.rollback()
+                return "full"
+            try:
+                for name in names:
+                    self.db.execute("INSERT INTO role_catalog(name, name_compare, created_at, created_by) VALUES (?,?,?,?)",
+                                    (name, name.casefold(), _now(), created_by))
+            except sqlite3.IntegrityError:
+                self.db.rollback()
+                return "exists"
+            self.db.commit()
+        return "ok"
+
+    def _role_usage_locked(self, names, now: int) -> dict:
+        """`{name: {"users", "keys", "services", "links", "approvals"}}` — where each of `names` is held or waits to
+        be: accounts (every row), API key scopes (not revoked, not expired), OAuth service scopes (not revoked), open
+        one-time tokens with roles in their payload (invitations, service pairing codes) and pending approvals of
+        `tinysesam.account.set_roles` that would add it. Called inside a transaction (or under `_lock`)."""
+        wanted = set(names)
+        out = {n: {"users": 0, "keys": 0, "services": 0, "links": 0, "approvals": 0} for n in wanted}
+
+        def count(kind: str, raw) -> None:
+            try:
+                value = json.loads(raw) if isinstance(raw, str) else raw
+            except (ValueError, TypeError):
+                return
+            for role in set(value) if isinstance(value, list) else ():
+                if isinstance(role, str) and role in wanted:
+                    out[role][kind] += 1
+
+        for r in self.db.execute("SELECT roles FROM users"):
+            count("users", r["roles"])
+        for r in self.db.execute("SELECT roles FROM api_key WHERE revoked = 0 "
+                                 "AND (expires_at IS NULL OR expires_at > ?)", (now,)):
+            count("keys", r["roles"])
+        for r in self.db.execute("SELECT roles FROM oauth_service_client "
+                                 "WHERE revoked_at IS NULL AND roles IS NOT NULL"):
+            count("services", r["roles"])
+        for r in self.db.execute("SELECT payload FROM magic_token WHERE used_at IS NULL AND expires_at > ? "
+                                 "AND payload IS NOT NULL", (now,)):
+            try:
+                payload = json.loads(r["payload"])
+            except (ValueError, TypeError):
+                continue
+            if isinstance(payload, dict):
+                count("links", payload.get("roles"))
+        for r in self.db.execute("SELECT payload FROM approval WHERE state = 'pending' "
+                                 "AND type = 'tinysesam.account.set_roles'"):
+            try:
+                payload = json.loads(r["payload"])
+            except (ValueError, TypeError):
+                continue
+            if isinstance(payload, dict):
+                count("approvals", payload.get("add"))
+        return out
+
+    def role_usage(self, names, now: Optional[int] = None) -> dict:
+        """`_role_usage_locked` for a read (the panel's list, the CLI)."""
+        with self._lock:
+            return self._role_usage_locked(names, _now() if now is None else now)
+
+    def delete_catalog_roles_if_unused(self, names, now: Optional[int] = None) -> tuple:
+        """Remove `names` from the catalog only if none of them is used anywhere (`_role_usage_locked`) — check and
+        delete in ONE transaction (`BEGIN IMMEDIATE`, also across processes): an account, key or invitation that gets
+        one of the roles while this runs either commits before (then the role is in use and stays) or waits for the
+        lock and commits after (then it holds a role the catalog no longer knows — the panel shows it under roles
+        outside the configuration). Returns `("ok", usage)`, `("in_use", usage)` or `("missing", {})` when one of
+        them is not in the catalog."""
+        names = list(dict.fromkeys(names))
+        now = _now() if now is None else now
+        with self._writing():
+            self._begin_immediate()
+            have = {r["name"] for r in self.db.execute(
+                f"SELECT name FROM role_catalog WHERE name IN ({','.join('?' * len(names))})", names)}
+            if len(have) != len(names):
+                self.db.rollback()
+                return "missing", {}
+            usage = self._role_usage_locked(names, now)
+            self._catalog_hook()
+            if any(any(v.values()) for v in usage.values()):
+                self.db.rollback()
+                return "in_use", usage
+            self.db.executemany("DELETE FROM role_catalog WHERE name = ?", [(n,) for n in names])
+            self.db.commit()
+        return "ok", usage
+
+    def _catalog_hook(self) -> None:
+        """Between the usage check and the delete, inside the transaction: nothing here. A test replaces it to show
+        that a concurrent assignment cannot slip in between (tests/test_role_catalog.py)."""
 
     def roles_in_use(self) -> list:
         """Every role some account carries, sorted (for the start check against `available_roles`)."""
