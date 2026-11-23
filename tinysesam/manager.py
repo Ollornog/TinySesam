@@ -548,6 +548,7 @@ class TinySesam:
         # The account API (`apps`): an application whose service account is missing or is a person stays shut — the
         # API checks the key's account on every request (fail-closed); here it is said once, at start.
         self._check_app_accounts()
+        self._check_orphaned_app_accounts()
         # Collisions in the identifier space from existing data: the database has prevented new ones
         # since 2026-09-26 (trigger over the counting buckets, `Store._trigger_sql`), but one from an
         # older version, from a raw UPDATE or from a row of a foreign writer
@@ -1866,6 +1867,9 @@ class TinySesam:
         self.store.set_disabled(uid, bool(disabled), through_operator=True)
         keys = self._lock_effects(uid) if disabled else 0
         self._lock_audit(u, bool(disabled), keys)
+        if not disabled and u["delete_after"]:
+            # Unlocking ends a deletion by the application (`Store.set_disabled`) — said in the log.
+            self.audit("provision_restore", str(u["username"]), detail=f"uid={uid} by=operator")
         return True
 
     def _reset_access(self, user_id: int, *, app_id: str, approved_by: dict, detail: str = "") -> dict:
@@ -4733,6 +4737,35 @@ class TinySesam:
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
                 "payload": read_payload(row["purpose"], row["payload"])}
 
+    def _app_link_refused(self, data: Optional[dict]) -> bool:
+        """Is this sign-in link one an application obtained (account API: creation, a new link, an access reset) for
+        an account that is no longer wholly that application's? Then it signs nobody in.
+
+        An application holds the link of every account it creates until the first sign-in. If the operator or a
+        delegate then gives the account a role outside the allowlist (an `approver_role`, the part of another
+        application), makes it administrator or a delegate, or releases it, the application would sign in as that
+        account through the link it still holds. Checked at the door, not at each place that changes an account, so
+        no path is missed — panel, delegate, approval, CLI, an embedding application, the identity provider. The same
+        once anyone has signed in to the account after the link was issued: the application's link is for the way
+        in, not for a second key beside the person's own."""
+        if not data:
+            return False
+        payload = data.get("payload") or {}
+        app_id = payload.get("app") if isinstance(payload, dict) else None
+        if not app_id:
+            return False
+        u = self.store.get_user(data["user_id"]) if data.get("user_id") is not None else None
+        app = self._provisioning().apps().get(str(app_id))
+        if u is None or app is None:
+            return True
+        roles = self.user_roles(u)
+        delegates = self._provisioning()._delegate_roles()
+        if not config_check.app_visible(app["id"], u, roles, delegates) or not config_check.may_manage(
+                frozenset(app["roles"]), None, u, roles, delegate_roles=delegates, without_roles=True):
+            return True
+        issued, last = payload.get("issued_at"), u["last_login_at"]
+        return bool(last) and (not isinstance(issued, int) or int(last) > issued)
+
     def peek_magic(self, raw, purpose=None) -> Optional[dict]:
         """Check a token WITHOUT consuming it (for the invite flow: redeem only at registration).
         Return as for `redeem_magic`."""
@@ -5140,6 +5173,12 @@ class TinySesam:
         With a `login_chain`, an account that lacks factors for it is led through the setup pass
         (`/auth/setup`) after the link: it sets up what the chain demands before it is fully signed
         in (T-34)."""
+        return self._signin_link(user_id, ttl_min=ttl_min, next=next)
+
+    def _signin_link(self, user_id, ttl_min=None, next="/", app_id: Optional[str] = None) -> dict:
+        """`create_signin_link`, and for the account API (`app_id`): the token then names the application and the
+        moment it was issued, so the door refuses it once the account is no longer wholly the application's
+        (`_app_link_refused`) — however that came about."""
         if not self.cfg.magiclink_enabled:
             raise ConfigError("magiclink_enabled=False — a sign-in link would have no route that redeems it")
         if not str(self.cfg.base_url or "").strip():
@@ -5168,8 +5207,10 @@ class TinySesam:
         # (`grant_mfa_enrollment`) first; then the link opens the setup pass.
         if not self._link_allowed(int(u["id"])):
             raise ValueError(self.t("api.signin_link_first_only"))
-        raw = self.create_magic_token("login", user_id=int(u["id"]), ttl_min=ttl,
-                                      payload={"next": str(next or "/"), "issued": "operator"})
+        payload: dict = {"next": str(next or "/"), "issued": "operator"}
+        if app_id:
+            payload.update(app=str(app_id), issued_at=_now())
+        raw = self.create_magic_token("login", user_id=int(u["id"]), ttl_min=ttl, payload=payload)
         url = self.magic_url(raw, base)
         self.audit("signin_link_issue", str(u["username"]), detail=f"ttl_min={ttl}")
         # T-47: a link is a way into the account for whoever holds it — the holder learns of it
@@ -7407,10 +7448,26 @@ class TinySesam:
         # the switch on — without it nothing changes, not even the keys of this result.
         if getattr(self.cfg, "approvals_enabled", False):
             numbers.update(self._approvals().gc())
+        # Account API (stage B): accounts whose grace period after a deletion by their application has run out.
+        numbers["provisioning_deleted"] = self.store.gc_provisioning(_now())
         days = int(self.cfg.audit_retention_days or 0)
         if days > 0:
             numbers["audit"] = self.store.gc_audit(_now() - days * 86400)
         return numbers
+
+    def _check_orphaned_app_accounts(self) -> dict:
+        """Accounts whose `managed_by` names an application that is not (or no longer) configured with
+        `provisioning` — one warning per application with the number. They stay as they are; no key reaches them
+        until the operator configures the application again or releases them (`tinysesam accounts release`).
+        Returns `{app_id: count}`."""
+        configured = set(self._provisioning().apps())
+        orphaned = {a: n for a, n in self.store.managed_counts().items() if a not in configured}
+        for app_id, n in orphaned.items():
+            logging.getLogger("tinysesam").warning(
+                "%d account(s) are managed by the application %s, which is not configured (apps[…].provisioning) — "
+                "configure it again or release them: tinysesam accounts release --app %s",
+                n, security.for_log(app_id), security.for_log(app_id))
+        return orphaned
 
     def _check_app_accounts(self) -> list:
         """The applications of `apps` with `provisioning` whose service account is missing or is no service account —

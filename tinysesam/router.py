@@ -530,7 +530,8 @@ def build_router(auth) -> APIRouter:
             """Only the sign-in link now. E-mail confirmation and invitation have had their own
             endpoints since 0.16 — otherwise disabling the magic link took both along."""
             _no_request_route(token)
-            if not auth.peek_magic(token, purpose="login"):
+            peeked = auth.peek_magic(token, purpose="login")
+            if not peeked or auth._app_link_refused(peeked):
                 auth._token_rejected("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, purpose="login",
@@ -551,6 +552,12 @@ def build_router(auth) -> APIRouter:
                            auth.client_ip(request))
                 return auth.render_page("magic_invalid", request=request, status=403,
                                         message=auth.t("magic.first_only"))
+            # A link an application obtained (account API) for an account that is no longer wholly the application's —
+            # a foreign role, admin, delegate, released — or that someone signed in to since: spent, nobody signed in.
+            if auth._app_link_refused(data):
+                auth.audit("magic_app_link_refused", auth._account_name(data["user_id"]), auth.client_ip(request),
+                           f"app={security.for_log(str((data.get('payload') or {}).get('app')))}")
+                return auth.render_page("magic_invalid", request=request, status=403)
             return _login_after_token(auth, request, data["user_id"],
                                      auth.safe_next((data.get("payload") or {}).get("next") or "", request),
                                      link=True)

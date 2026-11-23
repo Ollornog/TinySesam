@@ -2743,7 +2743,13 @@ finally:
 r.check("create_signin_link without base_url: ConfigError, no token (no derived base, no Host header)",
         _link_refused and _token_lines(_a_link) == _tokens_before,
         f"refused={_link_refused}, tokens {_tokens_before}->{_token_lines(_a_link)}")
-_MEASURED |= {"create_signin_link"}
+# Since the account API, stage B, the body lives in `_signin_link` (an application's link names the application);
+# `create_signin_link` only calls it. Measured the same way: with `app_id` the link is base_url too.
+_app_link_url = _a_link._signin_link(_link_uid, app_id="example")["url"]
+r.check("_signin_link (account API): the link is base_url, subpath exactly once",
+        _app_link_url.startswith(_UNDER + "/auth/magic/") and urlsplit(_app_link_url).path.count("/portal") == 1,
+        _app_link_url[:120])
+_MEASURED |= {"create_signin_link", "_signin_link"}
 _sender = set()
 for _file in sorted((ROOT / "tinysesam").glob("*.py")):
     _tree = _ast.parse(_file.read_text(encoding="utf-8"))

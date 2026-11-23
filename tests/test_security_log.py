@@ -286,9 +286,10 @@ _command_list = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_mai
 # the named route exists); the first-admin warning here stays as it is. `delete` (T-27) removes an
 # account — it creates none and changes no identifier (it frees them), so this warning stays too. `keys` (T-48)
 # rotates and retires the installation's keys — no account, no identifier. `diagnose` (T-79) only reads: a report,
-# no account, no identifier, not even a write.
+# no account, no identifier, not even a write. `accounts` (T-90, stage B) hands existing accounts to an application or
+# takes them back (`managed_by`) and cancels a deletion — it creates no account and changes no identifier.
 assert _command_list == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner",
-                      "rename", "delete", "keys", "diagnose"}, \
+                      "rename", "delete", "keys", "diagnose", "accounts"}, \
     (f"CLI commands changed: {sorted(_command_list)} — if one of them can now create accounts "
      "or change identifiers, the operator messages must be changed along")
 ok("first-admin warning names ensure_admin instead of the CLI (which creates no accounts)")

@@ -1,11 +1,12 @@
-"""The account API for applications, stage A: an application manages the accounts it creates itself.
+"""The account API for applications, stages A and B: an application manages the accounts it creates itself.
 
     TinySesamConfig(available_roles=["example-member", "example-editor"], magiclink_enabled=True,
                     base_url="https://auth.example.com",
                     apps={"example": {"account": "svc-example", "name": "Example",
                                       "provisioning": {"roles": ["example-member", "example-editor"],
                                                        "scopes": ["users:read", "users:invite",
-                                                                  "users:update", "users:disable"]}}})
+                                                                  "users:update", "users:disable",
+                                                                  "users:delete"]}}})
 
 The application calls TinySesam directly (not through the proxy) with an automation key of its service account:
 
@@ -14,7 +15,13 @@ The application calls TinySesam directly (not through the proxy) with an automat
     PATCH /auth/api/users/{id}                  display name and the roles of its allowlist (users:update)
     POST  /auth/api/users/{id}/disable|enable   lock with its own mark `disabled=3`, lift only that (users:disable)
     POST  /auth/api/users/{id}/signin-link      a new one-time link, only before the first sign-in (users:invite)
+    DELETE /auth/api/users/{id}                 never signed in: for good (204); otherwise locked, gone after
+                                                `delete_grace_days` (202, users:delete)
+    POST  /auth/api/users/{id}/restore          take a deletion back within the grace period (users:delete)
     GET   /auth/api/provisioning                what the application may do (no scope)
+
+The operator takes accounts over for an application (`managed_by`) or releases them — panel and
+`tinysesam accounts adopt|release|restore|list`; `adopt_refusal` is the one rule both apply.
 
 Resetting the access of an account that has signed in before is no route here: it is the approval type
 `tinysesam.account.reset_access` (`POST /auth/api/approvals`, scope `users:reset`), which a person holding
@@ -38,10 +45,10 @@ import time
 from typing import Any, Optional
 
 from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from . import config_check, security
-from .errors import ConfigError
+from .errors import ConfigError, StateError
 from .store import name_invalid, norm_email, norm_identifier, valid_email
 
 #: The header with the account the application claims to act for (a decimal id, or `-` for a job without a person).
@@ -126,10 +133,64 @@ def normalize_apps(cfg) -> dict:
                                      1, max_ttl), max_ttl),
             "max_accounts": _int(block.get("max_accounts"), config_check.PROVISIONING_DEFAULTS["max_accounts"],
                                  1, config_check.PROVISIONING_MAX_ACCOUNTS),
+            "delete_grace_days": _int(block.get("delete_grace_days"),
+                                      config_check.PROVISIONING_DEFAULTS["delete_grace_days"],
+                                      0, config_check.PROVISIONING_GRACE_MAX),
             "limits": {k: _int(limits.get(k), v, 1, config_check.PROVISIONING_LIMIT_MAX)
                        for k, v in config_check.PROVISIONING_LIMITS.items()},
         }
     return out
+
+
+def app_name(app: Optional[dict], app_id: str, lang: str = "en") -> str:
+    """How the panel and the CLI name an application: its `name` in `lang` (a text, or a mapping language → text,
+    falling back to English and then to any entry), else its id."""
+    name = (app or {}).get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    if isinstance(name, dict):
+        for k in (lang, "en"):
+            if isinstance(name.get(k), str) and name[k].strip():
+                return name[k].strip()
+        for v in name.values():
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return app_id
+
+
+def adopt_refusal(app: dict, target, target_roles, delegate_roles=frozenset()) -> Optional[str]:
+    """Why the operator may NOT take `target` over for `app` (`managed_by = app id`) — None when it may.
+
+    The one rule of the panel action and `tinysesam accounts adopt`: an account no application manages yet, no
+    administrator, owner, service account or delegate, at least one role, and every role in the application's
+    allowlist (`config_check.may_manage`, strict like a delegate scope). "Holds one allowlist role" is not enough: the
+    application could then lock or delete an account that also carries the part of another application or the
+    operator. Returns `not_found`, `managed`, `admin`, `owner`, `service`, `delegate`, `no_roles` or `foreign_roles`.
+    Pure."""
+    if target is None:
+        return "not_found"
+    if target["managed_by"]:
+        return "managed"
+    for word in ("is_admin", "is_owner", "is_service"):
+        if target[word]:
+            return word[3:]
+    roles = [r for r in target_roles or []]
+    if any(isinstance(r, str) and r in delegate_roles for r in roles):
+        return "delegate"
+    if not roles:
+        return "no_roles"
+    if not config_check.may_manage(frozenset(app["roles"]), None, target, roles, delegate_roles=delegate_roles):
+        return "foreign_roles"
+    return None
+
+
+def deletion_due(row, now: Optional[int] = None) -> bool:
+    """Has the grace period of a deletion by an application run out? Then the account is gone for the application
+    (404) even before the cleanup removes it."""
+    after = row["delete_after"] if row is not None else None
+    if not after:
+        return False
+    return int(after) <= int(_now() if now is None else now)
 
 
 class Provisioning:
@@ -215,27 +276,34 @@ class Provisioning:
             raise ProvisioningError("actor_required", 400, "TinySesam-On-Behalf-Of: an account id or - for a job")
         self.auth._claim_for_audit(claimed)
 
-    # ---------- limits (per application and hour, in the shared `flow` table) ----------
-    def _window(self) -> tuple[int, int]:
+    # ---------- limits (per application and hour or day, in the shared `flow` table) ----------
+    @staticmethod
+    def _window(day: bool = False) -> tuple[int, int]:
         now = _now()
-        return now // 3600, 3600 - now % 3600
+        span = 86400 if day else 3600
+        return now // span, span - now % span
 
-    def _key(self, app: dict, action: str) -> str:
-        return f"prov:{app['id']}:{action}:{self._window()[0]}"
+    def _key(self, app: dict, action: str, day: bool = False) -> str:
+        return f"prov:{app['id']}:{action}:{'day:' if day else ''}{self._window(day)[0]}"
 
     def spend(self, app: dict, action: str) -> None:
-        """Count one use of `action` (`create`, `disable`, `link`, `taken`) — 429 `limit` beyond the hourly limit,
-        with a security-log warning and the audit line `provision_throttled`. The counter lives in the database, so
-        several workers on one file share it."""
-        limit = app["limits"][f"{action}_per_hour"]
-        if not self.store.count_up(self._key(app, action), limit, 3700):
-            self._throttled(app, action)
+        """Count one use of `action` (`create`, `disable`, `link`, `taken`, `delete`) — 429 `limit` beyond its hourly
+        limit (and its daily one, `delete_per_day`), with a security-log warning and the audit line
+        `provision_throttled`. The counters live in the database, so several workers on one file share them."""
+        for day in (False, True):
+            name = f"{action}_per_{'day' if day else 'hour'}"
+            if name not in app["limits"]:
+                continue
+            if not self.store.count_up(self._key(app, action, day), app["limits"][name], 86500 if day else 3700):
+                self._throttled(app, action, day)
 
-    def _throttled(self, app: dict, action: str):
-        self.auth.audit("provision_throttled", None, None, f"app={app['id']} action={action}")
-        security.seclog.warning("account API throttled app=%s action=%s ip=%s", security.for_log(app["id"]), action,
-                                security.for_log((self._ip() or "-")))
-        raise ProvisioningError("limit", 429, f"{action}_per_hour", retry_after=self._window()[1])
+    def _throttled(self, app: dict, action: str, day: bool = False):
+        self.auth.audit("provision_throttled", None, None,
+                        f"app={app['id']} action={action} window={'day' if day else 'hour'}")
+        security.seclog.warning("account API throttled app=%s action=%s window=%s ip=%s", security.for_log(app["id"]),
+                                action, "day" if day else "hour", security.for_log((self._ip() or "-")))
+        raise ProvisioningError("limit", 429, f"{action}_per_{'day' if day else 'hour'}",
+                                retry_after=self._window(day)[1])
 
     def _ip(self) -> Optional[str]:
         return self.auth._request_ip()
@@ -258,13 +326,21 @@ class Provisioning:
         row = self.store.get_user(int(text)) if _ID.match(text) else None
         delegates = self._delegate_roles()
         roles = self.auth.user_roles(row) if row is not None else []
-        if not config_check.app_visible(app["id"], row, roles, delegates):
+        # A deletion whose grace period has run out is final for the application, before the cleanup gets to it.
+        if not config_check.app_visible(app["id"], row, roles, delegates) or deletion_due(row):
             self.auth.audit("provision_denied", None, None, f"app={app['id']} reason=not_found uid={_safe(text)[:20]}")
             raise ProvisioningError("not_found", 404)
         if whole and not config_check.may_manage(frozenset(app["roles"]), None, row, roles,
                                                  delegate_roles=delegates, without_roles=True):
             raise ProvisioningError("account_shared", 409, "the account holds roles outside the application's allowlist")
         return row
+
+    @staticmethod
+    def not_deleting(row) -> None:
+        """A write on an account in its grace period (other than restoring or deleting it again) → 409: unlocking it
+        would leave an active account the cleanup deletes, a new role or link would outlive the deletion."""
+        if row["delete_after"]:
+            raise ProvisioningError("account_deleting", 409, "the account is being deleted; restore it first")
 
     @staticmethod
     def state(row) -> str:
@@ -319,11 +395,14 @@ class Provisioning:
     # ---------- actions ----------
     def info(self, request: Request) -> dict:
         app = self.caller(request)
-        remaining = {k: max(0, v - self.store.counter(self._key(app, k[:-len("_per_hour")])))
-                     for k, v in app["limits"].items()}
+        remaining = {}
+        for k, v in app["limits"].items():
+            action, unit = k.rsplit("_per_", 1)
+            remaining[k] = max(0, v - self.store.counter(self._key(app, action, unit == "day")))
         return {"app": app["id"], "name": app["name"], "scopes": app["scopes"], "roles": app["roles"],
                 "approver_role": app["approver_role"],
                 "link_ttl_min": app["link_ttl_min"], "max_accounts": app["max_accounts"],
+                "delete_grace_days": app["delete_grace_days"],
                 "accounts": self.store.count_managed(app["id"]), "limits": dict(app["limits"]),
                 "remaining": remaining}
 
@@ -359,7 +438,7 @@ class Provisioning:
             for row in rows:
                 after = int(row["id"])
                 roles = self.auth.user_roles(row)
-                if not config_check.app_visible(app["id"], row, roles, delegates):
+                if not config_check.app_visible(app["id"], row, roles, delegates) or deletion_due(row):
                     continue
                 v = self.view(app, row)
                 if (role is not None and role not in v["roles"]) or (state is not None and v["state"] != state):
@@ -420,7 +499,7 @@ class Provisioning:
             raise self._taken(app, "email" if getattr(e, "field", None) == "email" else "username") from None
         auth.audit("user_create", None, None, f"{username} service=False uid={uid}")
         try:
-            link = auth.create_signin_link(uid, ttl_min=app["link_ttl_min"])
+            link = auth._signin_link(uid, ttl_min=app["link_ttl_min"], app_id=app["id"])
         except (ValueError, ConfigError):
             # The configuration changed at runtime (no sign-in link, no base_url): the account stands, the application
             # issues the link with `POST …/signin-link` once it works again.
@@ -439,6 +518,7 @@ class Provisioning:
         """`PATCH /auth/api/users/{id}` — `app` and the visible `row` were resolved before the body was read."""
         uid = int(row["id"])
         self.claim(request, app, write=True)
+        self.not_deleting(row)
         b = self._fields(body, UPDATE_FIELDS)
         if not b:
             raise ProvisioningError("invalid", 400, "nothing to change: display_name, roles")
@@ -459,6 +539,7 @@ class Provisioning:
         self.need(app, "users:disable")
         row = self.target(app, uid, whole=True)
         self.claim(request, app, write=True)
+        self.not_deleting(row)
         self.spend(app, "disable")
         try:
             outcome = self._panel().app_lock(int(row["id"]), lock)
@@ -474,6 +555,7 @@ class Provisioning:
         self.need(app, "users:invite")
         row = self.target(app, uid, whole=True)
         self.claim(request, app, write=True)
+        self.not_deleting(row)
         if row["first_login_at"] is not None:
             # After the first sign-in a link from a key would be a takeover: from then on the person helps themselves
             # (sign-in link to their address, reset) or the operator does.
@@ -483,11 +565,64 @@ class Provisioning:
         self.spend(app, "link")
         auth.store.revoke_user_magic_tokens(int(row["id"]))
         try:
-            link = auth.create_signin_link(int(row["id"]), ttl_min=app["link_ttl_min"])
+            link = auth._signin_link(int(row["id"]), ttl_min=app["link_ttl_min"], app_id=app["id"])
         except (ValueError, ConfigError):
             # `magiclink_first_login_only`, a configuration changed at runtime, or a change between the checks above and here: no link, no text from inside.
             raise ProvisioningError("conflict", 409, "no sign-in link for this account now") from None
         return {"id": int(row["id"]), "signin_url": link["url"], "expires_at": link["expires_at"], "qr": link["qr"]}
+
+    def delete(self, request: Request, uid) -> tuple[int, Optional[dict]]:
+        """`DELETE /auth/api/users/{id}` — (status, body). An account that never signed in goes for good at once
+        through `TinySesam.delete_user` (204: nothing to protect, and a typo is taken back cleanly); so does every
+        account with `delete_grace_days=0`. Any other is locked with the application's mark (`disabled=3`, the effect
+        of every lock: sessions, keys, devices, app passwords, open links) and gets `delete_after` = now + the grace
+        period (202); its name stays taken until the cleanup (`gc`) deletes it through the same path. Asking again
+        during the period changes nothing and answers the same. Counted against `delete_per_hour`/`delete_per_day`:
+        a leaked key that deletes en masse meets a limit, and what it did stays restorable."""
+        auth = self.auth
+        app = self.caller(request)
+        self.need(app, "users:delete")
+        row = self.target(app, uid, whole=True)
+        self.claim(request, app, write=True)
+        target_id = int(row["id"])
+        if row["delete_after"]:
+            return 202, {"id": target_id, "state": "deleting", "delete_after": int(row["delete_after"])}
+        self.spend(app, "delete")
+        grace = int(app["delete_grace_days"])
+        if row["first_login_at"] is None or grace == 0:
+            try:
+                gone = auth.delete_user(target_id)
+            except StateError:
+                raise ProvisioningError("conflict", 409, "the account cannot be deleted now") from None
+            if not gone:
+                raise ProvisioningError("not_found", 404)
+            return 204, None
+        until = _now() + grace * 86400
+        if not self.store.schedule_deletion(target_id, until):
+            # Deleted or scheduled by someone else between the check above and here.
+            now = self.store.get_user(target_id)
+            if now is None or not now["delete_after"]:
+                raise ProvisioningError("not_found", 404)
+            return 202, {"id": target_id, "state": "deleting", "delete_after": int(now["delete_after"])}
+        keys = auth._lock_effects(target_id)
+        auth.audit("provision_delete_scheduled", str(row["username"]), None,
+                   f"uid={target_id} delete_after={until}" + (f" api_keys_revoked={keys}" if keys else ""))
+        return 202, {"id": target_id, "state": "deleting", "delete_after": until}
+
+    def restore(self, request: Request, uid) -> dict:
+        """`POST /auth/api/users/{id}/restore` — take a deletion back within the grace period: `delete_after` goes,
+        the application's lock is lifted (a lock of the operator stays). After the period the account answers 404
+        like one that is gone; an account that is not being deleted → 409 `not_deleting`."""
+        app = self.caller(request)
+        self.need(app, "users:delete")
+        row = self.target(app, uid, whole=True)
+        self.claim(request, app, write=True)
+        if not row["delete_after"]:
+            raise ProvisioningError("not_deleting", 409, "the account is not being deleted")
+        if not self.store.cancel_deletion(int(row["id"]), _now()):
+            raise ProvisioningError("not_found", 404)
+        self.auth.audit("provision_restore", str(row["username"]), None, f"uid={int(row['id'])}")
+        return self.view(app, self.store.get_user(int(row["id"])))
 
 
 def _safe(value) -> str:
@@ -582,5 +717,22 @@ def register_routes(r, auth) -> None:
     def provisioning_link(request: Request, uid: str):
         try:
             return ok_json(svc.link(request, uid))
+        except ProvisioningError as e:
+            return error(e)
+
+    @r.delete("/auth/api/users/{uid}")
+    def provisioning_delete(request: Request, uid: str):
+        try:
+            status, data = svc.delete(request, uid)
+        except ProvisioningError as e:
+            return error(e)
+        if data is None:
+            return Response(status_code=status, headers={"Cache-Control": "no-store"})
+        return ok_json(data, status)
+
+    @r.post("/auth/api/users/{uid}/restore")
+    def provisioning_restore(request: Request, uid: str):
+        try:
+            return ok_json(svc.restore(request, uid))
         except ProvisioningError as e:
             return error(e)

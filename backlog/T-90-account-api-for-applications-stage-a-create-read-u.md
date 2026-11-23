@@ -30,14 +30,23 @@ application.
 - [x] Limits per application and hour in the `flow` table (shared by workers), audit with the panel's event names plus
       `app=… actor_claimed=…`, start check of the service account.
 
-## Stage B — delete, panel, CLI (open)
+## Stage B — delete, panel, CLI (done in its own pull request)
 
-- [ ] `DELETE /auth/api/users/{id}`: never signed in → at once; otherwise `disabled=3` + `delete_after`, `restore`,
-      `gc_provisioning` through `delete_user`; `users:delete`, `delete_grace_days`, `delete_per_hour`/`per_day`.
-- [ ] Panel: mark "managed by", filter, adopt/release with step-up, "cancel deletion"; account page names the
-      application as the origin of a link ("by Example").
-- [ ] CLI `tinysesam accounts adopt|release|restore|list`.
-- [ ] Browser test of the panel marks.
+- [x] `DELETE /auth/api/users/{id}`: never signed in → at once (`204`, `delete_user`); otherwise `disabled=3` +
+      `delete_after` (`202`), `restore` within the period (afterwards `404`), the cleanup (`Store.gc_provisioning` in
+      `TinySesam.gc()` and `tinysesam gc`) through the one deletion path; `users:delete`, `delete_grace_days`,
+      `delete_per_hour`/`delete_per_day`; during the period every other write `409 account_deleting`; the operator's
+      unlock ends a deletion. No schema change.
+- [x] Panel: "App: Example" in the type column, filter by application, "Managed by …" (also "(not configured)") on the
+      account page, "Take over for …"/"Release" (administrators, step-up), "Cancel deletion"; a delegate sees an
+      application's account only in scope. English and German.
+- [x] CLI `tinysesam accounts adopt|release|restore|list`; one rule for adopting (`provisioning.adopt_refusal`); start
+      warning for accounts of an application that is not configured.
+- [x] Follow-up of the access reset: a sign-in link the application obtained names it and dies at the door once the
+      account is no longer wholly the application's (foreign role, admin, delegate, released) or someone signed in
+      after it was issued (`TinySesam._app_link_refused`).
+- [x] Tests `tests/test_accounts_stage_b.py` (every row of the stage-B table with its mutation), browser test of the
+      panel marks (light/dark, 375/390 px, strict CSP).
 
 ## Access reset (done in its own pull request)
 
@@ -54,5 +63,6 @@ application.
 - [ ] Gateway variable `TINYSESAM_APPS` — together with the switches the gateway preset turns off (API keys, sign-in
       link, a way to set up a factor); alone it could never pass `config_check`.
 - [ ] `require_approval` per action (stage C), joining existing accounts with their consent.
+- [ ] The holder's account page names the application as the origin of a link or lock ("by Example", draft §8).
 
 Design: the accepted draft of 2026-11-22 (sections 0–13).

@@ -284,18 +284,21 @@ Remaining risk: a person who confirms without reading. The match code, the step-
 that harder, not impossible — the page is deliberately plain: who asks (key name and date), what (one sentence and the
 values), the code, the time left. Revoking the asking key ends a flood of requests.
 
-## Account API for applications (stage A)
+## Account API for applications
 
 With an application in `apps` that has a `provisioning` block, the application manages the accounts **it creates
-itself** through `/auth/api/users`: create (with a one-time link until the first sign-in), read, change the display name
-and the roles of its allowlist, lock and unlock. It calls TinySesam directly with an automation key of its service
+itself** (or the operator handed it) through `/auth/api/users`: create (with a one-time link until the first sign-in),
+read, change the display name and the roles of its allowlist, lock and unlock, delete with a grace period and restore. It calls TinySesam directly with an automation key of its service
 account.
 
 **What a leaked application key can do at most:** create accounts with the roles of the allowlist (`create_per_hour`,
 `max_accounts`) and receive their one-time links — so: own ways in with the application's roles, which is why those
 roles should belong to the application alone (`config_check` warns about a role without the `<app>-` prefix); change
 allowlist roles on the application's accounts; lock and unlock them (only its own lock, `disable_per_hour`); read the
-names, addresses, roles of the allowlist and sign-in times of the application's accounts.
+names, addresses, roles of the allowlist and sign-in times of the application's accounts; delete the application's
+accounts — at once only those that never signed in, every other one locked with a grace period (`delete_grace_days`,
+default 7) during which the application or the operator restores it, bounded by `delete_per_hour` and
+`delete_per_day`.
 
 **What it cannot do:** become administrator or delegate, see or change any other account, take over an account that
 has been used (no link after the first sign-in, no address change, no password, no factor), issue keys or app passwords,
@@ -330,11 +333,33 @@ create service accounts, lift a lock of the operator. The rules behind that:
   or `-` for a job; 400 without it). The audit names the service account as actor and the claim as
   `actor_claimed=<name>#<id>`. Answers `actor_invalid` count against `taken_per_hour`, like answers "taken": they would
   otherwise enumerate accounts.
-- **Limits per application** in the database (shared by every worker): creations, locks, links and "taken" answers per
-  hour (`429` with `Retry-After`, a security-log warning and `provision_throttled`); `max_accounts`.
+- **Limits per application** in the database (shared by every worker): creations, locks, links, deletions and
+  "taken" answers per hour, deletions also per day (`429` with `Retry-After`, a security-log warning and
+  `provision_throttled`); `max_accounts`.
+- **Mass deletion stays reversible.** An account that has signed in is never deleted by the key at once: `DELETE`
+  locks it (the effect of every lock) and sets `delete_after`; its name stays taken, so nobody re-creates it under the
+  same name meanwhile. During the period the application may only restore it (every other write answers
+  `409 account_deleting`, `enable` cannot lift the lock); the operator cancels in the panel or by
+  `tinysesam accounts restore`, and the operator's unlock ends the deletion as well. Only the cleanup deletes — through
+  the one deletion path, its audit lines anonymised (H-13), and only while the account is still the application's
+  (released or made administrator meanwhile: the mark goes, the account stays). After the deadline the account answers
+  `404` to the application.
+- **Ownership changes only by the operator.** Taking an existing account over for an application (panel, administrators
+  with a step-up; `tinysesam accounts adopt`) needs every role of the account in the allowlist and at least one, and
+  never takes an administrator, owner, service account or delegate (`provisioning.adopt_refusal`) — "holds one of the
+  application's roles" is not enough, the application could then lock or delete the part of another. Releasing
+  (`managed_by = NULL`) ends a pending deletion. Both are in the audit (`account_adopted`, `account_released`).
+- **The application's link dies when the account stops being wholly its own.** A sign-in link the application obtained
+  (creation, `signin-link`, an access reset) names the application; the door (`/auth/magic/…`) refuses it once the
+  account holds a role outside the allowlist, has become administrator or delegate, is no longer the application's —
+  or someone signed in to it after the link was issued. Otherwise a key that still held the creation link of an account
+  the operator then made an approver would sign in as that approver. Checked at redemption, so no path that changes an
+  account (panel, delegate, approval, CLI, an embedding application, the identity provider) is missed; audit
+  `magic_app_link_refused`. A link the operator issues is not affected.
 
-Remaining risk: whoever holds the key can create accounts with the application's roles until a limit stops them, and
-lock the application's accounts. Revoking the service account's key in the panel shuts the API at once; the audit
+Remaining risk: whoever holds the key can create accounts with the application's roles until a limit stops them,
+lock the application's accounts, and schedule the deletion of up to `delete_per_day` of them a day (restorable within
+the grace period). Revoking the service account's key in the panel shuts the API at once; the audit
 (`provision_*`, `apikey_use`) shows what happened.
 
 ### Resetting an account's access: an approval, never the key alone

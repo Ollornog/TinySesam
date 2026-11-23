@@ -1891,9 +1891,10 @@ cfg = TinySesamConfig(
         "name": {"en": "Example", "de": "Example"},
         "provisioning": {
             "roles": ["example-member", "example-editor"],                       # Allowlist
-            "scopes": ["users:read", "users:invite", "users:update", "users:disable"],
-            "link_ttl_min": 60, "max_accounts": 1000,
-            "limits": {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30},
+            "scopes": ["users:read", "users:invite", "users:update", "users:disable", "users:delete"],
+            "link_ttl_min": 60, "max_accounts": 1000, "delete_grace_days": 7,
+            "limits": {"create_per_hour": 60, "disable_per_hour": 60, "link_per_hour": 30, "taken_per_hour": 30,
+                       "delete_per_hour": 20, "delete_per_day": 100},
         },
     }},
 )
@@ -1919,7 +1920,9 @@ TinySesam-On-Behalf-Of: 17
 | `PATCH /auth/api/users/{id}` | `users:update` | `display_name` und `roles` (die ganze gewünschte Menge innerhalb der Allowlist; andere Rollen bleiben) |
 | `POST /auth/api/users/{id}/disable`, `/enable` | `users:disable` | die eigene Sperre der Anwendung; `enable` hebt nur diese auf |
 | `POST /auth/api/users/{id}/signin-link` | `users:invite` | ein neuer Einmal-Link, nur vor der ersten Anmeldung; ältere Links verfallen |
-| `GET /auth/api/provisioning` | — | was der Key darf: App, Scopes, Rollen, Kontingent, Grenzen und was davon übrig ist |
+| `DELETE /auth/api/users/{id}` | `users:delete` | nie angemeldet: endgültig weg (`204`); sonst gesperrt und nach `delete_grace_days` gelöscht (`202` `{"state": "deleting", "delete_after": …}`) |
+| `POST /auth/api/users/{id}/restore` | `users:delete` | eine Löschung in der Frist zurücknehmen; danach `404` |
+| `GET /auth/api/provisioning` | — | was der Key darf: App, Scopes, Rollen, Kontingent, Frist, Grenzen und was davon übrig ist |
 
 - **Aufrufe gehen direkt an TinySesam**, mit einem Automation-Key des Dienstkontos (`X-Api-Key` oder
   `Authorization: Bearer tsk_…`). Ein Sitzungs-Cookie zählt nicht. Schreibaufrufe tragen `TinySesam-On-Behalf-Of`: die
@@ -1936,7 +1939,7 @@ TinySesam-On-Behalf-Of: 17
 - **Fehler** sind `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
   `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
   email_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
-  disabled_by_operator`, `429 limit` mit `Retry-After`. Schreibrouten dürfen später `202` antworten (Freigaben); das
+  disabled_by_operator|account_deleting|not_deleting`, `429 limit` mit `Retry-After`. Schreibrouten dürfen später `202` antworten (Freigaben); das
   heißt „noch nicht ausgeführt“.
 - Die erste Anmeldung über den Link führt ein Konto ohne Faktoren durch den Einrichtungsgang (`/auth/setup`). Danach
   hilft sich die Person selbst (Anmeldelink an ihre Adresse, Passwort zurücksetzen), der Betreiber hilft — oder der
@@ -1978,9 +1981,34 @@ ohne `output`. Wer die Rolle beim Bestätigen nicht hat, bekommt `result: "forbi
 Einzelheiten und Fehlercodes: [`spec/provisioning-api.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/provisioning-api.md) §5; warum die Rolle nie von der
 Anwendung kommt: `SECURITY.de.md`.
 
+### Löschen, übernehmen, freigeben
+
+- **Löschen** (`users:delete`): Ein Konto, das sich nie angemeldet hat, geht sofort — es gibt nichts zu schützen, und
+  ein Tippfehler lässt sich sauber zurücknehmen. Jedes andere wird wie bei `disable` gesperrt (Sitzungen, Keys,
+  App-Passwörter und offene Links enden) und bekommt `delete_after` = jetzt + `delete_grace_days` (Standard 7, 0 =
+  sofort, höchstens 30); sein Name bleibt vergeben. Der regelmäßige Aufräumlauf (`auth.gc()` oder `tinysesam gc`)
+  löscht es dann über denselben Weg wie das Panel — seine Audit-Zeilen bleiben, anonymisiert. In der Frist darf die
+  Anwendung es wiederherstellen (`POST …/restore`), alles andere antwortet `409 account_deleting`; danach antwortet das
+  Konto mit `404`. `delete_per_hour` (20) und `delete_per_day` (100) begrenzen, was ein geleakter Key löscht. Ein
+  Löschwunsch nach Art. 17 DSGVO, der sofort greifen muss, geht über den Betreiber (Panel „Löschen“).
+- **Bestehende Konten übernehmen:** Einer Anwendung gehört nur, was sie angelegt hat oder was der **Betreiber** ihr
+  übergibt — im Panel („Übernehmen für …“, nur Administratoren, mit Step-up) oder per CLI:
+  `tinysesam accounts adopt --db auth.db --config myapp:cfg --app example --with-role example-member --dry-run`.
+  Nur Konten, deren Rollen alle in der Allowlist der Anwendung liegen (mindestens eine), nie ein Administrator, Owner,
+  Dienstkonto oder Delegierter. `tinysesam accounts release --app example [--user …]` nimmt Konten zurück,
+  `tinysesam accounts restore <konto>` bricht eine Löschung ab (auch im Panel: „Löschung abbrechen“),
+  `tinysesam accounts list [--app example]` zeigt sie mit ihrem Zustand.
+- **Das Panel** kennzeichnet ein Konto einer Anwendung in der Typ-Spalte („App: Example“) und filtert nach Anwendung;
+  die Kontoseite sagt „Verwaltet von …“ — „(nicht konfiguriert)“, wenn die Anwendung aus `apps` verschwunden ist, und
+  das Startlog nennt sie dann mit der Zahl ihrer Konten. Ein Delegierter sieht ein Konto einer Anwendung nur, wenn alle
+  seine Rollen in seinem Bereich liegen.
+- **Der Link der Anwendung ist nur für den Weg hinein:** Sobald ein Konto eine Rolle außerhalb der Allowlist hat (der
+  Betreiber oder ein Delegierter hat sie vergeben, etwa eine `approver_role`), Administrator oder Delegierter wird,
+  freigegeben wird oder sich nach der Ausstellung jemand angemeldet hat, meldet ein Anmeldelink, den die Anwendung noch
+  hält, niemanden mehr an.
+
 Was ein geleakter Anwendungs-Key höchstens kann und was nicht:
 [`SECURITY.de.md`, „Konten-API“](https://github.com/Ollornog/TinySesam/blob/main/i18n/SECURITY.de.md).
-Löschen mit Frist, die Übernahme bestehender Konten und die Kennzeichen im Panel kommen mit Etappe B.
 
 ## Neu in 0.5 — Kurzreferenz
 
@@ -2676,7 +2704,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**123 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**124 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

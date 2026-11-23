@@ -287,18 +287,21 @@ Restrisiko: ein Mensch, der bestätigt, ohne zu lesen. Prüfcode, Step-up je Fre
 verhindern es aber nicht — die Seite ist bewusst schlicht: wer fragt (Key-Name und Datum), was (ein Satz und die
 Werte), der Code, die Restzeit. Den anfragenden Key zu widerrufen beendet eine Flut von Anfragen.
 
-## Konten-API für Anwendungen (Etappe A)
+## Konten-API für Anwendungen
 
 Mit einer Anwendung in `apps`, die einen `provisioning`-Block hat, verwaltet die Anwendung die Konten, **die sie selbst
-anlegt**, über `/auth/api/users`: anlegen (mit einem Einmal-Link bis zur ersten Anmeldung), lesen, Anzeigename und die
-Rollen ihrer Allowlist ändern, sperren und entsperren. Sie ruft TinySesam direkt mit einem Automation-Key ihres
+anlegt** (oder die der Betreiber ihr übergeben hat), über `/auth/api/users`: anlegen (mit einem Einmal-Link bis zur
+ersten Anmeldung), lesen, Anzeigename und die Rollen ihrer Allowlist ändern, sperren und entsperren, mit Frist löschen
+und wiederherstellen. Sie ruft TinySesam direkt mit einem Automation-Key ihres
 Dienstkontos auf.
 
 **Was ein geleakter Anwendungs-Key höchstens kann:** Konten mit den Rollen der Allowlist anlegen (`create_per_hour`,
 `max_accounts`) und deren Einmal-Links bekommen — also eigene Zugänge mit den Rollen der Anwendung; darum sollten diese
 Rollen nur der Anwendung gehören (`config_check` warnt bei einer Rolle ohne Präfix `<app>-`); Allowlist-Rollen auf den
 Konten der Anwendung ändern; sie sperren und entsperren (nur die eigene Sperre, `disable_per_hour`); Namen, Adressen,
-Allowlist-Rollen und Anmeldezeitpunkte der Konten der Anwendung lesen.
+Allowlist-Rollen und Anmeldezeitpunkte der Konten der Anwendung lesen; Konten der Anwendung löschen — sofort nur die
+nie angemeldeten, jedes andere gesperrt mit einer Frist (`delete_grace_days`, Standard 7), in der die Anwendung oder der
+Betreiber es wiederherstellt, begrenzt durch `delete_per_hour` und `delete_per_day`.
 
 **Was er nicht kann:** Administrator oder Delegierter werden, ein anderes Konto sehen oder ändern, ein benutztes Konto
 übernehmen (kein Link nach der ersten Anmeldung, keine Adressänderung, kein Passwort, kein Faktor), Keys oder
@@ -334,12 +337,33 @@ App-Passwörter ausstellen, Dienstkonten anlegen, eine Sperre des Betreibers auf
   einer aktiven Person oder `-` für einen Job; ohne 400). Das Audit nennt das Dienstkonto als Akteur und die Behauptung
   als `actor_claimed=<name>#<id>`. Antworten `actor_invalid` zählen gegen `taken_per_hour` wie Antworten „vergeben“:
   sonst ließen sich Konten aufzählen.
-- **Grenzen je Anwendung** in der Datenbank (von allen Workern geteilt): Anlagen, Sperren, Links und Antworten
-  „vergeben“ je Stunde (`429` mit `Retry-After`, einer Warnung im Sicherheitslog und `provision_throttled`);
-  `max_accounts`.
+- **Grenzen je Anwendung** in der Datenbank (von allen Workern geteilt): Anlagen, Sperren, Links, Löschungen und
+  Antworten „vergeben“ je Stunde, Löschungen auch je Tag (`429` mit `Retry-After`, einer Warnung im Sicherheitslog und
+  `provision_throttled`); `max_accounts`.
+- **Massenlöschung bleibt umkehrbar.** Ein Konto, das sich schon angemeldet hat, löscht der Key nie sofort: `DELETE`
+  sperrt es (die Wirkung jeder Sperre) und setzt `delete_after`; der Name bleibt vergeben, niemand legt es in der
+  Zwischenzeit unter demselben Namen neu an. In der Frist darf die Anwendung es nur wiederherstellen (jeder andere
+  Schreibaufruf antwortet `409 account_deleting`, `enable` hebt die Sperre nicht auf); der Betreiber bricht im Panel
+  oder mit `tinysesam accounts restore` ab, auch sein Entsperren beendet die Löschung. Endgültig löscht nur der
+  Aufräumlauf — über den einen Löschpfad, die Audit-Zeilen anonymisiert (H-13), und nur, solange das Konto noch der
+  Anwendung gehört (inzwischen freigegeben oder Administrator geworden: die Markierung geht, das Konto bleibt). Nach
+  Fristende antwortet das Konto der Anwendung mit `404`.
+- **Eigentum ändert nur der Betreiber.** Ein bestehendes Konto für eine Anwendung übernehmen (Panel, Administratoren
+  mit Step-up; `tinysesam accounts adopt`) verlangt alle Rollen des Kontos in der Allowlist und mindestens eine und
+  übernimmt nie einen Administrator, Owner, ein Dienstkonto oder einen Delegierten (`provisioning.adopt_refusal`) —
+  „hat eine Rolle der Anwendung“ reicht nicht, die Anwendung könnte sonst den Teil einer anderen sperren oder löschen.
+  Freigeben (`managed_by = NULL`) beendet eine offene Löschung. Beides steht im Audit (`account_adopted`,
+  `account_released`).
+- **Der Link der Anwendung stirbt, wenn das Konto ihr nicht mehr ganz gehört.** Ein Anmeldelink, den die Anwendung
+  bekommen hat (Anlage, `signin-link`, Zugang zurücksetzen), nennt die Anwendung; die Tür (`/auth/magic/…`) weist ihn
+  ab, sobald das Konto eine Rolle außerhalb der Allowlist hat, Administrator oder Delegierter geworden ist, nicht mehr
+  der Anwendung gehört — oder sich jemand nach der Ausstellung angemeldet hat. Sonst meldete sich ein Key, der noch den
+  Anlage-Link eines Kontos hält, das der Betreiber danach zum Freigeber gemacht hat, als dieser Freigeber an. Geprüft
+  beim Einlösen, damit kein Weg fehlt, der ein Konto ändert (Panel, Delegierter, Freigabe, CLI, eine einbettende
+  Anwendung, der Identitätsanbieter); Audit `magic_app_link_refused`. Ein Link des Betreibers ist nicht betroffen.
 
-Restrisiko: Wer den Key hat, kann Konten mit den Rollen der Anwendung anlegen, bis eine Grenze greift, und die Konten
-der Anwendung sperren. Den Key des Dienstkontos im Panel zu widerrufen schließt die API sofort; das Audit
+Restrisiko: Wer den Key hat, kann Konten mit den Rollen der Anwendung anlegen, bis eine Grenze greift, die Konten der
+Anwendung sperren und bis zu `delete_per_day` davon am Tag zur Löschung vormerken (in der Frist wiederherstellbar). Den Key des Dienstkontos im Panel zu widerrufen schließt die API sofort; das Audit
 (`provision_*`, `apikey_use`) zeigt, was geschah.
 
 ### Zugang eines Kontos zurücksetzen: eine Freigabe, nie der Key allein

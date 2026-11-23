@@ -4,6 +4,36 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added — account deletion with a grace period, adopt and release
+
+- Account API, stage B (T-90, draft "account API" §5.6, §9): `DELETE /auth/api/users/{id}` (scope `users:delete`).
+  An account that never signed in goes for good at once (`204`, through `delete_user`, audit anonymised); any other is
+  locked with the application's mark (`disabled=3`, the effect of every lock) and gets `delete_after` = now +
+  `provisioning.delete_grace_days` (default 7, 0 = at once, at most 30) — `202 {"state": "deleting", "delete_after"}`,
+  the name stays taken. `POST /auth/api/users/{id}/restore` takes it back within the period, afterwards `404`. During
+  the period every other write answers `409 account_deleting`; the whole-account rule (`409 account_shared`) applies.
+- The cleanup (`TinySesam.gc()`, `tinysesam gc`) deletes accounts past their deadline through the one deletion path
+  (result key `provisioning_deleted`, audit `user_delete reason=delete_after`); an account that is no longer the
+  application's at the deadline is kept and its mark removed (`provision_delete_cancelled`).
+- Limits `delete_per_hour` (20) and `delete_per_day` (100): `429 limit` with `Retry-After`, a security-log warning,
+  audit `provision_throttled window=hour|day`. `GET /auth/api/provisioning` names `delete_grace_days`, and `remaining`
+  counts the daily limit.
+- The operator hands existing accounts to an application or takes them back — CLI `tinysesam accounts
+  adopt|release|restore|list` (adopt only with `--with-role` or `--user`, `--dry-run`, the configuration via
+  `--config`) and the admin panel ("Take over for …", "Release" — administrators, with a step-up; "Cancel deletion").
+  Taking over follows one rule (`provisioning.adopt_refusal`): every role in the allowlist, at least one, never an
+  administrator, owner, service account or delegate. Audit `account_adopted`, `account_released`, `provision_restore`.
+- Panel: the type column marks an application's account ("App: Example"), the list filters by application, the
+  account page says "Managed by …" (also "(not configured)") and shows the end of a pending deletion. A delegate sees
+  an application's account only in scope. Texts in English and German.
+- The start log names an application that holds accounts but is not configured, with their number.
+- A sign-in link the application obtained (creation, `signin-link`, access reset) signs nobody in once the account is
+  no longer wholly the application's — a role outside the allowlist (an approver role from the operator or a
+  delegate), administrator, delegate, released — or someone signed in after it was issued; checked at the door
+  (`/auth/magic/…`), audit `magic_app_link_refused`. Before, an application still holding the creation link of an
+  account the operator then made an approver could sign in as that approver.
+- Unlocking an account by the operator ends a pending deletion by the application. No schema change.
+
 ### Added — an application's team admin resets the access of one of its accounts
 
 - Approval type `tinysesam.account.reset_access` (T-90, draft "account API" §13): the application's service account

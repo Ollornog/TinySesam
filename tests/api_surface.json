@@ -3068,6 +3068,10 @@
       "keys": [],
       "tier": "B"
     },
+    "POST <admin>/api/users/{uid}/adopt": {
+      "keys": [],
+      "tier": "B"
+    },
     "POST <admin>/api/users/{uid}/delete": {
       "keys": [],
       "tier": "B"
@@ -3089,6 +3093,14 @@
       "tier": "B"
     },
     "POST <admin>/api/users/{uid}/password": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/release": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/restore": {
       "keys": [],
       "tier": "B"
     },

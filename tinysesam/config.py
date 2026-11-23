@@ -494,20 +494,23 @@ class TinySesamConfig:
     # (1–20). The answer to a token that keeps asking for something the person keeps refusing.
     approval_reject_limit: int = 3
 
-    # --- Applications: the account API (provisioning, stage A) ---
+    # --- Applications: the account API (provisioning, stages A and B) ---
     # The register of applications that speak to TinySesam through a service account — one entry per product:
     # `{"example": {"account": "svc-example", "name": {"en": "Example"}, "provisioning": {…}}}`. The id (lower-case
     # letters, digits, `_`, at most 32) is what `users.managed_by` stores. `account` names the service account
     # (`is_service`) whose automation keys speak for the application — a key of any other account, a `human` key or
     # a session is refused. With `provisioning` the application manages the accounts it creates itself through
     # `/auth/api/users`: create (with a one-time link until the first sign-in), read, change the display name and the
-    # roles of its allowlist, lock and unlock. Members of `provisioning`: `roles` (the allowlist — listed in
-    # `available_roles`, never `admin`, a delegate role or a role a group map assigns), `scopes` (`users:read`,
-    # `users:invite`, `users:update`, `users:disable`), `link_ttl_min` (default 60, at most `signin_link_max_ttl_min`),
-    # `max_accounts` (default 1000) and `limits` (per hour: `create_per_hour` 60, `disable_per_hour` 60,
-    # `link_per_hour` 30, `taken_per_hour` 30). It never touches passwords, passkeys, TOTP, the address after creation,
-    # an account it did not create, an administrator or a delegate. Empty = no account API. See README "Accounts for
-    # applications" and SECURITY.md "Account API".
+    # roles of its allowlist, lock and unlock, delete and restore. Members of `provisioning`: `roles` (the allowlist —
+    # listed in `available_roles`, never `admin`, a delegate role or a role a group map assigns), `scopes`
+    # (`users:read`, `users:invite`, `users:update`, `users:disable`, `users:delete`), `link_ttl_min` (default 60, at
+    # most `signin_link_max_ttl_min`), `max_accounts` (default 1000), `delete_grace_days` (default 7, 0–30: an account
+    # that has signed in is locked and deleted by the cleanup only after this many days, restorable until then; one that
+    # never signed in goes at once) and `limits` (per hour: `create_per_hour` 60, `disable_per_hour` 60,
+    # `link_per_hour` 30, `taken_per_hour` 30, `delete_per_hour` 20; per day: `delete_per_day` 100). It never touches
+    # passwords, passkeys, TOTP, the address after creation, an account it does not own, an administrator or a
+    # delegate. The operator hands existing accounts to an application or takes them back (panel, `tinysesam accounts
+    # adopt|release`). Empty = no account API. See README "Accounts for applications" and SECURITY.md "Account API".
     # Resetting the access of an account that has signed in before (new phone, forgotten password) is no key action:
     # with the scope `users:reset` and `approver_role` (one role name) the application asks for the approval
     # `tinysesam.account.reset_access` (needs `approvals_enabled`), and a person holding `approver_role` at that moment
