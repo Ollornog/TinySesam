@@ -297,7 +297,7 @@ a6 = asked(app, key, anna, return_url=RETURN, state="k3J-state_1.~")
 assert auth.store.get_approval(a6["id"])["nonce"] == "k3J-state_1.~"
 p6 = c_anna.get(f"/auth/approvals/{a6['id']}")
 csp = p6.headers["content-security-policy"]
-assert "https://app.example.com" in re.search(r"form-action[^;]*", csp).group(0), csp
+assert "https://app.example.com" in re.search(r"form-action[^;]*", csp).group(0).split(), csp
 assert "frame-ancestors 'none'" in csp and p6.headers["x-frame-options"] == "DENY"
 r = decide(c_anna, a6["id"], password=PW)
 assert r.status_code == 303, (r.status_code, r.text[-300:])
@@ -505,6 +505,11 @@ cases = [
 for apps_value, needle in cases:
     text = findings(apps=apps_value)
     assert needle in text, (needle, text[:500])
+for url in ("https://app.example.com:0/r", "https://app.example.com:99999/r", "https://app.example.com:x/r",
+            "https://user@app.example.com/r", "ftp://app.example.com/r", "https:///r"):
+    assert not config_check.approval_return_url_ok(url), url
+assert config_check.approval_return_url_ok("https://app.example.com:8443/r")
+assert config_check.approval_return_url_ok("http://127.0.0.1:8080/r")
 assert "needs approvals_enabled=True" in findings(approvals_enabled=False, apikey_enabled=True)
 assert "approval_token_ttl_sec" in findings(approval_token_ttl_sec=301)
 assert "approval_pickup_sec" in findings(approval_pickup_sec=30)

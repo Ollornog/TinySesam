@@ -2230,7 +2230,8 @@ def approval_return_url_ok(url) -> bool:
     try:
         p = urlsplit(url)
         host = p.hostname or ""
-        port = p.port  # noqa: F841 — raises on a malformed port
+        if p.port == 0:          # reading the port also raises ValueError for a malformed one
+            return False
     except ValueError:
         return False
     if p.scheme == "http":
