@@ -1630,71 +1630,87 @@ print("  Release script: sdist pin and \"from the release after X\" (en/de) foll
 
 # A Dependabot merge cut 0.27.1 (and 0.26.3) as a PATCH release with the whole open CHANGELOG section — new API
 # included — and the closing left no `## [Unreleased]`, so the next entry (#317) went into the published section.
-# The release automation (kit `_release_automatik.py`) calls the repo's own `versionsbefehl`: that must be
-# `scripts/_release.py --automation`, which refuses (rc 1, nothing changed) as soon as `[Unreleased]` holds more than
-# Fixed/Security/Dependencies, and every closing leaves an empty `## [Unreleased]` above the new section.
-# (Mutation probes: `PATCH_CATEGORIES` plus "added" → the Added case falls; `close_changelog` without the fresh
-# heading → the reopen case falls; `--automation` out of release-automatik.json → the wiring falls.)
+# Two parts. (1) Our closing leaves an empty `## [Unreleased]` above the new section. (2) The refusal itself lives in the
+# kit (`_release_automatik.py vorbereiten`, since 0.55.0): other categories than Fixed/Security/Dependencies under
+# `[Unreleased]` → rc 1, `::error::`, job summary, no release PR. We only wire it up and prove with a real probe that the
+# wiring holds: the real `release-automatik.json` must not loosen the check (`changelog.erlaubt`).
+# (Mutation probes: `close_changelog` without the fresh heading → the reopen case falls; `"erlaubt": ["*"]` in
+# release-automatik.json → the probe falls; a fourth key in the changelog block → the wiring case falls.)
+import importlib.util as _ilu_rel  # noqa: E402
 import json  # noqa: E402
 import tempfile  # noqa: E402
-_automation = json.loads(read(".github/release-automatik.json"))["versionsbefehl"]
-assert _automation == ["scripts/_release.py", "--automation", "{version}"], \
-    f"release-automatik.json: versionsbefehl does not call the patch guard: {_automation}"
 _fit = "# Changelog\n\n## [Unreleased]\n\n### Security — a hole\n\n- x\n\n### Fixed\n\n- y\n\n## [1.0.0] — 2026-01-01\n\n### Added\n\n- old\n"
-assert _release.unfit_for_patch(_fit) == [], _release.unfit_for_patch(_fit)
-assert _release.unfit_for_patch("## [Unreleased]\n\n## [1.0.0] — 2026-01-01\n\n### Added\n") == [], "empty section"
-assert _release.unfit_for_patch("## [Unreleased]\n\n### Dependencies\n\n- z\n") == [], "only Dependencies"
-for _cat in ("Added", "Added — gate client", "Changed", "Removed", "Deprecated", "Changed: tooling"):
-    _unfit = _release.unfit_for_patch(_fit.replace("### Fixed", f"### {_cat}"))
-    assert _unfit == [f"### {_cat}"], (_cat, _unfit)
-assert _release.unfit_for_patch("## [Unreleased]\n\nfree text\n\n### Fixed\n\n- y\n"), "text outside a category"
-assert _release.unfit_for_patch("## [1.0.0] — 2026-01-01\n\n### Added\n") == [], "a released Added is history"
 _closed = _release.close_changelog(_fit, "1.0.1", "2026-02-02")
 assert _closed.startswith("# Changelog\n\n## [Unreleased]\n\n## [1.0.1] — 2026-02-02\n\n### Security"), _closed[:120]
 assert _release.close_changelog("# Changelog\n", "1.0.1", "2026-02-02") is None
 
-# The real run: a copy of the tree's script in a throwaway tree, once with Added (refused, nothing changed), once clean.
-with tempfile.TemporaryDirectory() as _tmp:
-    def _tree(changelog: str) -> str:
-        top = tempfile.mkdtemp(dir=_tmp)
-        os.makedirs(os.path.join(top, "scripts")), os.makedirs(os.path.join(top, "tinysesam"))
-        os.makedirs(os.path.join(top, "i18n")), os.makedirs(os.path.join(top, "deploy/forward-auth"))
-        os.makedirs(os.path.join(top, "deploy/quickstart"))
-        with open(os.path.join(top, "scripts/_release.py"), "w", encoding="utf-8") as fh:
-            fh.write(read("scripts/_release.py"))
-        for name, text in {"pyproject.toml": 'version = "1.0.0"\n', "tinysesam/__init__.py": '__version__ = "1.0.0"\n',
-                           "README.md": "tinysesam:v1.0.0\n", "i18n/README.de.md": "tinysesam:v1.0.0\n",
-                           "deploy/forward-auth/docker-compose.yml": "image: tinysesam:v1.0.0\n",
-                           "deploy/quickstart/docker-compose.yml": "image: tinysesam:v1.0.0\n",
-                           "CHANGELOG.md": changelog}.items():
-            with open(os.path.join(top, name), "w", encoding="utf-8") as fh:
+_rel_cfg = json.loads(read(".github/release-automatik.json"))
+assert len(_rel_cfg["changelog"]) == 3, f"release-automatik.json adds keys to the changelog block (an allow list?): {_rel_cfg['changelog']}"
+assert _rel_cfg["versionsbefehl"] == ["scripts/_release.py", "{version}"], _rel_cfg["versionsbefehl"]
+
+# The real kit step `vorbereiten` in a throwaway git tree with the repo's real config. With Added under [Unreleased] it
+# must stop at the kit's check (message names the category); with Fixed only it gets past it (and fails later at
+# `versionsbefehl`, which this tree does not have: nothing is published, no network).
+_kit_spec = _ilu_rel.spec_from_file_location("_kit_release_automatik", os.path.join(ROOT, "scripts", "_release_automatik.py"))
+_kit_rel = _ilu_rel.module_from_spec(_kit_spec)
+_kit_spec.loader.exec_module(_kit_rel)
+assert _kit_rel.unreleased_unerlaubt(_fit, _kit_rel.ERLAUBT["en"]) == [], "kit refuses Fixed/Security"
+assert _kit_rel.unreleased_unerlaubt(_fit.replace("### Fixed", "### Added"), _kit_rel.ERLAUBT["en"]) == ["Added"]
+
+
+def _kit_probe(changelog: str) -> subprocess.CompletedProcess:
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, ".github"))
+        for name, text in {".github/release-automatik.json": read(".github/release-automatik.json"),
+                           "pyproject.toml": 'version = "1.0.0"\n', "CHANGELOG.md": changelog}.items():
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
                 fh.write(text)
-        return top
+        genv = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid", "GITHUB_REPOSITORY": "x/y",
+                "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary.md")}
+        for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "x"], ["tag", "v1.0.0"]):
+            subprocess.run(["git", "-C", tmp, *cmd], check=True, capture_output=True, env=genv)
+        res = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "_release_automatik.py"), "vorbereiten",
+                              "--root", tmp], capture_output=True, text=True, check=False, env=genv)
+        res.summary = read_at_file(os.path.join(tmp, "summary.md"))
+        return res
 
-    def read_at(top: str, name: str) -> str:
-        with open(os.path.join(top, name), encoding="utf-8") as fh:
+
+def read_at_file(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
             return fh.read()
+    except OSError:
+        return ""
 
-    def _run(top: str, *args: str) -> subprocess.CompletedProcess:
-        _summary = os.path.join(top, "summary.md")
-        return subprocess.run([sys.executable, os.path.join(top, "scripts/_release.py"), *args], capture_output=True,
-                              text=True, check=False, env={**os.environ, "GITHUB_STEP_SUMMARY": _summary})
 
-    _top = _tree(_fit.replace("### Fixed", "### Added — new API"))
-    _r = _run(_top, "--automation", "1.0.1")
-    assert _r.returncode == 1 and "### Added — new API" in _r.stderr + _r.stdout, (_r.returncode, _r.stdout, _r.stderr)
-    assert read_at(_top, "pyproject.toml") == 'version = "1.0.0"\n' and "[1.0.1]" not in read_at(_top, "CHANGELOG.md"), \
-        "the refused run changed files"
-    assert "Release automation stopped" in read_at(_top, "summary.md"), "no job summary"
-    _top = _tree(_fit)
-    _r = _run(_top, "--automation", "1.0.1")
+_r = _kit_probe(_fit.replace("### Fixed", "### Added — new API"))
+assert _r.returncode == 1 and "::error::" in _r.stderr and "Added" in _r.stderr and "[Unreleased]" in _r.stderr, \
+    (_r.returncode, _r.stdout, _r.stderr)
+assert "Release automation stopped" in _r.summary, "no job summary"
+_r = _kit_probe(_fit)
+assert "[Unreleased]" not in _r.stderr, (_r.returncode, _r.stderr)   # got past the category check
+
+# The human path (a minor release) has no guard and still closes cleanly.
+with tempfile.TemporaryDirectory() as _tmp:
+    _top = tempfile.mkdtemp(dir=_tmp)
+    for _d in ("scripts", "tinysesam", "i18n", "deploy/forward-auth", "deploy/quickstart"):
+        os.makedirs(os.path.join(_top, _d))
+    with open(os.path.join(_top, "scripts/_release.py"), "w", encoding="utf-8") as fh:
+        fh.write(read("scripts/_release.py"))
+    for name, text in {"pyproject.toml": 'version = "1.0.0"\n', "tinysesam/__init__.py": '__version__ = "1.0.0"\n',
+                       "README.md": "tinysesam:v1.0.0\n", "i18n/README.de.md": "tinysesam:v1.0.0\n",
+                       "deploy/forward-auth/docker-compose.yml": "image: tinysesam:v1.0.0\n",
+                       "deploy/quickstart/docker-compose.yml": "image: tinysesam:v1.0.0\n",
+                       "CHANGELOG.md": _fit.replace("### Fixed", "### Added")}.items():
+        with open(os.path.join(_top, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    _r = subprocess.run([sys.executable, os.path.join(_top, "scripts/_release.py"), "1.1.0"], capture_output=True,
+                        text=True, check=False)
     assert _r.returncode == 0, (_r.stdout, _r.stderr)
-    assert read_at(_top, "pyproject.toml") == 'version = "1.0.1"\n'
-    assert read_at(_top, "CHANGELOG.md").startswith("# Changelog\n\n## [Unreleased]\n\n## [1.0.1] — "), "no reopened section"
-    _top = _tree(_fit.replace("### Fixed", "### Added"))
-    _r = _run(_top, "1.1.0")      # the human path has no guard
-    assert _r.returncode == 0 and read_at(_top, "pyproject.toml") == 'version = "1.1.0"\n', (_r.stdout, _r.stderr)
-print("  Release script: the automation refuses a patch with Added/Changed/…, a closing leaves [Unreleased] open")
+    with open(os.path.join(_top, "CHANGELOG.md"), encoding="utf-8") as fh:
+        assert fh.read().startswith("# Changelog\n\n## [Unreleased]\n\n## [1.1.0] — "), "no reopened section"
+print("  Release script: the kit refuses a patch over Added/Changed/… (probe), a closing leaves [Unreleased] open")
 
 # ---------- Docs travel along: the changelog knows the current state ----------
 changelog = read("CHANGELOG.md")

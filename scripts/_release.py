@@ -3,8 +3,6 @@
 
     python3 scripts/_release.py 0.17.0          set the version, close the CHANGELOG
     python3 scripts/_release.py --check       check only, change nothing
-    python3 scripts/_release.py --automation 0.17.1   as the first, but refuses when [Unreleased] holds more than a
-                                              patch release may carry (the release automation calls it this way)
 
 The version appears in seven places (package, module, two READMEs several times, two compose files) and
 in the CHANGELOG. By hand this has worked so far because a test enforces it — but "works because
@@ -18,7 +16,6 @@ separation as for rollout (delivery, not deployment). It prepares and says what 
 from __future__ import annotations
 
 import datetime as dt
-import os
 import pathlib
 import re
 import sys
@@ -109,52 +106,6 @@ def close_changelog(text: str, new: str, today: str) -> str | None:
     return text.replace(opened, f"{opened}\n\n## [{new}] — {today}", 1)
 
 
-#: What a patch release may carry, the way the CHANGELOG names it (`### Fixed`, `### Security — …`, `### Dependencies`).
-#: Anything else (Added, Changed, Removed, Deprecated, …) is a feature or a change: a minor release, and a human cuts it.
-PATCH_CATEGORIES = frozenset({"fixed", "security", "dependencies"})
-
-
-def unfit_for_patch(text: str) -> list[str]:
-    """What in `[Unreleased]` keeps the release automation from cutting a patch release (empty list: it may).
-
-    The automation (kit `_release_automatik.py`, after a Dependabot merge that changes the image) takes the whole open
-    section with it. Cut as 0.27.1 it published new API (T-83, T-88) in a patch release. A category outside
-    `PATCH_CATEGORIES` and text outside every category (it cannot be classified) both count; an empty or missing
-    section is fine (then the release carries the Dependabot entries only)."""
-    start = re.search(r"^## \[Unreleased\][ \t]*$", text, re.M)
-    if not start:
-        return []
-    rest = text[start.end():]
-    end = re.search(r"^## ", rest, re.M)
-    section = rest[:end.start()] if end else rest
-    found: list[str] = []
-    parts = re.split(r"^### ", section, flags=re.M)
-    if parts[0].strip():
-        found.append("text outside a `###` category")
-    for part in parts[1:]:
-        heading = part.split("\n", 1)[0].strip()
-        category = re.split(r"\s+[—–-]\s+|[:\s]", heading, maxsplit=1)[0].lower()
-        if category not in PATCH_CATEGORIES:
-            found.append(f"### {heading}")
-    return found
-
-
-def automation_check() -> int:
-    """For the release automation: refuse (rc 1) when `[Unreleased]` holds more than a patch release may carry."""
-    unfit = unfit_for_patch(CHANGELOG.read_text(encoding="utf-8"))
-    if not unfit:
-        return 0
-    message = ("no automatic patch release: [Unreleased] holds entries for a minor release (" + "; ".join(unfit) +
-               "). A human decides: run `scripts/_release.py <version>` and merge the release PR.")
-    print(f"::error title=Release automation stopped::{message}")
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a", encoding="utf-8") as fh:
-            fh.write(f"### Release automation stopped\n\n{message}\n\nNothing was changed, no release PR was opened.\n")
-    print(f"  ✗ {message}", file=sys.stderr)
-    return 1
-
-
 def set_value(new: str) -> int:
     old = current_version()
     if old == new:
@@ -199,14 +150,9 @@ def main(argv) -> int:
         return 0
     if argv[0] == "--check":
         return 1 if check() else 0
-    automated = argv[0] == "--automation"
-    if automated:
-        argv = argv[1:]
-    if len(argv) != 1 or not SEMVER.match(argv[0]):
-        print(f"  {' '.join(argv)!r} is not a version of the form X.Y.Z")
+    if not SEMVER.match(argv[0]):
+        print(f"  '{argv[0]}' is not a version of the form X.Y.Z")
         return 2
-    if automated and automation_check():
-        return 1
     return set_value(argv[0])
 
 
