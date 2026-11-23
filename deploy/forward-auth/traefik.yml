@@ -137,7 +137,8 @@ http:
       service: app-svc
 
     # TinySesam's paths on the app's host — the sign-out at the app (T-22: /.tinysesam/logout, /.tinysesam/after-logout)
-    # and the top bar as data for the app's page (T-76: /.tinysesam/topbar.json). Past the check (signing out must work
+    # and the top bar and the own account as data for the app's page (T-76: /.tinysesam/topbar.json, T-91:
+    # /.tinysesam/account.json). Past the check (signing out must work
     # with an expired sign-in too) and with the browser's cookies: they are the credential there. The longer rule wins
     # over `app` by Traefik's default priority (rule length).
     app-tinysesam:

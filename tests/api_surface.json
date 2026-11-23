@@ -76,6 +76,10 @@
     }
   },
   "TinySesam": {
+    "account_overview": {
+      "sig": "(user, *, base: 'Optional[str]' = None, app_host: 'Optional[str]' = None, request: 'Optional[Request]' = None) -> 'Optional[dict]'",
+      "tier": "B"
+    },
     "add_messages": {
       "sig": "(lang, mapping: 'dict')",
       "tier": "A"
@@ -1371,6 +1375,10 @@
       "field": "bool = False",
       "tier": "A"
     },
+    "forward_frame_default": {
+      "field": "str = ''",
+      "tier": "A"
+    },
     "forward_headers": {
       "field": "dict = {}",
       "tier": "A"
@@ -2446,6 +2454,10 @@
       "keys": [],
       "tier": "B"
     },
+    "GET /.tinysesam/account.json": {
+      "keys": [],
+      "tier": "A"
+    },
     "GET /.tinysesam/after-logout": {
       "keys": [],
       "tier": "A"
@@ -2495,6 +2507,10 @@
       "tier": "B"
     },
     "GET /auth/account": {
+      "keys": [],
+      "tier": "B"
+    },
+    "GET /auth/account.json": {
       "keys": [],
       "tier": "B"
     },

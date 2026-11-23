@@ -1282,6 +1282,76 @@ From the [releases feed](https://github.com/Ollornog/TinySesam/releases) — via
 CI runs against the new version and you decide whether to merge. The running version is shown by
 `python -m tinysesam version` and in the admin panel under "Hardening".
 
+## Two ways to use TinySesam
+
+There is no mode switch: every difference below already hangs on a field. The two names only say which side draws
+which page.
+
+| What | **TinySesam provides the pages** | **The app provides the UI** | Field |
+|---|---|---|---|
+| Sign-in, second factor, step-up | TinySesam | TinySesam, **in the app frame** | `forward_apps[host]` `home`, `links` |
+| Change password, TOTP, passkeys, PIN, recovery codes | TinySesam's account page | TinySesam's account page, **in the app frame** | `account_enabled=True` |
+| Approvals, OAuth consent | TinySesam | TinySesam, in the app frame | `approvals_enabled`, `oauth_enabled` |
+| Show the security state | the account page | **the app's settings page**, data from TinySesam | `auth.account_overview`, `/.tinysesam/account.json` |
+| Top bar on the app's pages | `auth.topbar()`, `auth.topbar_data()`, `/auth/topbar.json` | the app's own bar, a "Security" link to the account page | `topbar_links` |
+| Top bar on TinySesam's pages | TinySesam's bar (`topbar_links`) | the app frame: "‹ name", the app's links, the account menu | `forward_apps[host]` |
+| Colleagues' accounts | admin panel, delegated admins | **the app**, through the account API | `apps[id].provisioning` |
+| Admin panel | admins and delegates | operators only (service accounts, adopt/release, gate) | no `admin_delegates` for the app's roles |
+| Look | the instance's tokens or C22 | the same: **one** style for every app behind a gateway | `c22_stylesheet`, `brand_css` |
+
+**The app frame.** Whoever comes from an application's host sees TinySesam's own pages as part of that application:
+the top bar shows "‹ Example" back to `home` (with "via <gate_brand>" below it on a desktop), the application's links,
+and an account menu with *Security* (the account page), *Approvals* (number and word), the admin panel for operators
+only, light/dark/system and *Sign out* (TinySesam's sign-out: the session ends). `topbar_links` and
+`topbar_menu_links` do not appear. A page without a signed-in account (sign-in, TOTP, errors) shows the name only — a
+back link would lead straight back to the sign-in. The frame is chosen by `?app=<host>`, by the host of an absolute
+`next`/`return_url`, or by `app=<host>` inside a relative `next` (so the step-up page keeps the frame of its target);
+`forward_frame_default` names the frame for everything else. **Every target comes from the configuration** — an unknown
+host changes nothing, and nothing of the request becomes a link. The account page's sections have stable anchors:
+`#sessions`, `#totp`, `#passkeys`, `#devices`, `#app-passwords`, `#services`.
+
+```python
+TinySesamConfig(forward_apps={"team.example.com": {
+    "name": "Example",                                    # the frame shows the name and nothing else on the left
+    "home": "/",                                          # a path on this host or https://team.example.com/…
+    "links": [("Spaces", "/spaces"), ("Team", "/team", {"role": "example-lead"})],   # like topbar_links, this host
+}}, trusted_redirect_hosts=["team.example.com"], available_roles=["example-lead"])
+```
+
+**The security state as data.** `auth.account_overview(user, *, base=None, app_host=None, request=None)` (tier B) gives
+what the account page shows: `sign_in` (password, TOTP with the recovery codes left, passkeys, PIN), `sessions` (when,
+last seen, a coarse "browser · system", `current`), `programs` (OAuth programs, services, app passwords: name and last
+use; the number of API keys), `approvals` and `links` (the account page and its anchors, with `app=<host>` for an
+`app_host` with a frame). `null` means "not offered here", `[]` "offered, empty"; there is never an address, a hash, a
+secret, a key prefix or another object's id in it. The account page reads the same function, so page and data cannot
+drift apart. Over HTTP: `GET /auth/account.json` and, on an application's host through the proxy,
+`GET /.tinysesam/account.json` — only for a full browser session (an API key, an OAuth token, an app password or a half
+session gets 401), `no-store`, `Vary: Cookie`, no CORS, 60 reads per account and minute, read only. Ending a session,
+revoking a program or an app password happens on the account page; the application links there with the anchors.
+
+Recipes:
+
+- **The app provides the UI, library, sign-in by OIDC only** (DashMyBoard does this): `admin_enabled=False`,
+  `account_enabled=False`, only `oidc_enabled`. No TinySesam page remains but the sign-in.
+- **The app provides the UI, library, local factors:** `account_enabled=True`. The pages already run on the
+  application's origin: `rp_name`/`gate_brand` = the application's name, `topbar_links` = its navigation — or a
+  `forward_apps` entry for the own host with `forward_frame_default` pointing to it. The settings page reads
+  `auth.account_overview(auth.session_user(request), request=request)`.
+- **The app provides the UI, behind the gateway** (also: TinySesam as a library in a thin wrapper of its own, as the
+  gate in front of an application in another language on other origins): `forward_apps[host]` with `name`, `home`,
+  `links` for every application host (each its own frame — a stable and a test host get their own); `apps[id]` with
+  `provisioning` for the account API; `account_enabled=True`; no `admin_delegates` for the application's roles (the
+  start warns when a delegate role overlaps an allowlist). The application draws its own bar (not from
+  `topbar.json`) with a *Security* link to `/auth/account?app=<host>`, and its settings page shows the security state:
+  - **preferred:** the gate client fetches `/.tinysesam/account.json` server-side with only TinySesam's cookies of the
+    request (spec §8a of `spec/gate-client.md`; the helpers in the clients follow) — then TinySesam itself checks
+    "a person, by browser session";
+  - **or inside the wrapper:** it calls `auth.account_overview(auth.get_user(remote_id), app_host=host)` and hands the
+    dict to the application, the way it hands on `topbar_data`. Then the wrapper owns three duties TinySesam cannot
+    enforce on this path: call it **only** for a checked `Remote-Kind: user` with `Remote-Auth: session`, **only** for
+    the account of that request's `Remote-Id` (never an id from a parameter), and answer with
+    `Cache-Control: no-store`. `current` stays `null` there: the gate token carries no session reference.
+
 ## Several apps, one TinySesam
 
 One installation can protect several apps — and **the identity provider decides who gets into
@@ -2621,6 +2691,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
 - **The top bar on your own pages:** `topbar_head` (tokens, bar CSS and the light/dark restore for `<head>`) and
   `topbar` (the bar with the account menu for this request's session); `topbar_data` (the same bar as data for an
   account, for an interface not drawn in Python) — see [Look & feel](#look--feel).
+- **The security state on your own settings page:** `account_overview` (what the account page shows, as data; the
+  same answer as `/auth/account.json`) — see [Two ways to use TinySesam](#two-ways-to-use-tinysesam).
 - **The gate client for apps without FastAPI:** `tinysesam.gate_client` — every name in its own section,
   [Gate client for Flask, Django and other Python apps](#gate-client-for-flask-django-and-other-python-apps-t-86).
 - **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
@@ -2698,7 +2770,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**126 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**128 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -450,6 +450,36 @@ Remaining risk: an approver who confirms for the wrong person, or a colluding ap
 approver is a person the operator chose, confirms each reset with a step-up, and is named in the audit; the holder is
 notified.
 
+## App frame and the own account as data
+
+**App frame** (`forward_apps[host]` `home`, `links`): the request only *chooses* a frame (`?app=<host>`, the host of
+an absolute `next`/`return_url`, `app=<host>` inside a relative `next`); its name, back link and links come from the
+configuration alone, checked at the start to lie on exactly that host (a path or `https://` on it — no `//`, no user
+part, no quotes). So the frame is no open redirect, and an unknown host answers byte-equal to the page without it (no
+oracle of the configured hosts). Pages without a signed-in account carry no frame link at all. Sign-out in the frame is
+TinySesam's (the session ends), not the application's `forward_logout`.
+
+**Reading the own account** (`GET /auth/account.json`, `GET /.tinysesam/account.json`, `auth.account_overview`):
+
+- **Only a full browser session.** An API key, an OAuth access token, an app password and a half session get 401: the
+  addresses and devices of sessions are a person's view (F-09, like `/auth/sessions`), and the factor state would tell
+  a leaked token which factor is missing. A locked account with a valid cookie gets 401. No parameter chooses an
+  account; the account API never reads another account's security state.
+- **Never in the answer:** addresses, session hashes, secrets, key hashes or prefixes, raw browser strings, ids of
+  other objects. A session shows a coarse "browser · system".
+- **CSRF and other origins:** GET only, nothing changes (POST/DELETE → 405), so no CSRF token; no CORS header, so a
+  foreign origin's page cannot read it; `no-store` and `Vary: Cookie` keep it out of shared caches. There is no writing
+  route under `/.tinysesam/`: there the application's host counts as an own origin (`_origin_ok`), and an XSS in the
+  application could otherwise end sessions after a fresh step-up. Ending sessions, revoking programs and app passwords
+  stay on the account page, behind the existing audited and step-up-guarded routes.
+- **Rate and log:** 60 reads per account and minute; a refusal (429, `Retry-After`) writes a
+  `failed verification … reason=ratelimit_account_json` line, never `failed login` (the fail2ban jail stays quiet).
+  Reads are not audited (own data; every change is).
+- **In a wrapper** that hands `account_overview` to an application in another language, the three duties of the recipe
+  are the wrapper's: only for a checked `Remote-Kind: user` with `Remote-Auth: session`, only for that request's
+  `Remote-Id`, answered with `no-store`. TinySesam cannot enforce them on that path; the gate client's fetch of
+  `/.tinysesam/account.json` (spec §8a) keeps the check with TinySesam.
+
 ## Vulnerable dependencies
 
 Deadlines for fixing a known vulnerability in a dependency of the package or the gateway image

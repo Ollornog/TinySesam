@@ -771,6 +771,7 @@ async def run():
         await accounts_panel(p)
         await provisioning_panel(p)
         await approvals_page(p)
+        await app_frame(p)
 
 
 async def t33_alternatives(p):
@@ -2421,6 +2422,107 @@ async def _app_action_page(p):
     print("  application action: name, operator text with escaped values in <bdi>, ⚠, code; 375px light/dark without "
           "sideways scrolling; confirmed → back to the registered address of another origin with approval + state; "
           "the confirmation picked up once and verified (strict CSP)")
+
+
+async def app_frame(_first):
+    """T-91 in a real browser on the T-33 app (strict CSP, real CSRF), in a tab of its own: the sign-in, step-up and
+    account pages in an application's frame (`forward_apps[host].home/links`, chosen by `?app=`) at 375 px and on a
+    desktop, light and dark — "‹ Example" back to home, "via <gate_brand>" on the desktop only, the application's links
+    in the bar (desktop) or in the menu (phone), "Security" and "Approvals" in words, tap targets ≥ 44 px, no sideways
+    scrolling, no CSP violation, no console error. `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    saved = (t33.cfg.forward_apps, t33.cfg.gate_brand)
+    t33.cfg.forward_apps = {"team.example.com": {"name": "Example Team Space", "home": "/",
+                                                 "links": [("Spaces", "/spaces"), ("Members", "/members")]}}
+    t33.cfg.gate_brand = "Example Gate"
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
+        try:
+            await _app_frame(p)
+        finally:
+            t33.cfg.forward_apps, t33.cfg.gate_brand = saved
+            await p.cmd("Emulation.clearDeviceMetricsOverride")
+            await p.js("localStorage.removeItem('themeMode');true")
+
+
+async def _app_frame(p):
+    import base64
+    failed_before = len(p.failed)
+    console_before = len(p.console)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+    app_q = "app=team.example.com"
+    boss = t33.store.get_user_by_name("boss")["id"]
+    pages = {"login": f"/auth/login?{app_q}",
+             "reauth": f"/auth/reauth?next=%2Fauth%2Faccount%3F{app_q.replace('=', '%3D')}",
+             "account": f"/auth/account?{app_q}"}
+    await p.cmd("Page.navigate", url=T33 + "/auth/login")          # localStorage needs the origin, not about:blank
+    await p.until("document.readyState==='complete' && location.origin!=='null'", "no first page")
+    for name, path in pages.items():
+        await p.cmd("Network.clearBrowserCookies")
+        if name != "login":
+            token, _ = t33.start_session(boss, "password")
+            await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+        for width in (375, 1280):
+            await p.cmd("Emulation.setDeviceMetricsOverride", width=width, height=812 if width < 500 else 900,
+                        deviceScaleFactor=1, mobile=width < 500)
+            for theme in ("light", "dark"):
+                await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+                await p.js("window.__old=true")
+                await p.cmd("Page.navigate", url=T33 + path)
+                await p.until("window.__old===undefined && document.readyState==='complete'"
+                              " && !!document.querySelector('header.tsframe')", f"{name}: no framed page")
+                await p.js("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))")
+                where = f"{name} {width}px {theme}"
+                viol = await p.js("JSON.stringify(window.__csp)")
+                assert viol == "[]", f"CSP violation on {where}: {viol}"
+                assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark"), where
+                over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+                assert over <= 0, f"{where}: {over}px of sideways scrolling"
+                bar = "document.querySelector('header.tsframe')"
+                assert "Example Team Space" in await p.js(f"{bar}.textContent"), where
+                via = await p.js("(()=>{const v=document.querySelector('header.tsframe .tsbar-via');"
+                                 "return v?getComputedStyle(v).display:'missing'})()")
+                assert (via == "none") == (width < 500) and via != "missing", f"{where}: 'via' shown={via}"
+                signed_in = name != "login"
+                assert await p.js(f"!!{bar}.querySelector('a.tsbar-back')") == signed_in, \
+                    f"{where}: a back link {'missing' if signed_in else 'without an account'}"
+                if signed_in:
+                    label = await p.js(f"{bar}.querySelector('a.tsbar-back').getAttribute('aria-label')")
+                    assert label == "Back to Example Team Space", (where, label)
+                    nav = await p.js("getComputedStyle(document.querySelector('header.tsframe .tsbar-links')).display")
+                    assert (nav == "none") == (width < 500), f"{where}: the links in the bar display={nav}"
+                    await p.js(f"{bar}.querySelector('.tsbar-btn').click();true")
+                    items = await p.js(f"[...{bar}.querySelectorAll('.tsbar-pop a')].filter(a=>a.offsetHeight)"
+                                       ".map(a=>a.textContent.trim()).join()")
+                    want = ("Spaces,Members," if width < 500 else "") + "Security,Approvals"
+                    assert items.startswith(want), f"{where}: menu {items!r}, want {want!r}…"
+                    assert "Home" not in items and "My things" not in items, f"{where}: gateway links in the frame"
+                    small = await p.js(f"[...{bar}.querySelectorAll('.tsbar-btn,.tsbar-back,.tsbar-item,"
+                                       ".tsbar-theme button')].filter(e=>e.offsetHeight&&"
+                                       "e.getBoundingClientRect().height<44).map(e=>e.className||e.tagName)")
+                    assert not small, f"{where}: tap targets under 44 px: {small}"
+                    box = json.loads(await p.js(f"JSON.stringify({bar}.querySelector('.tsbar-pop')"
+                                                ".getBoundingClientRect())"))
+                    assert box["left"] >= 0 and box["right"] <= width, f"{where}: the menu leaves the screen {box}"
+                if shots:
+                    os.makedirs(shots, exist_ok=True)
+                    data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+                    with open(os.path.join(shots, f"frame-{name}-{width}-{theme}.png"), "wb") as fh:
+                        fh.write(base64.b64decode(data))
+                if signed_in:
+                    await p.js("document.querySelector('header.tsframe .tsbar-btn').click();true")
+    assert len(p.console) == console_before, f"console errors: {p.console[console_before:][:2]}"
+    assert not p.failed[failed_before:], f"broken requests: {p.failed[failed_before:][:3]}"
+    print("  app frame: sign-in, step-up and account page framed at 375/1280 px, light/dark — back link (not on the "
+          "sign-in page), 'via' on the desktop only, links in the bar or the menu, Security and Approvals in words, "
+          "tap targets ≥ 44 px, no sideways scrolling, no CSP violation (strict CSP)")
 
 
 try:

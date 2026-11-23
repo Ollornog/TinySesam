@@ -402,7 +402,15 @@ try:
         assert h.get("Cache-Control") == "no-store", (was, dict(h))
         st, h, a = request("/.tinysesam/topbar.json", None, port=port)
         assert st == 200 and a and a.get("signed_in") is False and a.get("links") == [], (was, st, a)
-    ok("T-76: /.tinysesam/topbar.json on the application's host reaches TinySesam with the browser's cookies — "
+        # T-91: the own account as data takes the same way — with the cookies, never answered by the application.
+        st, h, a = request("/.tinysesam/account.json", session, port=port)
+        assert st == 200 and a and a.get("signed_in") is True and a["account"]["display_name"] == "Anna Ärger", \
+            (was, st, a)
+        assert "path" not in a and h.get("Cache-Control") == "no-store", (was, dict(h))
+        st, h, a = request("/.tinysesam/account.json", None, port=port)
+        assert st == 401, (was, "without a session", st, a)
+    ok("T-76/T-91: /.tinysesam/topbar.json and /.tinysesam/account.json on the application's host reach TinySesam "
+       "with the browser's cookies (account.json 401 without) — "
        "plain, quickstart and gate template")
 
     # ---------- with gate cookie: TinySesam is not asked ----------

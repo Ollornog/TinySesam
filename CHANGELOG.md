@@ -42,6 +42,37 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   follow.
 - Schema 24: `approval.nonce` (additive; rollback in `docs/OPERATIONS.md`).
 
+### Added — app frame on TinySesam's pages and the own account as data
+
+- Two ways to use TinySesam, as documentation without a switch (T-91): "TinySesam provides the pages" and "the app
+  provides the UI" — a table of what each side draws and three recipes in README (*Two ways to use TinySesam*),
+  `i18n/README.de.md`, `SECURITY.md`/`i18n/SECURITY.de.md` and the skill (recipe 5a). The recipe "behind the gateway"
+  covers TinySesam as a library in a wrapper of its own in front of an application in another language.
+- App frame: `forward_apps[host]` takes `home` (a path or https on exactly this host) and `links` (the shape of
+  `topbar_links`, targets on this host, visibility rules included). Whoever comes from that host (`?app=<host>`, the
+  host of an absolute `next`/`return_url`, `app=<host>` inside a relative `next`) sees sign-in, step-up, account,
+  approval and error pages with "‹ name" back to `home`, "via <gate_brand>" on a desktop, the application's links in
+  the bar or the phone menu, and an account menu with *Security*, *Approvals (n)*, the admin panel for operators only,
+  light/dark/system and sign-out — without `topbar_links`/`topbar_menu_links`. Pages without an account show the name
+  only. Every target comes from the configuration; an unknown host answers byte-equal to the page without it.
+  `forward_frame_default` names the frame when no request does. The account page's sections have the anchors
+  `#sessions`, `#totp`, `#passkeys`, `#devices`, `#app-passwords`, `#services`, and `app=` travels through account →
+  TOTP setup → step-up → back. Read by the library with or without forward auth.
+- `auth.account_overview(user, *, base, app_host, request)` (tier B), `GET /auth/account.json` and
+  `GET /.tinysesam/account.json` (tier A, through every proxy template like `topbar.json`): the account page's state as
+  data — password, TOTP with the recovery codes left, passkeys, PIN, sessions (when, last seen, a coarse
+  "browser · system", `current`), OAuth programs, services, app passwords, the number of API keys, approvals, links to
+  the account page and its anchors. `null` = not offered, `[]` = offered and empty; never an address, a hash, a secret,
+  a key prefix or another object's id. Only for a full browser session (401 for an API key, an OAuth token, an app
+  password, a half session, a locked account), no parameter chooses an account, `no-store` + `Vary: Cookie`, no CORS,
+  60 reads per account and minute (429 with `Retry-After`, a `failed verification` line), GET only. The account page
+  and `/auth/sessions` read the same function. The format is specified in `spec/gate-client.md` §8a for a later
+  `FetchAccount` in the gate clients.
+- `config_check`: a frame without a name, `home`/`links` off the host, `forward_frame_default` without a frame →
+  error; more than 8 frame links, a frame with `topbar_enabled=False`, and a delegate role whose roles overlap an
+  `apps[id].provisioning.roles` allowlist (panel and application would manage the same accounts) → warning. A
+  `forward_apps` entry with a frame no longer warns without forward auth.
+
 ### Added — account deletion with a grace period, adopt and release
 
 - Account API, stage B (T-90, draft "account API" §5.6, §9): `DELETE /auth/api/users/{id}` (scope `users:delete`).

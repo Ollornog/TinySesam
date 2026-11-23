@@ -100,9 +100,13 @@ CSS = f"""
 .tsbar .tsbar-theme button[aria-pressed=true] .tsbar-label-t::after{{content:" \\2713"}}
 .tsbar form{{margin:0}}
 .tsbar a:focus-visible,.tsbar button:focus-visible{{outline:2px solid var(--ts-link);outline-offset:2px}}
+.tsbar .tsbar-back{{gap:6px}}
+.tsbar .tsbar-back svg{{flex:0 0 20px;width:20px;height:20px;color:var(--ts-muted)}}
+.tsbar .tsbar-app{{display:flex;flex-direction:column;min-width:0}}
+.tsbar .tsbar-brand .tsbar-via{{font-size:11px;font-weight:400;letter-spacing:0;color:var(--ts-muted)}}
 @media(max-width:{NARROW_PX}px){{
   .tsbar .tsbar-in{{gap:10px;padding:0 12px}}
-  .tsbar .tsbar-links,.tsbar .tsbar-name{{display:none}}
+  .tsbar .tsbar-links,.tsbar .tsbar-name,.tsbar .tsbar-brand .tsbar-via{{display:none}}
   .tsbar .tsbar-mlinks{{display:flex}}
 }}
 @media(prefers-reduced-motion:reduce){{.tsbar .tsbar-chev{{transition:none}}}}
@@ -150,6 +154,8 @@ _ICON = {
     "out": "<path d='M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3'/><path d='M10 17l-5-5 5-5M5 12h11'/>",
     "link": "<path d='M9 6l6 6-6 6'/>",
     "approve": "<path d='M9 11l3 3 8-8'/><path d='M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9'/>",
+    "back": "<path d='M15 18l-6-6 6-6'/>",
+    "shield": "<path d='M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z'/><path d='M9 12l2 2 4-4'/>",
 }
 
 
@@ -210,8 +216,14 @@ def visible_links(auth, viewer, field: str = "topbar_links") -> list:
     """The (title, target) pairs of `topbar_links` (or `topbar_menu_links`) that `viewer` may see — one filter for the
     bar, the phone menu, the account menu and `/auth/topbar.json`. An entry is `(title, target)` (everyone) or
     `(title, target, rule)` (`link_visible`)."""
+    return filter_links(auth, viewer, getattr(auth.cfg, field, None))
+
+
+def filter_links(auth, viewer, entries) -> list:
+    """The (title, target) pairs of a link list that `viewer` may see — the filter of `visible_links`, also for the
+    links of an app frame (`forward_apps[host]['links']`, T-91)."""
     out = []
-    for entry in getattr(auth.cfg, field, None) or []:
+    for entry in entries or []:
         if not isinstance(entry, (list, tuple)) or len(entry) not in (2, 3):
             continue
         if link_visible(auth, viewer, entry[2] if len(entry) == 3 else None):
@@ -290,6 +302,14 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
     if auth._admin_panel_visible(viewer) and getattr(cfg, "admin_ui_enabled", True):
         items.append(f"<a class=tsbar-item href='{_e('__TS_P__' + cfg.admin_path)}'{cur('admin')}>{_svg('admin')}"
                      f"{_e(t('acc.admin'))}</a>")
+    menu_html = _menu(t, shown, pending, items, csrf)
+    return f"<header class=tsbar><div class=tsbar-in>{brand}{nav}{menu_html}</div></header>"
+
+
+def _menu(t, shown, pending, items: list, csrf: str) -> str:
+    """The account menu: the button, "Signed in as", `items`, the theme choice and "Sign out" (a POST with the CSRF
+    field) — one building block for the bar and the app frame."""
+    items = list(items)
     if items:
         items.append("<div class=tsbar-sep></div>")
     theme = "".join(f"<button type=button data-theme-mode={m} aria-pressed=false>{_svg(m)}"
@@ -306,15 +326,72 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
     if pending:
         label = f"{label} — {t('bar.approvals_n', n=pending)}"
         count = f"<span class=tsbar-count aria-hidden=true title='{_e(t('bar.approvals_n', n=pending))}'>{pending}</span>"
-    menu_html = (f"<div class=tsbar-menu>"
-                 f"<button type=button class=tsbar-btn aria-expanded=false aria-controls=tsbar-pop "
-                 f"aria-label='{_e(label)}'>"
-                 f"<span class=tsbar-av aria-hidden=true>{_e(str(shown)[:1])}</span>"
-                 f"<span class=tsbar-name>{_e(shown)}</span>{count}{_svg('chev', 'tsbar-chev')}</button>"
-                 f"<div class=tsbar-pop id=tsbar-pop hidden>"
-                 f"<div class=tsbar-who>{_e(t('bar.signed_in_as'))}<b>{_e(shown)}</b></div>"
-                 + "".join(items) + "</div></div>")
-    return f"<header class=tsbar><div class=tsbar-in>{brand}{nav}{menu_html}</div></header>"
+    return (f"<div class=tsbar-menu>"
+            f"<button type=button class=tsbar-btn aria-expanded=false aria-controls=tsbar-pop "
+            f"aria-label='{_e(label)}'>"
+            f"<span class=tsbar-av aria-hidden=true>{_e(str(shown)[:1])}</span>"
+            f"<span class=tsbar-name>{_e(shown)}</span>{count}{_svg('chev', 'tsbar-chev')}</button>"
+            f"<div class=tsbar-pop id=tsbar-pop hidden>"
+            f"<div class=tsbar-who>{_e(t('bar.signed_in_as'))}<b>{_e(shown)}</b></div>"
+            + "".join(items) + "</div></div>")
+
+
+def frame_href(host: str, target: str) -> str:
+    """A target of an app frame (T-91) as an address: a path lies on the application's host, not on TinySesam's."""
+    return f"https://{host}{target}" if target.startswith("/") else target
+
+
+def render_frame(auth, frame: dict, *, viewer=None, menu: bool = True, csrf: str = "", current: str = "") -> str:
+    """HTML of the bar in the app frame (T-91, without CSS/JS): TinySesam's page looks like part of the application.
+
+    `frame` comes from `TinySesam._frame` — host, name, home and links, all from `forward_apps[host]`, never from the
+    request. Left "‹ name" back to `home` (with `aria-label` "Back to name") and, on a desktop, "via <gate_brand>"
+    muted below it; in the middle the frame's links that `viewer` may see (the filter of `topbar_links`); on the right
+    the account menu: "Signed in as", on a phone the links under the application's name, "Security" (the account page,
+    framed), approvals (number and word), the admin panel for operators (the admin flag) only, light/dark/system,
+    sign out. `topbar_links` and `topbar_menu_links` do not appear. Without a viewer (sign-in, errors): the name only —
+    no back link (it would lead straight back to the sign-in) and no link at all in the source."""
+    from urllib.parse import quote
+    cfg = auth.cfg
+    t = auth.t
+    host, name = frame["host"], frame["name"]
+    gate = getattr(cfg, "gate_brand", "") or cfg.rp_name
+    via = f"<span class=tsbar-via>{_e(t('bar.via', name=gate))}</span>" if gate and gate != name else ""
+    label = f"<span class=tsbar-app><span>{_e(name)}</span>{via}</span>"
+    if not (menu and viewer):
+        return f"<header class='tsbar tsframe'><div class=tsbar-in><div class=tsbar-brand>{label}</div></div></header>"
+    q = "?app=" + quote(host, safe="")
+
+    def cur(key):
+        return " aria-current=page" if key and key == current else ""
+
+    brand = (f"<a class='tsbar-brand tsbar-back' href='{_e(frame['home'])}' aria-label='{_e(t('bar.back', name=name))}'>"
+             f"{_svg('back')}{label}</a>")
+    links = [(title, frame_href(host, target)) for title, target in filter_links(auth, viewer, frame.get("links"))]
+    nav = (f"<nav class=tsbar-links aria-label='{_e(name)}'>"
+           + "".join(f"<a href='{_e(h)}'>{_e(title)}</a>" for title, h in links) + "</nav>") if links else ""
+    shown = _field(viewer, "display_name") or _field(viewer, "username") or "?"
+    items = []
+    if links:
+        items.append(f"<div class=tsbar-mlinks><div class=tsbar-label>{_e(name)}</div>"
+                     + "".join(f"<a class=tsbar-item href='{_e(h)}'>{_svg('link')}{_e(title)}</a>"
+                               for title, h in links)
+                     + "<div class=tsbar-sep></div></div>")
+    if getattr(cfg, "account_enabled", True):
+        items.append(f"<a class=tsbar-item href='__TS_P__/auth/account{_e(q)}'{cur('account')}>{_svg('shield')}"
+                     f"{_e(t('bar.security'))}</a>")
+    pending = auth._approvals_pending(viewer)
+    if pending is not None:
+        word = t("bar.approvals_n", n=pending) if pending else t("bar.approvals")
+        items.append(f"<a class=tsbar-item href='__TS_P__/auth/approvals{_e(q)}'{cur('approvals')}>{_svg('approve')}"
+                     f"{_e(word)}</a>")
+    # The admin panel in the frame for operators only: a delegated admin manages accounts in the application then.
+    if (_field(viewer, "is_admin") and auth._admin_panel_visible(viewer)
+            and getattr(cfg, "admin_ui_enabled", True)):
+        items.append(f"<a class=tsbar-item href='{_e('__TS_P__' + cfg.admin_path)}'{cur('admin')}>{_svg('admin')}"
+                     f"{_e(t('acc.admin'))}</a>")
+    return (f"<header class='tsbar tsframe'><div class=tsbar-in>{brand}{nav}"
+            f"{_menu(t, shown, pending, items, csrf)}</div></header>")
 
 
 def assets() -> str:

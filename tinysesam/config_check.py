@@ -107,9 +107,11 @@ def _urlsplit_host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
-def _topbar_link_findings(config, f: str, links, hosts: set, roles_known: set, error: list, warnings: list) -> None:
-    """The checks of one top bar link field (`topbar_links`, `topbar_menu_links`, named by `f` in the findings):
-    shape, visibility, target."""
+def _topbar_link_findings(config, f: str, links, hosts: set, roles_known: set, error: list, warnings: list,
+                          frame: bool = False) -> None:
+    """The checks of one top bar link field (`topbar_links`, `topbar_menu_links`, `forward_apps[host]['links']` —
+    named by `f` in the findings): shape, visibility, target. `frame`: the links of an app frame (T-91), whose
+    targets lie on exactly the application's host (`hosts` = that one host)."""
     links = links or []
     if not isinstance(links, (list, tuple)):
         links = [links]
@@ -142,20 +144,38 @@ def _topbar_link_findings(config, f: str, links, hosts: set, roles_known: set, e
                     "available_roles — a typo hides it from everyone. List the role in available_roles.",
                     f=f, title=link[0], role=rule["role"]))
         href = link[1]
-        bad = not href or any(z in href for z in "'\"<>\\ \t\n")
-        if href.startswith("/") and not href.startswith("//"):
-            ok = not bad
-        elif href.startswith("https://") and not bad:
-            ok = _urlsplit_host(href) in hosts
-        else:
-            ok = False
-        if not ok:
+        if not _frame_target_ok(href, hosts):
+            if frame:
+                error.append(_t(
+                    config,
+                    "{f}: {h!r} — a target of the app frame is a path (\"/spaces\", on this host) or an https "
+                    "address on exactly this host, without quotation marks, angle brackets, backslash and spaces",
+                    f=f, h=href))
+                continue
             error.append(_t(
                 config,
                 "{f}: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on "
                 "the host of base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, "
                 "backslash and spaces",
                 f=f, h=href))
+
+
+def _frame_target_ok(href, hosts: set) -> bool:
+    """A link target of the top bar or the app frame: a path (not `//`) or an https address on one of `hosts`, without
+    quotation marks, angle brackets, backslash and white space (the bar writes it into a single-quoted attribute)."""
+    if not isinstance(href, str):
+        return False
+    bad = not href or any(z in href for z in "'\"<>\\ \t\n\r")
+    if bad:
+        return False
+    if href.startswith("/") and not href.startswith("//"):
+        return True
+    if href.startswith("https://"):
+        try:
+            return _urlsplit_host(href) in hosts and "@" not in href.split("/", 3)[2]
+        except ValueError:
+            return False
+    return False
 
 
 def _t(config, template: str, **values) -> str:
@@ -999,6 +1019,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
 
     _roles_without_list(config, warnings)
     _admin_delegates(config, error, warnings)
+    _delegates_and_app_allowlists(config, warnings)
     _role_level_ladders(config, error, warnings)
 
     # `audit_retention_days` is checked by NUMBER_LIMITS (below): a negative period would be in `gc()` a
@@ -1644,7 +1665,11 @@ def _groups_scope(config, warnings: list) -> None:
             affected="; ".join(affected)))
 
 
-FORWARD_APP_KEY_NAME = ("name", "login", "logout", "app_passwords")
+FORWARD_APP_KEY_NAME = ("name", "login", "logout", "app_passwords", "home", "links")
+#: The members of a `forward_apps[host]` entry that make up the app frame (T-91) — read by the library too.
+FORWARD_FRAME_KEYS = ("home", "links")
+#: More frame links than this would no longer fit next to the name on a desktop (a warning, not an error).
+FORWARD_FRAME_LINKS_MAX = 8
 FORWARD_LOGIN = ("page", "direct")
 FORWARD_LOGOUT = ("all", "app", "ask")
 
@@ -1707,17 +1732,21 @@ def _forward_apps(config, error: list, warnings: list) -> None:
                 where=where, value=e['app_passwords']))
         if e.get("login") == "direct":
             direct.append((where, "direct"))
+        _forward_frame(config, where, str(host).strip().lower().rstrip("."), e, error, warnings)
         if trusted and str(host).strip().lower() not in trusted:
             warnings.append(_t(
                 config,
                 "{where} is not in trusted_redirect_hosts — there is no redirect back for this "
                 "host, the setting never takes effect.",
                 where=where))
-    if apps and not _an(config, "forward_auth_enabled"):
+    # The app frame (T-91) is read by the library as well; only an entry WITHOUT a frame is moot without forward auth.
+    if (apps and not _an(config, "forward_auth_enabled")
+            and any(isinstance(e, dict) and not (set(e) & set(FORWARD_FRAME_KEYS)) for e in apps.values())):
         warnings.append(_t(
             config,
             "forward_apps is set, but forward_auth_enabled is False — only forward auth reads "
             "the per-application settings."))
+    _forward_frame_default(config, apps, error, warnings)
     # "Sign out everywhere" without the provider, in front of a gate that sends directly to the provider: the
     # next page request silently signs in again — signing out looks like a reload.
     sign_outs = [sign_out] + [str(e.get("logout")) for e in apps.values() if isinstance(e, dict) and e.get("logout")]
@@ -1740,6 +1769,92 @@ def _forward_apps(config, error: list, warnings: list) -> None:
                 "OIDC is the only login method (enabled: {enabled}). Otherwise the other "
                 "methods would have no way onto the login page.",
                 where=direct[0][0], enabled=', '.join(methods) or _t(config, "none")))
+
+
+def _forward_frame(config, where: str, host: str, e: dict, error: list, warnings: list) -> None:
+    """The app frame of one `forward_apps` entry (T-91): `home` and `links` lie on exactly this host, and a frame has a
+    name — the bar of a frame shows nothing else on the left."""
+    if not set(e) & set(FORWARD_FRAME_KEYS):
+        return
+    if not (isinstance(e.get("name"), str) and e["name"].strip()):
+        error.append(_t(
+            config,
+            "{where} has an app frame (home/links) but no name — the frame shows the application's name and "
+            "nothing else on the left. Set {where}['name'].",
+            where=where))
+    if "home" in e and not _frame_target_ok(e["home"], {host}):
+        error.append(_t(
+            config,
+            "{where}['home']={value!r}: a path (\"/\", on this host) or an https address on exactly this host, "
+            "without quotation marks, angle brackets, backslash and spaces.",
+            where=where, value=e["home"]))
+    if "links" in e:
+        links = e["links"]
+        if not isinstance(links, (list, tuple)):
+            error.append(_t(
+                config,
+                "{where}['links']={value!r}: a list of (title, target) pairs like topbar_links.",
+                where=where, value=links))
+            return
+        roles_known = set(getattr(config, "available_roles", None) or [])
+        _topbar_link_findings(config, f"{where}['links']", links, {host}, roles_known, error, warnings, frame=True)
+        if len(links) > FORWARD_FRAME_LINKS_MAX:
+            warnings.append(_t(
+                config,
+                "{where}['links'] has {n} entries — more than {limit} no longer fit next to the name on a desktop.",
+                where=where, n=len(links), limit=FORWARD_FRAME_LINKS_MAX))
+    if not getattr(config, "topbar_enabled", True):
+        warnings.append(_t(
+            config,
+            "{where} has an app frame (home/links), but topbar_enabled=False — the frame is a form of the top bar "
+            "and is not shown.",
+            where=where))
+
+
+def _forward_frame_default(config, apps: dict, error: list, warnings: list) -> None:
+    """`forward_frame_default` (T-91) names a host of `forward_apps` whose entry has a frame."""
+    raw = getattr(config, "forward_frame_default", "")
+    if raw in (None, ""):
+        return
+    if not isinstance(raw, str):
+        return                 # the type check reports it
+    host = raw.strip().lower().rstrip(".")
+    entry = next((e for h, e in apps.items() if str(h).strip().lower().rstrip(".") == host), None)
+    if not isinstance(entry, dict) or not set(entry) & set(FORWARD_FRAME_KEYS):
+        error.append(_t(
+            config,
+            "forward_frame_default={value!r} names no forward_apps entry with an app frame (home or links) — "
+            "the default frame would be empty.",
+            value=raw))
+
+
+def _delegates_and_app_allowlists(config, warnings: list) -> None:
+    """Delegated administration next to an application's account API (T-91, draft §5): when the roles a delegate role
+    manages overlap with an `apps[id].provisioning.roles` allowlist, the panel and the application manage the same
+    accounts — `may_manage` does not look at `managed_by` for delegates. Both may run side by side in one gateway, so
+    it is a warning."""
+    delegates = getattr(config, "admin_delegates", None)
+    apps = getattr(config, "apps", None)
+    if not isinstance(delegates, dict) or not isinstance(apps, dict):
+        return
+    for app_id, entry in apps.items():
+        block = entry.get("provisioning") if isinstance(entry, dict) else None
+        allow = block.get("roles") if isinstance(block, dict) else None
+        if not isinstance(allow, (list, tuple)):
+            continue
+        allowed = {r for r in allow if isinstance(r, str)}
+        for owner, spec in delegates.items():
+            roles = spec.get("roles") if isinstance(spec, dict) else None
+            if not isinstance(roles, (list, tuple)):
+                continue
+            shared = sorted(allowed & {r for r in roles if isinstance(r, str)})
+            if shared:
+                warnings.append(_t(
+                    config,
+                    "admin_delegates[{owner!r}] manages {roles}, which apps[{app!r}].provisioning.roles grants as "
+                    "well — the admin panel and the application then manage the same accounts. Keep delegates "
+                    "for applications without an account API.",
+                    owner=owner, roles=", ".join(shared), app=app_id))
 
 
 def _gate(config, error: list, warnings: list) -> None:
@@ -2757,6 +2872,36 @@ _DE: dict[str, str] = {
      "per-application settings."):
         ("forward_apps ist gesetzt, forward_auth_enabled aber False — die Einstellungen je "
          "Anwendung liest nur die Forward-Auth."),
+    ("{f}: {h!r} — a target of the app frame is a path (\"/spaces\", on this host) or an https "
+     "address on exactly this host, without quotation marks, angle brackets, backslash and spaces"):
+        ("{f}: {h!r} — ein Ziel des App-Rahmens ist ein Pfad (\"/spaces\", auf diesem Host) oder eine "
+         "https-Adresse auf genau diesem Host, ohne Anführungszeichen, spitze Klammern, Backslash und Leerzeichen"),
+    ("{where} has an app frame (home/links) but no name — the frame shows the application's name and "
+     "nothing else on the left. Set {where}['name']."):
+        ("{where} hat einen App-Rahmen (home/links), aber keinen name — der Rahmen zeigt links den Namen der "
+         "Anwendung und sonst nichts. {where}['name'] setzen."),
+    ("{where}['home']={value!r}: a path (\"/\", on this host) or an https address on exactly this host, "
+     "without quotation marks, angle brackets, backslash and spaces."):
+        ("{where}['home']={value!r}: ein Pfad (\"/\", auf diesem Host) oder eine https-Adresse auf genau diesem "
+         "Host, ohne Anführungszeichen, spitze Klammern, Backslash und Leerzeichen."),
+    "{where}['links']={value!r}: a list of (title, target) pairs like topbar_links.":
+        "{where}['links']={value!r}: eine Liste von Paaren (Titel, Ziel) wie topbar_links.",
+    "{where}['links'] has {n} entries — more than {limit} no longer fit next to the name on a desktop.":
+        "{where}['links'] hat {n} Einträge — mehr als {limit} passen am Desktop nicht mehr neben den Namen.",
+    ("{where} has an app frame (home/links), but topbar_enabled=False — the frame is a form of the top bar "
+     "and is not shown."):
+        ("{where} hat einen App-Rahmen (home/links), aber topbar_enabled=False — der Rahmen ist eine Form der "
+         "Kopfleiste und wird nicht gezeigt."),
+    ("forward_frame_default={value!r} names no forward_apps entry with an app frame (home or links) — "
+     "the default frame would be empty."):
+        ("forward_frame_default={value!r} nennt keinen Eintrag in forward_apps mit App-Rahmen (home oder links) "
+         "— der Standard-Rahmen wäre leer."),
+    ("admin_delegates[{owner!r}] manages {roles}, which apps[{app!r}].provisioning.roles grants as "
+     "well — the admin panel and the application then manage the same accounts. Keep delegates "
+     "for applications without an account API."):
+        ("admin_delegates[{owner!r}] verwaltet {roles}, das auch apps[{app!r}].provisioning.roles vergibt — "
+         "dann verwalten Admin-Panel und Anwendung dieselben Konten. Delegierte nur für Anwendungen ohne "
+         "Konten-API einsetzen."),
     ("{where} is not in trusted_redirect_hosts — there is no redirect back for this host, the "
      "setting never takes effect."):
         ("{where} steht nicht in trusted_redirect_hosts — für diesen Host gibt es keine "

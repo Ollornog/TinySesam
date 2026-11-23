@@ -8132,6 +8132,10 @@ class TinySesam:
         # and only a full session (never an API key: the menu signs out a cookie).
         if template in _topbar.MENU_PAGES and "viewer" not in ctx and getattr(self.cfg, "topbar_enabled", True):
             ctx["viewer"] = self.session_user(request) if request is not None else None
+        # …and the app frame (T-91): the frame of the host this person comes from, or None — chosen from the request,
+        # but every target in it comes from `forward_apps`.
+        if "frame" not in ctx:
+            ctx["frame"] = self._frame(request, ctx) if getattr(self.cfg, "topbar_enabled", True) else None
         built_in = not self.templates.overridden(template)
         out = self.templates.render(template, self, ctx)
         if isinstance(out, Response):
@@ -8189,6 +8193,195 @@ class TinySesam:
             if row is None or row["disabled"]:
                 user = None
         return _topbar.data(self, user, base=base)
+
+    # ---------- The app frame (T-91) ----------
+    #: The query members that may name the application a person comes from: `app=<host>` directly, or the target
+    #: of a round trip (`next`, `return_url`) — absolute with the host, or relative with `app=<host>` in its query.
+    _FRAME_TARGETS = ("next", "return_url")
+
+    def _frame_of(self, host) -> Optional[dict]:
+        """The app frame of a host — `{"host", "name", "home", "links"}` from `forward_apps[host]` — or None when the
+        host has no entry with a frame (`home` or `links`) and a name. `home` is absolute on that host (a path in the
+        config means a path there); `links` stay as configured, the bar resolves and filters them."""
+        if not isinstance(host, str) or not host or len(host) > 253:
+            return None
+        want = host.strip().lower().rstrip(".")
+        for h, e in (self.cfg.forward_apps or {}).items():
+            if str(h).strip().lower().rstrip(".") != want or not isinstance(e, dict):
+                continue
+            name = str(e.get("name") or "").strip()
+            if not name or not ({"home", "links"} & set(e)):
+                return None
+            raw = e.get("home")
+            home: str = raw if isinstance(raw, str) and raw else "/"
+            return {"host": want, "name": name, "home": _topbar.frame_href(want, home),
+                    "links": list(e.get("links") or [])}
+        return None
+
+    def _frame(self, request: Optional[Request] = None, ctx: Optional[dict] = None) -> Optional[dict]:
+        """Which app frame a built-in page shows (T-91), in this order: `?app=<host>`; the host of an absolute `next` /
+        `return_url` (query, then the page's ctx); `app=<host>` inside a relative one (so the reauth page inherits the
+        frame of its target); `forward_frame_default`. Only a host of `forward_apps` with a frame counts — an unknown
+        one changes nothing (no error, no difference to answer as an oracle), and nothing of the request ever becomes a
+        link target."""
+        from urllib.parse import parse_qs, urlsplit
+        query = request.query_params if request is not None else {}
+        ctx = ctx or {}
+        frame = self._frame_of(query.get("app"))
+        if frame:
+            return frame
+        targets = [v for v in ([query.get(k) for k in self._FRAME_TARGETS] + [ctx.get(k) for k in self._FRAME_TARGETS])
+                   if isinstance(v, str) and v and len(v) <= 4096]
+        for target in targets:
+            if "://" in target:
+                try:
+                    frame = self._frame_of(urlsplit(target).hostname or "")
+                except ValueError:
+                    frame = None
+                if frame:
+                    return frame
+        for target in targets:
+            if target.startswith("/") and "?" in target:
+                try:
+                    inner = parse_qs(urlsplit(target).query).get("app") or []
+                except ValueError:
+                    inner = []
+                frame = self._frame_of(inner[0] if inner else "")
+                if frame:
+                    return frame
+        return self._frame_of(getattr(self.cfg, "forward_frame_default", "") or "")
+
+    def _frame_app(self, request: Optional[Request]) -> str:
+        """The host of the app frame this request names (not the default frame) — "" without one. For the return
+        targets a route builds itself (B-8: TOTP setup back to the account page), so they stay framed."""
+        frame = self._frame(request) if request is not None else None
+        default = getattr(self.cfg, "forward_frame_default", "") or ""
+        if not frame or frame["host"] == str(default).strip().lower().rstrip("."):
+            return ""
+        return frame["host"]
+
+    # ---------- Self-service: the own account as data (T-91) ----------
+    #: The rate of `GET /auth/account.json` and `/.tinysesam/account.json`: reads per account and minute.
+    _ACCOUNT_JSON_PER_MINUTE = 60
+    #: The sections of the account page an application can link to (`#…`), as named in `account_overview()["links"]`.
+    _ACCOUNT_ANCHORS = {"sessions": "sessions", "totp": "totp", "passkeys": "passkeys", "devices": "devices",
+                       "app_passwords": "app-passwords", "services": "services"}
+
+    @staticmethod
+    def _coarse_agent(agent) -> Optional[str]:
+        """A coarse "browser on system" from a User-Agent (draft §9: where a session comes from, never the raw string
+        and never the address) — None when nothing is recognized."""
+        ua = str(agent or "")
+        if not ua:
+            return None
+        browser = next((name for needle, name in (("Edg/", "Edge"), ("OPR/", "Opera"), ("Firefox/", "Firefox"),
+                                                  ("Chrome/", "Chrome"), ("Chromium/", "Chromium"),
+                                                  ("Safari/", "Safari"), ("curl/", "curl")) if needle in ua), None)
+        system = next((name for needle, name in (("Android", "Android"), ("iPhone", "iOS"), ("iPad", "iPadOS"),
+                                                 ("Windows", "Windows"), ("Mac OS X", "macOS"), ("CrOS", "ChromeOS"),
+                                                 ("Linux", "Linux")) if needle in ua), None)
+        if browser and system:
+            return f"{browser} · {system}"
+        return browser or system
+
+    def _own_session_rows(self, user_id, current_hash: Optional[str] = None) -> list:
+        """The sessions of an account as the account page lists them — one source for `GET /auth/sessions` and
+        `account_overview`. Every row: created_at, last_seen, method, ip, user_agent (cut to 120), current (None
+        without a known current session)."""
+        out = []
+        for s in self.store.list_sessions(user_id):
+            out.append({"created_at": s["created_at"], "last_seen": s["last_seen"], "ip": s["ip"],
+                        "method": s["method"], "user_agent": (s["user_agent"] or "")[:120],
+                        "current": (s["token_hash"] == current_hash) if current_hash else None})
+        return out
+
+    def account_overview(self, user, *, base: Optional[str] = None, app_host: Optional[str] = None,
+                         request: Optional[Request] = None) -> Optional[dict]:
+        """The own account's security state as data (T-91) — what the account page shows, for an application that
+        draws its own settings page: the same answer `GET /auth/account.json` gives the session.
+
+        `user`: an account dict (`session_user`, `get_user`); a locked, unknown or service account gives None.
+        `base` goes in front of the links (default: `base_url`); `app_host` (a host of `forward_apps` with an app
+        frame) adds `app=<host>` to them, so the account page opens framed. `request`: the person's request with its
+        session cookie — only then does a session carry `current` (True/False); without it `current` is None.
+
+        Members: `account` (username, display name); `sign_in` — `password` ("set", "unset", "directory" or None when
+        passwords are off), `totp` ({enabled, recovery_left, recovery_low} or None), `passkeys` ({count, items} or None),
+        `pin` (bool or None); `sessions` ({count, items: created_at, last_seen, method, device, current}); `programs` —
+        `oauth`, `services`, `app_passwords` (lists of {name, created_at, last_used}, None when the feature is off) and
+        `api_keys_active` (a number, None when keys are off); `approvals` ({pending} or None); `links` (the account page
+        and its sections, absolute). None means "not offered here", `[]` "offered, empty". Never a hash, a secret, a key
+        prefix, an address or an id of another object.
+
+        Hand it to the application only for a person signed in by a browser session — in a wrapper in front of an app
+        in another language: only for a checked `Remote-Kind: user` with `Remote-Auth: session`, for the account of
+        `Remote-Id`, answered with `Cache-Control: no-store`. Changes happen on the account page only."""
+        cfg = self.cfg
+        uid = user.get("id") if isinstance(user, dict) else _topbar._field(user, "id")
+        row = self.store.get_user(uid) if uid is not None else None
+        if row is None or row["disabled"] or row["is_service"]:
+            return None
+        uid = int(row["id"])
+        if base is None:
+            base = (security.normalize_base(str(cfg.base_url or "").strip()) or "").rstrip("/")
+        frame = self._frame_of(app_host) if app_host else None
+        from urllib.parse import quote
+        q = f"?app={quote(frame['host'], safe='')}" if frame else ""
+        methods = cfg.enabled_methods()
+        pw_hash = self.store.get_password_hash(uid)
+        password = None
+        if "password" in methods:
+            password = ("set" if pw_hash else ("directory" if cfg.ldap_enabled else "unset"))
+        totp = None
+        if cfg.totp_enabled:
+            enabled = bool(self.store.has_confirmed_totp(uid))
+            left = self.recovery_codes_remaining(uid) if enabled else None
+            totp = {"enabled": enabled, "recovery_left": left,
+                    "recovery_low": bool(enabled and left is not None and left <= self._RECOVERY_WARN_THRESHOLD)}
+        passkeys = None
+        if "passkey" in methods:
+            items = [{"name": c["name"], "created_at": c["created_at"], "last_used": c["last_used"]}
+                     for c in self.store.list_webauthn(uid)]
+            passkeys = {"count": len(items), "items": items}
+        pin = bool(self.has_pin(uid)) if cfg.pin_enabled else None
+        current = None
+        if request is not None:
+            # The own cookie, on an application's host also its connection (T-26) — the session of this request.
+            s = self._gate_session(request, self._gate_host(request))
+            current = s["token_hash"] if s and s["user_id"] == uid else None
+        sessions = [{"created_at": s["created_at"], "last_seen": s["last_seen"], "method": s["method"],
+                     "device": self._coarse_agent(s["user_agent"]), "current": s["current"]}
+                    for s in self._own_session_rows(uid, current)]
+        oauth = services = None
+        if cfg.oauth_enabled:
+            oauth = [{"name": d["client_name"], "created_at": d["created_at"], "last_used": d["last_used"]}
+                     for d in self._oauth_server().devices(uid)]
+            if cfg.oauth_service_clients:
+                services = [{"name": s["name"], "created_at": s["created_at"], "last_used": s["last_used"]}
+                            for s in self.list_service_clients(uid)]
+        app_passwords = None
+        if self.app_password_hosts():
+            app_passwords = [{"name": p["name"], "created_at": p["created_at"], "last_used": p["last_used"],
+                              "expires_at": p["expires_at"]}
+                             for p in self.list_app_passwords(uid) if not p["revoked"] and not p["expired"]]
+        keys = self.store.count_active_api_keys(uid) if cfg.apikey_enabled else None
+        pending = self._approvals_pending(row)
+        account = f"{base}/auth/account{q}"
+        links = {"account": account if cfg.account_enabled else None}
+        # A section's link only where the page has the section (the same conditions as `templates._account`).
+        offered = {"sessions": True, "totp": totp is not None, "passkeys": passkeys is not None,
+                   "devices": oauth is not None, "app_passwords": app_passwords is not None,
+                   "services": services is not None}
+        for key, anchor in self._ACCOUNT_ANCHORS.items():
+            links[key] = f"{account}#{anchor}" if cfg.account_enabled and offered[key] else None
+        links["approvals"] = f"{base}/auth/approvals{q}" if pending is not None else None
+        return {"account": {"username": row["username"], "display_name": row["display_name"] or row["username"]},
+                "sign_in": {"password": password, "totp": totp, "passkeys": passkeys, "pin": pin},
+                "sessions": {"count": len(sessions), "items": sessions},
+                "programs": {"oauth": oauth, "services": services, "app_passwords": app_passwords,
+                             "api_keys_active": keys},
+                "approvals": {"pending": pending} if pending is not None else None,
+                "links": links}
 
     def _header_lines(self, resp: Response) -> Response:
         """The hardening headers of every TinySesam response (R8-1, R8-5, R4-08, R5-2).

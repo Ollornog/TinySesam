@@ -1306,6 +1306,79 @@ Aus dem [Releases-Feed](https://github.com/Ollornog/TinySesam/releases) — per 
 hochzieht. Dann läuft deine CI gegen die neue Version, und du entscheidest, ob du mergst.
 Die laufende Version zeigt `python -m tinysesam version` und das Admin-Panel unter „Härtung".
 
+## Zwei Einsatzarten von TinySesam
+
+Es gibt keinen Modus-Schalter: Jeder Unterschied unten hängt schon an einem Feld. Die beiden Namen sagen nur, welche
+Seite welche Oberfläche zeichnet.
+
+| Was | **TinySesam liefert die Seiten** | **Die App bringt die Oberfläche** | Feld |
+|---|---|---|---|
+| Anmeldung, zweiter Faktor, Step-up | TinySesam | TinySesam, **im App-Rahmen** | `forward_apps[host]` `home`, `links` |
+| Passwort, TOTP, Passkeys, PIN, Wiederherstellungscodes ändern | Kontoseite von TinySesam | Kontoseite von TinySesam, **im App-Rahmen** | `account_enabled=True` |
+| Freigaben, OAuth-Zustimmung | TinySesam | TinySesam, im App-Rahmen | `approvals_enabled`, `oauth_enabled` |
+| Sicherheitsstand anzeigen | Kontoseite | **Einstellungsseite der App**, Daten von TinySesam | `auth.account_overview`, `/.tinysesam/account.json` |
+| Kopfleiste auf den Seiten der App | `auth.topbar()`, `auth.topbar_data()`, `/auth/topbar.json` | eigene Leiste der App, Link „Sicherheit“ zur Kontoseite | `topbar_links` |
+| Kopfleiste auf den Seiten von TinySesam | Leiste von TinySesam (`topbar_links`) | App-Rahmen: „‹ Name“, Links der App, Kontomenü | `forward_apps[host]` |
+| Konten der Kolleginnen und Kollegen | Admin-Panel, Delegierte | **die App**, über die Konten-API | `apps[id].provisioning` |
+| Admin-Panel | Admins und Delegierte | nur Betreiber (Dienstkonten, Übernehmen/Freigeben, Gate) | keine `admin_delegates` für die Rollen der App |
+| Aussehen | Tokens bzw. C22 der Instanz | dasselbe: **ein** Stil für alle Apps hinter einem Gateway | `c22_stylesheet`, `brand_css` |
+
+**Der App-Rahmen.** Wer vom Host einer Anwendung kommt, sieht die Seiten von TinySesam als Teil dieser Anwendung: Die
+Kopfleiste zeigt „‹ Example“ zurück zu `home` (am Desktop darunter „über <gate_brand>“), die Links der Anwendung und
+ein Kontomenü mit *Sicherheit* (die Kontoseite), *Freigaben* (Zahl und Wort), dem Admin-Panel nur für Betreiber,
+Hell/Dunkel/System und *Abmelden* (das Abmelden von TinySesam: die Sitzung endet). `topbar_links` und
+`topbar_menu_links` erscheinen nicht. Eine Seite ohne angemeldetes Konto (Anmeldung, TOTP, Fehler) zeigt nur den Namen
+— ein Zurück-Link führte gleich wieder zur Anmeldung. Gewählt wird der Rahmen über `?app=<host>`, über den Host eines
+absoluten `next`/`return_url` oder über `app=<host>` in einem relativen `next` (so behält die Step-up-Seite den Rahmen
+ihres Ziels); `forward_frame_default` nennt den Rahmen für alles andere. **Jedes Ziel kommt aus der Konfiguration** —
+ein unbekannter Host ändert nichts, und nichts aus der Anfrage wird zum Link. Die Abschnitte der Kontoseite haben feste
+Anker: `#sessions`, `#totp`, `#passkeys`, `#devices`, `#app-passwords`, `#services`.
+
+```python
+TinySesamConfig(forward_apps={"team.example.com": {
+    "name": "Example",                                    # der Rahmen zeigt links den Namen und sonst nichts
+    "home": "/",                                          # ein Pfad auf diesem Host oder https://team.example.com/…
+    "links": [("Spaces", "/spaces"), ("Team", "/team", {"role": "example-lead"})],   # wie topbar_links, dieser Host
+}}, trusted_redirect_hosts=["team.example.com"], available_roles=["example-lead"])
+```
+
+**Der Sicherheitsstand als Daten.** `auth.account_overview(user, *, base=None, app_host=None, request=None)` (Stufe B)
+liefert, was die Kontoseite zeigt: `sign_in` (Passwort, TOTP mit den übrigen Wiederherstellungscodes, Passkeys, PIN),
+`sessions` (wann, zuletzt gesehen, grob „Browser · System“, `current`), `programs` (OAuth-Programme, Dienste,
+App-Passwörter: Name und letzte Nutzung; die Zahl der API-Keys), `approvals` und `links` (die Kontoseite und ihre
+Anker, mit `app=<host>` für einen `app_host` mit Rahmen). `null` heißt „hier nicht angeboten“, `[]` „angeboten, leer“;
+nie steht eine Adresse, ein Hash, ein Geheimnis, ein Key-Präfix oder die ID eines fremden Objekts darin. Die Kontoseite
+liest dieselbe Funktion, Seite und Daten können also nicht auseinanderlaufen. Über HTTP: `GET /auth/account.json` und,
+auf dem Host einer Anwendung über den Proxy, `GET /.tinysesam/account.json` — nur für eine volle Browser-Sitzung (ein
+API-Key, ein OAuth-Token, ein App-Passwort oder eine halbe Sitzung bekommt 401), `no-store`, `Vary: Cookie`, kein CORS,
+60 Abrufe je Konto und Minute, nur lesend. Eine Sitzung beenden, ein Programm oder ein App-Passwort widerrufen geht auf
+der Kontoseite; die Anwendung verlinkt mit den Ankern dorthin.
+
+Rezepte:
+
+- **Die App bringt die Oberfläche, Bibliothek, Anmeldung nur per OIDC** (so macht es DashMyBoard):
+  `admin_enabled=False`, `account_enabled=False`, nur `oidc_enabled`. Außer der Anmeldung bleibt keine Seite von
+  TinySesam.
+- **Die App bringt die Oberfläche, Bibliothek, lokale Faktoren:** `account_enabled=True`. Die Seiten laufen schon auf
+  dem Ursprung der Anwendung: `rp_name`/`gate_brand` = Name der Anwendung, `topbar_links` = ihre Navigation — oder ein
+  `forward_apps`-Eintrag für den eigenen Host mit `forward_frame_default` darauf. Die Einstellungsseite liest
+  `auth.account_overview(auth.session_user(request), request=request)`.
+- **Die App bringt die Oberfläche, hinter dem Gateway** (auch: TinySesam als Bibliothek in einem eigenen dünnen
+  Wrapper, als Gate vor einer Anwendung in anderer Sprache auf anderen Ursprüngen): `forward_apps[host]` mit `name`,
+  `home`, `links` für jeden Host der Anwendung (jeder sein eigener Rahmen — ein stabiler und ein Test-Host bekommen je
+  einen); `apps[id]` mit `provisioning` für die Konten-API; `account_enabled=True`; keine `admin_delegates` für die
+  Rollen der Anwendung (der Start warnt, wenn eine Delegiertenrolle sich mit einer Allowlist überschneidet). Die
+  Anwendung zeichnet ihre eigene Leiste (nicht aus `topbar.json`) mit einem Link *Sicherheit* auf
+  `/auth/account?app=<host>`, und ihre Einstellungsseite zeigt den Sicherheitsstand:
+  - **bevorzugt:** Der Gate-Client holt `/.tinysesam/account.json` server-seitig mit nur den TinySesam-Cookies der
+    Anfrage (Spec §8a in `spec/gate-client.md`; die Helfer in den Clients folgen) — dann prüft TinySesam selbst „ein
+    Mensch, per Browser-Sitzung“;
+  - **oder im Wrapper:** Er ruft `auth.account_overview(auth.get_user(remote_id), app_host=host)` und reicht das Dict
+    an die Anwendung weiter, so wie `topbar_data`. Dann trägt der Wrapper drei Pflichten, die TinySesam auf diesem Weg
+    nicht erzwingen kann: **nur** für ein geprüftes `Remote-Kind: user` mit `Remote-Auth: session` aufrufen, **nur** für
+    das Konto der `Remote-Id` dieser Anfrage (nie eine ID aus einem Parameter), und mit `Cache-Control: no-store`
+    antworten. `current` bleibt dort `null`: Das Gate-Token trägt keinen Sitzungsbezug.
+
 ## Mehrere Anwendungen, ein TinySesam
 
 Eine Installation kann mehrere Anwendungen schützen — und **wer in welche darf, entscheidet der
@@ -2690,6 +2763,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   für den `<head>`) und `topbar` (die Leiste mit dem Kontomenü für die Sitzung dieses Requests); `topbar_data`
   (dieselbe Leiste als Daten für ein Konto, für eine Oberfläche, die nicht in Python gezeichnet wird) — siehe
   [Look & Feel](#look--feel).
+- **Der Sicherheitsstand auf der eigenen Einstellungsseite:** `account_overview` (was die Kontoseite zeigt, als Daten;
+  dieselbe Antwort wie `/auth/account.json`) — siehe [Zwei Einsatzarten von TinySesam](#zwei-einsatzarten-von-tinysesam).
 - **Der Gate-Client für Apps ohne FastAPI:** `tinysesam.gate_client` — jeder Name im eigenen Abschnitt,
   [Gate-Client für Flask, Django und andere Python-Apps](#gate-client-für-flask-django-und-andere-python-apps-t-86).
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
@@ -2771,7 +2846,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**126 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**128 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

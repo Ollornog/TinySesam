@@ -205,7 +205,17 @@ class TinySesamConfig:
     # "logout": "ask", "app_passwords": True}}. name = display name on the login and sign-out pages; login/logout
     # override forward_login/forward_logout for this host; app_passwords = this host accepts app passwords by
     # Basic auth (T-66, default off — WebDAV, CalDAV/CardDAV, Git over HTTPS; never the account's own password).
+    # The app frame (T-91): home and links make TinySesam's own pages (sign-in, step-up, account, approvals) look
+    # like part of the application whenever a person comes from this host — the top bar shows "‹ name" back to home
+    # and the application's links instead of topbar_links and topbar_menu_links. home = a path or an https address on
+    # exactly this host (default https://<host>/); links = the shape of topbar_links, every target on this host (a
+    # path means a path on this host), at most 8. A frame needs a name. The frame is chosen by ?app=<host>, by the
+    # host of an absolute next/return_url, or by app=<host> inside a relative next; the targets always come from here,
+    # never from the request. Read by the library as well, with or without forward auth.
     forward_apps: dict = field(default_factory=dict)
+    # The frame of the pages when no request names one (T-91): a host of forward_apps whose entry has home or links,
+    # e.g. a TinySesam that serves exactly one application. Empty (default) = TinySesam's own top bar then.
+    forward_frame_default: str = ""
     gate_cookie_name: str = "__Host-tinysesam_gate"  # form __Host-tinysesam_<name>: host-only, and the templates strip it before the app
     # Central gateway, session stays on its host (T-26): An app host gets, via a
     # code exchange (/.tinysesam/start → /auth/gate/authorize → /.tinysesam/callback), only a connection
