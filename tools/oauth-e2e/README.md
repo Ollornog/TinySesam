@@ -10,6 +10,14 @@ the real client:
 4. an old refresh token presented again → the family is revoked (audit) → a new sign-in is needed
 5. the account is locked → access gone at once
 6. `claude mcp logout` revokes the tokens at the server (RFC 7009)
+7. pairing code ([ADR-14](../../backlog/ADR-14-pairing-code-as-consent-given-in-advance.md)): a fresh session fetches a
+   code, the "setup script" redeems it, `claude mcp login` signs in **without** the consent page (audit `via=pairing
+   fetch_site=none`)
+8. after `claude mcp logout` the next login shows the consent page again (`via=page`)
+
+The browser is headless Chrome driven over CDP; its `Page.navigate` is a browser navigation, like the URL that
+`xdg-open` hands over, so it sends `Sec-Fetch-Site: none` (headed Chrome 158 and Firefox 160 were measured by hand,
+ADR-14).
 
 ```bash
 pip install -e ".[all]" uvicorn websockets pyotp

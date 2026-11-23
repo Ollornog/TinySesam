@@ -100,8 +100,9 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   (`details={"count": n, "reason": …}`, `reason` eines von `password_reset`, `account_disabled`,
   `admin_password_reset`, `sessions_revoked`, `access_reset` — gesammelt beim Reset, bei der Sperre, beim
   Admin-Passwort, bei `sessions/revoke` mit `scope=all` und beim Zurücksetzen durch den Freigeber einer Anwendung). Verbundene Programme (OAuth, T-36):
-  `oauth_device_connected` (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …}` — ein
-  Programm hat nach der Zustimmung seine ersten Tokens bekommen), `oauth_device_revoked`
+  `oauth_device_connected` (`details={"grant_id": n, "client_id": …, "client_name": …, "resource": …, "via":
+  "page"|"pairing"}` — `pairing`, wenn ein Kopplungscode die Zustimmung gab, ADR-14 — ein Programm hat nach der
+  Zustimmung seine ersten Tokens bekommen), `oauth_device_revoked`
   (`details={"grant_id": n, "client_id": …, "reason": …}`, `reason` eines von `user`, `admin`, `client`
   und den Gründen von `api_keys_revoked` — seit der Angriffsrunde vom 2026-11-21 (A-1) trennen auch ein Reset, ein
   Admin-Passwort-Reset und „überall abmelden“ die verbundenen Programme, nicht nur eine Sperre) und `oauth_token_reuse` (`details={"grant_id": n, "client_id": …, "kind": "code"|"refresh"}`
@@ -202,6 +203,18 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   ein halbes OAuth-Token oder App-Passwort jedes API- und MCP-Aufrufs ins Caddy-Log. Seit 0.26.1 geht eine Anfrage mit
   `Authorization` oder ohne Gate-Cookie direkt an `/auth/forward`; jwtauth sieht nur das Gate-Cookie. Das protokolliert
   Caddy weiterhin gekürzt (ein JWT von höchstens `gate_token_ttl_sec`) bei jeder Anfrage, die es durchlässt.
+- **Ein Kopplungscode gibt die Zustimmung vorab (ADR-14, Vorgabe aus).** Mit `oauth_pairing_consent_enabled` holt
+  das Konto in seiner eigenen, frisch bestätigten Browser-Sitzung einen Einmal-Code (CSRF; nie ein API-Key, ein
+  Access-Token, ein Administrator oder eine Anwendung im Auftrag), und ein Einrichtungsskript löst ihn ohne Sitzung
+  ein. Dann überspringt genau eine Autorisierung dieses Kontos die Zustimmungsseite — nur wenn der Browser der Person
+  sie selbst geöffnet hat (`Sec-Fetch-Site: none` an `/authorize`; die Navigation einer Website trägt `cross-site` und
+  kann sie weder nutzen noch verbrauchen), die Weiterleitung eine Loopback-Adresse ist, der Client einer Person
+  gehört, die Ressource zur Ressource des Codes passt und das Fenster (`oauth_pairing_consent_minutes`, 15) offen ist,
+  nach denselben Anmelde- und Frischeprüfungen wie die Seite. Alles andere zeigt die Seite und verbraucht nichts. Der
+  Code hat 80 Bit, gespeichert wird nur sein Hash, er wird nie protokolliert, gilt einmal (atomar), 20 Einlöseversuche
+  je Adresse und Stunde, jeder Fehlschlag eine fail2ban-Zeile. Was bleibt: Ein lokales Programm, das im Fenster selbst
+  eine Autorisierung startet, bekommt diese eine Verbindung — Schadsoftware-Niveau; sie steht „per Kopplungscode“
+  unter *Verbundene Programme* und in `oauth_device_connected` (`via: "pairing"`).
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den

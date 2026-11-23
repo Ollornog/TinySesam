@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 76/88 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 77/89 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -107,6 +107,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-92](T-92-role-catalog-roles-in-the-database-for-the-admin-panel.md)** Role catalog: roles in the database, so administrators add them in the panel · M-2
 * ☑ **[T-93](T-93-follow-ups-to-0-29-0-kid-rule-proxy-duty-key-purposes.md)** Follow-ups to 0.29.0: kid rule, server-side top bar vs. proxy duty, key purposes both ways · M-2
 * ☑ **[T-94](T-94-first-sign-in-by-link-recovery-codes-off-totp-hint-target.md)** First sign-in by one-time link: recovery codes switchable, TOTP app hint, target after the setup · M-2
+* ☑ **[T-95](T-95-pairing-code-for-people-s-programs-and-a-simpler-consent-page.md)** Pairing code for people's programs (consent given in advance) and a consent page for laypeople · M-2
 
 ## Fehler
 
@@ -141,3 +142,4 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[ADR-11](ADR-11-oauth-authorization-server-in-tinysesam.md)** OAuth 2.1 authorization server for MCP clients — built into TinySesam with own thin handlers, not Ory Hydra as a sidecar
 * ☑ **[ADR-12](ADR-12-key-purposes-keyrings-and-rotation.md)** One key per purpose, each a keyring with key IDs — vault, gate signature, OAuth pepper; rotation without loss
 * ☑ **[ADR-13](ADR-13-oauth-for-services-private-key-jwt.md)** Services get tokens with client_credentials and private_key_jwt, paired by a one-time code — amends ADR-11
+* ☑ **[ADR-14](ADR-14-pairing-code-as-consent-given-in-advance.md)** A pairing code is a consent given in advance — one authorization of the account without the consent page, amends ADR-11

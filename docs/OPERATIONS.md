@@ -1260,6 +1260,26 @@ nothing — accounts hold their roles in `users.roles` as before.
   Nothing is lost or granted. No SQL is needed; `DROP TABLE role_catalog` removes the rows if you go back for good
   (list them first with `tinysesam roles list` and put the ones you need into `available_roles`).
 
+## Pairing code for people's programs: columns and rollback (schema 26)
+
+Schema 26 (ADR-14, T-95) only **adds** the columns `oauth_code.consent_via` and `oauth_grant.consent_via` (`NULL` for
+every existing row = allowed on the consent page, `pairing` = through a pairing code). The codes themselves live in
+`magic_token` (purpose `oauth_consent_pairing` until redeemed, `oauth_consent_armed` after), only as a digest, and go
+with the account's other one-time tokens on a lock, a reset or "end all sessions" and in `gc()`.
+
+- **Switch:** `oauth_pairing_consent_enabled` (off), `oauth_pairing_consent_minutes` (15, 1–60). Off again: both routes
+  answer `404`, an armed code skips nothing, connected programs stay connected.
+- **Audit events:** `oauth_consent_pairing_issued` (`resource=`, `expires_at=`), `oauth_consent_pairing_redeemed`,
+  `oauth_consent_pairing_denied` (`reason=malformed|unknown|kind|used|expired|account`), `oauth_consent_pairing_unused`
+  (an armed code did not cover a request: `reason=fetch_site|redirect|client|resource`), `oauth_consent … via=pairing`
+  (or `via=page`) with `fetch_site=`, and `fetch_site=` on `oauth_authorize`. The security log has
+  `reason=oauth_consent_redeem_<why>` for every failed redemption (fail2ban).
+- **Rollback:** an older version opens the file with the "newer schema version" warning and ignores both columns: its
+  device list shows such a program without "via pairing code", nothing else changes. Remove the two
+  `oauth_pairing_consent_*` fields from the configuration before you go back (an unknown field is a `TypeError`
+  there). Armed or open codes are harmless rows it never reads; `DELETE FROM magic_token WHERE purpose IN
+  ('oauth_consent_pairing', 'oauth_consent_armed')` removes them. No other SQL is needed.
+
 ## First sign-in through a one-time link: codes, hint, target (T-94)
 
 Three settings shorten the first sign-in of a person who got a link (account API, panel, `create_signin_link`). **No

@@ -527,6 +527,7 @@ NEW_ACCESS = {
     ("webauthn_.py", "reg_finish"): "passkey",
     ("oauth.py", "consent_page"): "OAuth consent page",
     ("oauth.py", "consent_answer"): "OAuth consent",
+    ("oauth.py", "own_pairing_create"): "OAuth consent given in advance (pairing code, ADR-14)",
     ("admin.py", "user_password"): "password set by an admin",
     ("admin.py", "user_key_create"): "API key by an admin",
     ("admin.py", "service_pairing"): "service pairing",

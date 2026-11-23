@@ -1018,7 +1018,8 @@
         "client_id",
         "client_name",
         "grant_id",
-        "resource"
+        "resource",
+        "via"
       ],
       "tier": "A"
     },
@@ -1609,6 +1610,14 @@
     },
     "oauth_enabled": {
       "field": "bool = False",
+      "tier": "B"
+    },
+    "oauth_pairing_consent_enabled": {
+      "field": "bool = False",
+      "tier": "B"
+    },
+    "oauth_pairing_consent_minutes": {
+      "field": "int = 15",
       "tier": "B"
     },
     "oauth_pairing_minutes": {
@@ -2915,6 +2924,14 @@
       "tier": "B"
     },
     "POST /auth/oauth/pair": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/pairing": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oauth/pairing/redeem": {
       "keys": [],
       "tier": "B"
     },

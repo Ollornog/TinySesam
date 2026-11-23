@@ -17,6 +17,9 @@ The rules and where they come from are in `backlog/ADR-11-oauth-authorization-se
   scope and account. A second exchange revokes everything the first one produced.
 * **Refresh tokens** rotate on every use; a used one coming back revokes the whole family (grant).
 * **Redirect URIs** are compared exactly — only the port of a loopback address is free (RFC 8252 §7.3).
+* **Consent** is asked on a page every time — except once after a **pairing code** (ADR-14, switch
+  `oauth_pairing_consent_enabled`): the consent given in advance by the account in its own fresh session, armed by a
+  setup script, spent by exactly one matching authorization that the person's own browser opened.
 """
 from __future__ import annotations
 
@@ -66,6 +69,17 @@ MAX_NAME_LEN = 100
 MAX_BODY = 16384
 #: How often the "last seen" of a device is written by an access token at most (seconds).
 TOUCH_SEC = 60
+#: Pairing consent (ADR-14): codes an account may fetch per hour, and redemptions per address (IPv6: /64) and per
+#: IPv6 /48 and hour — 80 bits are not guessed at 20 tries an hour, the limits keep the log quiet as well.
+CONSENT_PAIRING_ISSUE_PER_HOUR = 10
+CONSENT_PAIRING_REDEEM_PER_IP_HOUR = 20
+CONSENT_PAIRING_REDEEM_PER_NET48_HOUR = 100
+#: How an authorization was allowed, in `oauth_code`/`oauth_grant.consent_via` (NULL = the consent page).
+VIA_PAIRING = "pairing"
+#: The pairing code (of services, T-60, and of the pairing consent, ADR-14): 16 characters from 32 without
+#: look-alikes (no I, O, 0, 1) = 80 bits, in groups of four.
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+CODE_LEN = 16
 
 _B62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 _BODY_LEN = 43          # 62**43 > 2**256
@@ -127,6 +141,28 @@ def shape_ok(token, prefix: str) -> bool:
 
 def pkce_s256(verifier: str) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
+
+
+# ---------- pairing code ----------
+
+def new_pairing_code() -> str:
+    raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
+    return "-".join(raw[i:i + 4] for i in range(0, CODE_LEN, 4))
+
+
+def normalize_code(text) -> Optional[str]:
+    """The code without separators, upper case — or None if it cannot be one (checked before the database)."""
+    if not isinstance(text, str) or len(text) > 64:
+        return None
+    c = "".join(z for z in text.upper() if z not in "- \t")
+    if len(c) != CODE_LEN or any(z not in CODE_ALPHABET for z in c):
+        return None
+    return c
+
+
+def code_digest(code: str) -> str:
+    """What the database keeps of a pairing code (in `magic_token`; the purpose says which kind it is)."""
+    return hashlib.sha256(("tinysesam-pairing:" + code).encode("ascii")).hexdigest()
 
 
 # ---------- redirect URIs and resources ----------
@@ -454,8 +490,9 @@ class OAuthServer:
         values["iss"] = self.issuer()
         return redirect_uri + ("&" if "?" in redirect_uri else "?") + urlencode(values)
 
-    def decide(self, rid: str, req: dict, user: dict, allow: bool, ip) -> str:
-        """Consent answered: single use; returns the URL the browser is sent to."""
+    def decide(self, rid: str, req: dict, user: dict, allow: bool, ip, via: Optional[str] = None) -> str:
+        """Consent answered: single use; returns the URL the browser is sent to. `via`: how it was allowed when not
+        on the consent page (`VIA_PAIRING`, ADR-14) — it travels with the code into the grant."""
         if not self.store.oauth_take_request(self.digest(rid)):
             raise OAuthError("invalid_request", "this request was already answered", 400)
         p = req["params"]
@@ -466,11 +503,11 @@ class OAuthServer:
         code = new_token(CODE_PREFIX)
         now = _now()
         self.store.oauth_add_code(self.digest(code), client["client_id"], int(user["id"]), p["redirect_uri"],
-                                  p["code_challenge"], p["resource"], p["scope"], now, now + CODE_TTL_SEC)
+                                  p["code_challenge"], p["resource"], p["scope"], now, now + CODE_TTL_SEC, via)
         self.store.oauth_touch_client(client["client_id"], now)
         self._audit("oauth_consent", user["username"], ip,
                     f"client={client['client_id']} decision=allow resource={_detail(p['resource'])} "
-                    f"scope={_detail(p['scope'])}")
+                    f"scope={_detail(p['scope'])} via={via or 'page'} fetch_site={_detail(p.get('fetch_site'))}")
         return self.redirect_url(p["redirect_uri"], code=code, state=p.get("state"))
 
     # --- token endpoint ---
@@ -563,7 +600,8 @@ class OAuthServer:
         self._audit("oauth_token", u["username"], ip,
                     f"client={client['client_id']} grant={grant_id} refresh={'yes' if rt else 'no'}")
         self.auth._security_event("oauth_device_connected", u["id"], grant_id=grant_id, client_id=client["client_id"],
-                    client_name=client["name"], resource=row["resource"])
+                    client_name=client["name"], resource=row["resource"],
+                    via=row["consent_via"] or "page")      # ADR-14: "page" or "pairing"
         return self._answer(at, rt, scope)
 
     def _code_reused(self, row, ip) -> None:
@@ -728,6 +766,106 @@ class OAuthServer:
         self.auth._strip_delegate_roles(d)
         return d, ""
 
+    # --- pairing consent (ADR-14) ---
+    def issue_consent_pairing(self, user: dict, resource, ip) -> dict:
+        """A one-time pairing code for the signed-in account itself — the route checked a fresh session and CSRF.
+        `resource` (optional) binds it to one of `oauth_resources`. Returns `{"code", "expires_at", "resource",
+        "redeem_url", "issuer"}` — the code only this once; the database keeps its digest."""
+        if not self.auth.rl.allow(("oauth_consent_pairing", int(user["id"])), CONSENT_PAIRING_ISSUE_PER_HOUR, 3600):
+            raise OAuthError("temporarily_unavailable", "too many pairing codes for this account", 429)
+        wanted = None
+        if resource not in (None, ""):
+            wanted = normalize_resource(resource)
+            if wanted is None or wanted not in self.resources():
+                raise OAuthError("invalid_target", "unknown resource")
+        code = new_pairing_code()
+        now = _now()
+        expires = now + int(self.cfg.oauth_pairing_consent_minutes) * 60
+        self.store.oauth_replace_consent_pairing(code_digest(normalize_code(code) or ""), int(user["id"]), now,
+                                                 expires, {"resource": wanted})
+        self._audit("oauth_consent_pairing_issued", user["username"], ip,
+                    f"resource={_detail(wanted or '*')} expires_at={expires}")
+        return {"code": code, "expires_at": expires, "resource": wanted,
+                "redeem_url": self.endpoint("/auth/oauth/pairing/redeem"), "issuer": self.issuer()}
+
+    def redeem_consent_pairing(self, body, ip) -> dict:
+        """Redeem a pairing code (`POST /auth/oauth/pairing/redeem`, no session — the setup script has none). Arms the
+        consent once; every refusal is the same answer and lands in the audit log, the code never does."""
+        from .security import ip_bucket
+        if not (self.auth.rl.allow(("oauth_consent_redeem", ip_bucket(ip)), CONSENT_PAIRING_REDEEM_PER_IP_HOUR, 3600)
+                and self.auth.rl.allow(("oauth_consent_redeem48", ip_bucket(ip, 48)),
+                                       CONSENT_PAIRING_REDEEM_PER_NET48_HOUR, 3600)):
+            # A guessing run: the security log line for fail2ban, not one audit row per try.
+            self.auth._rejected(None, ip, "oauth_consent_redeem_ratelimit", login=False)
+            raise OAuthError("temporarily_unavailable", "too many pairing attempts from this address", 429)
+        def refuse(reason: str) -> OAuthError:
+            self._audit("oauth_consent_pairing_denied", None, ip, f"reason={reason}")
+            self.auth._rejected(None, ip, "oauth_consent_redeem_" + reason, login=False)
+            return OAuthError("invalid_grant", "unknown, used or expired pairing code")
+
+        code = normalize_code(body.get("code")) if isinstance(body, dict) else None
+        if code is None:
+            raise refuse("malformed")
+        now = _now()
+        row = self.store.get_magic_token(code_digest(code))
+        if row is None:
+            raise refuse("unknown")
+        if row["purpose"] not in (self.store.CONSENT_PAIRING, self.store.CONSENT_ARMED):
+            raise refuse("kind")      # another kind of one-time token (a service pairing code): never taken here
+        if row["purpose"] == self.store.CONSENT_ARMED or row["used_at"] is not None:
+            raise refuse("used")
+        if row["expires_at"] < now:
+            raise refuse("expired")
+        u = self.store.get_user(row["user_id"])
+        if u is None or u["disabled"] or u["is_service"]:
+            raise refuse("account")
+        if not self.store.oauth_arm_consent_pairing(row["token_hash"], now):
+            raise refuse("used")      # the same code redeemed in parallel: one of the two wins
+        payload = json.loads(row["payload"] or "{}")
+        self._audit("oauth_consent_pairing_redeemed", u["username"], ip,
+                    f"resource={_detail(payload.get('resource') or '*')}")
+        return {"armed": True, "expires_at": int(row["expires_at"]), "resource": payload.get("resource")}
+
+    def pairing_mismatch(self, req: dict, armed) -> str:
+        """Why the armed consent does NOT cover this authorization request — "" if it does. Pure: nothing is spent."""
+        p = req["params"]
+        if p.get("fetch_site") != "none":
+            # Opened by the person's browser itself (`xdg-open`, a pasted URL) — not by a website: a site's navigation
+            # carries `cross-site` through the whole redirect chain (Fetch Metadata), so it can neither use nor spend it.
+            return "fetch_site"
+        if loopback_uri(p.get("redirect_uri")) is None:
+            return "redirect"     # never for a code that leaves the computer (ADR-14: loopback only)
+        if self.store.oauth_service(req["client"]["client_id"]) is not None:
+            return "client"
+        bound = (json.loads(armed["payload"] or "{}") or {}).get("resource")
+        if bound and bound != p.get("resource"):
+            return "resource"
+        return ""
+
+    def consent_by_pairing(self, rid: str, req: dict, user: dict, ip) -> Optional[str]:
+        """The consent given in advance (ADR-14): the redirect URL when the account's armed pairing covers this
+        request and was spent on it now — or None, and the consent page asks as always. A request that does not
+        match spends nothing."""
+        if not self.cfg.oauth_pairing_consent_enabled:
+            return None
+        now = _now()
+        armed = self.store.oauth_armed_consent_pairing(int(user["id"]), now)
+        if armed is None:
+            return None
+        why = self.pairing_mismatch(req, armed)
+        if why:
+            self._audit("oauth_consent_pairing_unused", user["username"], ip,
+                        f"client={req['client']['client_id']} reason={why} "
+                        f"fetch_site={_detail(req['params'].get('fetch_site'))}")
+            return None
+        if not self.store.oauth_use_consent_pairing(armed["token_hash"], now):
+            return None           # another authorization spent it a moment ago
+        try:
+            return self.decide(rid, req, user, True, ip, via=VIA_PAIRING)
+        except OAuthError:
+            self.store.oauth_release_consent_pairing(armed["token_hash"], now)
+            raise
+
     # --- devices ---
     def devices(self, user_id=None) -> list:
         out = []
@@ -735,7 +873,9 @@ class OAuthServer:
             out.append({"id": int(g["id"]), "client_id": g["client_id"], "client_name": g["client_name"] or "",
                         "user_id": int(g["user_id"]), "username": g["username"], "resource": g["resource"],
                         "scope": g["scope"], "created_at": g["created_at"], "last_used": g["last_used"],
-                        "last_ip": g["last_ip"] or g["created_ip"] or ""})
+                        "last_ip": g["last_ip"] or g["created_ip"] or "",
+                        # ADR-14: "page" (the consent page) or "pairing" (a pairing code).
+                        "via": g["consent_via"] or "page"})
         return out
 
     def gc(self) -> dict:
@@ -900,9 +1040,13 @@ def add_routes(auth, r) -> None:
             return RedirectResponse(srv.redirect_url(e.redirect_uri, error=e.error,  # type: ignore[attr-defined]
                                                      error_description=e.description,
                                                      state=e.state), 303)  # type: ignore[attr-defined]
+        # ADR-14: who opened this request — the person's browser itself (`none`) or a page (`cross-site`, …). Kept with
+        # the request: the sign-in and reauth round trips in between are same-origin and say nothing about the start.
+        params["fetch_site"] = (request.headers.get("sec-fetch-site") or "").strip().lower()[:20]
         rid, browser = srv.begin(client, params)
         auth.audit("oauth_authorize", None, ip,
-                   f"client={client['client_id']} resource={_detail(params['resource'])}")
+                   f"client={client['client_id']} resource={_detail(params['resource'])} "
+                   f"fetch_site={_detail(params['fetch_site'])}")
         resp = RedirectResponse(auth.browser_path(request, "/auth/oauth/consent") + "?txn=" + rid, 303)
         auth._set_flow_cookie(resp, FLOW, browser, REQUEST_TTL_SEC)
         return resp
@@ -928,6 +1072,20 @@ def add_routes(auth, r) -> None:
             return RedirectResponse(target, 303)
         if auth._fresh_enough(request, user) == "relogin":
             return page_error(request, 403, auth.t("api.stepup_relogin"))
+        # ADR-14: a pairing code of THIS account answered the question in advance — once, only for a request that
+        # matches it; the freshness above holds for it as for the page.
+        try:
+            url = srv.consent_by_pairing(txn, req, user, auth.client_ip(request))
+        except OAuthError:
+            return page_error(request, 400, auth.t("oauth.expired"))
+        if url:
+            # A page that hands over with a meta refresh, not a 303: this GET is often the end of a redirect chain that
+            # began with the sign-in or reauth FORM, and Chrome checks every redirect after a form submission against
+            # that page's `form-action` — which names no loopback address (measured with Claude Code, ADR-14).
+            resp = auth.render_page("oauth_return", request=request, user=user, url=url,
+                                    client_name=req["client"]["name"])
+            auth._delete_flow_cookie(resp, FLOW)
+            return resp
         p = req["params"]
         host, port, _ = loopback_uri(p["redirect_uri"]) or ("?", None, "")
         access_ttl, idle, max_age = srv._lifetimes()
@@ -937,7 +1095,10 @@ def add_routes(auth, r) -> None:
             redirect_host=host + (f":{port}" if port else ""), resource=p["resource"],
             resource_name=auth._forward_app(p["resource"])["name"], scope=p["scope"].split(),
             offline="offline_access" in p["scope"].split(), access_minutes=access_ttl // 60,
-            idle_days=idle // 86400, max_days=(max_age or 0) // 86400)
+            idle_days=idle // 86400, max_days=(max_age or 0) // 86400,
+            # The app frame of T-91 for the application the program asks for (`forward_apps[host]`, when it has one).
+            **({"frame": frame} if cfg.topbar_enabled and (frame := auth._frame_of(urlsplit(p["resource"]).hostname))
+               else {}))
         resp.headers["Content-Security-Policy"] = _consent_csp(resp.headers.get("content-security-policy", ""),
                                                                p["redirect_uri"])
         resp.headers["X-Frame-Options"] = "DENY"
@@ -1067,6 +1228,40 @@ def add_routes(auth, r) -> None:
             if not auth.revoke_service_client(client_id, user_id=int(user["id"])):
                 raise HTTPException(404, auth.t("api.not_found"))
             return {"ok": True}
+
+
+    # --- pairing consent (ADR-14) ---
+    if cfg.oauth_pairing_consent_enabled:
+        @r.post("/auth/oauth/pairing")
+        async def own_pairing_create(request: Request):
+            # Only the account itself, from its own fresh browser session (CSRF in `json_body`): the code is a consent
+            # given in advance — never with an API key or an access token, never for someone else.
+            user = auth._require_fresh(request)
+            b = await auth.json_body(request)
+            try:
+                out = srv.issue_consent_pairing(user, b.get("resource"), auth.client_ip(request))
+            except OAuthError as e:
+                # The account page reads `detail`, like every other route of it.
+                raise HTTPException(e.status, auth.t("oauth.too_many") if e.status == 429
+                                    else auth.t("api.invalid", reason=e.description)) from None
+            return JSONResponse(out, status_code=201, headers={"Pragma": "no-cache", "Cache-Control": "no-store"})
+
+
+        @r.post("/auth/oauth/pairing/redeem")
+        async def own_pairing_redeem(request: Request):
+            ip = auth.client_ip(request)
+            try:
+                ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    raise OAuthError("invalid_request", "the body must be application/json")
+                try:
+                    body = json.loads((await _read_body(request)).decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    raise OAuthError("invalid_request", "the body is no JSON") from None
+                out = srv.redeem_consent_pairing(body, ip)
+            except OAuthError as e:
+                return error_json(e)
+            return JSONResponse(out, headers={"Pragma": "no-cache", "Cache-Control": "no-store"})
 
 
     # --- own devices (account page) ---

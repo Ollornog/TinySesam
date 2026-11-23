@@ -32,6 +32,8 @@ import warnings
 from typing import Optional
 
 from .oauth import ACCESS_PREFIX, DEFAULT_SCOPE, MAX_NAME_LEN, OAuthError, _detail, new_token, normalize_resource
+# The one-time code is shared with the pairing consent of people's programs (ADR-14): one format, one digest.
+from .oauth import code_digest, new_pairing_code, normalize_code
 from .store import now as _now
 
 #: RFC 7523 §2.2.
@@ -58,34 +60,11 @@ MAX_KEYS = 3
 PAIR_PER_IP_HOUR = 20
 CLIENT_PREFIX = "tss_"
 
-#: The pairing code: 16 characters from 32 without look-alikes (no I, O, 0, 1) = 80 bits, in groups of four.
-CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-CODE_LEN = 16
 _B64U = re.compile(r"[A-Za-z0-9_-]+")
 _JTI = re.compile(r"[\x21-\x7e]{8,200}")
 
 
 # ---------- pairing code ----------
-
-def new_pairing_code() -> str:
-    raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
-    return "-".join(raw[i:i + 4] for i in range(0, CODE_LEN, 4))
-
-
-def normalize_code(text) -> Optional[str]:
-    """The code without separators, upper case — or None if it cannot be one (checked before the database)."""
-    if not isinstance(text, str) or len(text) > 64:
-        return None
-    c = "".join(z for z in text.upper() if z not in "- \t")
-    if len(c) != CODE_LEN or any(z not in CODE_ALPHABET for z in c):
-        return None
-    return c
-
-
-def code_digest(code: str) -> str:
-    """What the database keeps of a pairing code (in `magic_token`, purpose `oauth_pairing`)."""
-    return hashlib.sha256(("tinysesam-pairing:" + code).encode("ascii")).hexdigest()
-
 
 def code_binding(code: str) -> str:
     """The value the pairing proof carries as `nonce`: binds the proof to this one code."""

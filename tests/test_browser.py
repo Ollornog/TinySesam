@@ -170,9 +170,13 @@ t36 = _TinySesam(_TinySesamConfig(
     forward_auth_enabled=True, oauth_enabled=True, oauth_resources=["http://127.0.0.1:9/mcp"],
     # T-66: two applications that take app passwords — the account page offers the section.
     forward_apps={"files.example.com": {"name": "Files", "app_passwords": True},
-                  "git.example.com": {"name": "Git", "app_passwords": True}},
+                  "git.example.com": {"name": "Git", "app_passwords": True},
+                  # T-95: the consent page names the application of the resource and shows its frame (T-91).
+                  "127.0.0.1": {"name": "Doc Hub", "home": "/"}},
     # T-60: services — the account page offers a pairing code (needs the extra [services], part of [all]).
-    oauth_service_clients=True))
+    oauth_service_clients=True,
+    # T-95 (ADR-14): the pairing code for people's programs — account page, redemption, straight back to the program.
+    oauth_pairing_consent_enabled=True))
 t36.set_security("password_min_length_single_factor", 8)
 _t36_app = _FastAPI()
 _t36_app.include_router(t36.router())
@@ -1200,6 +1204,7 @@ async def link_setup_pass(p):
 
     await link_setup_without_codes(p, go, until, me)
     await oauth_consent(p)
+    await oauth_pairing(p)
     await app_passwords_page(p)
     await services_page(p)
 
@@ -1361,6 +1366,148 @@ async def oauth_consent(p):
     assert not p.console, f"console errors: {p.console[:2]}"
     assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
     print("  OAuth devices: listed on the account page (390/1280 px), „Disconnect“ ends it at once")
+
+
+async def oauth_pairing(p):
+    """T-95 (ADR-14) in a real browser on the T-36 app, at 390 px: the account page creates a pairing code (own dialog,
+    once), the setup script's redemption over real HTTP, then the browser opens the authorization itself and lands at
+    the program's callback without a page (`Sec-Fetch-Site: none` of a browser navigation). The next authorization shows
+    the consent page for laypeople — light and dark, a large "Allow", details folded, no sideways scroll, strict CSP.
+    `TINYSESAM_SCREENSHOTS=<dir>` keeps the screenshots."""
+    import base64
+    import hashlib
+    import re
+    import secrets as _s
+    from urllib.parse import parse_qs, urlencode, urlsplit
+
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+
+    async def shot(name):
+        if not shots:
+            return
+        os.makedirs(shots, exist_ok=True)
+        data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+        with open(os.path.join(shots, name), "wb") as fh:
+            fh.write(base64.b64decode(data))
+
+    def authorize_url(cid):
+        verifier = _s.token_urlsafe(48)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+        q = urlencode({"response_type": "code", "client_id": cid, "redirect_uri": T36_CB, "code_challenge": challenge,
+                       "code_challenge_method": "S256", "state": "pc", "scope": "mcp offline_access",
+                       "resource": "http://127.0.0.1:9/mcp", "prompt": "consent"})
+        return f"{T36}/auth/oauth/authorize?{q}", verifier
+
+    uid = t36.create_user("pia", password="pia-pw-1234567")
+    tok, _ = t36.start_session(uid, "password")
+    await p.cmd("Network.setCookie", name=t36.session_cookie_name, value=tok, url=T36 + "/")
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
+    try:
+        await p.cmd("Page.navigate", url=f"{T36}/auth/account")
+        await p.until("document.readyState==='complete' && !!document.getElementById('pcsec')", "no pairing section")
+        assert await p.js("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        await p.click("[data-act=mkpc]")
+        await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "no dialog with the pairing code")
+        code = await p.js("document.querySelector('dialog.tsdlg[open] textarea').value")
+        assert re.fullmatch(r"([A-HJ-NP-Z2-9]{4}-){3}[A-HJ-NP-Z2-9]{4}", code), code
+        assert "15" in await p.js("document.querySelector('dialog.tsdlg[open]').innerText")
+        await shot("t95-pairing-code-390.png")
+        await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+        await p.until("!document.querySelector('dialog.tsdlg')", "the dialog did not close")
+        # The setup script: redeem over real HTTP, without a session.
+        req = urllib.request.Request(f"{T36}/auth/oauth/pairing/redeem", method="POST",
+                                     headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"code": code}).encode())
+        assert json.load(urllib.request.urlopen(req))["armed"] is True
+        reg = urllib.request.Request(f"{T36}/auth/oauth/register", method="POST",
+                                     headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"client_name": "Claude Code", "redirect_uris": [T36_CB],
+                                                      "token_endpoint_auth_method": "none"}).encode())
+        cid = json.load(urllib.request.urlopen(reg))["client_id"]
+        # `claude mcp login`: the browser opens the authorization itself — straight to the program, no page.
+        _t36_cb_seen.clear()
+        url, verifier = authorize_url(cid)
+        await p.cmd("Page.navigate", url=url)
+        for _ in range(40):
+            if _t36_cb_seen:
+                break
+            await asyncio.sleep(0.2)
+        assert _t36_cb_seen, f"no straight return to the program: {await p.js('location.href')}"
+        cbq = parse_qs(urlsplit(_t36_cb_seen[-1]).query)
+        assert cbq["state"] == ["pc"] and cbq["code"][0].startswith("tsac_"), cbq
+        line = next(a for a in t36.store.recent_audit(200) if a["event"] == "oauth_consent")["detail"]
+        assert "via=pairing" in line and "fetch_site=none" in line, line
+        tok_req = urllib.request.Request(f"{T36}/auth/oauth/token", method="POST",
+                                         data=urlencode({"grant_type": "authorization_code", "code": cbq["code"][0],
+                                                         "redirect_uri": T36_CB, "code_verifier": verifier,
+                                                         "client_id": cid}).encode(),
+                                         headers={"Content-Type": "application/x-www-form-urlencoded"})
+        assert json.load(urllib.request.urlopen(tok_req))["access_token"].startswith("tsat_")
+        assert [d["via"] for d in t36._oauth.devices(uid)] == ["pairing"]
+        # Not signed in yet: the chain runs through the sign-in FORM. Chrome checks every redirect after a form
+        # submission against that page's form-action — the return page hands over with a navigation instead (the
+        # real Claude Code stopped at chrome-error with a 303 here, ADR-14).
+        code2 = t36._oauth.issue_consent_pairing(t36.get_user(uid), None, None)["code"]
+        req = urllib.request.Request(f"{T36}/auth/oauth/pairing/redeem", method="POST",
+                                     headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"code": code2}).encode())
+        assert json.load(urllib.request.urlopen(req))["armed"] is True
+        await p.cmd("Network.clearBrowserCookies")
+        _t36_cb_seen.clear()
+        await p.cmd("Page.navigate", url=authorize_url(cid)[0])
+        await p.until("document.readyState==='complete' && !!document.querySelector('input[name=password]')",
+                      "no sign-in form on the way")
+        await p.js("(()=>{document.querySelector('input[name=username]').value='pia';"
+                   "document.querySelector('input[name=password]').value='pia-pw-1234567';"
+                   "document.querySelector('input[name=password]').form.submit()})();true")
+        for _ in range(50):
+            if _t36_cb_seen:
+                break
+            await asyncio.sleep(0.2)
+        assert _t36_cb_seen, f"after the sign-in form no return to the program: {await p.js('location.href')}"
+        assert "code=tsac_" in _t36_cb_seen[-1]
+        print("  T-95: account page → pairing code (dialog) → redeemed → the browser's authorization went straight to "
+              "the program (Sec-Fetch-Site none, via=pairing)")
+
+        # The next sign-in asks again — on the page for laypeople.
+        tok, _ = t36.start_session(uid, "password")
+        await p.cmd("Network.setCookie", name=t36.session_cookie_name, value=tok, url=T36 + "/")
+        backgrounds: set = set()
+        for theme in ("light", "dark"):
+            await p.cmd("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": theme}])
+            await p.cmd("Page.navigate", url=authorize_url(cid)[0])
+            await p.until("location.pathname==='/auth/oauth/consent' && document.readyState==='complete'",
+                          "the second authorization must show the consent page")
+            assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark"), theme
+            backgrounds.add(await p.js("getComputedStyle(document.body).backgroundColor"))
+            lead = await p.js("document.getElementById('oalead').innerText")
+            assert "Claude Code" in lead and "Doc Hub" in lead and "pia" in lead, lead
+            assert await p.js("document.getElementById('oadetails').open") is False, "details must start folded"
+            assert await p.js("document.getElementById('oaallow').getBoundingClientRect().height") >= 48
+            assert await p.js("(()=>{const a=document.getElementById('oaallow').getBoundingClientRect(),"
+                              "d=document.getElementById('oadetails').getBoundingClientRect();return a.bottom<=d.top})()")
+            assert await p.js("(()=>{const s=getComputedStyle(document.getElementById('oaallow'));"
+                              "return s.color!==s.backgroundColor})()")
+            over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+            assert over <= 0, f"the consent page scrolls sideways at 390 px ({over}px, {theme})"
+            await shot(f"t95-consent-{theme}-390.png")
+        assert len(backgrounds) == 2, f"light and dark look the same: {backgrounds}"
+        await p.js("document.querySelector('#oadetails summary').click();true")
+        await p.until("document.getElementById('oadetails').open && "
+                      "document.getElementById('oaclient').getBoundingClientRect().height>0", "details do not open")
+        assert "127.0.0.1" in await p.js("document.getElementById('oarhost').innerText")
+        assert await p.js("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        await shot("t95-consent-details-dark-390.png")
+        viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+        assert viol == "[]", f"CSP violation: {viol}"
+        assert not p.console, f"console errors: {p.console[:2]}"
+        assert p.failed[failed_before:] == [], f"broken requests: {p.failed[failed_before:][:3]}"
+    finally:
+        await p.cmd("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "light"}])
+        await p.cmd("Emulation.clearDeviceMetricsOverride")
+    print("  T-95: consent page for laypeople — one sentence with the app, large „Allow“, details folded "
+          "(390 px, light/dark, strict CSP)")
 
 
 async def app_passwords_page(p):
