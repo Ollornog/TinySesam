@@ -8,9 +8,11 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 77/89 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 80/93 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 * ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 0/15 erledigt
+* ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 0/4 erledigt
+* ☐ **[M-6](M-6-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 
 ## Aufgaben
 
@@ -43,7 +45,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-27](T-27-cli-delete-account.md)** CLI command to delete an account (maintenance without the admin panel) · M-2
 * ☑ **[T-28](T-28-go-variant-small-gate-client.md)** Gate client specification with language-neutral test and attack vectors · M-2
 * ☑ **[T-29](T-29-translate-everything-to-english.md)** Translate everything to English (code texts, docs, messages) · M-2
-* ☐ **[T-30](T-30-launch-plan.md)** Launch plan — make TinySesam publicly known · M-2
+* ☐ **[T-30](T-30-launch-plan.md)** Launch plan — make TinySesam publicly known · M-6
 * ☐ **[T-31](T-31-maybe-recommend-a-provider-session-at-least-as-lon.md)** Maybe: recommend a provider session at least as long as the gateway session · M-2
 * ☑ **[T-32](T-32-api-key-pairing-negotiate-a-key-on-first-contact-o.md)** API key pairing: negotiate a key on first contact, optional renew and rotate on login · M-2
 * ☑ **[T-33](T-33-sign-in-alternatives-qr-cross-device-login-admin-i.md)** Sign-in alternatives: QR/cross-device login, admin-issued link without mail, self-request switchable · M-2
@@ -83,9 +85,9 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-67](T-67-orderly-shutdown-close.md)** Orderly shutdown: a public close() that drains the outboxes and refuses new jobs · M-2
 * ☐ **[T-68](T-68-dpop-for-service-tokens.md)** DPoP for service tokens — bind a service's access token to its key (RFC 9449) · M-2
 * ☑ **[T-69](T-69-attack-round-a-oauth-services-app-passwords-keys.md)** Attack round A (2026-11-21) — OAuth, services, app passwords, keys · M-2
-* ☐ **[T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md)** SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap) · M-2
+* ☐ **[T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md)** SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap) · M-4
 * ☑ **[T-71](T-71-session-handles-keyed-with-the-pepper.md)** Session handles keyed with the pepper instead of a plain sha256 · M-2
-* ☐ **[T-72](T-72-pepper-for-the-remaining-token-digests.md)** Pepper for the remaining token digests, then drop the session-handle rewrite · M-2
+* ☐ **[T-72](T-72-pepper-for-the-remaining-token-digests.md)** Pepper for the remaining token digests, then drop the session-handle rewrite · M-5
 * ☐ **[T-73](T-73-tenants-multiple-hostnames-each-with-its-own-sign-in-choice.md)** Tenants — multiple hostnames, each with its own sign-in choice · M-2
 * ☑ **[T-74](T-74-delegated-admins.md)** Delegated admins — a team admin who manages accounts within listed roles · M-2
 * ☑ **[T-75](T-75-sign-in-kind-in-forward-auth.md)** Sign-in kind in forward auth: a Remote-Auth header · M-2
@@ -102,9 +104,9 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-86](T-86-python-gate-client.md)** Python gate client · M-2
 * ☑ **[T-87](T-87-accounts-page-and-role-levels-in-the-admin-panel.md)** Accounts page and role levels in the admin panel · M-2
 * ☑ **[T-88](T-88-account-kind-menu-links-logo-tooltip.md)** Account kind (Remote-Kind, spec v2), account menu links and the logo tooltip · M-2
-* ◐ **[T-89](T-89-approvals-confirm-one-sensitive-action-with-a-step.md)** 'Approvals: confirm one sensitive action with a step-up (stage A: TinySesam actions; stage B: application · M-2
-* ◐ **[T-90](T-90-account-api-for-applications-stage-a-create-read-u.md)** 'Account API for applications (stage A: create, read, update, lock, link; stage B: delete, panel, · M-2
-* ◐ **[T-91](T-91-app-frame-and-account-overview.md)** Two ways to use TinySesam: app frame on TinySesam''s pages and the own account as data · M-2
+* ☑ **[T-89](T-89-approvals-confirm-one-sensitive-action-with-a-step.md)** 'Approvals: confirm one sensitive action with a step-up (stage A: TinySesam actions; stage B: application · M-2
+* ☑ **[T-90](T-90-account-api-for-applications-stage-a-create-read-u.md)** 'Account API for applications (stage A: create, read, update, lock, link; stage B: delete, panel, · M-2
+* ☑ **[T-91](T-91-app-frame-and-account-overview.md)** Two ways to use TinySesam: app frame on TinySesam''s pages and the own account as data · M-2
 * ☑ **[T-92](T-92-role-catalog-roles-in-the-database-for-the-admin-panel.md)** Role catalog: roles in the database, so administrators add them in the panel · M-2
 * ☑ **[T-93](T-93-follow-ups-to-0-29-0-kid-rule-proxy-duty-key-purposes.md)** Follow-ups to 0.29.0: kid rule, server-side top bar vs. proxy duty, key purposes both ways · M-2
 * ☑ **[T-94](T-94-first-sign-in-by-link-recovery-codes-off-totp-hint-target.md)** First sign-in by one-time link: recovery codes switchable, TOTP app hint, target after the setup · M-2
@@ -123,7 +125,21 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md)** Stage S11 — acceptance matrix in CI: examples x origins · M-4
 * ☐ **[T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md)** Stage S12 (optional) — fully headless library: register, reset password, setup status · M-4
 * ☐ **[T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md)** Stage S13 (optional) — SCIM stage 2 for IdP role sync · M-4
-* ☐ **[T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)** Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant · M-4
+* ☐ **[T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)** Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant · M-6
+* ☐ **[T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md)** Schema baseline and ballast removal: the current state is the starting line · M-5
+* ☐ **[T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)** Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing · M-5
+* ☐ **[T-113](T-113-topbar-fetch-in-rust-and-php.md)** Topbar fetch in the Rust and PHP clients · M-2
+* ☐ **[T-114](T-114-test-image-nginx-on-the-stable-line.md)** Proxy test image: nginx on the stable line instead of mainline · M-2
+* ☐ **[T-115](T-115-one-aggregate-ci-job-per-client.md)** One aggregate CI job per client, so required checks do not depend on matrix names · M-2
+* ☐ **[T-116](T-116-pre-push-gate-caddy-suite-without-image.md)** Pre-push: the gate-Caddy suite without its image counts as red · M-2
+* ☐ **[T-117](T-117-client-go-fuzz-on-time-again.md)** client-go: fuzz on time again once Go fixes the deadline report · M-2
+* ☐ **[T-118](T-118-grype-exception-libc6-expires.md)** Grype exception for libc6 expires on 2026-11-28 — rebuild the base images or drop it · M-2
+* ☐ **[T-119](T-119-caddy-jwt-jwk-url-hang-follow-upstream.md)** caddy-jwt jwk_url hang: follow upstream, then offer jwk_url again; check the X-Forwarded-For warning · M-2
+* ☐ **[T-120](T-120-leftovers-of-approvals-account-api-and-app-frame.md)** On demand: leftovers of approvals, account API and app frame · M-2
+* ☐ **[T-121](T-121-server-side-fuzzing.md)** Fuzz the server side: gate token, forward headers, OAuth endpoints, JSON APIs, template escaping · M-6
+* ☐ **[T-122](T-122-public-threat-model.md)** A short public threat model · M-6
+* ☐ **[T-123](T-123-independent-review-external-penetration-test-or-human.md)** Independent review: an external penetration test or a human code review · M-6
+* ☐ **[T-124](T-124-crypto-inventory-and-post-quantum-readiness.md)** Crypto inventory and post-quantum readiness (harvest now, decrypt later) · M-6
 
 ## Fehler
 
@@ -142,7 +158,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-13](B-13-flaky-ci-suite-died-silently-and-chrome-start.md)** CI flakes: a suite died from a segfault without a word, a dialog wait raced, Chrome hung at startup · M-2
 * ☑ **[B-14](B-14-late-key-list-overwrites-the-sign-in-link-browser-test-reauth-flakes.md)** Admin panel: a late key list overwrote the sign-in link; browser test ran out after a dialog that navigates · M-2
 * ☑ **[B-15](B-15-totp-codes-in-the-suites-flip-at-a-step-boundary.md)** Test flake: TOTP codes in the suites flip at a 30-second step boundary · M-2
-* ☐ **[B-16](B-16-the-sql-check-of-test-english-code-goes-blind-afte.md)** The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment · M-2
+* ☐ **[B-16](B-16-the-sql-check-of-test-english-code-goes-blind-afte.md)** The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment · M-5
 
 ## Entscheidungen (ADR)
 

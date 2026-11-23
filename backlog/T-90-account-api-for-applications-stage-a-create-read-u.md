@@ -2,7 +2,7 @@
 type: Task
 title: 'Account API for applications (stage A: create, read, update, lock, link; stage B: delete, panel,
   CLI)'
-status: in-arbeit
+status: erledigt
 id: T-90
 milestone: M-2
 tags: [provisioning, accounts, service-accounts, delegates, api]
@@ -72,3 +72,9 @@ application.
 - [ ] The holder's account page names the application as the origin of a link or lock ("by Example", draft §8).
 
 Design: the accepted draft of 2026-11-22 (sections 0–13).
+
+## Closed 2026-11-23
+
+Stages A and B, the access reset and the panel hint are done. `TINYSESAM_APPS` is part of
+[T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md); the other "later" items moved to
+[T-120](T-120-leftovers-of-approvals-account-api-and-app-frame.md).

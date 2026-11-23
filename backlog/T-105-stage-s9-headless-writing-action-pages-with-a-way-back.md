@@ -21,3 +21,8 @@ The application draws everything, TinySesam only the pages for secrets and conse
 
 ## Acceptance
 - **Ex4** headless (JavaScript single-page app behind the server): every write action over an action page in the application's name and back; no secret in the application.
+
+## Added 2026-11-23
+
+From [T-91](T-91-app-frame-and-account-overview.md): ending a single session or program from the application uses
+the session handle of this stage (A2).

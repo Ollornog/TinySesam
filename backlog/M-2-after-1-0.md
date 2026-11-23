@@ -19,3 +19,12 @@ yardstick of this milestone therefore applies from the day of publication: until
 in the repo", afterwards "arrives correctly at a stranger's". This is where the points collect that follow from this shift — deadlines of the
 build tooling, gaps noticed while preparing for publication, and everything
 that would cost a major version if noticed too late.
+
+## Roadmap 2026-11-23
+
+This milestone stays the maintenance lane, worked in between the sprints of
+[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md), [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+and [M-6](M-6-trust-hardening-and-launch.md). Measurable done line for a release: no open `B-` entry in M-2, no expired
+scanner exception, and every remaining open entry is tagged `idea`, `maybe` or `on-demand` or waits for an upstream
+release. Moved out on 2026-11-23: B-16 and T-72 (M-5), T-70 (M-4), T-30 (M-6); closed: T-89, T-90, T-91 (rest in
+[T-120](T-120-leftovers-of-approvals-account-api-and-app-frame.md)).

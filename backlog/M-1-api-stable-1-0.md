@@ -378,4 +378,11 @@ translated texts and the promised names; this pass renames the rest **before** t
   `CONTRIBUTING.md` states the rule.
 * Still German on purpose: the interface texts (`lang="de"`, `i18n/`) and the shared test kit (`repokit sync`).
 
+## Roadmap 2026-11-23
+
+- The tier-C aliases (`_deprecated.py`) go with the schema baseline ([T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md), [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)) — they had to fall before 1.0 anyway; a tier-C break does not reset the clock.
+- The module cut ([T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)) must leave tiers A and B unchanged; it is measured by `tests/test_api_surface.py`, so the clock keeps running.
+- [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md) adds surface (additions are no break); new tier-A names start their own clock with the release that brings them.
+- Measurable done line: the latest two minor releases show no tier-A change in `tests/api_surface.json` against their predecessor (compared in CI from the tags), and `_deprecated.py` no longer exists.
+
 <!-- What used to be here (closing with 1.0.0) is obsolete together with the milestone itself. -->

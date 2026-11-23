@@ -23,3 +23,8 @@ Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-syn
 
 ## Acceptance
 - Same scenario (role, approval, admin action) once local, once OIDC, once SAML (test IdP) with the same result.
+
+## Roadmap (2026-11-23)
+
+The SAML step-up has its detailed design in [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md)
+(5 SP, 8–12 h, can run earlier); what remains here is about 8 SP, 16–20 h.

@@ -3,7 +3,8 @@ id: T-70
 type: Task
 title: 'SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap)'
 status: offen
-milestone: M-2
+milestone: M-4
+blocked_by: [T-112]
 tags: [security, saml, stepup]
 created: '2026-11-21'
 ---
@@ -50,3 +51,10 @@ mutations; `SECURITY.md` (en/de) drops the "SAML has no such check yet" line and
 Sources: SAML 2.0 Core (OASIS, 2005) §3.4.1 (`ForceAuthn`: "the identity provider MUST authenticate the presenter
 directly rather than rely on a previous security context"), §2.7.2 (`AuthnStatement`, `AuthnInstant` required);
 ASVS 5.0.0 6.8.4; NIST SP 800-63B-4 §5.2.
+
+## Roadmap (2026-11-23)
+
+Moved to [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md): this is the SAML part of stage S3
+([T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md)), the detailed design stays here. It does not
+need the server stage and can run as soon as the module cut ([T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md))
+is merged. Estimate: 5 SP, 8–12 h.
