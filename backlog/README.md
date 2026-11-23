@@ -134,7 +134,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-116](T-116-pre-push-gate-caddy-suite-without-image.md)** Pre-push: the gate-Caddy suite without its image counts as red · M-2
 * ☐ **[T-117](T-117-client-go-fuzz-on-time-again.md)** client-go: fuzz on time again once Go fixes the deadline report · M-2
 * ☐ **[T-118](T-118-grype-exception-libc6-expires.md)** Grype exception for libc6 expires on 2026-11-28 — rebuild the base images or drop it · M-2
-* ☐ **[T-119](T-119-caddy-jwt-jwk-url-hang-follow-upstream.md)** caddy-jwt jwk_url hang: follow upstream, then offer jwk_url again; check the X-Forwarded-For warning · M-2
+* ☐ **[T-119](T-119-caddy-jwt-jwk-url-hang-follow-upstream.md)** caddy-jwt 1.5.0: back to jwk_url, disable_authorization_fallback instead of the Authorization detour; check the X-Forwarded-For warning · M-2
 * ☐ **[T-120](T-120-leftovers-of-approvals-account-api-and-app-frame.md)** On demand: leftovers of approvals, account API and app frame · M-2
 * ☐ **[T-121](T-121-server-side-fuzzing.md)** Fuzz the server side: gate token, forward headers, OAuth endpoints, JSON APIs, template escaping · M-6
 * ☐ **[T-122](T-122-public-threat-model.md)** A short public threat model · M-6
