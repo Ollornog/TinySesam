@@ -297,7 +297,8 @@ a6 = asked(app, key, anna, return_url=RETURN, state="k3J-state_1.~")
 assert auth.store.get_approval(a6["id"])["nonce"] == "k3J-state_1.~"
 p6 = c_anna.get(f"/auth/approvals/{a6['id']}")
 csp = p6.headers["content-security-policy"]
-assert "https://app.example.com" in re.search(r"form-action[^;]*", csp).group(0).split(), csp
+form_action = re.search(r"form-action[^;]*", csp).group(0).split()
+assert form_action[-1] == "https://app.example.com" and form_action[:2] == ["form-action", "'self'"], csp
 assert "frame-ancestors 'none'" in csp and p6.headers["x-frame-options"] == "DENY"
 r = decide(c_anna, a6["id"], password=PW)
 assert r.status_code == 303, (r.status_code, r.text[-300:])
