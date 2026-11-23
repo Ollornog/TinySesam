@@ -16,6 +16,10 @@ The application calls TinySesam directly (not through the proxy) with an automat
     POST  /auth/api/users/{id}/signin-link      a new one-time link, only before the first sign-in (users:invite)
     GET   /auth/api/provisioning                what the application may do (no scope)
 
+Resetting the access of an account that has signed in before is no route here: it is the approval type
+`tinysesam.account.reset_access` (`POST /auth/api/approvals`, scope `users:reset`), which a person holding
+`provisioning.approver_role` confirms with a step-up — see `tinysesam.approvals`.
+
 Narrow on purpose (draft "account API", PO 2026-11-22): ownership only by `users.managed_by`; an account the application
 did not create, an administrator, an owner, a service account and a delegate answer 404 like an account that does not
 exist — decided before any field is read; roles only from the allowlist (never `admin` or a delegate role, rule E4);
@@ -81,7 +85,9 @@ def normalize_apps(cfg) -> dict:
     Fail-closed for a configuration changed at runtime (construction already refused a broken one, see
     `config_check._apps`): an entry with a bad id, without a service account or without a `provisioning` block is
     left out; a role that is `admin`, a delegate role, a role of a group map, unlisted or malformed is dropped from the
-    allowlist; an unknown scope counts for nothing; a number out of range falls back to its default."""
+    allowlist; an unknown scope counts for nothing; a number out of range falls back to its default; an
+    `approver_role` that is malformed, unlisted, `admin` or grantable by any application is None, and `users:reset`
+    counts for nothing without one."""
     raw = getattr(cfg, "apps", None) or {}
     if not isinstance(raw, dict):
         return {}
@@ -90,6 +96,10 @@ def normalize_apps(cfg) -> dict:
     mapped = set(config_check._mapped_roles(cfg))
     known = set(getattr(cfg, "available_roles", None) or [])
     max_ttl = _int(getattr(cfg, "signin_link_max_ttl_min", 0), 24 * 60, 1, 10 ** 6)
+    # Every role ANY application may grant: never an approver role (straw-account attack, `config_check`).
+    grantable = {r for e in raw.values() if isinstance(e, dict) and isinstance(e.get("provisioning"), dict)
+                 and isinstance(e["provisioning"].get("roles"), list) for r in e["provisioning"]["roles"]
+                 if isinstance(r, str)}
     out: dict = {}
     for app_id, entry in raw.items():
         if not isinstance(app_id, str) or not config_check.APP_ID.match(app_id) or not isinstance(entry, dict):
@@ -104,9 +114,14 @@ def normalize_apps(cfg) -> dict:
         scopes: list = raw_scopes if isinstance(raw_scopes, list) else []
         limits: dict = raw_limits if isinstance(raw_limits, dict) else {}
         name = entry.get("name")
+        approver = block.get("approver_role")
+        if not (_role_ok(approver) and approver != "admin" and approver in known and approver not in grantable):
+            approver = None
+        granted = [s for s in config_check.PROVISIONING_SCOPES if s in scopes
+                   and (s != "users:reset" or approver is not None)]
         out[app_id] = {
             "id": app_id, "account": account, "name": name if isinstance(name, (str, dict)) else None,
-            "roles": allow, "scopes": [s for s in config_check.PROVISIONING_SCOPES if s in scopes],
+            "roles": allow, "scopes": granted, "approver_role": approver,
             "link_ttl_min": min(_int(block.get("link_ttl_min"), config_check.PROVISIONING_DEFAULTS["link_ttl_min"],
                                      1, max_ttl), max_ttl),
             "max_accounts": _int(block.get("max_accounts"), config_check.PROVISIONING_DEFAULTS["max_accounts"],
@@ -307,6 +322,7 @@ class Provisioning:
         remaining = {k: max(0, v - self.store.counter(self._key(app, k[:-len("_per_hour")])))
                      for k, v in app["limits"].items()}
         return {"app": app["id"], "name": app["name"], "scopes": app["scopes"], "roles": app["roles"],
+                "approver_role": app["approver_role"],
                 "link_ttl_min": app["link_ttl_min"], "max_accounts": app["max_accounts"],
                 "accounts": self.store.count_managed(app["id"]), "limits": dict(app["limits"]),
                 "remaining": remaining}

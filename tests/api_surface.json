@@ -900,7 +900,7 @@
     },
     "SECURITY_EVENTS": {
       "tier": "A",
-      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked', 'signed_in_after_failures', 'approval_approved')"
+      "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked', 'signed_in_after_failures', 'approval_approved', 'access_reset')"
     },
     "TOKEN_PATHS": {
       "tier": "B",
@@ -908,6 +908,19 @@
     }
   },
   "TinySesam.event_payload": {
+    "access_reset": {
+      "keys": [
+        "api_keys",
+        "app",
+        "approved_by",
+        "passkeys",
+        "password",
+        "pin",
+        "recovery_codes",
+        "totp"
+      ],
+      "tier": "A"
+    },
     "api_key_created": {
       "keys": [
         "key_id",

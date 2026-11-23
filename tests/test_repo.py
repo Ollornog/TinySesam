@@ -119,7 +119,7 @@ _NOT_NAMES = frozenset({"NAME", "git"})
 #: The approval types (`tinysesam.approvals.TYPES`, T-89) are dotted names of a namespace of their own
 #: (`tinysesam.apikey.revoke`), not Python names — exactly the registered ones are exempt, nothing around them.
 _APPROVAL_TYPES = frozenset(re.findall(r'^    "(tinysesam(?:\.[a-z_]+){2,})": \{', read("tinysesam/approvals.py"), re.M))
-assert "tinysesam.apikey.revoke" in _APPROVAL_TYPES and len(_APPROVAL_TYPES) == 3, _APPROVAL_TYPES
+assert "tinysesam.apikey.revoke" in _APPROVAL_TYPES and len(_APPROVAL_TYPES) == 4, _APPROVAL_TYPES
 
 
 def package_words(sources) -> set:

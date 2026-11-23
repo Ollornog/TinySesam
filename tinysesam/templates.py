@@ -1514,7 +1514,7 @@ def _approval(auth, ctx) -> str:
     # ⚠ glyph would show a box) plus "Permanent", and the ⚠ character for screen readers and copy-paste.
     warn = (f"<div class=warnbar id=apvirrev><svg class=apvwarn viewBox='0 0 24 24' fill='none' stroke='currentColor' "
             f"stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>{_SYMBOL['warn']}</svg>"
-            f"<span class=apvwarntxt><span class=apvsr>⚠ </span>{_e(t('apv.irreversible'))}</span></div>"
+            f"<span class=apvwarntxt><span class=apvsr>⚠ </span>{_e(a.get('warning') or t('apv.irreversible'))}</span></div>"
             if a.get("irreversible") else "")
     summary = f"<p class=apvsum id=apvsum><bdi>{_e(a.get('summary'))}</bdi></p>"
     title = f"<h1>{_e(a.get('title'))}</h1>"

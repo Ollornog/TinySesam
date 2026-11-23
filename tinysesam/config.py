@@ -508,6 +508,12 @@ class TinySesamConfig:
     # `link_per_hour` 30, `taken_per_hour` 30). It never touches passwords, passkeys, TOTP, the address after creation,
     # an account it did not create, an administrator or a delegate. Empty = no account API. See README "Accounts for
     # applications" and SECURITY.md "Account API".
+    # Resetting the access of an account that has signed in before (new phone, forgotten password) is no key action:
+    # with the scope `users:reset` and `approver_role` (one role name) the application asks for the approval
+    # `tinysesam.account.reset_access` (needs `approvals_enabled`), and a person holding `approver_role` at that moment
+    # confirms it with a step-up — then every factor of the account is deleted and the application picks up a new
+    # one-time link once. `approver_role` must never stand in the allowlist of any application (a leaked key would give
+    # it to a straw account it created); only the operator, or a delegate whose `roles` hold it, grants it.
     apps: dict = field(default_factory=dict)
 
     # --- Sessions (server-side, revocable) ---
