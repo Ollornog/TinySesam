@@ -176,8 +176,12 @@ final readonly class Gate
         );
     }
 
-    /** @throws ConfigError */
-    private static function checkJwksUrl(string $url): void
+    /**
+     * @internal shared with {@see ApprovalVerifier} and {@see Account}
+     *
+     * @throws ConfigError
+     */
+    public static function checkJwksUrl(string $url): void
     {
         $u = parse_url($url);
         if (

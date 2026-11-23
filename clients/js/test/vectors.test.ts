@@ -2,6 +2,9 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { parseAccount } from '../src/account.ts';
+import { createApprovalVerifier } from '../src/approval.ts';
+import { errorClassOf } from '../src/errors.ts';
 import { Gate } from '../src/gate.ts';
 import { identityFromHeaders } from '../src/identity.ts';
 import { type FetchResult, JwksCache } from '../src/jwks.ts';
@@ -22,13 +25,72 @@ import {
 } from './helpers.ts';
 
 // Every file in spec/vectors/ must be run by one of these tests; a new file without a runner fails the suite.
-const RUNNERS = ['headers.json', 'jwks.json', 'keys.json', 'token.json', 'topbar.json'];
-// Vector files of another part of the specification whose runner comes with that part's helper: approval.json
-// (spec/approval-token.md) with the approval helper (T-89 stage B, part 2). Listed, so a new file still fails.
-const PENDING = ['approval.json'];
+const RUNNERS = [
+  'account.json',
+  'approval.json',
+  'headers.json',
+  'jwks.json',
+  'keys.json',
+  'token.json',
+  'topbar.json',
+];
 
 test('every vector file has a runner', () => {
-  assert.deepEqual(vectorFiles(), [...RUNNERS, ...PENDING].sort(), 'add a runner for the new vector file');
+  assert.deepEqual(vectorFiles(), [...RUNNERS].sort(), 'add a runner for the new vector file');
+});
+
+test('account vectors', (t) => {
+  const vectors: Json[] = loadVectors('account.json').vectors;
+  assert.ok(vectors.length > 0, 'no account vectors');
+  for (const v of vectors) {
+    const body = JSON.stringify(v.input.account);
+    assert.deepStrictEqual(parseAccount(body), v.expected.account, v.id);
+    assert.deepStrictEqual(parseAccount(new TextEncoder().encode(body)), v.expected.account, `${v.id} (bytes)`);
+  }
+  t.diagnostic(`${vectors.length} account vectors`);
+});
+
+/** Checks one vector of approval.json: the claims or the error class. */
+async function runApproval(input: Json): Promise<{ ok: true; claims: Json } | { ok: false; error: string }> {
+  const seen = new Set<string>(input.seen);
+  const verifier = createApprovalVerifier({
+    issuer: input.issuer,
+    appId: input.app_id,
+    keys: await parseJwks(JSON.stringify(input.jwks)),
+    leewaySeconds: input.leeway,
+    now: () => input.now,
+  });
+  const store = (jti: string): boolean => {
+    if (seen.has(jti)) {
+      return false;
+    }
+    seen.add(jti);
+    return true;
+  };
+  try {
+    const c = await verifier.verify(input.jws, input.expect, store);
+    return { ok: true, claims: c.raw };
+  } catch (err) {
+    return { ok: false, error: errorClassOf(err) };
+  }
+}
+
+test('approval vectors', async (t) => {
+  const doc = loadVectors('approval.json');
+  assert.equal(doc.spec, 'spec/approval-token.md');
+  const vectors: Json[] = doc.vectors;
+  assert.ok(vectors.length >= 40, `only ${vectors.length} approval vectors`);
+  const problems: string[] = [];
+  for (const v of vectors) {
+    const got = await runApproval(v.input);
+    try {
+      assert.deepStrictEqual(got, v.expected);
+    } catch {
+      problems.push(`${v.id}: ${JSON.stringify(got).slice(0, 200)}, want ${JSON.stringify(v.expected).slice(0, 200)}`);
+    }
+  }
+  assert.deepEqual(problems, []);
+  t.diagnostic(`${vectors.length} approval vectors`);
 });
 
 /** Compares an identity (and has_role) with the expected value of a vector; returns the differences. */

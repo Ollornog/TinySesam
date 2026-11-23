@@ -1,0 +1,1110 @@
+{
+  "format": 2,
+  "kind": "account",
+  "spec": "spec/gate-client.md",
+  "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
+  "defaults": {
+    "issuer": "https://auth.example.com",
+    "audience": "app.example.com",
+    "now": 1767225600
+  },
+  "vectors": [
+    {
+      "id": "signed-in",
+      "attack": null,
+      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      }
+    },
+    {
+      "id": "offered-less",
+      "attack": null,
+      "reason": "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` means not offered here.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": null,
+            "passkeys": null,
+            "pin": null
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": null
+          },
+          "approvals": null,
+          "links": {
+            "account": null,
+            "sessions": null,
+            "totp": null,
+            "passkeys": null,
+            "devices": null,
+            "app_passwords": null,
+            "services": null,
+            "approvals": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": null,
+            "passkeys": null,
+            "pin": null
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": null
+          },
+          "approvals": null,
+          "links": {
+            "account": null,
+            "sessions": null,
+            "totp": null,
+            "passkeys": null,
+            "devices": null,
+            "app_passwords": null,
+            "services": null,
+            "approvals": null
+          }
+        }
+      }
+    },
+    {
+      "id": "signed-out-401",
+      "attack": null,
+      "reason": "The body of the 401 answer: signed out.",
+      "input": {
+        "account": {
+          "authenticated": false,
+          "signed_in": false
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": false,
+          "account": null,
+          "sign_in": null,
+          "sessions": null,
+          "programs": null,
+          "approvals": null,
+          "links": null
+        }
+      }
+    },
+    {
+      "id": "signed-in-string",
+      "attack": "account-types",
+      "reason": "`signed_in` as a string is no `true`: signed out.",
+      "input": {
+        "account": {
+          "signed_in": "true",
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": false,
+          "account": null,
+          "sign_in": null,
+          "sessions": null,
+          "programs": null,
+          "approvals": null,
+          "links": null
+        }
+      }
+    },
+    {
+      "id": "not-object",
+      "attack": "account-types",
+      "reason": "An answer that is no object: signed out.",
+      "input": {
+        "account": [
+          {
+            "signed_in": true,
+            "account": {
+              "username": "anna",
+              "display_name": "Anna Berg"
+            },
+            "sign_in": {
+              "password": "set",
+              "totp": {
+                "enabled": true,
+                "recovery_left": 2,
+                "recovery_low": true
+              },
+              "passkeys": {
+                "count": 1,
+                "items": [
+                  {
+                    "name": "Security key",
+                    "created_at": 1767225600,
+                    "last_used": null
+                  }
+                ]
+              },
+              "pin": true
+            },
+            "sessions": {
+              "count": 2,
+              "items": [
+                {
+                  "created_at": 1767225600,
+                  "last_seen": 1767225600,
+                  "method": "password",
+                  "device": "Firefox · Linux",
+                  "current": null
+                },
+                {
+                  "created_at": 1767225600,
+                  "last_seen": 1767225600,
+                  "method": "passkey",
+                  "device": null,
+                  "current": null
+                }
+              ]
+            },
+            "programs": {
+              "oauth": null,
+              "services": null,
+              "app_passwords": [
+                {
+                  "name": "Phone calendar",
+                  "created_at": 1767225600,
+                  "last_used": null,
+                  "expires_at": 1769817600
+                }
+              ],
+              "api_keys_active": 1
+            },
+            "approvals": {
+              "pending": 1
+            },
+            "links": {
+              "account": "https://auth.example.com/auth/account",
+              "sessions": "https://auth.example.com/auth/account#sessions",
+              "totp": "https://auth.example.com/auth/account#totp",
+              "passkeys": "https://auth.example.com/auth/account#passkeys",
+              "devices": null,
+              "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+              "services": null,
+              "approvals": "https://auth.example.com/auth/approvals"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": false,
+          "account": null,
+          "sign_in": null,
+          "sessions": null,
+          "programs": null,
+          "approvals": null,
+          "links": null
+        }
+      }
+    },
+    {
+      "id": "unsafe-hrefs",
+      "attack": "account-href",
+      "reason": "Only http(s) URLs and paths starting with a single `/` survive, every other `href` becomes `null`; a name with markup stays text, unchanged.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "<img src=x onerror=alert(1)>"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": "javascript:alert(1)",
+            "sessions": "//evil.example.com/a",
+            "totp": "/\\evil.example.com",
+            "passkeys": "data:text/html,<script>",
+            "devices": "https://ok.example.com/a b",
+            "app_passwords": "/x\u0007",
+            "services": 5,
+            "approvals": "/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "<img src=x onerror=alert(1)>"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": null,
+            "sessions": null,
+            "totp": null,
+            "passkeys": null,
+            "devices": null,
+            "app_passwords": null,
+            "services": null,
+            "approvals": "/auth/approvals"
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-types",
+      "attack": "account-types",
+      "reason": "A member of the wrong type reads as missing (`null`); an entry of a list that is no object is dropped; a negative count is no count.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": 5,
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": true,
+            "totp": {
+              "enabled": "yes",
+              "recovery_left": -1,
+              "recovery_low": 1
+            },
+            "passkeys": {
+              "count": 1.5,
+              "items": {
+                "name": "x"
+              }
+            },
+            "pin": "true"
+          },
+          "sessions": {
+            "count": "2",
+            "items": [
+              "x",
+              {
+                "created_at": "1",
+                "last_seen": true,
+                "method": 7,
+                "device": [
+                  "a"
+                ],
+                "current": "yes"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": {
+              "name": "x"
+            },
+            "services": "none",
+            "app_passwords": [
+              null
+            ],
+            "api_keys_active": false
+          },
+          "approvals": {
+            "pending": -1
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": null,
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": null,
+            "totp": {
+              "enabled": null,
+              "recovery_left": null,
+              "recovery_low": null
+            },
+            "passkeys": {
+              "count": null,
+              "items": []
+            },
+            "pin": null
+          },
+          "sessions": {
+            "count": null,
+            "items": [
+              {
+                "created_at": null,
+                "last_seen": null,
+                "method": null,
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [],
+            "api_keys_active": null
+          },
+          "approvals": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      }
+    },
+    {
+      "id": "unknown-and-missing",
+      "attack": "account-types",
+      "reason": "Members a newer TinySesam adds are ignored; a missing group reads as all `null`.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true,
+            "password_age_days": 12
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "ip": "192.0.2.1"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals",
+            "security_log": "/auth/account#log"
+          },
+          "recovery": {
+            "email": "anna@example.com"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": null,
+            "api_keys_active": null
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      }
+    },
+    {
+      "id": "groups-wrong-type",
+      "attack": "account-types",
+      "reason": "A group of the wrong type (a string, a number, a boolean, a list) reads as an empty one: every member `null`, the lists empty.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": "anna",
+          "sign_in": 5,
+          "sessions": true,
+          "programs": [
+            "x"
+          ],
+          "approvals": {
+            "pending": 1
+          },
+          "links": "/auth/account"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": null,
+            "display_name": null
+          },
+          "sign_in": {
+            "password": null,
+            "totp": null,
+            "passkeys": null,
+            "pin": null
+          },
+          "sessions": {
+            "count": null,
+            "items": []
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": null,
+            "api_keys_active": null
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "links": {
+            "account": null,
+            "sessions": null,
+            "totp": null,
+            "passkeys": null,
+            "devices": null,
+            "app_passwords": null,
+            "services": null,
+            "approvals": null
+          }
+        }
+      }
+    },
+    {
+      "id": "approvals-not-integer",
+      "attack": "account-types",
+      "reason": "`approvals.pending` must be an integer, a boolean is none.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": true
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg"
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      }
+    }
+  ]
+}

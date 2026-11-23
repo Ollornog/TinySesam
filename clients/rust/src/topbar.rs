@@ -34,6 +34,18 @@ pub struct TopBar {
     pub admin_panel: Option<String>,
     /// The sign-out address.
     pub logout: Option<String>,
+    /// The approvals waiting for this account, when TinySesam has approvals switched on and the answer carries a count
+    /// of at least 0 and a safe link. Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
+    pub approvals: Option<Approvals>,
+}
+
+/// How many approvals wait for this account and where to decide them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Approvals {
+    /// How many (a JSON integer from 0 to 2^53 − 1).
+    pub pending: u64,
+    /// Where to decide them (a safe target).
+    pub href: String,
 }
 
 /// The safe `{title, href}` entries of a link list; anything that is no list counts as none.
@@ -69,6 +81,7 @@ pub fn normalize(data: &Value) -> TopBar {
         account: None,
         admin_panel: None,
         logout: None,
+        approvals: None,
     };
     let Some(data) = data.as_object() else {
         return out;
@@ -96,6 +109,16 @@ pub fn normalize(data: &Value) -> TopBar {
     out.account = shown("account");
     out.admin_panel = shown("admin_panel");
     out.logout = data.get("logout").and_then(|l| safe_href(l.get("href")));
+    out.approvals = data.get("approvals").and_then(|a| {
+        let pending = a
+            .get("pending")
+            .and_then(Value::as_u64)
+            .filter(|n| *n <= crate::token::MAX_SAFE_INTEGER)?;
+        Some(Approvals {
+            pending,
+            href: safe_href(a.get("href"))?,
+        })
+    });
     out
 }
 

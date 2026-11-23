@@ -824,13 +824,14 @@ def topbar_vectors(p: Probe) -> list:
                     "expected": {"ok": True, "topbar": want}})
 
     signed_out = {"brand": "Example", "signed_in": False, "name": None, "links": [], "menu_links": [],
-                  "account": None, "admin_panel": None, "logout": None}
+                  "account": None, "admin_panel": None, "logout": None, "approvals": None}
     anna = p.topbar("anna")
     add("signed-in", "GET /auth/topbar.json for a signed-in account.", anna,
         {"brand": "Example", "signed_in": True, "name": "Anna Berg",
          "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
          "menu_links": [{"title": "My collections", "href": "/collections"}],
-         "account": f"{ISSUER}/auth/account", "admin_panel": None, "logout": f"{ISSUER}/auth/logout"})
+         "account": f"{ISSUER}/auth/account", "admin_panel": None, "logout": f"{ISSUER}/auth/logout",
+         "approvals": None})
     admin = p.topbar("admin")
     add("admin", "The admin panel link is shown to an admin.", admin,
         dict(signed_out, signed_in=True, name="Admin", links=[{"title": "Wiki", "href": "https://app.example.com/wiki"},
@@ -859,19 +860,252 @@ def topbar_vectors(p: Probe) -> list:
         old, {"brand": "Example", "signed_in": True, "name": "Anna Berg",
               "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
               "menu_links": [], "account": f"{ISSUER}/auth/account", "admin_panel": None,
-              "logout": f"{ISSUER}/auth/logout"}, attack="topbar-types")
+              "logout": f"{ISSUER}/auth/logout", "approvals": None}, attack="topbar-types")
     wrong = json.loads(json.dumps(anna))
     wrong["menu_links"] = {"title": "x", "href": "/x"}
     add("menu-links-not-list", "`menu_links` that is no list counts as none.", wrong,
         {"brand": "Example", "signed_in": True, "name": "Anna Berg",
          "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
          "menu_links": [], "account": f"{ISSUER}/auth/account", "admin_panel": None,
-         "logout": f"{ISSUER}/auth/logout"}, attack="topbar-types")
+         "logout": f"{ISSUER}/auth/logout", "approvals": None}, attack="topbar-types")
     add("wrong-types", "signed_in as a string is no `true`: shown as signed out.",
         {"brand": "Example", "signed_in": "true", "name": "anna", "links": [], "account": None},
         signed_out, attack="topbar-types")
     add("not-object", "An answer that is no object: signed out without brand.", ["x"],
         dict(signed_out, brand=""), attack="topbar-types")
+    return out
+
+
+def topbar_approval_vectors(ap: "AccountProbe") -> list:
+    """The optional member `approvals` of spec §8, from an installation with approvals switched on."""
+    out = []
+
+    def add(vid, reason, data, want, attack=None):
+        out.append({"id": vid, "attack": attack, "reason": reason, "input": {"topbar": data},
+                    "expected": {"ok": True, "topbar": want}})
+
+    anna = ap.topbar()
+    assert anna.get("approvals") == {"pending": 1, "href": f"{ISSUER}/auth/approvals"}, anna.get("approvals")
+    plain = {"brand": "Example", "signed_in": True, "name": "Anna Berg", "links": [], "menu_links": [],
+             "account": f"{ISSUER}/auth/account", "admin_panel": None, "logout": f"{ISSUER}/auth/logout",
+             "approvals": None}
+    add("approvals-pending", "GET /auth/topbar.json with approvals switched on: one approval waits for this account; "
+        "the normalized result carries the number and the checked link.",
+        anna, dict(plain, approvals={"pending": 1, "href": f"{ISSUER}/auth/approvals"}))
+    zero = json.loads(json.dumps(anna))
+    zero["approvals"]["pending"] = 0
+    add("approvals-none-waiting", "Approvals switched on, nothing waiting: zero is a count, not a missing member.",
+        zero, dict(plain, approvals={"pending": 0, "href": f"{ISSUER}/auth/approvals"}))
+    for vid, reason, value in (
+            ("approvals-unsafe-href", "An `approvals.href` that is no safe link drops the whole member.",
+             {"pending": 1, "href": "javascript:alert(1)"}),
+            ("approvals-protocol-relative", "A protocol-relative `approvals.href` drops the whole member.",
+             {"pending": 1, "href": "//evil.example.com/auth/approvals"}),
+            ("approvals-negative", "A negative `pending` is no count.", {"pending": -1, "href": "/auth/approvals"}),
+            ("approvals-not-integer", "`pending` as a boolean is no count.",
+             {"pending": True, "href": "/auth/approvals"}),
+            ("approvals-string", "`pending` as a string is no count.", {"pending": "1", "href": "/auth/approvals"}),
+            ("approvals-fraction", "`pending` with a fraction is no count.",
+             {"pending": 1.5, "href": "/auth/approvals"}),
+            ("approvals-no-href", "Without an `href` there is nowhere to decide: no member.", {"pending": 1}),
+            ("approvals-not-object", "`approvals` that is no object counts as none.", [1, "/auth/approvals"])):
+        bad = json.loads(json.dumps(anna))
+        bad["approvals"] = value
+        add(vid, reason, bad, plain, attack="topbar-href" if "href" in vid or "relative" in vid else "topbar-types")
+    out_ = json.loads(json.dumps(anna))
+    out_["signed_in"] = False
+    add("approvals-signed-out", "Signed out: no approvals, whatever the answer says.", out_,
+        {"brand": "Example", "signed_in": False, "name": None, "links": [], "menu_links": [], "account": None,
+         "admin_panel": None, "logout": None, "approvals": None}, attack="topbar-types")
+    return out
+
+
+# ---------- the own account as data (spec §8a) ----------
+
+class AccountProbe:
+    """A throwaway TinySesam with approvals, TOTP, PIN, passkeys and API keys switched on, and the person `anna` with
+    some of each — under a fixed clock, so the answer of `/auth/account.json` is the same on every run."""
+
+    APP = "example"
+
+    def __init__(self):
+        from tinysesam import TinySesam, TinySesamConfig
+        self.dir = tempfile.mkdtemp(prefix="tinysesam-account-vectors-")
+        with self.clock(), open(os.devnull, "w") as quiet, contextlib.redirect_stderr(quiet):
+            self.auth = TinySesam(TinySesamConfig(
+                db_path=os.path.join(self.dir, "probe.db"), base_url=ISSUER, rp_name="Example", oidc_enabled=False,
+                passkey_enabled=True, totp_enabled=True, pin_enabled=True, apikey_enabled=True,
+                approvals_enabled=True, forward_auth_enabled=True,
+                forward_apps={"dav.example.com": {"app_passwords": True}},
+                apps={self.APP: {"account": "svc-example", "name": {"en": "Example"},
+                                 "approvals": {"types": {"example.collection.archive": {
+                                     "fields": {"collection": {"type": "string", "max": 64}},
+                                     "title": {"en": "Archive a collection", "de": "Collection archivieren"},
+                                     "summary": {"en": "Archive {collection}.", "de": "{collection} archivieren."}}},
+                                     "return_urls": ["https://app.example.com/approvals/return"]}}}))
+            a = self.auth
+            self.service = a.create_service("svc-example")
+            self.anna = a.create_user("anna", "a long probe password 4711", display_name="Anna Berg")
+            uid = int(self.anna)
+            a.store.set_totp(uid, "JBSWY3DPEHPK3PXP", confirmed=True)
+            a.store.add_recovery_codes(uid, ["hash-1", "hash-2"])
+            a.store.add_webauthn(uid, b"credential-1", b"public-key", 0, ["usb"], "Security key")
+            a.store.set_pin_hash(uid, "pin-hash")
+            a.store.create_session(uid, 3600, 1, "password", ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) "
+                                                               "Gecko/20100101 Firefox/140.0")
+            a.store.create_session(uid, 3600, 1, "passkey", ua="")
+            a.store.add_api_key(uid, "backup", "tsk_probe", "key-hash")
+            a.create_app_password(uid, "Phone calendar", expires_days=30)
+            from tinysesam import approvals as apv
+            text = apv.canonical({"type": "example.collection.archive", "collection": "c_81f2"})
+            a.store.add_approval({
+                "id": "apv_probe", "class": "app", "type": "example.collection.archive", "app_id": self.APP,
+                "subject_id": uid, "requester_kind": "app", "requester_ref": str(int(self.service)),
+                "payload": text, "payload_hash": apv.payload_hash(text), "match_code": "418 207", "return_url": None,
+                "nonce": None, "state": "pending", "created_at": NOW - 30, "expires_at": NOW + 300,
+                "decided_at": None, "stepup_amr": None, "auth_time": None})
+
+    @staticmethod
+    @contextlib.contextmanager
+    def clock():
+        """Every clock the probe's data passes through, fixed at NOW."""
+        from tinysesam import approvals as apv
+        from tinysesam import manager
+        from tinysesam import store as store_mod
+        saved = (store_mod._now, apv._now, manager._wall_now, manager._now)
+        store_mod._now = apv._now = manager._wall_now = manager._now = lambda: NOW
+        try:
+            yield
+        finally:
+            store_mod._now, apv._now, manager._wall_now, manager._now = saved
+
+    def close(self) -> None:
+        import shutil
+        self.auth.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def user(self) -> dict:
+        u = dict(self.auth.get_user(self.anna))
+        u["_via"] = "session"
+        return u
+
+    def topbar(self) -> dict:
+        with self.clock():
+            return self.auth.topbar_data(self.user(), base=ISSUER)
+
+    def answer(self, **off) -> dict:
+        """The body of `GET /auth/account.json` (`router._account_json`): `signed_in` plus `account_overview`. `off`
+        switches configuration fields for this one answer (an installation that offers less)."""
+        cfg = self.auth.cfg
+        saved = {k: getattr(cfg, k) for k in off}
+        for k, v in off.items():
+            setattr(cfg, k, v)
+        try:
+            with self.clock():
+                view = self.auth.account_overview(self.user(), base=ISSUER)
+        finally:
+            for k, v in saved.items():
+                setattr(cfg, k, v)
+        assert view is not None
+        return {"signed_in": True, **view}
+
+
+#: The members of the normalized account overview (spec §8a) — every one present in every signed-in result.
+ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
+SIGNED_OUT_ACCOUNT = {"signed_in": False, "account": None, "sign_in": None, "sessions": None, "programs": None,
+                      "approvals": None, "links": None}
+
+
+def account_vectors(ap: AccountProbe) -> list:
+    import copy
+    out = []
+
+    def add(vid, reason, data, want, attack=None):
+        out.append({"id": vid, "attack": attack, "reason": reason, "input": {"account": data},
+                    "expected": {"ok": True, "account": want}})
+
+    full = ap.answer()
+    # The server's answer has exactly the members this file knows: a new member needs a decision here (and in §8a).
+    assert sorted(full) == sorted(SIGNED_OUT_ACCOUNT), sorted(full)
+    assert sorted(full["links"]) == sorted(ACCOUNT_LINKS), sorted(full["links"])
+    s = full["sessions"]["items"]
+    assert full["sign_in"]["password"] == "set" and full["sign_in"]["totp"]["enabled"] is True, full["sign_in"]
+    assert full["approvals"] == {"pending": 1} and full["programs"]["api_keys_active"] == 1, full
+    assert len(s) == 2 and s[0]["device"] is not None and s[1]["device"] is None, s
+    assert [p["name"] for p in full["programs"]["app_passwords"]] == ["Phone calendar"], full["programs"]
+    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type).
+    add("signed-in", "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API "
+        "key and one approval waiting.", full, copy.deepcopy(full))
+    less = ap.answer(totp_enabled=False, pin_enabled=False, passkey_enabled=False, apikey_enabled=False,
+                     approvals_enabled=False, account_enabled=False)
+    assert less["sign_in"]["totp"] is None and less["links"]["account"] is None, less
+    add("offered-less", "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` "
+        "means not offered here.", less, copy.deepcopy(less))
+    add("signed-out-401", "The body of the 401 answer: signed out.", {"authenticated": False, "signed_in": False},
+        SIGNED_OUT_ACCOUNT)
+    add("signed-in-string", "`signed_in` as a string is no `true`: signed out.", dict(full, signed_in="true"),
+        SIGNED_OUT_ACCOUNT, attack="account-types")
+    add("not-object", "An answer that is no object: signed out.", [full], SIGNED_OUT_ACCOUNT, attack="account-types")
+
+    evil = copy.deepcopy(full)
+    evil["account"]["display_name"] = "<img src=x onerror=alert(1)>"
+    evil["links"].update(account="javascript:alert(1)", sessions="//evil.example.com/a", totp="/\\evil.example.com",
+                         passkeys="data:text/html,<script>", devices="https://ok.example.com/a b",
+                         app_passwords="/x\x07", services=5, approvals="/auth/approvals")
+    want = copy.deepcopy(full)
+    want["account"]["display_name"] = "<img src=x onerror=alert(1)>"
+    want["links"] = {k: None for k in ACCOUNT_LINKS}
+    want["links"]["approvals"] = "/auth/approvals"
+    add("unsafe-hrefs", "Only http(s) URLs and paths starting with a single `/` survive, every other `href` becomes "
+        "`null`; a name with markup stays text, unchanged.", evil, want, attack="account-href")
+
+    wrong = copy.deepcopy(full)
+    wrong["account"]["username"] = 5
+    wrong["sign_in"]["password"] = True
+    wrong["sign_in"]["totp"] = {"enabled": "yes", "recovery_left": -1, "recovery_low": 1}
+    wrong["sign_in"]["passkeys"] = {"count": 1.5, "items": {"name": "x"}}
+    wrong["sign_in"]["pin"] = "true"
+    wrong["sessions"] = {"count": "2", "items": ["x", {"created_at": "1", "last_seen": True, "method": 7,
+                                                        "device": ["a"], "current": "yes"}]}
+    wrong["programs"] = {"oauth": {"name": "x"}, "services": "none", "app_passwords": [None],
+                         "api_keys_active": False}
+    wrong["approvals"] = {"pending": -1}
+    want = copy.deepcopy(full)
+    want["account"]["username"] = None
+    want["sign_in"] = {"password": None, "totp": {"enabled": None, "recovery_left": None, "recovery_low": None},
+                       "passkeys": {"count": None, "items": []}, "pin": None}
+    want["sessions"] = {"count": None, "items": [{"created_at": None, "last_seen": None, "method": None,
+                                                  "device": None, "current": None}]}
+    want["programs"] = {"oauth": None, "services": None, "app_passwords": [], "api_keys_active": None}
+    want["approvals"] = None
+    add("wrong-types", "A member of the wrong type reads as missing (`null`); an entry of a list that is no object is "
+        "dropped; a negative count is no count.", wrong, want, attack="account-types")
+
+    grown = copy.deepcopy(full)
+    grown["recovery"] = {"email": "anna@example.com"}
+    grown["sign_in"]["password_age_days"] = 12
+    grown["sessions"]["items"][0]["ip"] = "192.0.2.1"
+    grown["links"]["security_log"] = "/auth/account#log"
+    del grown["programs"]
+    want = copy.deepcopy(full)
+    want["programs"] = {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None}
+    add("unknown-and-missing", "Members a newer TinySesam adds are ignored; a missing group reads as all `null`.",
+        grown, want, attack="account-types")
+    groups = dict(full, account="anna", sign_in=5, sessions=True, programs=["x"], links="/auth/account")
+    add("groups-wrong-type", "A group of the wrong type (a string, a number, a boolean, a list) reads as an empty one: "
+        "every member `null`, the lists empty.", groups,
+        {"signed_in": True, "account": {"username": None, "display_name": None},
+         "sign_in": {"password": None, "totp": None, "passkeys": None, "pin": None},
+         "sessions": {"count": None, "items": []},
+         "programs": {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None},
+         "approvals": copy.deepcopy(full["approvals"]), "links": {k: None for k in ACCOUNT_LINKS}},
+        attack="account-types")
+    bool_pending = copy.deepcopy(full)
+    bool_pending["approvals"] = {"pending": True}
+    want = copy.deepcopy(full)
+    want["approvals"] = None
+    add("approvals-not-integer", "`approvals.pending` must be an integer, a boolean is none.", bool_pending, want,
+        attack="account-types")
     return out
 
 
@@ -897,16 +1131,19 @@ def build() -> dict:
                      for label, role in (("A", "active gate key of the probe installation"),
                                          ("B", "previous key after a rotation"),
                                          ("X", "the attacker's key, in no key set"))}}
+    ap = AccountProbe()
     try:
         return {
             "keys.json": _file("keys", keys),
             "token.json": _file("token", {"vectors": token_vectors(p)}),
             "headers.json": _file("headers", {"vectors": header_vectors(p)}),
             "jwks.json": _file("jwks", {"sets": jwks_sets(), "scenarios": jwks_scenarios()}),
-            "topbar.json": _file("topbar", {"vectors": topbar_vectors(p)}),
+            "topbar.json": _file("topbar", {"vectors": topbar_vectors(p) + topbar_approval_vectors(ap)}),
+            "account.json": _file("account", {"vectors": account_vectors(ap)}),
         }
     finally:
         p.close()
+        ap.close()
 
 
 def _read(path: str) -> str:

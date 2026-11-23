@@ -7,6 +7,7 @@
 //! - the URL comes from configuration only (`https`, plain `http` only to a loopback address); redirects are not
 //!   followed, nothing from a token is ever fetched.
 
+use crate::approval::{ApprovalConfig, ApprovalError, ApprovalExpect, Checked, approval_precheck};
 use crate::cache::{FetchOutcome, JWKS_MAX_BODY, JwksCache};
 use crate::error::{ConfigError, TokenError};
 use crate::keys::PublicKey;
@@ -112,17 +113,25 @@ impl HttpFetcher {
         })
     }
 
-    async fn attempt(&self) -> Option<FetchOutcome> {
-        let mut response = self
-            .client
-            .get(self.url.clone())
-            .header(
-                reqwest::header::ACCEPT,
-                "application/jwk-set+json, application/json",
-            )
-            .send()
+    /// One GET with the deadline and the body limit, optionally carrying a `Cookie` header (the account overview of
+    /// spec §8a: only TinySesam's cookies of the request).
+    pub(crate) async fn get(&self, cookie: Option<&str>) -> FetchOutcome {
+        tokio::time::timeout(self.deadline, self.attempt(cookie))
             .await
-            .ok()?;
+            .ok()
+            .flatten()
+            .unwrap_or(FetchOutcome::Failed)
+    }
+
+    async fn attempt(&self, cookie: Option<&str>) -> Option<FetchOutcome> {
+        let mut request = self.client.get(self.url.clone()).header(
+            reqwest::header::ACCEPT,
+            "application/jwk-set+json, application/json",
+        );
+        if let Some(cookie) = cookie {
+            request = request.header(reqwest::header::COOKIE, cookie);
+        }
+        let mut response = request.send().await.ok()?;
         let status = response.status().as_u16();
         let cache_control = {
             let values: Option<Vec<&str>> = response
@@ -163,11 +172,7 @@ impl HttpFetcher {
 
 impl Fetch for HttpFetcher {
     async fn fetch(&self) -> FetchOutcome {
-        tokio::time::timeout(self.deadline, self.attempt())
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(FetchOutcome::Failed)
+        self.get(None).await
     }
 }
 
@@ -339,6 +344,80 @@ impl<F: Fetch, C: CacheClock> JwksVerifier<F, C> {
         let token = precheck(jws)?;
         let key = self.keys.lookup(token.kid()).await?;
         self.config.finish(token, &key, now)
+    }
+
+    /// The remote keys.
+    pub fn keys(&self) -> &RemoteKeys<F, C> {
+        &self.keys
+    }
+}
+
+/// Approval confirmations (spec/approval-token.md) with the approval key set fetched by the rules of spec §5.
+pub struct ApprovalJwksVerifier<F = HttpFetcher, C = MonotonicClock> {
+    config: ApprovalConfig,
+    keys: RemoteKeys<F, C>,
+}
+
+impl<F, C> Clone for ApprovalJwksVerifier<F, C> {
+    fn clone(&self) -> Self {
+        ApprovalJwksVerifier {
+            config: self.config.clone(),
+            keys: self.keys.clone(),
+        }
+    }
+}
+
+impl ApprovalJwksVerifier {
+    /// A verifier for TinySesam's approval key set, normally `https://<auth host>/auth/approvals/jwks.json`. The gate
+    /// key set (a path ending in `/gate/jwks.json`) is refused: a confirmation is never checked with a gate key.
+    pub fn from_url(
+        config: ApprovalConfig,
+        url: &str,
+    ) -> Result<ApprovalJwksVerifier, ConfigError> {
+        let parsed = reqwest::Url::parse(url)
+            .map_err(|_| ConfigError::new("the key set URL is not a URL"))?;
+        if parsed
+            .path()
+            .trim_end_matches('/')
+            .ends_with("/gate/jwks.json")
+        {
+            return Err(ConfigError::new(
+                "that is the GATE key set; confirmations have their own (https://<auth host>/auth/approvals/jwks.json)",
+            ));
+        }
+        Ok(ApprovalJwksVerifier::new(
+            config,
+            RemoteKeys::from_url(url)?,
+        ))
+    }
+}
+
+impl<F: Fetch, C: CacheClock> ApprovalJwksVerifier<F, C> {
+    /// A verifier from configuration and remote keys (the approval key set).
+    pub fn new(config: ApprovalConfig, keys: RemoteKeys<F, C>) -> ApprovalJwksVerifier<F, C> {
+        ApprovalJwksVerifier { config, keys }
+    }
+
+    /// Steps 1–11 at a given time; write [`Checked::jti`] into the store, then [`Checked::accept`]. A `kid` that
+    /// fails the format check never triggers a fetch.
+    pub async fn check_at(
+        &self,
+        jws: &str,
+        expect: &ApprovalExpect,
+        now: i64,
+    ) -> Result<Checked, ApprovalError> {
+        let token = approval_precheck(jws)?;
+        let key = self.keys.lookup(token.kid()).await?;
+        self.config.check(token, &key, expect, now)
+    }
+
+    /// Steps 1–11 against the system clock.
+    pub async fn check(
+        &self,
+        jws: &str,
+        expect: &ApprovalExpect,
+    ) -> Result<Checked, ApprovalError> {
+        self.check_at(jws, expect, unix_now()).await
     }
 
     /// The remote keys.

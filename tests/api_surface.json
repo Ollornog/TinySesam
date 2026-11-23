@@ -2191,6 +2191,10 @@
       "sig": "'not_yet_valid'",
       "tier": "B"
     },
+    "SIGNED_OUT_ACCOUNT": {
+      "sig": "{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'links': None}",
+      "tier": "B"
+    },
     "SignatureError": {
       "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
       "tier": "B"
@@ -2204,11 +2208,15 @@
       "tier": "B"
     },
     "Topbar": {
-      "sig": "class (brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None) -> None",
+      "sig": "class (brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None, approvals: 'Optional[TopbarApprovals]' = None) -> None",
       "tier": "B"
     },
     "Topbar.to_dict": {
       "sig": "() -> 'dict[str, Any]'",
+      "tier": "B"
+    },
+    "TopbarApprovals": {
+      "sig": "class (pending: 'int', href: 'str') -> None",
       "tier": "B"
     },
     "TopbarLink": {
@@ -2239,12 +2247,20 @@
       "sig": "(source: 'Any' = None) -> 'Optional[Identity]'",
       "tier": "B"
     },
+    "fetch_account": {
+      "sig": "(url: 'str', cookie_header: 'str' = '') -> 'dict[str, Any]'",
+      "tier": "B"
+    },
     "fetch_topbar": {
       "sig": "(url: 'str', cookie_header: 'str' = '') -> 'Topbar'",
       "tier": "B"
     },
     "guard_status": {
       "sig": "(identity: 'Optional[Identity]', *, role: 'Optional[str]' = None, session: 'bool' = False, account_kind: 'Optional[str]' = None) -> 'Optional[int]'",
+      "tier": "B"
+    },
+    "parse_account": {
+      "sig": "(data: 'Any') -> 'dict[str, Any]'",
       "tier": "B"
     },
     "parse_topbar": {

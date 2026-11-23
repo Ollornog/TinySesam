@@ -108,7 +108,7 @@ function checkKeys(config: object, allowed: Set<string>, mode: string): void {
   }
 }
 
-function checkJwksUrl(raw: string): void {
+export function checkJwksUrl(raw: string): void {
   let u: URL;
   try {
     u = new URL(raw);

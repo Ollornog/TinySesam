@@ -53,8 +53,11 @@ export interface TokenRules {
 
 const encoder = new TextEncoder();
 
-/** Steps 1-5 of spec section 4.4: size, structure, header JSON, header members, signature length. */
-export function parseToken(jws: string): ParsedToken {
+/**
+ * Steps 1-5 of spec section 4.4: size, structure, header JSON, header members, signature length. `typ` is the gate
+ * token's by default; the approval confirmation (spec/approval-token.md section 4) runs the same steps with its own.
+ */
+export function parseToken(jws: string, typ: string = TOKEN_TYPE): ParsedToken {
   if (typeof jws !== 'string' || jws.length > MAX_TOKEN_BYTES || encoder.encode(jws).length > MAX_TOKEN_BYTES) {
     throw new GateError('malformed', 'token too large');
   }
@@ -86,8 +89,8 @@ export function parseToken(jws: string): ParsedToken {
   if (own(header, 'alg') !== TOKEN_ALGORITHM) {
     throw new GateError('header', 'alg is not EdDSA');
   }
-  const typ = own(header, 'typ');
-  if (typeof typ !== 'string' || !asciiEqualFold(typ, TOKEN_TYPE)) {
+  const gotTyp = own(header, 'typ');
+  if (typeof gotTyp !== 'string' || !asciiEqualFold(gotTyp, typ)) {
     throw new GateError('header', 'wrong typ');
   }
   const kid = own(header, 'kid');
@@ -126,7 +129,7 @@ export async function finishToken(token: ParsedToken, key: CryptoKey, rules: Tok
 }
 
 /** An integer claim: a JSON number without fraction or exponent from 0 to 2^53 - 1; not a boolean, not a string. */
-function intClaim(value: unknown, text: string | undefined): number | null {
+export function intClaim(value: unknown, text: string | undefined): number | null {
   if (typeof value !== 'number' || text === undefined || !INTEGER_TEXT.test(text)) {
     return null;
   }

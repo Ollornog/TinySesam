@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace TinySesam\Gate\Tests;
 
 use PHPUnit\Framework\TestCase;
+use TinySesam\Gate\Account;
+use TinySesam\Gate\ApprovalClaims;
+use TinySesam\Gate\ApprovalExpect;
+use TinySesam\Gate\ApprovalVerifier;
 use TinySesam\Gate\Gate;
 use TinySesam\Gate\GateRequest;
 use TinySesam\Gate\Headers;
@@ -21,22 +25,73 @@ use TinySesam\Gate\Tests\Support\Vectors;
 final class VectorsTest extends TestCase
 {
     /** Every file in spec/vectors/ must be run by one of these tests; a new file without a runner fails the suite. */
-    private const array RUNNERS = ['headers.json', 'jwks.json', 'keys.json', 'token.json', 'topbar.json'];
+    private const array RUNNERS = ['account.json', 'approval.json', 'headers.json', 'jwks.json', 'keys.json',
+        'token.json', 'topbar.json'];
 
-    /**
-     * Vector files of another part of the specification whose runner comes with that part's helper: approval.json
-     * (spec/approval-token.md) with the approval helper (T-89 stage B, part 2). Listed, so a new file still fails.
-     */
-    private const array PENDING = ['approval.json'];
-
-    public function testEveryVectorFileHasARunnerAndFormat2(): void
+    public function testEveryVectorFileHasARunnerAndItsFormat(): void
     {
-        $expected = [...self::RUNNERS, ...self::PENDING];
+        $expected = self::RUNNERS;
         sort($expected);
         self::assertSame($expected, Vectors::files(), 'add a runner for the new vector file');
         foreach (self::RUNNERS as $file) {
-            self::assertSame(2, Vectors::load($file)->format, $file);
+            self::assertSame($file === 'approval.json' ? 1 : 2, Vectors::load($file)->format, $file);
         }
+    }
+
+    public function testAccountVectors(): void
+    {
+        $vectors = Vectors::load('account.json')->vectors;
+        self::assertNotEmpty($vectors, 'no account vectors');
+        foreach ($vectors as $v) {
+            $got = Account::parse(Vectors::encode($v->input->account));
+            self::assertSame(Vectors::normalize($v->expected->account), Vectors::normalize($got), $v->id);
+        }
+    }
+
+    public function testApprovalVectors(): void
+    {
+        $doc = Vectors::load('approval.json');
+        self::assertSame('spec/approval-token.md', $doc->spec);
+        self::assertGreaterThanOrEqual(40, \count($doc->vectors));
+        $problems = [];
+        foreach ($doc->vectors as $v) {
+            $in = $v->input;
+            $now = $in->now;
+            $verifier = ApprovalVerifier::create(
+                $in->issuer,
+                $in->app_id,
+                keys: KeySet::fromJwks(Vectors::encode($in->jwks)),
+                leewaySeconds: $in->leeway,
+                clock: static fn (): int => $now,
+            );
+            $e = $in->expect;
+            $expect = new ApprovalExpect($e->type, Vectors::fields($e->fields), $e->sub, $e->nonce ?? null);
+            $seen = array_fill_keys($in->seen, true);
+            $store = static function (string $jti) use (&$seen): bool {
+                if (isset($seen[$jti])) {
+                    return false;
+                }
+                $seen[$jti] = true;
+
+                return true;
+            };
+            $claims = null;
+            $got = Vectors::outcome(static function () use ($verifier, $in, $expect, $store, &$claims): void {
+                $claims = $verifier->verify($in->jws, $expect, $store);
+            });
+            if ($v->expected->ok !== true) {
+                if ($got !== $v->expected->error) {
+                    $problems[] = "{$v->id}: {$got}, want {$v->expected->error}";
+                }
+                continue;
+            }
+            if ($got !== 'ok' || !$claims instanceof ApprovalClaims) {
+                $problems[] = "{$v->id}: refused with {$got}";
+            } elseif (Vectors::normalize($claims->raw) !== Vectors::normalize($v->expected->claims)) {
+                $problems[] = "{$v->id}: claims differ";
+            }
+        }
+        self::assertSame([], $problems);
     }
 
     /**
@@ -240,7 +295,8 @@ final class VectorsTest extends TestCase
 
     public function testAnUnknownTopBarMemberIsIgnored(): void
     {
-        // The answer may grow (spec section 8: an optional `approvals`, for example); the normalized form does not.
+        // The answer may grow; a member this client does not know leaves the normalized form as it is, and an
+        // `approvals` of the wrong shape is no approvals.
         $answer = ['brand' => 'Example', 'signed_in' => true, 'name' => 'Anna', 'links' => [], 'approvals' => [1, 2],
             'unknown' => ['nested' => true]];
         $plain = $answer;

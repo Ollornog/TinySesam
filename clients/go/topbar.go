@@ -26,6 +26,15 @@ type Topbar struct {
 	Account    *string      `json:"account"`
 	AdminPanel *string      `json:"admin_panel"`
 	Logout     *string      `json:"logout"`
+	// Approvals is set when TinySesam has approvals switched on and the answer carries a count of at least 0 and a
+	// safe link (spec section 8). Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
+	Approvals *TopbarApprovals `json:"approvals"`
+}
+
+// TopbarApprovals is how many approvals wait for this account and where to decide them.
+type TopbarApprovals struct {
+	Pending int64  `json:"pending"`
+	Href    string `json:"href"`
 }
 
 // ParseTopbar normalizes the body of /.tinysesam/topbar.json or /auth/topbar.json. Anything but a JSON object with
@@ -68,6 +77,13 @@ func ParseTopbar(body []byte) Topbar {
 			out.Logout = &href
 		}
 	}
+	if m, ok := data["approvals"].(map[string]any); ok {
+		pending, ok1 := intClaim(m["pending"])
+		href, ok2 := m["href"].(string)
+		if ok1 && ok2 && safeHref(href) {
+			out.Approvals = &TopbarApprovals{Pending: pending, Href: href}
+		}
+	}
 	return out
 }
 
@@ -105,22 +121,31 @@ func hasPrefixFold(s, lowerPrefix string) bool {
 	return len(s) >= len(lowerPrefix) && asciiEqualFold(s[:len(lowerPrefix)], lowerPrefix)
 }
 
-var errTopbarStatus = errors.New("tinysesam: top bar answered with a status other than 200")
+var errTopbarStatus = errors.New("tinysesam: TinySesam answered with a status other than 200")
 
 // FetchTopbar fetches the top bar data server-side for the request r: a GET to topbarURL (normally
 // https://<auth host>/auth/topbar.json) carrying only TinySesam's cookies of r (tinysesam_* and __Host-tinysesam_*),
 // with a deadline of FetchTimeout and a body limit of 64 KiB. On any failure it returns the signed-out top bar and
 // the error. Do not cache the result across sessions.
 func FetchTopbar(ctx context.Context, client *http.Client, topbarURL string, r *http.Request) (Topbar, error) {
-	signedOut := Topbar{Links: []TopbarLink{}, MenuLinks: []TopbarLink{}}
+	body, err := fetchTinySesamJSON(ctx, client, topbarURL, r)
+	if err != nil {
+		return Topbar{Links: []TopbarLink{}, MenuLinks: []TopbarLink{}}, err
+	}
+	return ParseTopbar(body), nil
+}
+
+// fetchTinySesamJSON is the server-side GET of the top bar and the account overview: only TinySesam's cookies of r,
+// a deadline of FetchTimeout, a body limit of 64 KiB, status 200 only.
+func fetchTinySesamJSON(ctx context.Context, client *http.Client, target string, r *http.Request) ([]byte, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	ctx, cancel := context.WithTimeout(ctx, FetchTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, topbarURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return signedOut, err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	for _, c := range r.Cookies() {
@@ -130,18 +155,18 @@ func FetchTopbar(ctx context.Context, client *http.Client, topbarURL string, r *
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return signedOut, err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return signedOut, errTopbarStatus
+		return nil, errTopbarStatus
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxJWKSBytes+1))
 	if err != nil {
-		return signedOut, err
+		return nil, err
 	}
 	if len(body) > MaxJWKSBytes {
-		return signedOut, errBodyTooLarge
+		return nil, errBodyTooLarge
 	}
-	return ParseTopbar(body), nil
+	return body, nil
 }

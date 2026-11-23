@@ -37,6 +37,7 @@ from .errors import ConfigError
 
 __all__ = [
     "TOKEN_TYPE", "MAX_LIFETIME", "MAX_LEEWAY", "issue", "verify", "key_set", "payload_digest", "canonical",
+    "JWKSKeys",
     "ApprovalTypeError", "ApprovalFieldsError", "SubjectError", "NonceError", "ReplayError",
 ]
 
@@ -155,8 +156,9 @@ def _parse(jws: Any) -> "_gc._Parsed":
                        signature=signature)
 
 
-def _select_key(parsed, keys: Mapping[str, bytes]) -> bytes:
-    """Step 6: the key from the APPROVAL key set of the configuration, never from the token or the gate set."""
+def _select_key(parsed, keys: Any) -> bytes:
+    """Step 6: the key from the APPROVAL key set of the configuration, never from the token or the gate set. A fetched
+    set (`JWKSKeys`) answers `kid` and `key_unavailable` itself, under the rules of spec/gate-client.md §5."""
     public = keys.get(parsed.kid)
     if public is None:
         raise _gc.KidError("not in the key set", kid=parsed.kid)
@@ -307,9 +309,41 @@ def _check_leeway(leeway: Any) -> int:
     return leeway
 
 
-def key_set(keys: Any) -> dict:
+class JWKSKeys:
+    """The approval key set fetched from TinySesam — `JWKSKeys("https://auth.example.com/auth/approvals/jwks.json")` —
+    under the fetch rules of spec/gate-client.md §5 (5-second deadline, 64 KiB, freshness 60–3600 s, one attempt per
+    10 s, a refetch for an unknown `kid`). Create it once and pass it to every `verify`. The gate key set
+    (`…/auth/gate/jwks.json`) is refused at construction: a confirmation is never checked with a gate key."""
+
+    def __init__(self, url: str):
+        import urllib.parse
+        target = _gc._check_fetch_url(url, "JWKSKeys")
+        if urllib.parse.urlsplit(target).path.rstrip("/").endswith("/gate/jwks.json"):
+            raise ConfigError("JWKSKeys: that is the GATE key set — confirmations have their own, "
+                              "https://<auth host>/auth/approvals/jwks.json")
+        self.url = target
+        self._cache = _gc._JWKSCache(lambda: _gc._read_limited(target, {"Accept": "application/json"},
+                                                               _gc._FETCH_TIMEOUT, _gc._MAX_JWKS_BYTES))
+
+    def at(self, now: int) -> "_FetchedLookup":
+        return _FetchedLookup(self._cache, now)
+
+
+class _FetchedLookup:
+    """One check's view of a fetched key set: `get(kid)` returns the key or raises `kid`/`key_unavailable`."""
+
+    def __init__(self, cache: Any, now: int):
+        self._cache, self._now = cache, now
+
+    def get(self, kid: str) -> bytes:
+        return self._cache.lookup(kid, self._now)
+
+
+def key_set(keys: Any) -> Any:
     """kid → public key from a JWKS document (`/auth/approvals/jwks.json`, rules of spec/gate-client.md §4.3) or from
-    an existing mapping kid → 32 raw bytes."""
+    an existing mapping kid → 32 raw bytes; a `JWKSKeys` stays as it is."""
+    if isinstance(keys, JWKSKeys):
+        return keys
     if isinstance(keys, Mapping) and "keys" not in keys:
         out = {}
         for kid, public in keys.items():
@@ -329,7 +363,8 @@ def verify(token: Any, *, keys: Any, issuer: str, app_id: str, expect_type: str,
     """Check a confirmation before carrying the action out — the claims, or a `gate_client.TokenError` whose `kind` is
     the class of spec/approval-token.md §5. Every class means: do not carry the action out.
 
-    `keys` is the APPROVAL key set (a JWKS document or kid → raw bytes), never the gate key set; `issuer` TinySesam's
+    `keys` is the APPROVAL key set (a JWKS document, kid → raw bytes, or a `JWKSKeys` that fetches it), never the gate
+    key set; `issuer` TinySesam's
     `base_url` without a trailing slash; `app_id` the application's own id; `expect_type` and `expect_fields` the action
     the application stored when it asked (exactly — names, JSON types and values); `expect_sub` the account it acts
     for; `expect_nonce` the `state` it kept in the session (browser entry; None when it sent none); `jti_store(jti,
@@ -340,7 +375,7 @@ def verify(token: Any, *, keys: Any, issuer: str, app_id: str, expect_type: str,
     leeway = _check_leeway(leeway)
     when = int(time.time()) if now is None else int(now)
     parsed = _parse(token)
-    public = _select_key(parsed, lookup)
+    public = _select_key(parsed, lookup.at(when) if isinstance(lookup, JWKSKeys) else lookup)
     _verify_signature(parsed, public)
     try:
         claims = _gc._json_object(parsed.payload)           # step 8 — only after the signature

@@ -56,6 +56,21 @@ switch ($path) {
         header('Content-Type: application/json');
         echo $jwks;
         break;
+    case '/account':
+        // The account overview (spec section 8a): the body of TS_JWKS, and the Cookie header it saw in TS_HITS.
+        if (is_string($hits) && $hits !== '') {
+            $cookie = $_SERVER['HTTP_COOKIE'] ?? '';
+            file_put_contents($hits, 'cookie:' . (is_string($cookie) ? $cookie : '') . "\n", FILE_APPEND | LOCK_EX);
+        }
+        header('Content-Type: application/json');
+        header('Cache-Control: no-store');
+        echo $jwks;
+        break;
+    case '/account-401':
+        http_response_code(401);
+        header('Content-Type: application/json');
+        echo '{"authenticated":false,"signed_in":false}';
+        break;
     case '/identify':
         header('Content-Type: application/json');
         try {

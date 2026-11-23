@@ -575,6 +575,7 @@ test('top bar fetch: only TinySesam cookies go out, any failure is signed out', 
       account: null,
       admin_panel: null,
       logout: '/auth/logout',
+      approvals: null,
     });
     assert.equal((await fetchTopbar(`http://127.0.0.1:${port}/fail`, null)).signed_in, false);
     assert.equal((await fetchTopbar('http://127.0.0.1:1/none', null)).signed_in, false);

@@ -353,14 +353,16 @@ host (the proxy passes `/.tinysesam/*` to TinySesam) or server-side at `/auth/to
 
 The normalized result has the members `brand`, `signed_in`, `name`, `links` and `menu_links` (each a list of
 `title`, `href`; `menu_links` are the entries of the account menu, `[]` when the answer has none or no list),
-`account`, `admin_panel` and `logout` (each an `href` or `null`); `vectors/topbar.json` shows it. The same `href` rule
-applies to both link lists.
+`account`, `admin_panel` and `logout` (each an `href` or `null`) and `approvals` (below); `vectors/topbar.json` shows it.
+The same `href` rule applies to both link lists.
 
 An answer MAY carry further members; a client MUST ignore what it does not know and keep normalizing the rest. With
 approvals switched on (T-89) TinySesam adds `approvals`: `{"pending": <count>, "href": <URL of /auth/approvals>}` — the
-number of approvals waiting for this account and where to decide them. A client MAY pass it on; whoever shows it shows
-the number with a word ("Approvals (2)"), never a coloured dot alone. It is not yet part of the normalized result (that
-follows with the approval helpers of stage B).
+number of approvals waiting for this account and where to decide them. The normalized `approvals` is
+`{"pending", "href"}` when `pending` is a JSON integer from 0 to 2^53 − 1 (not a boolean, not a string, no fraction)
+and `href` passes the rule above, otherwise `null` — also when signed out. Whoever shows it shows the number with a
+word ("Approvals (2)"), never a coloured dot alone. Every client tolerated the member before it was normalized (the
+vector `approvals-pending` passed all five unchanged, T-89 stage B part 2).
 
 ## 8a. Account overview data (optional)
 
@@ -408,8 +410,22 @@ id of another object. On an application's host the links carry `app=<host>`, so 
 application's frame; the anchors (`#sessions`, `#totp`, `#passkeys`, `#devices`, `#app-passwords`, `#services`) are
 stable.
 
-The normalized result of a helper has the same members with every `href` checked; vectors and the client helpers follow
-in a later change.
+The normalized result of a helper (`vectors/account.json` shows it):
+
+- **Signed out** — any answer but a `200` with a JSON object whose `signed_in` is `true`: `{"signed_in": false}` with
+  `account`, `sign_in`, `sessions`, `programs`, `approvals` and `links` all `null`.
+- **Signed in** — every member of the table is present, unknown ones are dropped:
+  - a text, a flag or a count of the wrong type reads as `null`; a count or a time is a JSON integer from 0 to
+    2^53 − 1 (a negative number, a fraction, a boolean or a string is none);
+  - `account`, `sign_in`, `sessions`, `programs` and `links` are always objects: an answer without them, or with
+    another type, gives the object with every member `null`;
+  - `sign_in.totp` and `sign_in.passkeys` are an object or `null` (not offered); `programs.oauth`, `programs.services`
+    and `programs.app_passwords` a list or `null`; `sessions.items` and `sign_in.passkeys.items` always a list (`[]`
+    when the answer has none or no list); an entry of a list that is no object is dropped, the members of an entry
+    follow the same rules;
+  - `approvals` is `{"pending": <count>}` when `pending` is a count, otherwise `null`;
+  - every member of `links` is an `href` that passes the rule of §8, or `null`;
+  - `sign_in.password` is kept as text — a value besides the three of the table is for the application to ignore.
 
 ## 9. Test vectors
 
@@ -426,6 +442,7 @@ request TinySesam answers carries `Remote-Kind`, the header vectors about other 
 | `headers.json` | header mode: `input.headers` → `expected` (`identity` [+ `has_role`] or `error`). A header value is a string of octets, one code point U+0000–U+00FF per octet (convert with Latin-1); a list means the field occurred more than once |
 | `jwks.json` | `sets`: a JWKS document → usable `kids` in order, or `error: jwks_invalid`; `scenarios`: steps with `now`, `jws` and a simulated `fetch` answer (`status`, `cache_control`, `body` or `body_text`, or `error`) → `expect` (`fetched`, `ok`, `error`). A client that fetches where no `fetch` is given fails the step |
 | `topbar.json` | §8: `input.topbar` → the normalized `expected.topbar` |
+| `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account` |
 
 Every vector has an `id`, a `reason` and an `attack` class (`null` for a plain valid case). Every attack vector carries
 **one defect**: with that one check switched off it would be accepted, so a client that lacks the check fails the
@@ -478,7 +495,9 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `jwks-shape` | key set documents that are invalid as a whole |
 | `jwks-cache` | the fetch rules of §5 |
 | `topbar-href` | `javascript:`, `data:`, protocol-relative and other unsafe links |
-| `topbar-types` | an answer of the wrong shape |
+| `topbar-types` | an answer of the wrong shape, an `approvals` that is no count |
+| `account-href` | unsafe links in the account overview |
+| `account-types` | an account overview of the wrong shape, members of the wrong type, unknown and missing members |
 
 ### Relation to TinySesam's own check
 

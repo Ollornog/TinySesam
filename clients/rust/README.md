@@ -26,8 +26,8 @@ tinysesam-gate = { git = "https://github.com/ollornog/TinySesam", rev = "<full c
 
 | Feature | What | Extra dependencies |
 |---|---|---|
-| *(none, default)* | header mode, token mode with fixed keys, key set parsing, the cache rules, guards, top bar | `ed25519-dalek`, `serde_json`, `base64`, `sha2`, `http` — no network, no async runtime |
-| `jwks` | `RemoteKeys` / `JwksVerifier`: fetches `/auth/gate/jwks.json` with a deadline and shares a running fetch | `reqwest` (rustls), `tokio` (`sync`, `time`) |
+| *(none, default)* | header mode, token mode with fixed keys, key set parsing, the cache rules, guards, top bar, account overview, approval check with fixed keys | `ed25519-dalek`, `serde_json`, `base64`, `sha2`, `http` — no network, no async runtime |
+| `jwks` | `RemoteKeys` / `JwksVerifier`: fetches `/auth/gate/jwks.json` with a deadline and shares a running fetch; `ApprovalJwksVerifier` (the approval key set), `account::AccountFetcher` | `reqwest` (rustls), `tokio` (`sync`, `time`) |
 
 Tested with the current stable Rust (edition 2024). `#![forbid(unsafe_code)]`.
 
@@ -174,7 +174,57 @@ Every class means the same to the application: not authenticated.
 `topbar::normalize_json` reduces TinySesam's `topbar.json` to what an application may render (spec §8): signed out on
 any doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/` (in `links` and in
 `menu_links`, the account menu). Titles and names are
-text, never markup; do not cache the answer across sessions.
+text, never markup; do not cache the answer across sessions. `approvals` is `Some` when TinySesam has approvals
+switched on (`pending` of at least 0 and a safe `href`); show the number with a word, never a coloured dot alone.
+
+## Account overview
+
+`account::normalize_json(body)` normalizes TinySesam's `account.json` (spec §8a) for a settings page of your own:
+signed out unless `signed_in` is `true`, every href safe or `None`, a member of the wrong type `None`, unknown members
+dropped. With the feature `jwks`, `account::AccountFetcher::new(url)?.fetch(cookie_header).await` fetches it
+server-side with only TinySesam's cookies (`account::tinysesam_cookies`), 5 seconds and 64 KiB; anything but a `200`
+is signed out. Changes happen on TinySesam's account page, which `links` lead to.
+
+## Approval confirmations
+
+`approval::ApprovalVerifier` checks the signed confirmation of one sensitive action (`spec/approval-token.md`) against
+what the application stored when it asked. The `jti` store runs between the two steps, so a synchronous or an
+asynchronous database fits; the claims stay locked until `accept`:
+
+```rust
+use tinysesam_gate::KeySet;
+use tinysesam_gate::approval::{ApprovalConfig, ApprovalExpect, ApprovalVerifier};
+
+fn check(jwks: &serde_json::Value, confirmation: &str, state: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // The APPROVAL key set (/auth/approvals/jwks.json) — never the gate key set.
+    let verifier = ApprovalVerifier::new(
+        ApprovalConfig::new("https://auth.example.com", "example")?,
+        KeySet::from_jwks(jwks)?,
+    )?;
+    let expect = ApprovalExpect::new("example.collection.delete_permanently", "42")
+        .field("collection", "c_81f2")
+        .field("name", "Project Alpha")
+        .nonce(state); // browser entry only
+    match verifier.check_at(confirmation, &expect, tinysesam_gate::unix_now()) {
+        Ok(checked) => {
+            // INSERT INTO approval_jti (jti, until) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING — rows == 1
+            let first_use = insert_once(checked.jti(), checked.until());
+            let _claims = checked.accept(first_use)?; // `replay` when it was used before
+            // run your own rule again, then act
+        }
+        Err(e) => eprintln!("approval refused: {}", e.class()), // never log the confirmation
+    }
+    Ok(())
+}
+# fn insert_once(_: &str, _: i64) -> bool { true }
+```
+
+`verify_at(token, &expect, &store, now)` does both steps with a synchronous `JtiStore` (a closure
+`Fn(&str, i64) -> Result<bool, StoreFailed>` is one). With the feature `jwks`, `ApprovalJwksVerifier::from_url(config,
+"https://auth.example.com/auth/approvals/jwks.json")` fetches the key set by the rules of spec §5 and refuses a
+`…/gate/jwks.json`. Errors: `ApprovalError::Token(_)` with the classes of the gate token, then `approval_type`,
+`approval_fields`, `subject`, `nonce`, `replay`, and `internal` for a failing store — every class means *do not carry
+the action out*. `ApprovalConfig::with_leeway` allows at most 30 seconds.
 
 ## Libraries
 

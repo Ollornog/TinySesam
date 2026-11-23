@@ -71,7 +71,8 @@
           ],
           "account": "https://auth.example.com/auth/account",
           "admin_panel": null,
-          "logout": "https://auth.example.com/auth/logout"
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
         }
       }
     },
@@ -145,7 +146,8 @@
           ],
           "account": "https://auth.example.com/auth/account",
           "admin_panel": "https://auth.example.com/auth/admin",
-          "logout": "https://auth.example.com/auth/logout"
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
         }
       }
     },
@@ -181,7 +183,8 @@
           "menu_links": [],
           "account": null,
           "admin_panel": null,
-          "logout": null
+          "logout": null,
+          "approvals": null
         }
       }
     },
@@ -283,7 +286,8 @@
           ],
           "account": null,
           "admin_panel": null,
-          "logout": "https://auth.example.com/auth/logout"
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
         }
       }
     },
@@ -338,7 +342,8 @@
           "menu_links": [],
           "account": "https://auth.example.com/auth/account",
           "admin_panel": null,
-          "logout": "https://auth.example.com/auth/logout"
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
         }
       }
     },
@@ -397,7 +402,8 @@
           "menu_links": [],
           "account": "https://auth.example.com/auth/account",
           "admin_panel": null,
-          "logout": "https://auth.example.com/auth/logout"
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
         }
       }
     },
@@ -424,7 +430,8 @@
           "menu_links": [],
           "account": null,
           "admin_panel": null,
-          "logout": null
+          "logout": null,
+          "approvals": null
         }
       }
     },
@@ -447,7 +454,486 @@
           "menu_links": [],
           "account": null,
           "admin_panel": null,
-          "logout": null
+          "logout": null,
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-pending",
+      "attack": null,
+      "reason": "GET /auth/topbar.json with approvals switched on: one approval waits for this account; the normalized result carries the number and the checked link.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": 1,
+            "href": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": {
+            "pending": 1,
+            "href": "https://auth.example.com/auth/approvals"
+          }
+        }
+      }
+    },
+    {
+      "id": "approvals-none-waiting",
+      "attack": null,
+      "reason": "Approvals switched on, nothing waiting: zero is a count, not a missing member.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": 0,
+            "href": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": {
+            "pending": 0,
+            "href": "https://auth.example.com/auth/approvals"
+          }
+        }
+      }
+    },
+    {
+      "id": "approvals-unsafe-href",
+      "attack": "topbar-href",
+      "reason": "An `approvals.href` that is no safe link drops the whole member.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": 1,
+            "href": "javascript:alert(1)"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-protocol-relative",
+      "attack": "topbar-href",
+      "reason": "A protocol-relative `approvals.href` drops the whole member.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": 1,
+            "href": "//evil.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-negative",
+      "attack": "topbar-types",
+      "reason": "A negative `pending` is no count.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": -1,
+            "href": "/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-not-integer",
+      "attack": "topbar-types",
+      "reason": "`pending` as a boolean is no count.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": true,
+            "href": "/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-string",
+      "attack": "topbar-types",
+      "reason": "`pending` as a string is no count.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": "1",
+            "href": "/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-fraction",
+      "attack": "topbar-types",
+      "reason": "`pending` with a fraction is no count.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": 1.5,
+            "href": "/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-no-href",
+      "attack": "topbar-href",
+      "reason": "Without an `href` there is nowhere to decide: no member.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": 1
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-not-object",
+      "attack": "topbar-types",
+      "reason": "`approvals` that is no object counts as none.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": [
+            1,
+            "/auth/approvals"
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": "https://auth.example.com/auth/account",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null
+        }
+      }
+    },
+    {
+      "id": "approvals-signed-out",
+      "attack": "topbar-types",
+      "reason": "Signed out: no approvals, whatever the answer says.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": false,
+          "name": "Anna Berg",
+          "links": [],
+          "menu_links": [],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "approvals": {
+            "pending": 1,
+            "href": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": false,
+          "name": null,
+          "links": [],
+          "menu_links": [],
+          "account": null,
+          "admin_panel": null,
+          "logout": null,
+          "approvals": null
         }
       }
     }

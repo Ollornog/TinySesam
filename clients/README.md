@@ -27,7 +27,8 @@ TinySesam itself stays Python; a client never issues tokens and never signs anyo
 ## What every client contains
 
 - **Both modes** of the specification (header mode, token mode with fixed keys and with JWKS), chosen explicitly by
-  configuration; the optional top bar helper of §8 only when someone needs it.
+  configuration; the optional helpers — the top bar of §8 (with its `approvals` member), the account overview of §8a
+  and the approval check of [`spec/approval-token.md`](../spec/approval-token.md) — in every client.
 - **Guards** in the idiom of the language (middleware, extractor, attribute): signed in, `has_role`, session only,
   account kind (`user`/`service`, spec v2). They answer 401/403 and never reveal why (spec §6).
 - **Spec version 2:** the identity carries `account_kind` from `Remote-Kind`/`ts_kind`, and a request or token without
@@ -38,7 +39,11 @@ TinySesam itself stays Python; a client never issues tokens and never signs anyo
   - `headers.json` — convert each header value to bytes with Latin-1, a list means a repeated field;
   - `jwks.json` — `sets` against the key set parser, `scenarios` against the cache with a fake fetcher and a fake
     clock (a fetch where the step gives no `fetch` answer fails the step);
-  - `topbar.json` — if the helper exists.
+  - `topbar.json` and `account.json` — the normalized result, exactly;
+  - `approval.json` (`"format": 1`, its own specification) — every vector against the approval helper with a fixed
+    key set, a fixed clock and `input.seen` as the `jti` store: the claims or the error class. That every attack vector
+    carries one defect is measured once, against the Python reference (`tests/test_approval_vectors.py`); a client
+    proves its own rules by mutation.
   Plus the tests the vectors cannot carry (spec §5): a JWKS server that accepts and never answers (the request returns
   within the deadline), a body above 64 KiB, concurrent requests sharing one fetch.
 - **Mutation as proof**: relax one rule (take `alg` from the header, skip the duplicate check, strip instead of refuse)

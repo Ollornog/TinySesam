@@ -99,6 +99,8 @@ const LONE_SURROGATE = /\p{Cs}/u;
 export interface StrictJson {
   readonly value: unknown;
   readonly numbers: ReadonlyMap<string, string>;
+  /** Whether a number anywhere in the text has a fraction or an exponent (JSON.parse reads `1.0` as `1`). */
+  readonly fractional: boolean;
 }
 
 /**
@@ -130,8 +132,8 @@ export function parseStrictJsonText(text: string): StrictJson | null {
   } catch {
     return null;
   }
-  const numbers = scan(text);
-  return numbers === null ? null : { value, numbers };
+  const scanned = scan(text);
+  return scanned === null ? null : { value, numbers: scanned.numbers, fractional: scanned.fractional };
 }
 
 interface Frame {
@@ -147,8 +149,9 @@ const NUMBER_CHAR = /[0-9eE.+-]/;
  * Walks JSON text that JSON.parse has accepted. Refuses a repeated member name in any object and a lone surrogate in
  * any string; returns the source text of the numbers that are members of a top-level object.
  */
-function scan(text: string): Map<string, string> | null {
+function scan(text: string): { numbers: Map<string, string>; fractional: boolean } | null {
   const numbers = new Map<string, string>();
+  let fractional = false;
   const stack: Frame[] = [];
   let i = 0;
   while (i < text.length) {
@@ -189,16 +192,18 @@ function scan(text: string): Map<string, string> | null {
       while (j < text.length && NUMBER_CHAR.test(text[j] ?? '')) {
         j++;
       }
+      const literal = text.slice(i, j);
+      fractional ||= /[.eE]/.test(literal);
       const root = stack[0];
       if (stack.length === 1 && root?.object) {
-        numbers.set(root.lastName, text.slice(i, j));
+        numbers.set(root.lastName, literal);
       }
       i = j;
     } else {
       i++; // whitespace, ':' and the letters of true, false, null
     }
   }
-  return numbers;
+  return { numbers, fractional };
 }
 
 /** A plain JSON object (not an array, not null). */

@@ -220,7 +220,51 @@ Every class means the same to the application: not authenticated.
 doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/` (in `links` and in
 `menuLinks`, the account menu); members it does not know are ignored. Titles and names are text, never markup — escape
 them. Fetching it is the application's job: server-side with only TinySesam's cookies, a deadline, no redirects, and no
-cache across sessions.
+cache across sessions. `approvals` is `['pending' => …, 'href' => …]` when TinySesam has approvals switched on,
+otherwise `null`; show the number with a word, never a coloured dot alone.
+
+## Account overview
+
+`Account::fetch($url, $_SERVER['HTTP_COOKIE'] ?? '')` fetches TinySesam's `account.json` (spec §8a) server-side for a
+settings page of your own — only TinySesam's cookies, ext-curl, 5 seconds, 64 KiB, no redirects; anything but a `200`
+with `signed_in: true` is `Account::signedOut()`. `Account::parse($body)` normalizes a body into a plain array: every
+href safe or `null`, a member of the wrong type `null`, unknown members dropped. Escape every string. Changes happen on
+TinySesam's account page, which `links` lead to.
+
+## Approval confirmations
+
+`ApprovalVerifier` checks the signed confirmation of one sensitive action (`spec/approval-token.md`) against what the
+application stored when it asked:
+
+```php
+use TinySesam\Gate\ApprovalExpect;
+use TinySesam\Gate\ApprovalVerifier;
+use TinySesam\Gate\GateError;
+
+$approvals = ApprovalVerifier::create(
+    'https://auth.example.com',
+    'example',
+    jwksUrl: 'https://auth.example.com/auth/approvals/jwks.json', // never /auth/gate/jwks.json (refused)
+);
+try {
+    $claims = $approvals->verify($confirmation, new ApprovalExpect(
+        'example.collection.delete_permanently',
+        ['collection' => 'c_81f2', 'name' => 'Project Alpha'], // exactly as sent: name, type, value
+        $storedRemoteId,
+        $storedState, // browser entry only, else null
+    ), $jtiStore);
+    // run your own rule again, then act
+} catch (GateError $e) {
+    error_log('approval refused: ' . $e->errorClass->value); // never log the confirmation
+}
+```
+
+`$jtiStore` implements `JtiStore` (or is a callable `fn (string $jti, int $until): bool`): true only the first time,
+one `INSERT` into a table with a unique key shared by every worker — the interface's doc block has a PDO example. Under
+PHP-FPM give the key set cache a `FileStore` (`store:`), as for the gate. `keys:` (`KeySet::fromJwks`) takes a fixed
+approval key set instead of `jwksUrl:`; `leewaySeconds:` allows at most 30. Errors: the classes of the gate token plus
+`approval_type`, `approval_fields`, `subject`, `nonce`, `replay`, and `internal` for a failing store — every class
+means *do not carry the action out*.
 
 ## Libraries
 

@@ -152,7 +152,86 @@ standard Base64; a `JWKSURL` that is not `https` (plain `http` only to a loopbac
 `ParseTopbar(body)` normalizes TinySesam's `/.tinysesam/topbar.json` (spec §8): anything but `signed_in: true` with a
 string name is signed out, and links that are not absolute `http(s)` URLs or single-slash paths (`javascript:`,
 `data:`, `//host`) are dropped — in `Links` and in `MenuLinks` (the account menu) alike. `FetchTopbar` fetches it server-side with only TinySesam's cookies of the request, a
-5-second deadline and a 64 KiB limit. Do not cache the result across sessions.
+5-second deadline and a 64 KiB limit. Do not cache the result across sessions. `Approvals` is set when TinySesam has
+approvals switched on (`Pending` of at least 0 and a safe `Href`), otherwise nil; show the number with a word
+("Approvals (2)"), never a coloured dot alone.
+
+## Account overview (optional)
+
+`FetchAccount(ctx, client, accountURL, r)` fetches the person's own security state for a settings page of your own
+(spec §8a): `https://<auth host>/auth/account.json` (or `/.tinysesam/account.json` on your host) with only
+TinySesam's cookies of `r`, 5 seconds, 64 KiB. TinySesam answers only a full browser session; a 401, 404 or 429 comes
+back as the signed-out `Account` plus the error. `ParseAccount(body)` normalizes a body: every href is safe or nil,
+every string is text (escape it), a member of the wrong type is nil, unknown members are dropped. Changes happen on
+TinySesam's account page — link to `Links.Account`, `Links.Sessions`, … Do not cache the result across sessions.
+
+```go
+acct, err := tinysesam.FetchAccount(r.Context(), nil, "https://auth.example.com/auth/account.json", r)
+if err != nil || !acct.SignedIn {
+    // show nothing of TinySesam's state; the gate decided about the request already
+}
+if t := acct.SignIn.TOTP; t != nil && t.RecoveryLow != nil && *t.RecoveryLow {
+    // "Few recovery codes left" with a link to *acct.Links.TOTP
+}
+```
+
+## Approval confirmations (optional)
+
+A person confirms one sensitive action of your application in TinySesam with a fresh step-up; your back end picks up
+one signed confirmation and checks it before acting (`spec/approval-token.md`). Configure the check once:
+
+```go
+approvals, err := tinysesam.NewApprovalVerifier(tinysesam.ApprovalConfig{
+    Issuer:  "https://auth.example.com",
+    AppID:   "example",                                          // apps.example in TinySesam's configuration
+    JWKSURL: "https://auth.example.com/auth/approvals/jwks.json", // never /auth/gate/jwks.json (refused)
+})
+```
+
+Then, after the pickup (`GET /auth/api/approvals/{id}?wait=25` with your service account's key), check the
+confirmation against what you stored when you asked — never against what the confirmation says:
+
+```go
+claims, err := approvals.Verify(ctx, confirmation, tinysesam.ApprovalExpect{
+    Type:    "example.collection.delete_permanently",
+    Fields:  map[string]any{"collection": "c_81f2", "name": "Project Alpha"}, // exactly as sent: name, type, value
+    Subject: storedRemoteID,                                                 // the account you act for
+    Nonce:   storedState,                                                    // browser entry only, else ""
+}, jtiStore)
+if err != nil {
+    log.Printf("approval refused: %s", tinysesam.ClassOf(err)) // never log the confirmation
+    return
+}
+// run your own rule again (still the owner? does the collection still exist?), then act
+```
+
+`jtiStore` implements `JTIStore` (`Remember(ctx, jti, until) (bool, error)`): true only the first time, written
+atomically and shared by every process — one `INSERT` into a table with a unique key:
+
+```go
+store := tinysesam.JTIStoreFunc(func(ctx context.Context, jti string, until int64) (bool, error) {
+    res, err := db.ExecContext(ctx,
+        `INSERT INTO approval_jti (jti, until) VALUES ($1, $2) ON CONFLICT (jti) DO NOTHING`, jti, until)
+    if err != nil {
+        return false, err // refuses the confirmation (class internal)
+    }
+    n, err := res.RowsAffected()
+    return n == 1, err
+})
+```
+
+The checks, in the order of the specification: size and structure, header (`typ` `tinysesam-approval+jwt`, never a
+gate token), `kid` in the approval key set, the Ed25519 signature, then the claims — `aud` one string equal to `AppID`,
+exactly one `authorization_details` entry, its RFC 8785 digest, the order of the times, `iss`, a lifetime of at most
+300 s, `nbf`/`exp` with `LeewaySeconds` (0–30) — then type, fields, subject and nonce, and the `jti` last, so a
+confirmation refused for another reason does not use up its id. Errors: the classes of the gate token plus
+`approval_type`, `approval_fields`, `subject`, `nonce`, `replay` (`ErrApprovalType`, …) and `internal` for a failing
+store; every class means *do not carry the action out*. `KeySet` (from `ParseJWKS`) takes a fixed approval key set
+instead of `JWKSURL`. A complete application with the browser entry: `examples/approvals/app.py` (Python, the same
+flow).
+
+`NewApprovalVerifier` refuses: no `Issuer` or `AppID`, no or both key sources, an empty key set, a `JWKSURL` that is
+not `https` (plain `http` only to a loopback address) or ends in `/gate/jwks.json`, `LeewaySeconds` outside 0–30.
 
 ## Development
 

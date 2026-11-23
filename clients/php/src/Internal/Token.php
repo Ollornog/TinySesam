@@ -32,18 +32,19 @@ final class Token
     private const array IDENTITY_CLAIMS = [
         'ts_user', 'ts_name', 'ts_email', 'ts_groups', 'ts_id', 'ts_auth', 'ts_kind',
     ];
-    private const int MAX_SAFE = 9007199254740991; // 2^53 - 1
+    public const int MAX_SAFE = 9007199254740991; // 2^53 - 1
 
     private function __construct()
     {
     }
 
     /**
-     * Steps 1-5: size, structure, header JSON, header members, signature length.
+     * Steps 1-5: size, structure, header JSON, header members, signature length. $typ is the gate token's by default;
+     * the approval confirmation (spec/approval-token.md section 4) runs the same steps with its own.
      *
      * @throws GateError
      */
-    public static function parse(#[\SensitiveParameter] string $jws): ParsedToken
+    public static function parse(#[\SensitiveParameter] string $jws, string $typ = self::TYPE): ParsedToken
     {
         if (\strlen($jws) > self::MAX_TOKEN_BYTES) {
             throw new GateError(ErrorClass::Malformed, 'token too large');
@@ -74,8 +75,8 @@ final class Token
         if (Strict::member($header, 'alg') !== self::ALGORITHM) {
             throw new GateError(ErrorClass::Header, 'alg is not EdDSA');
         }
-        $typ = Strict::member($header, 'typ');
-        if (!\is_string($typ) || !Strict::asciiEqualFold($typ, self::TYPE)) {
+        $gotTyp = Strict::member($header, 'typ');
+        if (!\is_string($gotTyp) || !Strict::asciiEqualFold($gotTyp, $typ)) {
             throw new GateError(ErrorClass::Header, 'wrong typ');
         }
         $kid = Strict::member($header, 'kid');

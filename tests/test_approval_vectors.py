@@ -202,4 +202,65 @@ except gc.HeaderError:
     pass
 ok("a confirmation is no gate token: gate.check and the gate client refuse it (typ), whatever key they hold")
 
+# ---------- 7. the key set fetched from TinySesam (JWKSKeys) ----------
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+from tinysesam.errors import ConfigError  # noqa: E402
+
+hits = {"n": 0}
+
+
+class _JWKS(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        hits["n"] += 1
+        body = json.dumps(valid["input"]["jwks"]).encode()
+        self.send_response(200 if self.path == "/auth/approvals/jwks.json" else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "max-age=300")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _JWKS)
+httpd.daemon_threads = True
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+base_url = f"http://127.0.0.1:{httpd.server_address[1]}"
+try:
+    fetched = at.JWKSKeys(base_url + "/auth/approvals/jwks.json")
+    memory.clear()
+    claims = at.verify(valid["input"]["jws"], **dict(kw, keys=fetched))
+    assert claims["jti"] == valid["expected"]["claims"]["jti"]
+    memory.clear()
+    at.verify(valid["input"]["jws"], **dict(kw, keys=fetched))
+    assert hits["n"] == 1, f"fetched {hits['n']} times — the cache is not used"
+    foreign = next(v for v in VECS if v["id"] == "foreign-key")["input"]["jws"]
+    try:
+        at.verify(foreign, **dict(kw, keys=fetched, now=valid["input"]["now"] + 1))
+        raise AssertionError("an unknown kid passed")
+    except gc.KidError:
+        pass
+    missing = at.JWKSKeys(base_url + "/auth/approvals/missing.json")
+    try:
+        at.verify(valid["input"]["jws"], **dict(kw, keys=missing))
+        raise AssertionError("a key set that cannot be fetched passed")
+    except gc.KeyUnavailable:
+        pass
+finally:
+    httpd.shutdown()
+    httpd.server_close()
+for bad_url in ("https://auth.example.com/auth/gate/jwks.json", "https://auth.example.com/auth/gate/jwks.json/",
+                "http://auth.example.com/auth/approvals/jwks.json", "", None):
+    try:
+        at.JWKSKeys(bad_url)
+        raise AssertionError(f"JWKSKeys accepted {bad_url!r}")
+    except ConfigError:
+        pass
+ok("JWKSKeys: the approval key set fetched once and cached; an unknown kid is `kid`, an unreachable set "
+   "`key_unavailable`; the gate key set and plain http to another host stop the start")
+
 print("OK test_approval_vectors")
