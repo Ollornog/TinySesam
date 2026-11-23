@@ -725,7 +725,8 @@ class Approvals:
         ttl = int(app["link_ttl_min"])
         auth.store.set_mfa_enroll_until(uid, _now() + (ttl + 60) * 60)
         try:
-            link = auth._signin_link(uid, ttl_min=ttl, app_id=app["id"])
+            # T-94: the application's `welcome_url` (checked by `normalize_apps`) — where its links lead afterwards.
+            link = auth._signin_link(uid, ttl_min=ttl, app_id=app["id"], next=app.get("welcome_url"))
         except (ValueError, ConfigError):
             auth.store.set_mfa_enroll_until(uid, None)
             return None, "conflict"

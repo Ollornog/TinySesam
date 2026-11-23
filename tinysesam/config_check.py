@@ -983,6 +983,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _app_approvals(config, error)
     _keys(config, warnings)
     _forward_apps(config, error, warnings)
+    _first_sign_in(config, error, warnings)
 
     has_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     # --- SMTP TLS (B3-1, attack A4): since the certificate is checked, a wrong
@@ -2024,7 +2025,8 @@ APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 #: actions (`approvals`, stage B).
 APP_KEYS = ("account", "name", "provisioning", "approvals")
 #: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stages A and B).
-PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role", "delete_grace_days")
+PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role", "delete_grace_days",
+                     "welcome_url")
 #: `users:reset` asks for the approval type `tinysesam.account.reset_access` — a person holding `approver_role`
 #: confirms it; the scope alone resets nothing. `users:delete` deletes (with a grace period) and restores.
 PROVISIONING_SCOPES = ("users:read", "users:invite", "users:update", "users:disable", "users:delete", "users:reset")
@@ -2150,6 +2152,11 @@ def _apps(config, error: list, warnings: list) -> None:
             if not security.normalize_base(str(getattr(config, "base_url", "") or "").strip()):
                 error.append(_t(config, "apps[{app!r}]: the scope users:invite needs base_url — the one-time link "
                                         "is built from it, never from the Host header", app=app_id))
+        welcome = block.get("welcome_url")
+        if welcome is not None and not link_next_ok(config, welcome):
+            error.append(_t(config, "apps[{app!r}].provisioning.welcome_url={v!r} — a path (/…) or an http(s) address "
+                                    "on the host of base_url or in trusted_redirect_hosts, printable ASCII without "
+                                    "user part, at most {max} characters", app=app_id, v=welcome, max=LINK_NEXT_MAX))
         ttl = block.get("link_ttl_min", PROVISIONING_DEFAULTS["link_ttl_min"])
         if not _plain_int(ttl) or not 1 <= ttl <= max_ttl:
             error.append(_t(config, "apps[{app!r}].provisioning.link_ttl_min={v!r} — 1 to signin_link_max_ttl_min "
@@ -2177,6 +2184,77 @@ def _apps(config, error: list, warnings: list) -> None:
         error.append(_t(config, "admin_path='/auth' with apps: /auth/api/ is reserved for the machine APIs — the "
                                 "panel's JSON would lie under /auth/api/users, the path of the account API"))
 
+
+
+#: The longest target a sign-in link may carry to the end of the first sign-in (`next`, `welcome_url`, T-94).
+LINK_NEXT_MAX = 2048
+#: The longest `totp_app_hint` text and the most languages it may hold.
+TOTP_APP_HINT_MAX = 300
+TOTP_APP_HINT_LANGS = 20
+_LANG_TAG = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
+#: The placeholder of the mount prefix in the built-in pages (`manager._PREFIX_PLACEHOLDER`): never part of a target.
+_PREFIX_MARK = "__TS_P__"
+
+
+def link_next_ok(config, value) -> bool:
+    """May a sign-in link lead here once the first sign-in is complete (`next` of the account API, `welcome_url`)?
+
+    The circle of every redirect of TinySesam (`TinySesam.safe_next`): a relative path (one leading `/`), or an
+    absolute `http(s)` address whose host is the host of `base_url` or stands in `trusted_redirect_hosts` — never one
+    from the `Host` header. Stricter than `safe_next`, which falls back to `login_redirect` in silence: here the value
+    must pass UNCHANGED, so a wrong target is refused where it is given (400), not dropped at the door. Printable ASCII
+    only (an international domain name in its `xn--` form): no control character, no space, no backslash, no user part
+    (`https://app.example.com@evil.example`), no protocol-relative `//host`, no other scheme (`javascript:`)."""
+    if not isinstance(value, str) or not value or len(value) > LINK_NEXT_MAX:
+        return False
+    if any(not 0x21 <= ord(z) <= 0x7e for z in value) or _PREFIX_MARK in value:
+        return False
+    hosts = [n for n in (security.host_name(h) for h in (getattr(config, "trusted_redirect_hosts", None) or [])) if n]
+    own = security.host_name(getattr(config, "base_url", "") or "")
+    if own and own not in hosts:
+        hosts.append(own)
+    sentinel = "\x00refused"
+    return security.safe_next(value, sentinel, hosts or None) == value
+
+
+def totp_app_hint_ok(text) -> bool:
+    """One text of `totp_app_hint`: 1 to `TOTP_APP_HINT_MAX` characters, not only spaces, no control or format
+    character (line breaks, bidirectional overrides and zero-width characters included)."""
+    import unicodedata
+    return (isinstance(text, str) and bool(text.strip()) and len(text) <= TOTP_APP_HINT_MAX
+            and not any(unicodedata.category(z) in ("Cc", "Cf", "Zl", "Zp") for z in text))
+
+
+def _first_sign_in(config, error: list, warnings: list) -> None:
+    """The first sign-in through a one-time link (T-94): the TOTP hint, and recovery codes switched off without a
+    way back for a lost authenticator."""
+    hints = getattr(config, "totp_app_hint", None)
+    if hints not in (None, {}):
+        if (not isinstance(hints, dict) or len(hints) > TOTP_APP_HINT_LANGS
+                or not all(isinstance(k, str) and _LANG_TAG.match(k) and totp_app_hint_ok(v)
+                           for k, v in hints.items())):
+            error.append(_t(config, "totp_app_hint: a mapping language → text (at most {langs} languages such as "
+                                    "\"en\", \"de\"), each text 1 to {max} characters of plain text without control "
+                                    "characters or line breaks", langs=TOTP_APP_HINT_LANGS, max=TOTP_APP_HINT_MAX))
+    codes = getattr(config, "recovery_codes_enabled", True)
+    if not isinstance(codes, bool):
+        error.append(_t(config, "recovery_codes_enabled={v!r} — True or False", v=codes))
+        return
+    if codes or not _an(config, "totp_enabled"):
+        return
+    # The only configured way that resets a lost authenticator: an application's `reset_access` (an approval). The
+    # admin panel removes no TOTP; the application's own code (`totp_disable` + `grant_mfa_enrollment` + a link) is
+    # invisible here, so the text names it.
+    raw = getattr(config, "apps", None)
+    reset = _an(config, "approvals_enabled") and isinstance(raw, dict) and any(
+        isinstance(e, dict) and isinstance(e.get("provisioning"), dict)
+        and isinstance(e["provisioning"].get("scopes"), list) and "users:reset" in e["provisioning"]["scopes"]
+        and e["provisioning"].get("approver_role") for e in raw.values())
+    if not reset:
+        warnings.append(_t(config, "recovery_codes_enabled=False and no application may reset an access (apps[…]."
+                                   "provisioning with the scope users:reset): whoever loses their authenticator app "
+                                   "is locked out until the application's own code removes the TOTP (totp_disable, "
+                                   "grant_mfa_enrollment, create_signin_link) — the admin panel cannot."))
 
 
 def _approver_roles(config, raw: dict, known: set, error: list, warnings: list) -> None:
@@ -2711,6 +2789,22 @@ def _combinations(config, error: list, warnings: list) -> None:
 # REQUIRES_MAILER / REQUIRES_BASE_URL / BASE_URL_RECOMMENDED must be a key of `_DE`, and every
 # key must be used (`config_check._DE`).
 _DE: dict[str, str] = {
+    ("totp_app_hint: a mapping language → text (at most {langs} languages such as \"en\", \"de\"), each text 1 to "
+     "{max} characters of plain text without control characters or line breaks"):
+        ("totp_app_hint: eine Zuordnung Sprache → Text (höchstens {langs} Sprachen wie \"en\", \"de\"), jeder Text 1 "
+         "bis {max} Zeichen reiner Text ohne Steuerzeichen und Zeilenumbrüche"),
+    "recovery_codes_enabled={v!r} — True or False":
+        "recovery_codes_enabled={v!r} — True oder False",
+    ("recovery_codes_enabled=False and no application may reset an access (apps[…].provisioning with the scope "
+     "users:reset): whoever loses their authenticator app is locked out until the application's own code removes "
+     "the TOTP (totp_disable, grant_mfa_enrollment, create_signin_link) — the admin panel cannot."):
+        ("recovery_codes_enabled=False und keine Anwendung darf einen Zugang zurücksetzen (apps[…].provisioning mit "
+         "dem Scope users:reset): Wer die Authenticator-App verliert, bleibt ausgesperrt, bis der Code der Anwendung "
+         "das TOTP entfernt (totp_disable, grant_mfa_enrollment, create_signin_link) — das Admin-Panel kann es nicht."),
+    ("apps[{app!r}].provisioning.welcome_url={v!r} — a path (/…) or an http(s) address on the host of base_url or "
+     "in trusted_redirect_hosts, printable ASCII without user part, at most {max} characters"):
+        ("apps[{app!r}].provisioning.welcome_url={v!r} — ein Pfad (/…) oder eine http(s)-Adresse auf dem Host von "
+         "base_url oder in trusted_redirect_hosts, druckbares ASCII ohne Benutzerangabe, höchstens {max} Zeichen"),
     ("{field}: the role {role!r} is empty, holds a comma or a control character, or has surrounding spaces — "
      "Remote-Groups would read it as another role or as several"):
         ("{field}: Die Rolle {role!r} ist leer, enthält ein Komma oder ein Steuerzeichen oder hat Leerzeichen am Rand — "

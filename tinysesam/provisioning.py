@@ -20,6 +20,11 @@ The application calls TinySesam directly (not through the proxy) with an automat
     POST  /auth/api/users/{id}/restore          take a deletion back within the grace period (users:delete)
     GET   /auth/api/provisioning                what the application may do (no scope)
 
+Create and `signin-link` take an optional `next` (T-94): where the link leads once the first sign-in and its setup are
+complete — else `provisioning.welcome_url`, else the usual target. A path or an address on the host of `base_url` or in
+`trusted_redirect_hosts` (`config_check.link_next_ok`); anything else is 400 `next_invalid` before anything is written.
+The target is stored with the token, never in the link.
+
 The operator takes accounts over for an application (`managed_by`) or releases them — panel and
 `tinysesam accounts adopt|release|restore|list`; `adopt_refusal` is the one rule both apply.
 
@@ -58,7 +63,9 @@ DISPLAY_MAX = 150
 #: List page size: default and maximum.
 PAGE_DEFAULT, PAGE_MAX = 100, 200
 #: Fields of the bodies (anything else → 400 `invalid`: a typo must not pass silently).
-CREATE_FIELDS = ("username", "display_name", "email", "roles")
+CREATE_FIELDS = ("username", "display_name", "email", "roles", "next")
+#: Fields of the body of `POST …/{id}/signin-link` (the body is optional).
+LINK_FIELDS = ("next",)
 UPDATE_FIELDS = ("display_name", "roles")
 STATES = ("active", "disabled", "disabled_operator", "deleting")
 _ID = re.compile(r"^[1-9][0-9]{0,17}$")
@@ -94,7 +101,8 @@ def normalize_apps(cfg) -> dict:
     left out; a role that is `admin`, a delegate role, a role of a group map, unlisted or malformed is dropped from the
     allowlist; an unknown scope counts for nothing; a number out of range falls back to its default; an
     `approver_role` that is malformed, unlisted, `admin` or grantable by any application is None, and `users:reset`
-    counts for nothing without one."""
+    counts for nothing without one; a `welcome_url` outside the redirect circle (`config_check.link_next_ok`) is
+    None."""
     raw = getattr(cfg, "apps", None) or {}
     if not isinstance(raw, dict):
         return {}
@@ -129,6 +137,9 @@ def normalize_apps(cfg) -> dict:
         out[app_id] = {
             "id": app_id, "account": account, "name": name if isinstance(name, (str, dict)) else None,
             "roles": allow, "scopes": granted, "approver_role": approver,
+            # T-94: where the application's links lead after the first sign-in when a request names no `next`.
+            "welcome_url": block.get("welcome_url") if config_check.link_next_ok(cfg, block.get("welcome_url"))
+            else None,
             "link_ttl_min": min(_int(block.get("link_ttl_min"), config_check.PROVISIONING_DEFAULTS["link_ttl_min"],
                                      1, max_ttl), max_ttl),
             "max_accounts": _int(block.get("max_accounts"), config_check.PROVISIONING_DEFAULTS["max_accounts"],
@@ -469,6 +480,7 @@ class Provisioning:
         self.need(app, "users:invite")
         self.claim(request, app, write=True)
         b = self._fields(body, CREATE_FIELDS)
+        target = self._link_next(app, b.get("next"))       # before anything is written: a bad target is the caller's
         roles = self._roles(app, b.get("roles"), at_least_one=True)
         email = None
         if b.get("email") not in (None, ""):
@@ -511,13 +523,24 @@ class Provisioning:
             raise self._taken(app, "email" if getattr(e, "field", None) == "email" else "username") from None
         auth.audit("user_create", None, None, f"{username} service=False uid={uid}")
         try:
-            link = auth._signin_link(uid, ttl_min=app["link_ttl_min"], app_id=app["id"])
+            link = auth._signin_link(uid, ttl_min=app["link_ttl_min"], app_id=app["id"], next=target)
         except (ValueError, ConfigError):
             # The configuration changed at runtime (no sign-in link, no base_url): the account stands, the application
             # issues the link with `POST …/signin-link` once it works again.
             link = {"url": None, "expires_at": None, "qr": None}
         return {"id": uid, "username": username, "signin_url": link["url"], "expires_at": link["expires_at"],
                 "qr": link["qr"], "user": self.view(app, self.store.get_user(uid))}
+
+    def _link_next(self, app: dict, value) -> Optional[str]:
+        """Where the one-time link leads once the first sign-in is complete (T-94): the request's `next`, else the
+        application's `welcome_url`, else None (the default target). A `next` outside the redirect circle
+        (`config_check.link_next_ok`: a path, or the host of `base_url` or of `trusted_redirect_hosts`) is refused with
+        400 `next_invalid` — never dropped in silence, so the application learns of its mistake."""
+        if value is None or value == "":
+            return app.get("welcome_url")
+        if not config_check.link_next_ok(self.cfg, value):
+            raise ProvisioningError("next_invalid", 400, "next: a path or an address on a trusted host")
+        return value
 
     def _taken(self, app: dict, field: str) -> ProvisioningError:
         """The answer "taken" (409) — counted against `taken_per_hour` (429 beyond it) and logged, because a rate of
@@ -561,11 +584,21 @@ class Provisioning:
             raise ProvisioningError("disabled_by_operator", 409, "only the operator lifts this lock")
         return self.view(app, self.store.get_user(int(row["id"])))
 
-    def link(self, request: Request, uid) -> dict:
+    def link(self, request: Request, uid, raw: bytes = b"") -> dict:
+        """`POST /auth/api/users/{id}/signin-link` — `raw` is the request body: empty, or a JSON object with `next`.
+        Parsed only after the target is resolved: an account the application may not see answers 404 even with a
+        broken body."""
         auth = self.auth
         app = self.caller(request)
         self.need(app, "users:invite")
         row = self.target(app, uid, whole=True)
+        body: dict = {}
+        if raw.strip():
+            try:
+                body = self._fields(json.loads(raw), LINK_FIELDS)
+            except ValueError:
+                raise ProvisioningError("invalid", 400, "a JSON object") from None
+        target = self._link_next(app, body.get("next"))
         self.claim(request, app, write=True)
         self.not_deleting(row)
         if row["first_login_at"] is not None:
@@ -577,7 +610,7 @@ class Provisioning:
         self.spend(app, "link")
         auth.store.revoke_user_magic_tokens(int(row["id"]))
         try:
-            link = auth._signin_link(int(row["id"]), ttl_min=app["link_ttl_min"], app_id=app["id"])
+            link = auth._signin_link(int(row["id"]), ttl_min=app["link_ttl_min"], app_id=app["id"], next=target)
         except (ValueError, ConfigError):
             # `magiclink_first_login_only`, a configuration changed at runtime, or a change between the checks above and here: no link, no text from inside.
             raise ProvisioningError("conflict", 409, "no sign-in link for this account now") from None
@@ -726,9 +759,10 @@ def register_routes(r, auth) -> None:
             return error(e)
 
     @r.post("/auth/api/users/{uid}/signin-link")
-    def provisioning_link(request: Request, uid: str):
+    async def provisioning_link(request: Request, uid: str):
         try:
-            return ok_json(svc.link(request, uid))
+            # The body is optional (`{"next": …}`, T-94); `link` resolves caller and target before it parses it.
+            return ok_json(svc.link(request, uid, await request.body()))
         except ProvisioningError as e:
             return error(e)
 

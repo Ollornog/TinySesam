@@ -129,6 +129,11 @@ assert link["url"].startswith("https://app.example.com/auth/magic/")
 The admin panel (`/auth/admin`) has the same as a *Sign-in link* button per user. `auth.set_disabled(uid, True)`
 locks an account (ends sessions, revokes keys, drops open links). Cross-device sign-in by QR code:
 `qr_login_enabled=True` (extra `[qr]`). README: *Recipe: the admin creates accounts, a link signs them in*.
+A shorter first sign-in for people without technical knowledge (T-94): `totp_app_hint={"en": "Install Example
+Authenticator."}` names the app above the QR code; `recovery_codes_enabled=False` drops the code page (a lost phone then
+needs a reset — README *Setting up TOTP*); `create_signin_link(uid, next="/welcome")`, or `next` and
+`provisioning.welcome_url` of the account API, lead into the app once the setup is done (a path or a host of
+`base_url`/`trusted_redirect_hosts` only — anything else is refused, not dropped).
 Team leads who manage their team in the panel without being admins: `admin_delegates={"team-lead": {"roles":
 ["editors"]}}` (hierarchy with `manages`, actions with `can`) — README: *Delegated administration*.
 

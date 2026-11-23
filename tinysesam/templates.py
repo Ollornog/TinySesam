@@ -543,9 +543,11 @@ def _account(auth, ctx) -> str:
                 key = "acc.recovery_none" if rest == 0 else ("acc.recovery_low" if tight else "acc.recovery_left")
                 notice = (f"<div id=rc_left class='rcleft {'err' if tight else 'ok'}'>"
                           f"{_e(t(key, n=rest))}</div>")
+            # T-94: with `recovery_codes_enabled=False` no code action (the route answers 404 anyway).
+            codes = (f" <button data-act=recovery>{_e(t('acc.recovery'))}</button>"
+                     if getattr(auth.cfg, "recovery_codes_enabled", True) else "")
             totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
-                    f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button> "
-                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>")
+                    f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button>{codes}")
         else:
             notice = ""
             totp = (f"<a class=btnlink href='__TS_P__/auth/totp/setup{_e(_app_q(ctx))}'>"
@@ -1243,6 +1245,18 @@ def _pin(auth, ctx) -> str:
     return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx), below=messages, ctx=ctx)
 
 
+def _totp_app_hint(cfg) -> str:
+    """`totp_app_hint` in the page's language (`lang`, else `en`, else the first entry) — or "". Fail-closed for a
+    value changed at runtime: only a text that `config_check` would accept is shown."""
+    from .config_check import totp_app_hint_ok
+    hints = getattr(cfg, "totp_app_hint", None)
+    if not isinstance(hints, dict) or not hints:
+        return ""
+    lang = str(getattr(cfg, "lang", "en") or "en")
+    text = hints.get(lang) or hints.get("en") or next(iter(hints.values()), "")
+    return text if totp_app_hint_ok(text) else ""
+
+
 def _totp_setup(auth, ctx) -> str:
     """ctx: data = {secret, uri, qr} — or `None`/missing for the first step.
 
@@ -1252,8 +1266,11 @@ def _totp_setup(auth, ctx) -> str:
     """
     t = auth.t
     data = ctx.get("data")
+    # T-94: the operator's hint (which app to install), escaped, on both steps — before the start and above the QR.
+    app_hint = _totp_app_hint(auth.cfg)
+    app_hint = f"<div class=hint id=totp_app_hint>{_e(app_hint)}</div>" if app_hint else ""
     if not data:
-        body = (f"<h1>{_e(t('setup.title'))}</h1>"
+        body = (f"<h1>{_e(t('setup.title'))}</h1>{app_hint}"
                 f"<div class=hint>{_e(t('setup.start_hint'))}</div>"
                 f"<form method=post action='__TS_P__/auth/totp/setup/start'>{_cf(ctx)}"
                 f"<input type=hidden name=next value='{_e(ctx.get('next') or '/')}'>"
@@ -1262,7 +1279,7 @@ def _totp_setup(auth, ctx) -> str:
     qr = f"<img class=qr src='{data['qr']}'>" if data.get("qr") else ""
     ok_msg = _e(t("setup.ok")).replace("'", "\\'")
     bad_msg = _e(t("err.code")).replace("'", "\\'")
-    body = (f"<h1>{_e(t('setup.title'))}</h1>"
+    body = (f"<h1>{_e(t('setup.title'))}</h1>{app_hint}"
             f"<div class=hint>{_e(t('setup.scan'))}</div>"
             f"{qr}"
             f"<div class=hint>{_e(t('setup.manual'))}</div><div class=mono>{_e(data['secret'])}</div>"
