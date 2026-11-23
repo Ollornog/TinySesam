@@ -352,6 +352,26 @@ impl<F: Fetch, C: CacheClock> JwksVerifier<F, C> {
     }
 }
 
+impl JwksVerifier {
+    /// A verifier for TinySesam's gate key set, normally `https://<auth host>/auth/gate/jwks.json`. The approval key
+    /// set (a path ending in `/approvals/jwks.json`) is refused: a gate token is never checked with an approval key
+    /// (spec/approval-token.md §3).
+    pub fn from_url(config: TokenConfig, url: &str) -> Result<JwksVerifier, ConfigError> {
+        let parsed = reqwest::Url::parse(url)
+            .map_err(|_| ConfigError::new("the key set URL is not a URL"))?;
+        if parsed
+            .path()
+            .trim_end_matches('/')
+            .ends_with("/approvals/jwks.json")
+        {
+            return Err(ConfigError::new(
+                "that is the APPROVAL key set; gate tokens have their own (https://<auth host>/auth/gate/jwks.json)",
+            ));
+        }
+        Ok(JwksVerifier::new(config, RemoteKeys::from_url(url)?))
+    }
+}
+
 /// Approval confirmations (spec/approval-token.md) with the approval key set fetched by the rules of spec §5.
 pub struct ApprovalJwksVerifier<F = HttpFetcher, C = MonotonicClock> {
     config: ApprovalConfig,

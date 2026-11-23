@@ -143,6 +143,11 @@ for bad in (
         {"mode": "token", "issuer": ISSUER, "audience": AUDIENCE, "jwks_url": "http://auth.example.com/jwks.json"},
         {"mode": "token", "issuer": ISSUER, "audience": AUDIENCE, "jwks_url": "ftp://auth.example.com/jwks.json"},
         {"mode": "token", "issuer": ISSUER, "audience": AUDIENCE, "jwks_url": "https:///jwks.json"},
+        # spec/approval-token.md §3: never the approval key set (the counterpart of JWKSKeys refusing the gate set)
+        {"mode": "token", "issuer": ISSUER, "audience": AUDIENCE,
+         "jwks_url": "https://auth.example.com/auth/approvals/jwks.json"},
+        {"mode": "token", "issuer": ISSUER, "audience": AUDIENCE,
+         "jwks_url": "https://auth.example.com/auth/approvals/jwks.json/"},
         {"mode": "token", "issuer": ISSUER, "audience": AUDIENCE, "gate_keys": [KEY_A], "leeway": 61},
         {"mode": "token", "issuer": ISSUER, "audience": AUDIENCE, "gate_keys": [KEY_A], "cookie_name": "a",
          "token_header": "X-Gate"},
@@ -158,7 +163,7 @@ for good in ("http://127.0.0.1:8080/jwks.json", "http://localhost/jwks.json", "h
 assert not token_client()._may_block and token_client(gate_keys=KEY_A, leeway=60)
 assert raises(ConfigError, lambda: gc.GateClient(mode="header").verify(VALID)), "verify() in header mode"
 ok("configuration errors: no or unknown mode, mixed settings, missing issuer/audience/key source, bad keys, a JWKS URL "
-   "that is not https (http only to loopback), leeway above 60, two token sources, bad header names")
+   "that is not https (http only to loopback) or the approval key set, leeway above 60, two token sources, bad header names")
 
 # ---------- header mode ----------
 hm = gc.GateClient(mode="header", trusted_proxies=["127.0.0.1", "198.51.100.0/24", "::1"])

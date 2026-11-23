@@ -339,6 +339,11 @@ export async function createGate(config: GateConfig): Promise<Gate> {
       throw new ConfigError('jwksUrl must be a string');
     }
     checkJwksUrl(config.jwksUrl);
+    if (new URL(config.jwksUrl).pathname.replace(/\/+$/, '').endsWith('/approvals/jwks.json')) {
+      throw new ConfigError(
+        'jwksUrl is the APPROVAL key set; gate tokens have their own (https://<auth host>/auth/gate/jwks.json)',
+      );
+    }
     if (config.fetch !== undefined && typeof config.fetch !== 'function') {
       throw new ConfigError('fetch must be a function');
     }

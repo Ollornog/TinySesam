@@ -68,7 +68,9 @@ the following, and a client's documentation MUST state them:
 3. The application is reachable **only** through that proxy (bound to a loopback or private address, or protected by
    mutual TLS). A second way in — a published port, a sidecar, another virtual host — makes every header forgeable.
 4. The proxy removes TinySesam's cookies (`tinysesam_*`, `__Host-tinysesam_*`) and the client's `Authorization` and
-   `X-Api-Key` before the application, unless the application checks them itself.
+   `X-Api-Key` before the application, unless the application checks them itself. A server-side top bar or account
+   helper (§8, §8a) needs the session cookie at the application; letting exactly that one through is a deliberate
+   exception with a price, described in §8.
 
 A client SHOULD offer a list of trusted peer addresses and refuse header mode for requests from any other peer. It MUST
 NOT read identity from any other header (`X-Forwarded-User`, `X-Remote-User`, `X-Auth-Request-*`, …). It MAY let the
@@ -212,13 +214,17 @@ The client knows the public keys from its configuration, never from the token:
 - **Fixed key:** the output of `tinysesam gate-key --db …` (32 raw bytes, standard Base64 — the proxy's `sign_key`).
   The client computes its `kid` as in §4.1. It MAY accept several fixed keys (before and after a rotation).
 - **JWKS:** a URL configured by the operator, normally `https://<auth host>/auth/gate/jwks.json`, fetched as in §5.
+  A URL whose path (without trailing slashes) ends in `/approvals/jwks.json` is the approval key set and is refused
+  at configuration ([`approval-token.md`](approval-token.md) §3).
 
 Both reduce to a key set `kid → 32-byte Ed25519 public key`. A JWKS entry is usable only when all of these hold;
 otherwise it is skipped and the others stay usable:
 
 - `kty` is `OKP` and `crv` is `Ed25519`;
 - `x` is strict base64url (§4.4) of exactly 32 bytes;
-- `kid` is a string equal to the first 16 hex digits of SHA-256 over those 32 bytes;
+- `kid` is a string equal to the first 16 hex digits of SHA-256 over those 32 bytes (a `kid` of one's own choosing,
+  e.g. in a test fixture, makes the entry unusable: a set with no usable entry is a failed fetch and gives
+  `key_unavailable`, §5; with other usable entries the token gets `kid`);
 - `alg`, if present, is `EdDSA`; `use`, if present, is `sig`; `key_ops`, if present, is an array containing `verify`;
 - it has no `d` (private material), `x5u`, `x5c`, `x5t`, `x5t#S256` or `jku`.
 
@@ -342,7 +348,22 @@ fetch need tests of their own in each client.
 
 An application that draws its own top bar fetches TinySesam's data same-origin at `/.tinysesam/topbar.json` on its own
 host (the proxy passes `/.tinysesam/*` to TinySesam) or server-side at `/auth/topbar.json` with the request's cookie
-([T-76](../backlog/T-76-top-bar-link-visibility.md)). A helper for it MUST:
+([T-76](../backlog/T-76-top-bar-link-visibility.md)).
+
+**Server-side or in the browser.** A server-side helper forwards TinySesam's cookies of the incoming request (only
+names starting with `tinysesam_` or `__Host-tinysesam_`, only to the configured URL). Behind a proxy that keeps
+duty 4 of §2.1 they never reach the application, so a server-side fetch always reads *signed out*. Letting them through
+hands the application the person's browser session: with the session cookie the application — or whoever takes it
+over — acts as that person at TinySesam and at every other application behind the gate until the session ends. The
+**recommended** way is therefore the browser's: the page fetches `/.tinysesam/topbar.json` or
+`/.tinysesam/account.json` same-origin, the proxy passes them to TinySesam with the browser's cookies, and the
+application never holds the session. Server-side only for an application one trusts with the session, and then the
+proxy lets through exactly what the fetch needs — the session cookie (`tinysesam_session`, the name of
+`session_cookie`, set for `cookie_domain`) and, for a host outside the cookie domain, its connection cookie
+`__Host-tinysesam_link` (T-26) — and keeps stripping every other TinySesam cookie (CSRF, gate, unlock, flow).
+`deploy/forward-auth/Caddyfile.gate` carries this as a commented variant, measured in `tests/test_gate_caddy.py`.
+
+A helper for it MUST:
 
 - treat anything but a JSON object with `signed_in: true` (the boolean) and a string `name` as signed out;
 - render only links whose `href` is an absolute `http`/`https` URL or a path that starts with exactly one `/` (not
@@ -369,7 +390,8 @@ vector `approvals-pending` passed all five unchanged, T-89 stage B part 2).
 An application that shows the person's security state on its own settings page (sign-in methods, sessions, connected
 programs) fetches it like the top bar: same-origin at `/.tinysesam/account.json` on its own host, or server-side at
 `/.tinysesam/account.json` respectively `/auth/account.json` with only TinySesam's cookies of the request
-([T-91](../backlog/T-91-app-frame-and-account-overview.md)). It is an optional helper: a client without it is still a
+([T-91](../backlog/T-91-app-frame-and-account-overview.md)) — which reach the application only by the deliberate
+exception of §8 ("Server-side or in the browser"); the browser way is the recommended one. It is an optional helper: a client without it is still a
 complete gate client. TinySesam answers only for a full browser session — an API key, an OAuth token, an app password
 or a half session gets `401` — so the check "a person, by browser" stays with TinySesam and the application needs no
 route of its own. Reading only: every change happens on TinySesam's account page, which the links lead to.

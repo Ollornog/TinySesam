@@ -872,6 +872,9 @@ class GateClient:
                 raise ConfigError("gate_keys: no key")
         else:
             url = _check_fetch_url(jwks_url, "jwks_url")
+            if urllib.parse.urlsplit(url).path.rstrip("/").endswith("/approvals/jwks.json"):
+                raise ConfigError("jwks_url: that is the APPROVAL key set — gate tokens have their own, "
+                                  "https://<auth host>/auth/gate/jwks.json")
             self._cache = _JWKSCache(lambda: _read_limited(url, {"Accept": "application/json"}, _FETCH_TIMEOUT,
                                                            _MAX_JWKS_BYTES))
         if cookie_name is not None and token_header is not None:

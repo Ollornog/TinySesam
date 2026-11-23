@@ -105,12 +105,13 @@ With the feature `jwks` the keys come from the operator's key set URL instead:
 ```rust
 #[cfg(feature = "jwks")]
 mod gate {
-    use tinysesam_gate::{ConfigError, Identity, JwksVerifier, RemoteKeys, TokenConfig, TokenError};
+    use tinysesam_gate::{ConfigError, Identity, JwksVerifier, TokenConfig, TokenError};
 
     /// Build once at start-up; clone it freely — the key set cache is shared.
     pub fn verifier() -> Result<JwksVerifier, ConfigError> {
         let config = TokenConfig::new("https://auth.example.com", "app.example.com")?;
-        Ok(JwksVerifier::new(config, RemoteKeys::from_url("https://auth.example.com/auth/gate/jwks.json")?))
+        // never /auth/approvals/jwks.json (refused)
+        JwksVerifier::from_url(config, "https://auth.example.com/auth/gate/jwks.json")
     }
 
     pub async fn identify(verifier: &JwksVerifier, token: &str) -> Result<Identity, TokenError> {
@@ -131,6 +132,13 @@ and 64 KiB per fetch, fresh for `max-age` clamped to 60–3600 s (300 s without 
 failed fetch never replaces the cached set, which stays usable up to 3600 s past its freshness. A request never waits
 longer than one fetch deadline: concurrent requests share the running fetch. The cache runs on a monotonic clock, so
 a jumping wall clock cannot stall or flood it. A custom transport implements `Fetch` (and must keep the deadline).
+
+Every key set entry's `kid` must be the one derived from its key (the first 16 hex digits of SHA-256 over the 32 key
+bytes, spec §4.3); an entry with a `kid` of your own choosing (a test fixture with `"kid": "test-key"`) is skipped
+silently, and a fetched set without a single usable entry is a failed fetch: every token gets `key_unavailable` (with
+other usable entries: `kid`). `KeySet::from_jwks` follows the same rule. `JwksVerifier::from_url` refuses a URL ending
+in `/approvals/jwks.json` (the approval key set); `JwksVerifier::new` with `RemoteKeys` of your own leaves that check
+to you.
 
 ## Identity and guards
 
@@ -156,7 +164,8 @@ An axum example with a middleware and a role guard: [`examples/axum_gate.rs`](ex
 These return a `ConfigError` at construction instead of failing open later: no or an empty issuer or audience, a
 clock leeway above 60 seconds, no gate key, a key that is not 32 bytes of standard Base64 or no Ed25519 key, two keys
 with one `kid`, an invalid or empty trusted peer list, an invalid or repeated header name, a key set URL that is not
-`https` (or `http` to a loopback IP address) or carries credentials, a fetch deadline above 5 seconds. Header mode
+`https` (or `http` to a loopback IP address) or carries credentials, a gate key set URL ending in
+`/approvals/jwks.json`, a fetch deadline above 5 seconds. Header mode
 itself needs the explicit `HeaderMode::trust_proxy()`.
 
 ## Error classes
@@ -183,7 +192,7 @@ switched on (`pending` of at least 0 and a safe `href`); show the number with a 
 signed out unless `signed_in` is `true`, every href safe or `None`, a member of the wrong type `None`, unknown members
 dropped. With the feature `jwks`, `account::AccountFetcher::new(url)?.fetch(cookie_header).await` fetches it
 server-side with only TinySesam's cookies (`account::tinysesam_cookies`), 5 seconds and 64 KiB; anything but a `200`
-is signed out. Changes happen on TinySesam's account page, which `links` lead to.
+is signed out. Changes happen on TinySesam's account page, which `links` lead to. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser").
 
 ## Approval confirmations
 

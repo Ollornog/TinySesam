@@ -49,7 +49,11 @@ TinySesam itself stays Python; a client never issues tokens and never signs anyo
 - **Mutation as proof**: relax one rule (take `alg` from the header, skip the duplicate check, strip instead of refuse)
   and show that the vector suite turns red; restore from a saved copy.
 - A `README.md` in English with installation, the two modes, the proxy duties of spec §2.1 and the configuration
-  errors that stop the start.
+  errors that stop the start — including the price of a server-side top bar or account helper (it needs the session
+  cookie the proxy strips, spec §8 "Server-side or in the browser") and the key set rule of spec §4.3 (an entry's
+  `kid` must be derived from its key, else it is skipped: a set with no usable entry gives `key_unavailable`).
+- **Key purposes kept apart** (spec/approval-token.md §3): the gate client refuses a key set URL ending in
+  `/approvals/jwks.json`, the approval helper one ending in `/gate/jwks.json` — both at configuration.
 - No private infrastructure, English everywhere; the repository's hygiene test reads these directories too.
 
 ## Libraries: no cryptography of our own

@@ -56,6 +56,8 @@ test('configuration errors stop the start', async () => {
     ['jwksUrl with credentials', { ...TOKEN_BASE, jwksUrl: 'https://u:p@auth.example.com/j' }],
     ['jwksUrl not absolute', { ...TOKEN_BASE, jwksUrl: '/auth/gate/jwks.json' }],
     ['jwksUrl ftp', { ...TOKEN_BASE, jwksUrl: 'ftp://auth.example.com/j' }],
+    ['approval key set', { ...TOKEN_BASE, jwksUrl: 'https://auth.example.com/auth/approvals/jwks.json' }],
+    ['approval key set /', { ...TOKEN_BASE, jwksUrl: 'https://auth.example.com/auth/approvals/jwks.json/' }],
     ['leeway above 60', { ...TOKEN_BASE, gateKeys: [signKey('A')], leewaySeconds: 61 }],
     ['negative leeway', { ...TOKEN_BASE, gateKeys: [signKey('A')], leewaySeconds: -1 }],
     ['fractional leeway', { ...TOKEN_BASE, gateKeys: [signKey('A')], leewaySeconds: 1.5 }],

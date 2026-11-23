@@ -139,6 +139,11 @@ without one), at most one attempt per 10 s, a failed fetch never replaces the ca
 fetch. The cache runs on a monotonic clock (`performance.now`), so a jumping wall clock cannot stall or flood it.
 `fetch` in the configuration replaces the global `fetch` (for a proxy agent, for instance).
 
+Every key set entry's `kid` must be the one derived from its key (the first 16 hex digits of SHA-256 over the 32 key
+bytes, spec §4.3); an entry with a `kid` of your own choosing (a test fixture with `"kid": "test-key"`) is skipped
+silently, and a fetched set without a single usable entry is a failed fetch: every token gets `key_unavailable` (with
+other usable entries: `kid`). A key set URL ending in `/approvals/jwks.json` (the approval key set) stops the start.
+
 ### Fetch handlers (Hono, Deno, Bun, edge runtimes)
 
 ```ts
@@ -189,7 +194,7 @@ middleware hand them to the optional `logger`, which receives `{ code, kid }` �
 mode or an unknown setting (a misspelt `trustedProxies` would otherwise silently trust every peer), no or an empty
 issuer or audience, a clock leeway that is not an integer from 0 to 60, no gate key, a key that is not 32 bytes of
 standard Base64 or no Ed25519 key, both `gateKeys` and `jwksUrl`, a key set URL that is not `https` (or `http` to a
-loopback address) or carries credentials, `fetch` without `jwksUrl`, both `cookieName` and `tokenHeader`, an invalid
+loopback address), carries credentials or ends in `/approvals/jwks.json`, `fetch` without `jwksUrl`, both `cookieName` and `tokenHeader`, an invalid
 or repeated header name, an empty or invalid trusted proxy list, and a runtime without WebCrypto `Ed25519`.
 
 ## Error classes
@@ -208,7 +213,7 @@ Every class means the same to the application: not authenticated.
 `parseTopbar(body)` reduces TinySesam's `topbar.json` to what an application may render (spec §8): signed out on any
 doubt, only links with an absolute `http`/`https` URL or a path starting with exactly one `/` (in `links` and in
 `menu_links`, the account menu). Titles and names are text, never markup — set them with `textContent`. `fetchTopbar(url, cookieHeader)` fetches it server-side with only
-TinySesam's cookies, a 5-second deadline and a 64 KiB limit; do not cache the answer across sessions. `approvals` is
+TinySesam's cookies, a 5-second deadline and a 64 KiB limit; do not cache the answer across sessions. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser"). `approvals` is
 `{ pending, href }` when TinySesam has approvals switched on, otherwise `null`; show the number with a word, never a
 coloured dot alone.
 
@@ -251,7 +256,7 @@ try {
 }
 ```
 
-`keys` (from `parseJwks`) takes a fixed approval key set instead of `jwksUrl`; `leewaySeconds` allows at most 30.
+`keys` (from `parseJwks`, the same `kid` rule as above) takes a fixed approval key set instead of `jwksUrl`; `leewaySeconds` allows at most 30.
 Errors: the classes of the gate token plus `approval_type`, `approval_fields`, `subject`, `nonce`, `replay`, and
 `internal` for a failing store — every class means *do not carry the action out*. The `jti` is written last, so a
 confirmation refused for another reason does not use up its id. Because `JSON.parse` reads `1.0` as `1`, a number
