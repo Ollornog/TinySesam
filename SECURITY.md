@@ -38,6 +38,13 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 - **Always run behind HTTPS**; `rp_id`/`origin` must match the domain exactly.
 - Trust the real client IP only behind a trusted proxy (`trusted_proxies`), otherwise `X-Forwarded-For` is forgeable.
 - Set `trusted_redirect_hosts` only to hosts you actually own (open redirect / forward auth).
+- **Switching recovery codes off (`recovery_codes_enabled=False`, T-94) removes the self-service way back.** Whoever
+  loses the authenticator app then gets in again only when someone resets the access: an application's
+  `reset_access` (scope `users:reset`, confirmed by a person holding `approver_role`) or your own code with
+  `totp_disable`, `grant_mfa_enrollment` and a new sign-in link. The admin panel removes no TOTP. `config_check` warns
+  when no application has `users:reset`. With the switch off no code is accepted, and none is used up; codes an account
+  holds stay in the database (hashed) and are valid again once the switch is back on — delete them per account with
+  `totp_disable` if that way back is not wanted.
 - Keep secrets (OIDC client secret, SMTP password) in the environment / a secret store, not in code.
 - **Known limit — the first-admin one-time token travels in a URL.** It is redeemed with
   `GET /auth/claim-admin?token=…`, and when you are not signed in yet the login redirect mirrors it
@@ -371,6 +378,14 @@ create service accounts, lift a lock of the operator. The rules behind that:
 - **The one-time link only before the first sign-in** (`409 already_signed_in` afterwards — after it a link from a key
   would be a takeover). A new link discards the open ones. The link exists only in the answer: the database stores the
   hash, the audit names `ttl_min`, no log line carries it. The holder learns of it (`signin_link_issued`).
+- **Where the link leads afterwards is checked where it is given** (`next`, `provisioning.welcome_url`, T-94): only the
+  circle of every redirect — a path, or an `http(s)` address on the host of `base_url` or in `trusted_redirect_hosts`,
+  never one from the `Host` header (`config_check.link_next_ok`). Printable ASCII only, so a homograph (`аpp` with a
+  Cyrillic `а`), a control character, a backslash or a user part (`https://app.example.com@evil.example`) is refused
+  outright rather than read differently by the browser; `//host` and other schemes (`javascript:`) as well. A bad
+  target is `400 next_invalid` before anything is written — not dropped in silence. It is stored with the token (the
+  payload), never in the link, and the door re-checks it against the configuration of the moment; the audit names the
+  host (`next_host=`), not the address. A leaked key thus sends a new person only where TinySesam already redirects.
 - **The application's own lock** (`disabled=3`): it never downgrades another lock (`UPDATE … WHERE disabled=0`), and
   `enable` lifts only `3` (`409 disabled_by_operator` otherwise). Every check reads `disabled <> 0`, so `3` signs in
   nowhere — not by password, passkey, sign-in link, OIDC, SAML, LDAP or key. Locking ends sessions, keys, devices, app

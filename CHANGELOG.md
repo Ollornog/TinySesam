@@ -4,6 +4,22 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+
+- A shorter first sign-in by one-time link (T-94). `recovery_codes_enabled` (default `True`): `False` drops the code
+  page of the TOTP setup and every code action; no code is issued or accepted, codes an account holds stay untouched
+  for the way back, and `config_check` warns when no application may reset an access (`users:reset`).
+  `totp_app_hint` (`{lang: text}`) shows which authenticator app to install above the QR code. The account API takes
+  an optional `next` on `POST /auth/api/users` and `…/{id}/signin-link`, with `apps[…].provisioning.welcome_url` as the
+  application's default: the link leads there once the setup is complete. Only a path or an address on the host of
+  `base_url` or in `trusted_redirect_hosts` (`config_check.link_next_ok`); anything else is `400 next_invalid` before
+  anything is written. Stored with the token, never in the link; the audit names only the host. No schema change.
+
+### Changed
+
+- `create_signin_link(next=…)` checks the target when the link is issued and raises `ValueError` for one outside the
+  redirect circle; before, the door dropped it in silence and the person landed on `login_redirect` (T-94).
+
 ## [0.29.1] — 2026-11-23
 
 Who needs this release: users of the Go gate client, who can now pin `clients/go@vX.Y.Z` instead of a pseudo-version;

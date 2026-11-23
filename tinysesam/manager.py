@@ -3992,7 +3992,12 @@ class TinySesam:
     _RECOVERY_WARN_THRESHOLD = 3
 
     def generate_recovery_codes(self, user_id, n=None) -> list:
-        """Generate new one-time codes (replaces existing ones). Plaintext return ONLY ONCE."""
+        """Generate new one-time codes (replaces existing ones). Plaintext return ONLY ONCE.
+
+        Raises `ConfigError` with `recovery_codes_enabled=False` (T-94): codes that no route accepts would be a
+        promise of a way back that does not exist — and the codes the account still holds stay untouched."""
+        if not self.cfg.recovery_codes_enabled:
+            raise ConfigError("recovery_codes_enabled=False — no recovery codes are issued or accepted")
         n = int(n or self.cfg.recovery_code_count)
         codes = ["-".join(secrets.token_hex(self._RECOVERY_BYTES) for _ in range(2)) for _ in range(n)]
         self.store.delete_recovery_codes(user_id)
@@ -4007,8 +4012,11 @@ class TinySesam:
         return hashlib.sha256(norm.encode()).hexdigest()
 
     def _verify_recovery_code(self, user_id, code) -> bool:
-        """Check and consume a one-time code. A code is valid exactly once."""
-        if not code:
+        """Check and consume a one-time code. A code is valid exactly once.
+
+        With `recovery_codes_enabled=False` (T-94) no code is looked at — it is neither accepted nor used up, so the
+        codes stay as they were for the day the switch goes back on."""
+        if not code or not self.cfg.recovery_codes_enabled:
             return False
         if not self.store.consume_recovery_code(user_id, self._rc_hash(code)):
             return False
@@ -5266,8 +5274,12 @@ class TinySesam:
         extra `[qr]`. The plaintext exists only in this return value; the database holds the hash.
         Audit `signin_link_issue` under the account, with `actor=` when an admin issues it.
 
+        `next` is where the link leads once the sign-in (and a setup pass) is complete. It is stored with the token,
+        not in the link, and must be a path or an http(s) address on the host of `base_url` or in
+        `trusted_redirect_hosts` (`config_check.link_next_ok`, T-94).
+
         Raises `ConfigError` without `magiclink_enabled` (no route would redeem the link) or without
-        `base_url`; `ValueError` for an unknown, disabled or service account, an invalid `ttl_min`, or
+        `base_url`; `ValueError` for an unknown, disabled or service account, an invalid `ttl_min` or `next`, or
         — with `magiclink_first_login_only` — an account that is set up already (T-34).
 
         With a `login_chain`, an account that lacks factors for it is led through the setup pass
@@ -5307,12 +5319,22 @@ class TinySesam:
         # (`grant_mfa_enrollment`) first; then the link opens the setup pass.
         if not self._link_allowed(int(u["id"])):
             raise ValueError(self.t("api.signin_link_first_only"))
-        payload: dict = {"next": str(next or "/"), "issued": "operator"}
+        # T-94: the target is checked HERE, where it is given — `safe_next` at the door would drop a wrong one in
+        # silence and the person would land somewhere else than the issuer meant. It is stored with the token (the
+        # payload), never in the link: nobody who holds the link can rewrite it. The door checks it once more.
+        target = str(next or "/")
+        if not config_check.link_next_ok(self.cfg, target):
+            raise ValueError(self.t("api.invalid", reason="next"))
+        payload: dict = {"next": target, "issued": "operator"}
         if app_id:
             payload.update(app=str(app_id), issued_at=_now())
         raw = self.create_magic_token("login", user_id=int(u["id"]), ttl_min=ttl, payload=payload)
         url = self.magic_url(raw, base)
-        self.audit("signin_link_issue", str(u["username"]), detail=f"ttl_min={ttl}")
+        # The audit names the target's host, not the address (a path or query may carry what is no log's business).
+        where = security.host_name(target) if "://" in target else ""
+        self.audit("signin_link_issue", str(u["username"]),
+                   detail=f"ttl_min={ttl}" + (f" next_host={security.for_log(where)}" if where else
+                                              (" next=path" if target != "/" else "")))
         # T-47: a link is a way into the account for whoever holds it — the holder learns of it
         # (hook, mail with `notify_new_access`, "Recent activity"). `by_operator`: someone else issued it.
         a = _REQUEST.get() or {}
@@ -8460,7 +8482,8 @@ class TinySesam:
         totp = None
         if cfg.totp_enabled:
             enabled = bool(self.store.has_confirmed_totp(uid))
-            left = self.recovery_codes_remaining(uid) if enabled else None
+            # T-94: without recovery codes there is nothing to count — the page offers no code action.
+            left = self.recovery_codes_remaining(uid) if enabled and cfg.recovery_codes_enabled else None
             totp = {"enabled": enabled, "recovery_left": left,
                     "recovery_low": bool(enabled and left is not None and left <= self._RECOVERY_WARN_THRESHOLD)}
         passkeys = None

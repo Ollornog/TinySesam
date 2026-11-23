@@ -265,6 +265,17 @@ erzeugt `recovery_code_count` Codes und gibt sie einmal zurück (`recovery_codes
 Ziel (`next` — das übergebene, sonst die Kontoseite); die eingebaute Seite zeigt sie und leitet erst
 nach *Notiert — weiter* weiter. `/auth/totp/recovery` ersetzt sie später (mit Step-up).
 
+**Recovery-Codes lassen sich abschalten** (`recovery_codes_enabled=False`, T-94) — für Menschen, die über eine
+Code-Liste nur stolpern würden. Die Einrichtung zeigt dann keine Code-Seite und erzeugt keine Codes,
+`/auth/totp/recovery` antwortet `404`, die Kontoseite bietet keine Code-Aktion an, und nirgends wird ein Code
+angenommen. Codes, die ein Konto schon hat, bleiben unangetastet in der Datenbank (wieder einschalten, und sie gelten
+wieder). Der Preis: Eine verlorene Authenticator-App braucht jemanden, der den Zugang zurücksetzt — `reset_access` einer
+Anwendung (Scope `users:reset`, unten) oder euer eigener Code (`totp_disable`, `grant_mfa_enrollment`, dann
+`create_signin_link`); das Admin-Panel entfernt kein TOTP. `config_check` warnt, wenn keine Anwendung `users:reset` hat.
+**`totp_app_hint`** setzt einen kurzen Hinweis je Sprache über den QR-Code — welche App man installiert:
+`{"en": "Install Example Authenticator.", "de": "Installiere Example Authenticator."}` (reiner Text, escaped, höchstens
+300 Zeichen, `lang` der Seite, sonst `en`, sonst der erste Eintrag).
+
 **Wer einen Faktor ANLEGT, braucht eine interaktive Sitzung.** `GET/POST /auth/totp/setup` und
 `POST /auth/passkey/register/{begin,finish}` verlangen ebenfalls eine Sitzung — ein API-Key
 bekommt 403 (der Wächter ist `auth.require_session()`). Sonst richtet ein abgeflossener CI-Key
@@ -2095,11 +2106,11 @@ TinySesam-On-Behalf-Of: 17
 
 | Route | Scope | Was |
 |---|---|---|
-| `POST /auth/api/users` | `users:invite` | eine Person mit Allowlist-Rollen anlegen (mindestens eine); den Einmal-Link gibt es nur in dieser Antwort |
+| `POST /auth/api/users` | `users:invite` | eine Person mit Allowlist-Rollen anlegen (mindestens eine) und optionalem `next`; den Einmal-Link gibt es nur in dieser Antwort |
 | `GET /auth/api/users/{id}`, `GET /auth/api/users` | `users:read` | ein Konto oder eine Seite (`?limit=` ≤ 200, `&after=<id>`, `?role=`, `?state=`) → `{"users": […], "next": <id>\|null}` |
 | `PATCH /auth/api/users/{id}` | `users:update` | `display_name` und `roles` (die ganze gewünschte Menge innerhalb der Allowlist; andere Rollen bleiben) |
 | `POST /auth/api/users/{id}/disable`, `/enable` | `users:disable` | die eigene Sperre der Anwendung; `enable` hebt nur diese auf |
-| `POST /auth/api/users/{id}/signin-link` | `users:invite` | ein neuer Einmal-Link, nur vor der ersten Anmeldung; ältere Links verfallen |
+| `POST /auth/api/users/{id}/signin-link` | `users:invite` | ein neuer Einmal-Link, nur vor der ersten Anmeldung; ältere Links verfallen; optionaler Body `{"next": …}` |
 | `DELETE /auth/api/users/{id}` | `users:delete` | nie angemeldet: endgültig weg (`204`); sonst gesperrt und nach `delete_grace_days` gelöscht (`202` `{"state": "deleting", "delete_after": …}`) |
 | `POST /auth/api/users/{id}/restore` | `users:delete` | eine Löschung in der Frist zurücknehmen; danach `404` |
 | `GET /auth/api/provisioning` | — | was der Key darf: App, Scopes, Rollen, Kontingent, Frist, Grenzen und was davon übrig ist |
@@ -2118,9 +2129,18 @@ TinySesam-On-Behalf-Of: 17
   `deleting`.
 - **Fehler** sind `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
   `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
-  email_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
+  email_invalid|next_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
   disabled_by_operator|account_deleting|not_deleting`, `429 limit` mit `Retry-After`. Schreibrouten dürfen später `202` antworten (Freigaben); das
   heißt „noch nicht ausgeführt“.
+- **Wohin der Link danach führt** (T-94): `next` im Body von Anlegen oder `signin-link` — nach Passwort, TOTP und was
+  der Einrichtungsgang sonst verlangt, geht der Browser dorthin statt zum üblichen Ziel. Ohne `next` ist
+  `provisioning.welcome_url` die Vorgabe der Anwendung. Beide werden gleich geprüft: ein Pfad (`/welcome`) oder eine
+  `http(s)`-Adresse auf dem Host von `base_url` oder in `trusted_redirect_hosts` — druckbares ASCII, keine
+  Benutzerangabe, kein `//`, kein anderes Schema, höchstens 2048 Zeichen (eine internationale Domain in ihrer
+  `xn--`-Form). Alles andere ist `400 next_invalid`, bevor etwas geschrieben wird. Das Ziel liegt am Token, nie im
+  Link, also kann es niemand umschreiben, der den Link hält; die Tür prüft es noch einmal, und das Audit
+  (`signin_link_issue`) nennt nur den Host. Der Link eines bestätigten `reset_access` (unten) führt ebenfalls zur
+  `welcome_url`.
 - Die erste Anmeldung über den Link führt ein Konto ohne Faktoren durch den Einrichtungsgang (`/auth/setup`). Danach
   hilft sich die Person selbst (Anmeldelink an ihre Adresse, Passwort zurücksetzen), der Betreiber hilft — oder der
   Teamadmin der Anwendung setzt den Zugang zurück (unten).
@@ -2907,7 +2927,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**132 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**133 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

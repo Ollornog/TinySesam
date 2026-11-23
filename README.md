@@ -269,6 +269,16 @@ must not stand in for the second factor of a half-finished sign-in (fixed in 0.2
 (`next` — the given one, otherwise the account page); the built-in page shows them and leads on only
 after *I have written them down*. `/auth/totp/recovery` replaces them later (with step-up).
 
+**Recovery codes can be switched off** (`recovery_codes_enabled=False`, T-94) — for people who would only stumble
+over a list of codes. The setup then shows no code page and creates no codes, `/auth/totp/recovery` answers `404`, the
+account page offers no code action, and no code is accepted anywhere. Codes an account already holds stay in the
+database untouched (switch back on, and they work again). The price: a lost authenticator app needs someone who resets
+the access — an application's `reset_access` (scope `users:reset`, below) or your own code (`totp_disable`,
+`grant_mfa_enrollment`, then `create_signin_link`); the admin panel removes no TOTP. `config_check` warns when no
+application has `users:reset`. **`totp_app_hint`** puts a short hint per language above the QR code — which app to
+install: `{"en": "Install Example Authenticator.", "de": "…"}` (plain text, escaped,
+at most 300 characters, the page's `lang`, else `en`, else the first entry).
+
 **Setting a factor up needs an interactive session.** `GET/POST /auth/totp/setup` and
 `POST /auth/passkey/register/{begin,finish}` require a session as well — an API key gets a 403
 (`auth.require_session()` is the guard). Otherwise a leaked CI key would enrol a factor **it**
@@ -2060,11 +2070,11 @@ TinySesam-On-Behalf-Of: 17
 
 | Route | Scope | What |
 |---|---|---|
-| `POST /auth/api/users` | `users:invite` | create a person with allowlist roles (at least one); the one-time link is only in this answer |
+| `POST /auth/api/users` | `users:invite` | create a person with allowlist roles (at least one) and an optional `next`; the one-time link is only in this answer |
 | `GET /auth/api/users/{id}`, `GET /auth/api/users` | `users:read` | one account, or a page (`?limit=` ≤ 200, `&after=<id>`, `?role=`, `?state=`) → `{"users": […], "next": <id>\|null}` |
 | `PATCH /auth/api/users/{id}` | `users:update` | `display_name` and `roles` (the whole wanted set within the allowlist; other roles stay) |
 | `POST /auth/api/users/{id}/disable`, `/enable` | `users:disable` | the application's own lock; `enable` lifts only that one |
-| `POST /auth/api/users/{id}/signin-link` | `users:invite` | a new one-time link, only before the first sign-in; older links die |
+| `POST /auth/api/users/{id}/signin-link` | `users:invite` | a new one-time link, only before the first sign-in; older links die; optional body `{"next": …}` |
 | `DELETE /auth/api/users/{id}` | `users:delete` | never signed in: gone for good (`204`); otherwise locked and deleted after `delete_grace_days` (`202` `{"state": "deleting", "delete_after": …}`) |
 | `POST /auth/api/users/{id}/restore` | `users:delete` | take a deletion back within the grace period; afterwards `404` |
 | `GET /auth/api/provisioning` | — | what the key may do: app, scopes, roles, quota, grace period, limits and what is left |
@@ -2081,9 +2091,17 @@ TinySesam-On-Behalf-Of: 17
   `state` is `active`, `disabled` (by the application), `disabled_operator` (only the operator lifts it) or `deleting`.
 - **Errors** are `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
   `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
-  email_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
+  email_invalid|next_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
   disabled_by_operator|account_deleting|not_deleting`, `429 limit` with `Retry-After`. Write routes may answer `202` later (approvals); treat it as
   "not done yet".
+- **Where the link leads afterwards** (T-94): `next` in the body of create or `signin-link` — after the password, the
+  TOTP and whatever else the setup pass asks, the browser goes there instead of the usual target. Without `next`,
+  `provisioning.welcome_url` is the application's default. Both are checked the same way: a path (`/welcome`) or an
+  `http(s)` address on the host of `base_url` or in `trusted_redirect_hosts` — printable ASCII, no user part, no `//`,
+  no other scheme, at most 2048 characters (an international domain in its `xn--` form). Anything else is
+  `400 next_invalid` before anything is written. The target is stored with the token, never in the link, so whoever
+  holds the link cannot rewrite it; the door checks it once more, and the audit (`signin_link_issue`) names only its
+  host. The confirmed `reset_access` link (below) leads to `welcome_url` as well.
 - The first sign-in through the link leads an account without factors through the setup pass (`/auth/setup`). After
   that the person helps themselves (sign-in link to their address, password reset), the operator does — or the
   application's team admin resets the access (below).
@@ -2848,7 +2866,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**132 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**133 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

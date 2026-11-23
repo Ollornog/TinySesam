@@ -420,6 +420,18 @@ class TinySesamConfig:
     # instead of a TypeError about an unknown argument.
     totp_required: bool = False
     recovery_code_count: int = 10         # number of one-time recovery codes per generation (lost authenticator)
+    #: One-time recovery codes at all (T-94). `False`: the TOTP setup shows no code page and creates no codes, the
+    #: account page offers none, and a code is no longer accepted anywhere — codes an account already holds stay in
+    #: the database untouched (switching back on makes them valid again) and are deleted as before when TOTP is
+    #: removed. A lost authenticator then needs someone who resets the access: an application's `reset_access`
+    #: (`apps[…].provisioning`, scope `users:reset`) or the application's own code (`totp_disable`,
+    #: `grant_mfa_enrollment`, `create_signin_link`); `config_check` warns when no application has `users:reset`.
+    recovery_codes_enabled: bool = True
+    #: A short hint per language above the QR code of the TOTP setup (T-94), e.g. which authenticator app to install:
+    #: `{"en": "Use the app Example Authenticator.", "de": "…"}`. The page takes the
+    #: entry of `lang`, else `en`, else the first one. Plain text only — shown escaped, at most 300 characters, no
+    #: control characters (`config_check`). Empty = no hint.
+    totp_app_hint: dict = field(default_factory=dict)
 
     # --- Password reset (forgot password by email; needs magiclink_enabled + mailer) ---
     password_reset_enabled: bool = False
@@ -538,7 +550,10 @@ class TinySesamConfig:
     # most `signin_link_max_ttl_min`), `max_accounts` (default 1000), `delete_grace_days` (default 7, 0–30: an account
     # that has signed in is locked and deleted by the cleanup only after this many days, restorable until then; one that
     # never signed in goes at once) and `limits` (per hour: `create_per_hour` 60, `disable_per_hour` 60,
-    # `link_per_hour` 30, `taken_per_hour` 30, `delete_per_hour` 20; per day: `delete_per_day` 100). It never touches
+    # `link_per_hour` 30, `taken_per_hour` 30, `delete_per_hour` 20; per day: `delete_per_day` 100) and `welcome_url`
+    # (T-94: where the application's one-time links lead once the first sign-in and its setup are complete, when the
+    # request names no `next` of its own — a path or an http(s) address on the host of `base_url` or in
+    # `trusted_redirect_hosts`, checked like `next`; default: the usual target). It never touches
     # passwords, passkeys, TOTP, the address after creation, an account it does not own, an administrator or a
     # delegate. The operator hands existing accounts to an application or takes them back (panel, `tinysesam accounts
     # adopt|release`). Empty = no account API. See README "Accounts for applications" and SECURITY.md "Account API".

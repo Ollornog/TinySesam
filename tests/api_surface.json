@@ -1775,6 +1775,10 @@
       "field": "int = 10",
       "tier": "A"
     },
+    "recovery_codes_enabled": {
+      "field": "bool = True",
+      "tier": "A"
+    },
     "redis_url": {
       "field": "str = ''",
       "tier": "A"
@@ -1993,6 +1997,10 @@
     },
     "topbar_menu_links": {
       "field": "list = []",
+      "tier": "B"
+    },
+    "totp_app_hint": {
+      "field": "dict = {}",
       "tier": "B"
     },
     "totp_enabled": {

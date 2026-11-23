@@ -1260,6 +1260,30 @@ nothing — accounts hold their roles in `users.roles` as before.
   Nothing is lost or granted. No SQL is needed; `DROP TABLE role_catalog` removes the rows if you go back for good
   (list them first with `tinysesam roles list` and put the ones you need into `available_roles`).
 
+## First sign-in through a one-time link: codes, hint, target (T-94)
+
+Three settings shorten the first sign-in of a person who got a link (account API, panel, `create_signin_link`). **No
+schema change**: the target lives in the token's existing payload (`magic_token.payload`, key `next`), as it did for
+the mailed link.
+
+- **`recovery_codes_enabled=False`** — the TOTP setup goes straight on without the code page and creates no codes;
+  `/auth/totp/recovery` answers `404`, the account page offers no code action, `generate_recovery_codes` raises
+  `ConfigError`, and a code typed at `/auth/totp` counts as a wrong code (neither accepted nor used up, no
+  `recovery_used` line). Codes created before stay in `recovery_code`; switching back on makes them valid again —
+  that is the way back. A lost authenticator then needs a reset: an application's `reset_access` (scope `users:reset`)
+  or the application's own code (`totp_disable`, `grant_mfa_enrollment`, `create_signin_link`). The start warns when
+  no application has `users:reset`.
+- **`totp_app_hint`** — `{"en": …, "de": …}`, shown escaped above the QR code (`lang`, else `en`, else the first
+  entry). A text longer than 300 characters, with a control or format character or a line break is a start error.
+- **`next` / `apps[…].provisioning.welcome_url`** — where the link leads once the setup is complete. Checked when it is
+  given (`400 next_invalid`, start error for `welcome_url`) and again at the door against the configuration of the
+  moment: a host removed from `trusted_redirect_hosts` meanwhile sends the person to `login_redirect`. Audit
+  `signin_link_issue … next_host=<host>` (or `next=path` for a relative target), never the address.
+- **Rollback:** nothing to do in the database. An older version does not know the three fields — remove
+  `recovery_codes_enabled`, `totp_app_hint` and `welcome_url` from the configuration before you go back (an unknown
+  field is a `TypeError` there, an unknown `provisioning` member a start error). Links issued with a `next` keep
+  working; an older version reads the same payload key.
+
 ## Sign-in methods and their strength
 
 **By default TinySesam is single-factor:** a password alone signs in completely. A second
@@ -1277,7 +1301,7 @@ account has one. From this follow ways of differing strength to the same account
 | Sign-in link (`magic`) | access to the mailbox | yes, if set up — likewise a passkey, also in a chain like `["magic"]` and in route chains `require(factors=[…])` (`magiclink_require_second_factor`, default on) | without a second factor the mailbox is the only factor (ASVS 6.3.6) |
 | OIDC (`oidc`) / SAML (`saml`) | what the provider has checked | yes, if set up locally | TinySesam does not see whether the provider demanded MFA |
 | Password reset by link | mailbox → new password | yes, at the subsequent login | ends all sessions, does not sign in by itself |
-| Recovery code | replacement for TOTP, one-time | — | only in the TOTP step |
+| Recovery code | replacement for TOTP, one-time | — | only in the TOTP step; none with `recovery_codes_enabled=False` (T-94) |
 | API key | possession of the key | never (no interactive factor) | as an automation key carries no admin flag, reaches no step-up route (R6-5, R3-3) and changes no password (`POST /auth/password`, `change_password`: 403, since 0.22.0) |
 
 **The PIN as follow-up factor** (G7, since 2026-09-26): After the first factor of a chain,

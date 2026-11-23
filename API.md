@@ -22,7 +22,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 185 of 219 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 186 of 221 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -30,7 +30,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 185 of 219
 
 **`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 410 · B 307 · C 38 names.
+**Status:** A 411 · B 308 · C 38 names.
 
 ## A · Methods of `TinySesam`
 
@@ -757,7 +757,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `hsts`, `totp_required`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `approval_pickup_sec`, `approval_token_ttl_sec`, `approval_app_requests_per_hour`, `approval_key_file`, `apps`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `hsts`, `totp_required`, `totp_app_hint`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `approval_pickup_sec`, `approval_token_ttl_sec`, `approval_app_requests_per_hour`, `approval_key_file`, `apps`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 

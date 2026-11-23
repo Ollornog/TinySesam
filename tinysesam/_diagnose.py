@@ -179,6 +179,8 @@ FIELDS: dict[str, Any] = {
     "secrets_key_file": REDACT,
     "totp_required": SHOW,
     "recovery_code_count": SHOW,
+    "recovery_codes_enabled": SHOW,
+    "totp_app_hint": REDACT,
     "password_reset_enabled": SHOW,
     "login_chain": METHODS,
     "mfa_enrollment": _one_of("first_login", "grace", "strict"),

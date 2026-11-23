@@ -1198,9 +1198,80 @@ async def link_setup_pass(p):
     assert broken == [], f"broken requests: {broken[:3]}"
     print("  setup pass: link → password (typo caught) → TOTP + recovery codes → fully signed in (strict CSP)")
 
+    await link_setup_without_codes(p, go, until, me)
     await oauth_consent(p)
     await app_passwords_page(p)
     await services_page(p)
+
+
+async def link_setup_without_codes(p, go, until, me):
+    """T-94 in a real browser, at 390 px in the light and the dark theme: `recovery_codes_enabled=False` and a
+    `totp_app_hint` — the hint stands above the QR code, the TOTP step leads straight to the target without a code
+    page, strict CSP, no sideways scroll. `TINYSESAM_SCREENSHOTS=<dir>` keeps the screenshots."""
+    import base64
+    import pyotp
+
+    failed_before = len(p.failed)
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+    t34.cfg.recovery_codes_enabled = False
+    t34.cfg.totp_app_hint = {"en": "Install <Example Authenticator> from your app store first.",
+                             "de": "Example Authenticator (de)."}
+    try:
+        await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
+        backgrounds: set = set()
+        for theme in ("light", "dark"):
+            await p.cmd("Network.clearBrowserCookies")        # tess of the pass before is still signed in
+            uid = t34.create_user(f"uma-{theme}", email=f"uma-{theme}@example.com")
+            url = t34.create_signin_link(uid, next="/")["url"]
+            await p.cmd("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": theme}])
+            await go(url[len(T34):])
+            await p.js("document.querySelector('form button').click()")
+            await until("location.pathname==='/auth/setup' && document.readyState==='complete'",
+                        "the link did not lead into the setup pass")
+            await p.js("document.getElementById('ob_pw1').value='uma-first-24680';"
+                       "document.getElementById('ob_pw2').value='uma-first-24680';"
+                       "document.querySelector('#ob_password button').click();true")
+            await until("!!document.getElementById('ob_totp') && document.readyState==='complete'",
+                        "after the password the page must offer the TOTP step")
+            await p.js("document.querySelector('#ob_totp a').click();true")
+            await until("!!document.getElementById('totp_app_hint')", "no app hint on the TOTP start page")
+            await p.js("document.querySelector(\"form[action$='/auth/totp/setup/start'] button\").click();true")
+            await until("document.readyState==='complete' && !!document.getElementById('tstotp')", "no TOTP form")
+            assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark"), theme
+            backgrounds.add(await p.js("getComputedStyle(document.body).backgroundColor"))
+            hint = await p.js("document.getElementById('totp_app_hint').textContent")
+            assert hint == "Install <Example Authenticator> from your app store first.", hint
+            assert await p.js("(()=>{const h=document.getElementById('totp_app_hint'),q=document.querySelector("
+                              "'img.qr')||document.querySelector('.mono');return !!q&&h.getBoundingClientRect().bottom"
+                              "<=q.getBoundingClientRect().top})()"), "the hint must stand above the QR code"
+            assert await p.js("(()=>{const s=getComputedStyle(document.getElementById('totp_app_hint'));"
+                              "return s.display!=='none'&&s.visibility!=='hidden'&&s.color!==s.backgroundColor})()")
+            over = await p.js("document.documentElement.scrollWidth - window.innerWidth")
+            assert over <= 0, f"the TOTP page scrolls sideways at 390 px ({over}px, {theme})"
+            if shots:
+                os.makedirs(shots, exist_ok=True)
+                data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+                with open(os.path.join(shots, f"t94-totp-hint-{theme}-390.png"), "wb") as fh:
+                    fh.write(base64.b64decode(data))
+            secret = await p.js("document.querySelector('.mono').textContent")
+            await p.js(f"document.querySelector('#tstotp [name=code]').value={pyotp.TOTP(secret).now()!r};"
+                       "document.querySelector('#tstotp button').click();true")
+            await until("location.pathname==='/' && document.readyState==='complete'",
+                        "without recovery codes the TOTP step must lead straight to the target")
+            assert await me() == f"uma-{theme}", f"not fully signed in: {await me()!r}"
+            assert t34.recovery_codes_remaining(uid) == 0
+            viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+            assert viol == "[]", f"CSP violation ({theme}): {viol}"
+        assert len(backgrounds) == 2, f"light and dark look the same: {backgrounds}"
+        assert not p.console, f"console errors: {p.console[:2]}"
+        broken = [f for f in p.failed[failed_before:] if not (f[0] == 401 and f[1].endswith("/auth/me"))]
+        assert broken == [], f"broken requests: {broken[:3]}"
+    finally:
+        t34.cfg.recovery_codes_enabled = True
+        t34.cfg.totp_app_hint = {}
+        await p.cmd("Emulation.setEmulatedMedia", features=[{"name": "prefers-color-scheme", "value": "light"}])
+        await p.cmd("Emulation.clearDeviceMetricsOverride")
+    print("  T-94: no recovery codes + app hint above the QR → straight to the target (390 px, light/dark, strict CSP)")
 
 
 async def oauth_consent(p):

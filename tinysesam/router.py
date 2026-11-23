@@ -271,7 +271,9 @@ def build_router(auth) -> APIRouter:
         # else may hold; here the session has just proven the new factor itself (the code was
         # consumed), and whoever holds the secret needs no codes to get in. `totp_begin` already
         # cleared orphaned ones, an API key never gets this far (`require_session`).
-        codes = auth.generate_recovery_codes(u["id"])
+        # T-94: `recovery_codes_enabled=False` — no codes, and the page goes straight on (it shows the code box only
+        # for a non-empty list).
+        codes = auth.generate_recovery_codes(u["id"]) if cfg.recovery_codes_enabled else []
         if not enrollment:
             # B1-7: after a new factor offer to end the other sessions — the number
             # tells the UI whether there is anything to offer.
@@ -322,6 +324,8 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/totp/recovery")
     def totp_recovery(request: Request):
         """Generate new one-time recovery codes (only with TOTP set up). Plain text ONLY ONCE."""
+        if not cfg.recovery_codes_enabled:
+            raise HTTPException(404)      # T-94: switched off — no route that issues codes
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.require_mfa(request)   # R3-3: fresh factor confirmation, no API key
         if not auth.store.has_confirmed_totp(u["id"]):
