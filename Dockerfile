@@ -100,7 +100,7 @@ RUN set -eu; \
 # only with a Python release, so a fixed zlib waited there for weeks (CVE-2026-85091). The project publishes floating
 # tags only (`nonroot`, `latest`, `debug…`); the digest pins one state of `nonroot`, and Dependabot moves the digest
 # when the tag moves (dependabot.yml, `docker`).
-FROM gcr.io/distroless/base-debian13:nonroot@sha256:a08d9054afbaf1af9b90fd02cdc7b32236319b5376d374505a41548d42b0c5db
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:83e67481ae9fc8c7a6d211113431fb8085619bed49672e583261111bac184f0d
 
 COPY --from=build /rootfs/ /
 COPY --from=build /opt/venv /opt/venv
