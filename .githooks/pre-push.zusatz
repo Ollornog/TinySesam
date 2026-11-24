@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Repo extra of the fast pre-push (kit hook, "Repo-eigener Zusatz"): a change near the gate runs the gate-Caddy suite (T-116).
+#
+# The hook picks tests by NAME of the changed file; a change in deploy/forward-auth/ names no test, and the suite skips
+# without a Caddy that has caddy-jwt (exit 77), which the hook counts as red. So: when the change touches the forward-auth
+# templates or the Caddy build, the suite runs here — it builds the Caddy with Docker once and keeps it by content
+# (tests/_gate_caddy_binary.py). Without Docker (or without a module the suite needs) the skip is named loudly and the
+# push goes on: the PR CI job `gate-caddy` always runs the suite.
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+basis="$(git merge-base HEAD origin/main 2>/dev/null)" || basis=""
+[[ -n "$basis" ]] || { echo "  gate-caddy: no origin/main to compare with — PR CI"; exit 0; }
+changed="$(git diff --name-only "$basis" HEAD)"
+
+# The test file itself is run by the hook by name; everything else near the gate is not.
+grep -qE '^tests/test_gate_caddy\.py$' <<<"$changed" && exit 0
+grep -qE '^(deploy/forward-auth/|tests/_gate_caddy_binary\.py$)' <<<"$changed" || exit 0
+
+py=python3
+[[ -x .venv/bin/python ]] && py=.venv/bin/python
+echo "  gate-caddy: a change near the gate — running tests/test_gate_caddy.py"
+"$py" tests/test_gate_caddy.py
+rc=$?
+if [[ $rc -eq 77 ]]; then
+    echo "  gate-caddy: NOT checked here (see the reason above) — the PR CI job gate-caddy runs it" >&2
+    exit 0
+fi
+exit $rc

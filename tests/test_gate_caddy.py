@@ -9,7 +9,8 @@ a free port and `auto_https` is off.
 
 Caddy with the plugin comes from TINYSESAM_GATE_CADDY (path to the binary). The CI job `gate-caddy`
 builds it from deploy/forward-auth/caddy-gate/Dockerfile and sets the variable — if it is set,
-the binary is required. Without the variable the suite reports “skipped” with a reason.
+the binary is required. Without the variable the suite builds it itself when Docker is there (T-116, cached by content,
+tests/_gate_caddy_binary.py) and reports “skipped” naming the missing tool when it is not.
 """
 import base64
 import http.server
@@ -32,8 +33,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from voraussetzung import braucht, braucht_modul  # noqa: E402
 
 CADDY = os.environ.get("TINYSESAM_GATE_CADDY", "")
-braucht(CADDY, "TINYSESAM_GATE_CADDY not set — Caddy with caddy-jwt missing "
-               "(build: deploy/forward-auth/caddy-gate/Dockerfile)")
+if not CADDY and not os.environ.get("CI"):
+    # T-116: on a machine with Docker the binary is built once and kept by content (tests/_gate_caddy_binary.py);
+    # without Docker the skip names the missing tool. CI sets the variable itself (and without it, a job
+    # of CI that has Docker anyway must not build here).
+    from _gate_caddy_binary import ensure_binary  # noqa: E402
+    CADDY, _why = ensure_binary()
+    braucht(CADDY, f"Caddy with caddy-jwt missing: {_why}")
+braucht(CADDY, "TINYSESAM_GATE_CADDY not set (in CI the job gate-caddy builds it)")
 braucht_modul("uvicorn")
 # Set means required: a wrong path or a Caddy without the plugin is an error, not a skip.
 assert os.access(CADDY, os.X_OK), f"TINYSESAM_GATE_CADDY={CADDY!r} is not an executable file"
