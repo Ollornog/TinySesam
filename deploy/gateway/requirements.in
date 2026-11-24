@@ -8,7 +8,7 @@ cryptography>=50.0
 pyotp>=2.12.1
 python-multipart>=0.0.34
 httpx>=0.27
-authlib>=1.9.9
+authlib>=1.9.10
 uvicorn>=0.30
 # Build backend for `pip install --no-build-isolation .` in the image. Listed here and not in
 # pyproject: with build isolation pip fetched setuptools unchecked in the latest
