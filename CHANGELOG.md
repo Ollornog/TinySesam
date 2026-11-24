@@ -4,6 +4,17 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-11-24
+
+**The last release with database migrations.** The next release starts from a single schema baseline, drops old
+migrations and transition paths, and will break parts of the public API once, on purpose, before 1.0 (see the
+roadmap milestone M-5). Every installation should move to 0.30.0 first, let it migrate, and re-encrypt stored secrets
+in the current format (`tinysesam keys reencrypt`) before taking the next release. Who needs this release besides
+that: operators who invite people by one-time link (shorter first sign-in, optional recovery codes, a hint for the
+authenticator app, a welcome target after setup) and anyone connecting MCP clients for laypeople (pairing code as
+consent given in advance, ADR-14, switch off by default). Schema 25 → 26 (additive; migration runs at start, rollback
+in `docs/OPERATIONS.md`) — back up the database before upgrading.
+
 ### Added
 
 - A shorter first sign-in by one-time link (T-94). `recovery_codes_enabled` (default `True`): `False` drops the code
