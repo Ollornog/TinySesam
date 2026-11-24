@@ -3,6 +3,7 @@ id: T-105
 type: Task
 title: "Stage S9 — headless writing: action pages with a way back"
 status: offen
+points: 21
 milestone: M-4
 blocked_by: [T-98, T-104]
 tags: [headless, actions]

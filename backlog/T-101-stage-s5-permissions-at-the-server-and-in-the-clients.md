@@ -3,6 +3,7 @@ id: T-101
 type: Task
 title: Stage S5 — permissions at the server and in the clients
 status: offen
+points: 13
 milestone: M-4
 blocked_by: [T-100]
 tags: [permissions, clients, spec]

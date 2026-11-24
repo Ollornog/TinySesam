@@ -3,6 +3,7 @@ id: T-107
 type: Task
 title: "Stage S11 — acceptance matrix in CI: examples x origins"
 status: offen
+points: 8
 milestone: M-4
 blocked_by: [T-101, T-102, T-103, T-104, T-106]
 tags: [ci, tests]

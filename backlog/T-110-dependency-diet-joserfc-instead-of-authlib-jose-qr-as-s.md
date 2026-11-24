@@ -3,6 +3,7 @@ id: T-110
 type: Task
 title: "Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant"
 status: offen
+points: 5
 milestone: M-6
 blocked_by: [T-112]
 tags: [dependencies, supply-chain]

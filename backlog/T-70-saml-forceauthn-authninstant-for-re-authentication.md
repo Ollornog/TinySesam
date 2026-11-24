@@ -3,6 +3,7 @@ id: T-70
 type: Task
 title: 'SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap)'
 status: offen
+points: 5
 milestone: M-4
 blocked_by: [T-112]
 tags: [security, saml, stepup]

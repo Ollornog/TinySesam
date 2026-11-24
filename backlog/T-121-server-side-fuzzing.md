@@ -3,6 +3,7 @@ id: T-121
 type: Task
 title: "Fuzz the server side: gate token, forward headers, OAuth endpoints, JSON APIs, template escaping"
 status: offen
+points: 5
 milestone: M-6
 blocked_by: [T-112]
 tags: [security, fuzzing, hardening]

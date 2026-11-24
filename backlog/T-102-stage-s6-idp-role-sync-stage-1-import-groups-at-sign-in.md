@@ -3,6 +3,7 @@ id: T-102
 type: Task
 title: "Stage S6 — IdP role sync stage 1: import groups at sign-in"
 status: offen
+points: 8
 milestone: M-4
 blocked_by: [T-99, T-100]
 tags: [idp, roles]

@@ -3,6 +3,7 @@ id: T-103
 type: Task
 title: "Stage S7 — shell on top and at the side: one component, layout top or side"
 status: offen
+points: 13
 milestone: M-4
 blocked_by: [T-97]
 tags: [shell, ui, topbar]

@@ -3,6 +3,7 @@ id: T-124
 type: Task
 title: "Crypto inventory and post-quantum readiness (harvest now, decrypt later)"
 status: offen
+points: 5
 milestone: M-6
 blocked_by: [T-112]
 tags: [security, crypto, pq]

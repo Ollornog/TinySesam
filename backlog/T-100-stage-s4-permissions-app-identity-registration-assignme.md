@@ -3,6 +3,7 @@ id: T-100
 type: Task
 title: "Stage S4 — permissions: app identity, registration, assignment, has_permission"
 status: offen
+points: 13
 milestone: M-4
 blocked_by: [T-97]
 tags: [permissions, roles, admin]

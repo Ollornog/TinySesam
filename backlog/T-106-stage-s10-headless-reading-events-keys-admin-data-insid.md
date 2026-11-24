@@ -3,6 +3,7 @@ id: T-106
 type: Task
 title: "Stage S10 — headless reading: events, keys, admin data inside the application"s area"
 status: offen
+points: 13
 milestone: M-4
 blocked_by: [T-105]
 tags: [headless, admin, spec]
