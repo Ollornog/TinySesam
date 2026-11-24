@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 83/94 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 84/94 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 * ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 0/15 erledigt
 * ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 0/4 erledigt
@@ -140,7 +140,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-122](T-122-public-threat-model.md)** A short public threat model · M-6
 * ☐ **[T-123](T-123-independent-review-external-penetration-test-or-human.md)** Independent review: an external penetration test or a human code review · M-6
 * ☐ **[T-124](T-124-crypto-inventory-and-post-quantum-readiness.md)** Crypto inventory and post-quantum readiness (harvest now, decrypt later) · M-6
-* ☐ **[T-125](T-125-attestation-retry-in-the-tag-jobs.md)** Attestation retry in the tag jobs of release.yml (image, SBOM) · M-2
+* ☑ **[T-125](T-125-attestation-retry-in-the-tag-jobs.md)** Attestation retry in the tag jobs of release.yml (image, SBOM) · M-2
 
 ## Fehler
 

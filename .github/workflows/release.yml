@@ -736,7 +736,34 @@ jobs:
       # thus does not prove exactly what matters here. Instead an attestation signed via Sigstore,
       # which also lands in the registry next to the image — whoever pulls it can verify the
       # provenance without knowing this repo.
-      - name: Attest the provenance of the image
+      # Every attestation: up to three attempts as in `rehearsal-attest` (Sigstore "error fetching tlog entry - (404)",
+      # 2026-11-22, T-125): attempts 1 and 2 may fail softly, the pause and the next attempt run only after a failure,
+      # attempt 3 is hard — three failures keep the job red. tests/test_repo.py pins that shape.
+      - name: Attest the provenance of the image (attempt 1)
+        id: provenance-image-1
+        continue-on-error: true
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
+          subject-digest: ${{ needs.image.outputs.digest }}
+          push-to-registry: true
+      - name: Pause before attempt 2 (image provenance)
+        if: steps.provenance-image-1.outcome == 'failure'
+        run: sleep 20
+      - name: Attest the provenance of the image (attempt 2)
+        id: provenance-image-2
+        if: steps.provenance-image-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
+          subject-digest: ${{ needs.image.outputs.digest }}
+          push-to-registry: true
+      - name: Pause before attempt 3 (image provenance)
+        if: steps.provenance-image-2.outcome == 'failure'
+        run: sleep 60
+      - name: Attest the provenance of the image (attempt 3)
+        if: steps.provenance-image-2.outcome == 'failure'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
@@ -756,7 +783,33 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
-      - name: Attest the SBOM
+      - name: Attest the SBOM (attempt 1)
+        id: sbom-image-1
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
+          subject-digest: ${{ needs.image.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+      - name: Pause before attempt 2 (image SBOM)
+        if: steps.sbom-image-1.outcome == 'failure'
+        run: sleep 20
+      - name: Attest the SBOM (attempt 2)
+        id: sbom-image-2
+        if: steps.sbom-image-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
+          subject-digest: ${{ needs.image.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+      - name: Pause before attempt 3 (image SBOM)
+        if: steps.sbom-image-2.outcome == 'failure'
+        run: sleep 60
+      - name: Attest the SBOM (attempt 3)
+        if: steps.sbom-image-2.outcome == 'failure'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
@@ -766,7 +819,31 @@ jobs:
 
       # The Caddy image, the same three steps. Its SBOM lists the Go modules of the binary — Caddy, caddy-jwt and
       # every dependency with its version — plus the Alpine packages.
-      - name: Attest the provenance of the Caddy image
+      - name: Attest the provenance of the Caddy image (attempt 1)
+        id: provenance-caddy-1
+        continue-on-error: true
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate
+          subject-digest: ${{ needs.image.outputs.caddy-gate-digest }}
+          push-to-registry: true
+      - name: Pause before attempt 2 (Caddy provenance)
+        if: steps.provenance-caddy-1.outcome == 'failure'
+        run: sleep 20
+      - name: Attest the provenance of the Caddy image (attempt 2)
+        id: provenance-caddy-2
+        if: steps.provenance-caddy-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate
+          subject-digest: ${{ needs.image.outputs.caddy-gate-digest }}
+          push-to-registry: true
+      - name: Pause before attempt 3 (Caddy provenance)
+        if: steps.provenance-caddy-2.outcome == 'failure'
+        run: sleep 60
+      - name: Attest the provenance of the Caddy image (attempt 3)
+        if: steps.provenance-caddy-2.outcome == 'failure'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate
@@ -781,7 +858,33 @@ jobs:
           output-file: sbom-caddy-gate.spdx.json
           upload-artifact: false
 
-      - name: Attest the SBOM of the Caddy image
+      - name: Attest the SBOM of the Caddy image (attempt 1)
+        id: sbom-caddy-1
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate
+          subject-digest: ${{ needs.image.outputs.caddy-gate-digest }}
+          sbom-path: sbom-caddy-gate.spdx.json
+          push-to-registry: true
+      - name: Pause before attempt 2 (Caddy SBOM)
+        if: steps.sbom-caddy-1.outcome == 'failure'
+        run: sleep 20
+      - name: Attest the SBOM of the Caddy image (attempt 2)
+        id: sbom-caddy-2
+        if: steps.sbom-caddy-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate
+          subject-digest: ${{ needs.image.outputs.caddy-gate-digest }}
+          sbom-path: sbom-caddy-gate.spdx.json
+          push-to-registry: true
+      - name: Pause before attempt 3 (Caddy SBOM)
+        if: steps.sbom-caddy-2.outcome == 'failure'
+        run: sleep 60
+      - name: Attest the SBOM of the Caddy image (attempt 3)
+        if: steps.sbom-caddy-2.outcome == 'failure'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam-caddy-gate

@@ -1068,7 +1068,7 @@ assert "sha256sum -c ../shipped/SHA256SUMS" in _bp, "build-provenance.yml: no co
 _bp_jobs = _jobs(_bp)
 _bp_attest = [z.strip() for z in _bp_jobs.get("attest", [])]
 assert "if: inputs.attest" in _bp_attest, "build-provenance.yml: `attest` does not hang on the input"
-assert [z for z in _bp_attest if z.startswith("subject-path:")] == ['subject-path: "dist/*.whl, dist/*.tar.gz"'] * 2, \
+assert [z for z in _bp_attest if z.startswith("subject-path:")] == ['subject-path: "dist/*.whl, dist/*.tar.gz"'] * 6, \
     "build-provenance.yml: `attest` attests something other than wheel and sdist"
 assert re.search(r"^  workflow_call:", "\n".join(_code(_bp.split("\njobs:", 1)[0])), re.M) and \
     not re.search(r"^  (push|pull_request|workflow_dispatch|schedule)", _bp, re.M), \
@@ -1189,49 +1189,59 @@ def _step_inputs(step: list[str]) -> list[str]:
     return [z.strip() for z in step if z.startswith("  ")]
 
 
-_ra = _steps(_rel_jobs.get("rehearsal-attest", []))
-_attempts = [i for i, s in enumerate(_ra) if (_step_key(s, "uses") or "").startswith("actions/attest")]
-_ids = {_step_key(_ra[i], "id"): i for i in _attempts if _step_key(_ra[i], "id")}
-_soft = [i for i, s in enumerate(_ra) if _step_key(s, "continue-on-error") is not None]
-assert set(_soft) <= set(_attempts), "release.yml: `rehearsal-attest` lets a step other than an attest attempt fail softly"
-_in_chain, _chains = set(), 0
-for _head in (i for i in _attempts if _step_key(_ra[i], "if") is None):
-    _chains += 1
-    _i, _n = _head, 1
-    while True:
-        _s = _ra[_i]
-        assert _i not in _in_chain, f"release.yml: `rehearsal-attest` step {_s[0]!r} belongs to two chains"
-        _in_chain.add(_i)
-        _coe = _step_key(_s, "continue-on-error")
-        if _coe is None:
-            break                                   # the hard attempt ends the chain
-        _id = _step_key(_s, "id")
-        assert _coe == "true" and _id, f"release.yml: `rehearsal-attest` step {_s[0]!r} fails softly without an id"
-        _cond = f"steps.{_id}.outcome == 'failure'"
-        _next = [j for j in _attempts if j > _i and _step_key(_ra[j], "if") == _cond]
-        assert len(_next) == 1 and _step_key(_ra[_next[0]], "uses") == _step_key(_s, "uses") \
-            and _step_inputs(_ra[_next[0]]) == _step_inputs(_s), \
-            f"release.yml: `rehearsal-attest` step {_s[0]!r} fails softly without exactly one next attempt (same action " \
-            "and inputs, `if: steps.<id>.outcome == 'failure'`)"
-        for _k in range(_i + 1, _next[0]):           # between them only the pause after this failure
-            assert _step_key(_ra[_k], "if") != _cond or re.fullmatch(r"sleep \d+", _step_key(_ra[_k], "run") or ""), \
-                f"release.yml: `rehearsal-attest` runs {_ra[_k][0]!r} after the failure of {_s[0]!r}"
-        _i, _n = _next[0], _n + 1
-    assert _n <= 3, f"release.yml: `rehearsal-attest` tries {_ra[_head][0]!r} {_n} times — at most three"
-assert _chains == 2 and _in_chain == set(_attempts), \
-    "release.yml: `rehearsal-attest` attests outside the chains of soft and final hard attempts (provenance, SBOM)"
-for _k, _s in enumerate(_ra):
-    if _step_key(_s, "run") and _step_key(_s, "run").startswith("sleep"):
-        _m = re.fullmatch(r"steps\.([\w-]+)\.outcome == 'failure'", _step_key(_s, "if") or "")
-        assert _m and _ids.get(_m.group(1)) in _soft and _ids[_m.group(1)] < _k, f"release.yml: `rehearsal-attest` pauses {_s[0]!r} not only after a failure"
-_ra_verify = [i for i, s in enumerate(_ra) if any("gh attestation verify" in z for z in s)]
-assert len(_ra_verify) == 1 and _ra_verify[0] > max(_attempts) and _step_key(_ra[_ra_verify[0]], "if") is None \
-    and _step_key(_ra[_ra_verify[0]], "continue-on-error") is None, \
-    "release.yml: `rehearsal-attest` does not verify unconditionally after every attest attempt"
+def _check_attest_chains(where: str, job_lines: list[str], chains: int, verify: bool) -> None:
+    """The shape of every attestation of a job: chains of soft attempts and one hard last one (T-125)."""
+    _ra = _steps(job_lines)
+    _attempts = [i for i, s in enumerate(_ra) if (_step_key(s, "uses") or "").startswith("actions/attest")]
+    _ids = {_step_key(_ra[i], "id"): i for i in _attempts if _step_key(_ra[i], "id")}
+    _soft = [i for i, s in enumerate(_ra) if _step_key(s, "continue-on-error") is not None]
+    assert set(_soft) <= set(_attempts), f"{where} lets a step other than an attest attempt fail softly"
+    _in_chain, _chains = set(), 0
+    for _head in (i for i in _attempts if _step_key(_ra[i], "if") is None):
+        _chains += 1
+        _i, _n = _head, 1
+        while True:
+            _s = _ra[_i]
+            assert _i not in _in_chain, f"{where} step {_s[0]!r} belongs to two chains"
+            _in_chain.add(_i)
+            _coe = _step_key(_s, "continue-on-error")
+            if _coe is None:
+                break                                   # the hard attempt ends the chain
+            _id = _step_key(_s, "id")
+            assert _coe == "true" and _id, f"{where} step {_s[0]!r} fails softly without an id"
+            _cond = f"steps.{_id}.outcome == 'failure'"
+            _next = [j for j in _attempts if j > _i and _step_key(_ra[j], "if") == _cond]
+            assert len(_next) == 1 and _step_key(_ra[_next[0]], "uses") == _step_key(_s, "uses") \
+                and _step_inputs(_ra[_next[0]]) == _step_inputs(_s), \
+                f"{where} step {_s[0]!r} fails softly without exactly one next attempt (same action " \
+                "and inputs, `if: steps.<id>.outcome == 'failure'`)"
+            for _k in range(_i + 1, _next[0]):           # between them only the pause after this failure
+                assert _step_key(_ra[_k], "if") != _cond or re.fullmatch(r"sleep \d+", _step_key(_ra[_k], "run") or ""), \
+                    f"{where} runs {_ra[_k][0]!r} after the failure of {_s[0]!r}"
+            _i, _n = _next[0], _n + 1
+        assert _n <= 3, f"{where} tries {_ra[_head][0]!r} {_n} times — at most three"
+    assert _chains == chains and _in_chain == set(_attempts), \
+        f"{where} attests outside the chains of soft and final hard attempts (provenance, SBOM)"
+    for _k, _s in enumerate(_ra):
+        if _step_key(_s, "run") and _step_key(_s, "run").startswith("sleep"):
+            _m = re.fullmatch(r"steps\.([\w-]+)\.outcome == 'failure'", _step_key(_s, "if") or "")
+            assert _m and _ids.get(_m.group(1)) in _soft and _ids[_m.group(1)] < _k, f"{where} pauses {_s[0]!r} not only after a failure"
+    if verify:
+        _ra_verify = [i for i, s in enumerate(_ra) if any("gh attestation verify" in z for z in s)]
+        assert len(_ra_verify) == 1 and _ra_verify[0] > max(_attempts) and _step_key(_ra[_ra_verify[0]], "if") is None \
+            and _step_key(_ra[_ra_verify[0]], "continue-on-error") is None, \
+            f"{where} does not verify unconditionally after every attest attempt"
+
+
+_check_attest_chains("release.yml: `rehearsal-attest`", _rel_jobs.get("rehearsal-attest", []), 2, True)
+# The tag jobs (T-125): the image attestations (provenance and SBOM of both images) and the wheel and sdist of the
+# isolated builder have the same chains; their verification is the user's `gh attestation verify`, not a step here.
+_check_attest_chains("release.yml: `image-attest`", _rel_jobs.get("image-attest", []), 4, False)
+_check_attest_chains("build-provenance.yml: `attest`", _bp_jobs.get("attest", []), 2, False)
 for _j, _lines in _rel_jobs.items():
-    if _j != "rehearsal-attest":
+    if _j not in ("rehearsal-attest", "image-attest"):
         assert not any(re.match(r"\s*continue-on-error:", z) for z in _lines), \
-            f"release.yml: job `{_j}` fails softly (continue-on-error) — only the dress rehearsal's attempts may"
+            f"release.yml: job `{_j}` fails softly (continue-on-error) — only the attestation attempts may"
 _image = "\n".join(_rel_jobs.get("image", []))
 assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _image, \
     "release.yml: the image is also pushed without a tag"
@@ -1288,7 +1298,7 @@ assert set(_probe_scans) == {"tinysesam-probe:local", "tinysesam-caddy-gate-prob
 _attest = "\n".join(_rel_jobs.get("image-attest", []))
 for _name in ("tinysesam", "tinysesam-caddy-gate"):
     _subjects = re.findall(rf"subject-name: ghcr\.io/\$\{{\{{ env\.OWNER_LC \}}\}}/{_name}\s*$", _attest, re.M)
-    assert len(_subjects) == 2, f"release.yml: image-attest attests {_name} {len(_subjects)}× (provenance + SBOM expected)"
+    assert len(_subjects) == 6, f"release.yml: image-attest attests {_name} {len(_subjects)}× (provenance + SBOM, three attempts each: 6 expected)"
 for _sbom in ("sbom.spdx.json", "sbom-caddy-gate.spdx.json"):
     assert re.search(rf"^\s+output-file: {re.escape(_sbom)}\s*$", _attest, re.M) and \
         re.search(rf"^\s+sbom-path: {re.escape(_sbom)}\s*$", _attest, re.M), \
