@@ -261,3 +261,22 @@ jobs:
       # gate thus contradicted the local safety net.
       - name: Tree must be unchanged
         run: scripts/_residue_check.sh check --seit "$RUNNER_TEMP/tree-before.txt"
+
+  # Aggregate for the branch protection (T-115): the Python suite on every version of the matrix.
+  # A matrix leg added or dropped needs no change of the protection — it names this job only.
+  # `always()`: the job also runs when a leg failed or was cancelled — then it is red itself; a skipped leg is not green
+  # either. Not skipped itself, so a required check never hangs.
+  suite-ok:
+    name: suite-ok
+    if: ${{ always() }}
+    needs: [full]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every job it needs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          printf '%s\n' "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null

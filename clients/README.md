@@ -80,6 +80,10 @@ others: one workflow per client, `.github/workflows/client-<lang>.yml`, on `pull
 filter (a required check that is skipped blocks the merge forever); a job that finds no change in its directory may end
 early and green.
 
+The branch protection names one aggregate job per workflow (`client-<lang>-ok`, and `suite-ok` for the Python matrix), never
+the legs of a matrix: the job `needs` all others, runs `always()` and is red unless each one succeeded (a skipped leg
+counts as not green). A leg added or dropped then needs no change of the protection (`tests/test_ci_aggregate.py`).
+
 ```yaml
 name: client-go
 on:

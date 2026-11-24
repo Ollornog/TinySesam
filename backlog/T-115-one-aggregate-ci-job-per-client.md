@@ -2,7 +2,7 @@
 id: T-115
 type: Task
 title: "One aggregate CI job per client, so required checks do not depend on matrix names"
-status: offen
+status: erledigt
 milestone: M-2
 tags: [ci, branch-protection]
 created: 2026-11-23
