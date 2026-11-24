@@ -39,6 +39,39 @@ final readonly class Topbar
     }
 
     /**
+     * Fetches the top bar server-side: a GET to $url (normally `https://<application host>/.tinysesam/topbar.json` or
+     * `https://<auth host>/auth/topbar.json`) carrying only TinySesam's cookies of $cookieHeader, with a deadline of
+     * 5 seconds, a body limit of 64 KiB and no redirects. Anything but a 200 (a 404 included), a failed transfer or a
+     * body above the limit gives "no bar": the signed-out value.
+     *
+     * The browser way stays the recommendation (spec section 8): the page fetches topbar.json itself with its own
+     * cookies, and the application's server renders nothing that depends on the person. Use this for a server-side
+     * render only, and never cache the answer across sessions.
+     *
+     * @param ?\Closure(string $url, list<string> $headers): Jwks\Fetcher $fetcher builds the fetcher for one request
+     *     (tests); a {@see Jwks\CurlFetcher} when not given
+     *
+     * @throws ConfigError a URL that is not https (plain http only to a loopback address)
+     */
+    public static function fetch(string $url, string $cookieHeader = '', ?\Closure $fetcher = null): self
+    {
+        Gate::checkJwksUrl($url);
+        $cookies = Account::tinysesamCookies($cookieHeader);
+        $headers = $cookies === '' ? [] : ['Cookie: ' . $cookies];
+        try {
+            $f = $fetcher !== null ? $fetcher($url, $headers) : new Jwks\CurlFetcher($url, $headers);
+            $result = $f->fetch(Jwks\JwksCache::FETCH_TIMEOUT);
+        } catch (\Throwable) {
+            return new self();
+        }
+        if ($result->status !== 200 || \strlen($result->body) > Jwks\JwksCache::MAX_JWKS_BYTES) {
+            return new self();
+        }
+
+        return self::parse($result->body);
+    }
+
+    /**
      * Normalizes the body of `/.tinysesam/topbar.json` or `/auth/topbar.json`. Anything but a JSON object with
      * `signed_in` true (the boolean) and a string `name` counts as signed out; unsafe links are dropped.
      */
