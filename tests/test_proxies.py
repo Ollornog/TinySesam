@@ -43,6 +43,12 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from voraussetzung import braucht, braucht_modul  # noqa: E402
 
+# Static, runs without Docker too: nginx stands on the stable line (even minor), not on mainline (T-114).
+_nginx_ref = re.search(r"^FROM nginx:(\d+)\.(\d+)\.\d+-alpine@sha256:", pathlib.Path(__file__).resolve().parent.joinpath(
+    "proxies/Dockerfile").read_text(encoding="utf-8"), re.M)
+assert _nginx_ref, "tests/proxies/Dockerfile: nginx must be pinned as `nginx:X.Y.Z-alpine@sha256:…` (stable line)"
+assert int(_nginx_ref.group(2)) % 2 == 0, f"nginx {_nginx_ref.group(1)}.{_nginx_ref.group(2)} is mainline (odd minor) — T-114: stable only"
+
 braucht(os.environ.get("TINYSESAM_PROXY_TESTS") == "1",
         "TINYSESAM_PROXY_TESTS not set — nginx and Traefik run in Docker (the CI job gate-caddy sets it)")
 braucht_modul("uvicorn")

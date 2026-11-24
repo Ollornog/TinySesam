@@ -247,6 +247,11 @@ updates:
   # says 3.14), Dependabot offers only the minor, never a digest refresh of the old one — stay on the newest line.
   - package-ecosystem: docker
     directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies", "/clients/php/ci"]
+    # nginx of tests/proxies: the stable line only (even minor). Mainline (odd minor) minors are ignored; patch releases
+    # of the stable line and the digest still come. The move to the next stable line (1.32) is a deliberate change (T-114).
+    ignore:
+      - dependency-name: nginx
+        versions: ["1.31.x", "1.33.x", "1.35.x", "1.37.x", "1.39.x"]
     # Waiting period before version updates (PO 2026-09-28), does not apply to security updates.
     cooldown:
       default-days: 3
