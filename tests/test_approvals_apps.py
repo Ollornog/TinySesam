@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -42,7 +41,6 @@ from tinysesam import TinySesam, TinySesamConfig, approval_token, config_check  
 from tinysesam import approvals as apv  # noqa: E402
 from tinysesam import gate, gate_client as gc  # noqa: E402
 from tinysesam.errors import ConfigError  # noqa: E402
-from tinysesam.store import Store  # noqa: E402
 
 BASE = "https://auth.example.com"
 PW = "a long probe password 4711"
@@ -540,26 +538,6 @@ assert len(rotated) == 2 and rotated[1]["kid"] == jwks["keys"][0]["kid"], rotate
 auth_r.close()
 ok("keys: `keys list` shows the approval key, `rotate --purpose approval` adds a new active one (the old one stays "
    "published), `retire` refuses within the overlap")
-
-# ══ migration to schema 24 ═══════════════════════════════════════════════════════════════════════════════════════
-path = os.path.join(tempfile.mkdtemp(), "old.db")
-s0 = Store(path)
-s0.db.close()
-raw = sqlite3.connect(path)
-raw.execute("ALTER TABLE approval DROP COLUMN nonce")
-raw.execute("INSERT INTO users(username, display_name, created_at) VALUES ('old', 'old', 1)")
-raw.execute("INSERT INTO approval(id, class, type, subject_id, requester_kind, requester_ref, payload, payload_hash, "
-            "match_code, state, created_at, expires_at) VALUES ('apv_old', 'tinysesam', 'tinysesam.account.disable', "
-            "1, 'apikey', '1', '{}', 'h', '000 000', 'pending', 1, 2)")
-raw.execute("PRAGMA user_version = 23")
-raw.commit()
-raw.close()
-s1 = Store(path)
-assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 24
-assert "nonce" in {r["name"] for r in s1.db.execute("PRAGMA table_info(approval)")}
-assert s1.get_approval("apv_old")["nonce"] is None and s1.get_approval("apv_old")["state"] == "pending"
-s1.db.close()
-ok("migration: a schema-23 file gets approval.nonce and stamp 24; rows unchanged")
 
 # ══ without an approvals block nothing changes ═══════════════════════════════════════════════════════════════════
 off, off_app = build(approvals_enabled=False, apps={})

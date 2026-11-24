@@ -26,11 +26,9 @@ one itself. A new name comes in without a tier and keeps the guard red until som
 — a silent "A" would have committed every helper method that happens to be created without an
 underscore, for good.
 
-**Tier C is only an alias since 0.22.0** (`tinysesam/_deprecated.py`): The implementation
-is called `_name`, the old name keeps forwarding until 1.0 and warns. The guard additionally
-pins down (`c_findings()`): every C entry is a `Deprecated` in the class and vice versa, it points to the
-underscore implementation, calling it warns exactly once with the replacement and at the caller, no
-code in the package uses an old name, and from 1.0 none is left.
+**Internal is a leading underscore.** Tier C (an old name kept as a warning alias of its `_name` implementation, 0.22.0)
+is gone with the schema baseline (T-111, the one break of M-5): the aliases were removed, and a name that is not
+public carries an underscore and is not measured.
 
 **Tiers A and B are named in English** (PO decision 2026-09-27, `check_names()`): No name,
 parameter, configuration field or attribute of an error type in tiers A/B carries a German
@@ -43,7 +41,7 @@ they stay as they are.
 
 **Public is what is documented** (PO decision 2026-11-20, `check_documented()`): every Python name of
 tiers A and B is named in the hand-written docs (READMEs, CONFIGURATION.md, SECURITY.md, docs/) —
-not only in the generated API.md. An undocumented name is documented or becomes tier C.
+not only in the generated API.md. An undocumented name is documented or becomes internal (`_name`).
 """
 import ast
 import dataclasses
@@ -60,7 +58,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import importlib
 from tinysesam import ConfigError, LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig, security
-from tinysesam._deprecated import UNTIL, Deprecated
 
 import _contract as CT           # static measurement: routes, header/cookie atoms, loggers, log lines, payloads
 import _contract_probe as PR     # observed measurement: forward/gate responses, the hook, `auth.cfg`
@@ -76,12 +73,7 @@ TIERS = {
     "A": "public, stable from 1.0 — a break resets the 1.0 clock (M-1)",
     "B": "for advanced users — remove or rebuild only after a DeprecationWarning "
          "over two minor versions",
-    "C": "internal — the implementation carries a leading underscore, the old name stays "
-         "until 1.0 as an alias with DeprecationWarning (entry with `target`, `since`, `until`)",
 }
-
-#: Since when the C aliases warn (extra field `since` on every C entry).
-C_SINCE = "0.22.0"
 
 #: Under which key an entry in `api_surface.json` carries its MEASURED value.
 #: Everything else on the entry (`tier`, later alias details) is a decision and is carried over by
@@ -151,14 +143,9 @@ def signature(fn) -> str:
 
 def surface() -> dict:
     """What an embedder uses: the class, the configuration, the exports."""
-    # Measuring is not using: `getmembers` reads every attribute, including the constant aliases
-    # of tier C, and those warn when read. Method aliases deliver their wrapper here — its
-    # signature is that of the target via `__wrapped__`, and that is exactly what is promised.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        manager = {name: signature(fn)
-                   for name, fn in inspect.getmembers(TinySesam, callable)
-                   if not name.startswith("_")}
+    manager = {name: signature(fn)
+               for name, fn in inspect.getmembers(TinySesam, callable)
+               if not name.startswith("_")}
     # With DEFAULT VALUE. Without it `session_ttl_hours` could silently change from 168 to 1 —
     # a behaviour break for everyone who never touched the field, and exactly the kind that
     # nobody looks for in the CHANGELOG. Until 0.18.0 the guard only covered name and type.
@@ -183,22 +170,16 @@ def surface() -> dict:
     # callables — `FORWARD_HEADERS_DEFAULT` could silently change that way, although the docs
     # list it as a commitment ("the Authelia-style set Remote-User/-Name/-Email/-Groups"). A
     # change breaks every Caddy/Traefik installation without a single line of code looking different.
-    # A constant alias (tier C) is measured with the value of its target — read statically,
-    # without triggering it; a method alias is listed above with the methods.
     constants = {}
     for name, value in vars(TinySesam).items():
-        if isinstance(value, Deprecated):
-            if value.method:
-                continue
-            value = vars(TinySesam)[value.destination]
-        elif callable(value) or isinstance(value, (property, staticmethod, classmethod)):
+        if callable(value) or isinstance(value, (property, staticmethod, classmethod)):
             continue
         if not name.startswith("_"):
             constants[name] = repr(value)
     # Properties belong to it as well (0.20.1): `session_cookie_name`, `csrf_cookie_name`,
     # `resource_cookie_name` are the documented replacement API for fixed cookie names. What is
     # captured is the return type of the getter; a setter appends "(writable)". Read statically:
-    # a property is the property object even then, and no constant alias warns in the process.
+    # a property is the property object even then.
     properties = {name: signature(value.fget) + (" (schreibbar)" if value.fset else "")
                      for name, value in inspect.getmembers_static(
                          TinySesam, lambda w: isinstance(w, property))
@@ -608,491 +589,6 @@ def compare(earlier_file: dict, now: dict) -> tuple:
     return bool(missing or breaks or extensions), missing, breaks, extensions
 
 
-# ---------- Tier C: the aliases (0.22.0) ----------
-# PO decision 2026-09-26: A tier-C name gets a leading underscore; the old name
-# stays as an alias until 1.0 that triggers a DeprecationWarning when called. That is only
-# true if it is measured — an alias that silently forwards, or a route that still calls the
-# old name (and thus warns on every login), would look just as green.
-
-#: Where code lives that belongs to the package or uses it without being a test: No old
-#: name appears there. The tests call the underscore names; only this guard calls the old ones.
-OWN_CODE = ("tinysesam", "examples", "scripts", "web")
-#: Under these areas a name may carry tier C — only there is there an alias.
-C_AREAS = {"TinySesam": True, "TinySesam.constants": False}   # area → method?
-
-
-def c_entries(file: dict) -> dict:
-    """{(area, name): entry} — every tier-C entry, in whichever area."""
-    return {(area, name): e for area, entries in file.items()
-            if isinstance(entries, dict)
-            for name, e in entries.items() if isinstance(e, dict) and e.get("tier") == "C"}
-
-
-def _warns(klass, name: str, alias: Deprecated) -> list:
-    """Does the alias warn exactly once, with replacement and at the caller — and does it forward?
-
-    On an object without constructor whose target is a stub: This is how the guard measures the alias
-    itself, not what the real method would do with test data."""
-    error = []
-    probe = klass.__new__(klass)
-    char, received = object(), []
-    with warnings.catch_warnings(record=True) as warned:
-        warnings.simplefilter("always")
-        if alias.method:
-            probe.__dict__[alias.destination] = lambda *a, **k: (received.append((a, k)), char)[1]
-            fn = getattr(probe, name)
-            if warned:
-                error.append("warns already on lookup (hasattr, getmembers) instead of on call")
-                del warned[:]
-            result = fn(1, two=2)
-            if result is not char or received != [((1,), {"two": 2})]:
-                error.append(f"does not pass through unchanged to {alias.destination} "
-                              f"(received {received!r})")
-        else:
-            result = getattr(klass, name)
-            if result is not vars(klass)[alias.destination]:
-                error.append(f"does not return the value of {alias.destination}")
-    if len(warned) != 1:
-        error.append(f"raises {len(warned)} warnings instead of exactly one")
-    for w in warned[:1]:
-        text = str(w.message)
-        if w.category is not DeprecationWarning:
-            error.append(f"warns as {w.category.__name__}, not as DeprecationWarning")
-        if os.path.abspath(w.filename) != os.path.abspath(__file__):
-            error.append(f"the warning points to {os.path.basename(w.filename)} instead of to the "
-                          "caller (stacklevel)")
-        for part in (f"{klass.__name__}.{name} ", f"goes away with {UNTIL}", alias.replacement):
-            if part not in text:
-                error.append(f"the message does not name {part!r}: {text!r}")
-    return [f"TinySesam{'' if alias.method else '.constants'}.{name}: Alias {f}" for f in error]
-
-
-def _assignment(klass, name: str, alias: Deprecated) -> list:
-    """An assignment to the old name on the object (test fake) no longer takes effect — does it warn?
-
-    Exactly one `RuntimeWarning` (visible without a filter) that names the target and points to the assignment;
-    afterwards the old name reads the assigned value, and `del` restores the alias
-    (this is how `mock.patch.object` cleans up). Finding of the counter-check 2026-09-27: A fake on
-    `check_password` was called 0 times, the login gave 303, and nobody warned."""
-    error = []
-    probe = klass.__new__(klass)
-    fake = object()
-    with warnings.catch_warnings(record=True) as warned:
-        warnings.simplefilter("always")
-        try:
-            setattr(probe, name, fake)
-            read = probe.__dict__.get(name, None) is fake and getattr(probe, name) is fake
-            delattr(probe, name)
-        except Exception as e:                     # noqa: BLE001 — every exception is a finding
-            return [f"TinySesam.{name}: Alias: assignment on the object raises {type(e).__name__}: {e}"]
-    if [w.category for w in warned] != [RuntimeWarning]:
-        error.append(f"assignment on the object raises {[w.category.__name__ for w in warned]} "
-                      "instead of exactly one RuntimeWarning")
-    else:
-        text = str(warned[0].message)
-        if f"`{alias.destination}`" not in text:
-            error.append(f"the warning on an assignment does not name the target `{alias.destination}`: "
-                          f"{text!r}")
-        if os.path.abspath(warned[0].filename) != os.path.abspath(__file__):
-            error.append(f"the warning on an assignment points to "
-                          f"{os.path.basename(warned[0].filename)} instead of to the assignment")
-    if not read:
-        error.append("does not return the assigned value after an assignment on the object")
-    if name in probe.__dict__:
-        error.append("`del` leaves the value set on the object in place")
-    kind = "" if alias.method else ".constants"
-    return [f"TinySesam{kind}.{name}: Alias {f}" for f in error]
-
-
-def alias_findings(file: dict, klass=TinySesam) -> list:
-    """Do baseline and class agree for tier C, and does every alias do what it should?"""
-    findings = []
-    tier = {(b, n): e.get("tier") for b, ee in file.items() if isinstance(ee, dict)
-             for n, e in ee.items() if isinstance(e, dict)}
-    c = c_entries(file)
-    for (area, name), e in sorted(c.items()):
-        if area not in C_AREAS:
-            findings.append(f"{area}.{name}: tier C exists only for methods and constants "
-                           "of the class — there as an alias")
-            continue
-        alias = inspect.getattr_static(klass, name, None)
-        if not isinstance(alias, Deprecated):
-            kind = "is missing in the class" if alias is None else "has its own implementation"
-            findings.append(f"{area}.{name}: tier C, {kind} — the implementation is called "
-                           f"`_{name}`, the old name becomes `Deprecated(\"_{name}\", \"<Ersatz>\")`")
-            continue
-        if alias.method != C_AREAS[area]:
-            findings.append(f"{area}.{name}: the alias points to "
-                           f"{'a method' if alias.method else 'a constant'}")
-        if e.get("target") != alias.destination:
-            findings.append(f"{area}.{name}: the baseline names `target` {e.get('target')!r}, the "
-                           f"alias points to {alias.destination!r}")
-        destination = inspect.getattr_static(klass, alias.destination, None)
-        if destination is None or isinstance(destination, Deprecated):
-            findings.append(f"{area}.{name}: the target {alias.destination!r} is not an implementation")
-        elif alias.destination != f"_{name}" and tier.get((area, alias.destination)) != "A":
-            findings.append(f"{area}.{name}: points to {alias.destination!r} — allowed is `_{name}` "
-                           "or a name of tier A (e.g. `complete_mfa` → `complete_totp`)")
-        if not e.get("since") or e.get("until") != alias.until:
-            findings.append(f"{area}.{name}: `since`/`until` are missing or do not match the alias "
-                           f"(baseline {e.get('since')!r}/{e.get('until')!r}, alias until {alias.until})")
-        findings += _warns(klass, name, alias) + _assignment(klass, name, alias)
-    for name, alias in sorted(vars(klass).items()):
-        if isinstance(alias, Deprecated):
-            area = "TinySesam" if alias.method else "TinySesam.constants"
-            if (area, name) not in c:
-                findings.append(f"{area}.{name}: is an alias (Deprecated) in the class, but in the "
-                               "baseline not tier C")
-    return findings
-
-
-def old_names_in_text(text: str, destinations: dict, strings: bool) -> list:
-    """[(line, finding)] — accesses to an old name in a source text (AST, not grep:
-    a comment or docstring that mentions the name is not a call)."""
-    hit = []
-    for k in ast.walk(ast.parse(text)):
-        if isinstance(k, ast.Attribute) and k.attr in destinations:
-            hit.append((k.lineno, f"`.{k.attr}` is the old name — use `.{destinations[k.attr]}`"))
-        elif (strings and isinstance(k, ast.Constant) and isinstance(k.value, str)
-              and k.value in destinations):
-            hit.append((k.lineno, f"string {k.value!r} — getattr/setattr on the old "
-                                      f"name? use `{destinations[k.value]}`"))
-    return sorted(hit)
-
-
-def internal_calls(destinations: dict, root: str = ROOT) -> tuple:
-    """(findings, checked files) — does code in the repo that is not a test use an old name?
-
-    Strings only count in the package itself (`security.OWN_LOCK` names methods by
-    name); `scripts/_api_docs.py` may name the old names — it describes them."""
-    findings, number = [], 0
-    for folder in OWN_CODE:
-        for path_, under, files in os.walk(os.path.join(root, folder)):
-            under[:] = sorted(u for u in under if u != "__pycache__")
-            for file in sorted(files):
-                if not file.endswith(".py"):
-                    continue
-                path = os.path.join(path_, file)
-                with open(path, encoding="utf-8") as fh:
-                    text = fh.read()
-                number += 1
-                rel = os.path.relpath(path, root)
-                findings += [f"{rel}:{z}: {was}"
-                            for z, was in old_names_in_text(text, destinations, folder == "tinysesam")]
-    return findings, number
-
-
-def _version(text: str) -> tuple:
-    numbers = []
-    for part in str(text).split(".")[:3]:
-        digits = ""
-        for char in part:
-            if not char.isdigit():
-                break
-            digits += char
-        numbers.append(int(digits or 0))
-    return tuple(numbers + [0] * (3 - len(numbers)))
-
-
-def deadline_findings(file: dict, version: str) -> list:
-    """With 1.0 the aliases fall — if one is still there, that is red, not forgotten."""
-    return [f"{area}.{name}: the alias should have fallen with {e.get('until', UNTIL)} "
-            f"(version {version}) — remove alias and entry, CHANGELOG Removed"
-            for (area, name), e in sorted(c_entries(file).items())
-            if _version(version) >= _version(e.get("until", UNTIL))]
-
-
-#: The name of the still-open section in the CHANGELOG — what is in it is in no release.
-OPEN = "Unreleased"
-
-
-def changelog_stale(text: str) -> list:
-    """[(section, {names})] in CHANGELOG order (newest first): per section
-    `## [X.Y.Z]` or `## [Unreleased]` the names in backticks under `### Deprecated`."""
-    sections, current, in_stale = [], None, False
-    for line in text.split("\n"):
-        if line.startswith("## ["):
-            head = line[4:].split("]", 1)[0].strip()
-            current = (head, set())
-            sections.append(current)
-            in_stale = False
-        elif line.startswith("### "):
-            in_stale = current is not None and line[4:].strip().startswith("Deprecated")
-        elif in_stale:
-            parts = line.split("`")
-            current[1].update(t for t in parts[1::2] if t.isidentifier())
-    return sections
-
-
-def since_findings(file: dict, changelog: str) -> list:
-    """Does the `since` of every alias match the release that introduces it? (0.22.0)
-
-    Reason: The tiering was built with `seit: 0.21.0`, then 0.21.0 went out without it. A
-    `since` that names an already published release in which the alias did not exist
-    sends everyone who reads the warning to the wrong version — and nothing was noticed, because
-    only whether the field is there was checked. The rule, measured against the CHANGELOG:
-
-    * The alias is under `### Deprecated` in exactly the section that introduces it — the
-      oldest that names it there. If it is missing everywhere, that is red.
-    * If `[Unreleased]` introduces it, `since` must be **greater** than the latest release
-      in the CHANGELOG: The next release brings it, none of those already out.
-    * If a release `[X.Y.Z]` introduces it, `since` must be exactly `X.Y.Z`. When renaming
-      `[Unreleased]` to the new release the same rule keeps applying.
-    """
-    sections = changelog_stale(changelog)
-    releases = [head for head, _ in sections if head != OPEN and head[:1].isdigit()]
-    if not releases:
-        return ["CHANGELOG.md: no release section `## [X.Y.Z]` found — the `since` of the aliases "
-                "cannot be checked"]
-    youngest = max(releases, key=_version)
-    findings = []
-    for (area, name), e in sorted(c_entries(file).items()):
-        since = str(e.get("since") or "")
-        where = [head for head, names in sections if name in names]
-        if not where:
-            findings.append(f"{area}.{name}: CHANGELOG lists the alias in no section under "
-                           f"Deprecated — it belongs there, with replacement (`since` {since!r})")
-            continue
-        introduction = where[-1]                   # the oldest section that names it
-        if introduction == OPEN:
-            if _version(since) <= _version(youngest):
-                findings.append(
-                    f"{area}.{name}: `since` {since!r}, but the alias is only under "
-                    f"[{OPEN}] — {youngest} is already published and did not know it; "
-                    f"set `since` to the next release (greater than {youngest})")
-        elif _version(since) != _version(introduction):
-            findings.append(f"{area}.{name}: `since` {since!r}, but the alias was introduced by "
-                           f"[{introduction}] (CHANGELOG, Deprecated)")
-    return findings
-
-
-def c_findings(file: dict, klass=TinySesam, version: str = _package.__version__,
-              root: str = ROOT, changelog: "str | None" = None) -> tuple:
-    """(findings, checked files) — the whole tier-C check of the normal run."""
-    destinations = {name: alias.destination for name, alias in vars(klass).items() if isinstance(alias, Deprecated)}
-    destinations.update({name: e.get("target") or f"_{name}" for (_, name), e in c_entries(file).items()
-                  if name not in destinations})
-    inside, number = internal_calls(destinations, root)
-    if changelog is None:
-        with open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8") as fh:
-            changelog = fh.read()
-    return (alias_findings(file, klass) + inside + deadline_findings(file, version)
-            + since_findings(file, changelog)), number
-
-
-def check_subclass() -> None:
-    """A subclass that overrides an old name must find out (RuntimeWarning):
-    Since 0.22.0 the routes call `_name`, the override would silently run into the void."""
-    with warnings.catch_warnings(record=True) as warned:
-        warnings.simplefilter("always")
-
-        class _Overrides(TinySesam):
-            def check_password(self, username, password):
-                return None
-
-            def own_method(self):
-                return None
-    assert [w.category for w in warned] == [RuntimeWarning], [str(w.message) for w in warned]
-    text = str(warned[0].message)
-    assert f"{_Overrides.__name__}.check_password" in text and "`_check_password`" in text, text
-    assert os.path.abspath(warned[0].filename) == os.path.abspath(__file__), warned[0].filename
-    with warnings.catch_warnings(record=True) as warned:
-        warnings.simplefilter("always")
-
-        class _Harmless(TinySesam):
-            def own_method(self):
-                return None
-    assert not warned, (_Harmless.__name__, [str(w.message) for w in warned])
-    ok("a subclass that overrides an old name gets a RuntimeWarning")
-
-
-def check_warning_filter() -> None:
-    """Does `tests/run_all.py` really turn an old name, called FROM the package, into an error?
-
-    A misspelled `-W` filter is only acknowledged by Python with "Invalid -W option ignored"
-    — the run would stay green without checking anything. Hence measure the effect: In a
-    fresh process with exactly the environment of a suite, code that poses as a module of the package
-    calls an alias (method and constant) — that must raise; the same call from
-    `__main__` (a user, a test) only warn."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import run_all
-    import tempfile
-    sandbox = tempfile.mkdtemp(prefix="tinysesam-warnfilter-")
-    # Only the filter of run_all.py counts — an externally set PYTHONWARNINGS (such as a
-    # strict run with `error::DeprecationWarning`) would falsify the counter-check from `__main__`.
-    from_outside = os.environ.pop("PYTHONWARNINGS", None)
-    try:
-        environment = run_all.environment(sandbox)
-    finally:
-        if from_outside is not None:
-            os.environ["PYTHONWARNINGS"] = from_outside
-    entries = set(environment.get("PYTHONWARNINGS", "").split(","))
-    module = set()
-    for path_, under, files in os.walk(os.path.join(ROOT, "tinysesam")):
-        under[:] = [u for u in under if u != "__pycache__"]
-        parts = os.path.relpath(path_, ROOT).split(os.sep)
-        module |= {".".join(parts if d == "__init__.py" else parts + [d[:-3]])
-                   for d in files if d.endswith(".py")}
-    missing = sorted(m for m in module if f"error:TinySesam.:DeprecationWarning:{m}" not in entries)
-    assert not missing, f"run_all.py does not filter these modules: {missing}"
-    probe = (
-        "import warnings\n"
-        "from tinysesam import TinySesam\n"
-        "p = TinySesam.__new__(TinySesam)\n"
-        "p.__dict__['_sec'] = lambda key: 1\n"
-        "for code in ('p.sec(\"x\")', 'p.DEMO_USERS'):\n"
-        "    for modul in ('tinysesam.router', '__main__'):\n"
-        "        try:\n"
-        "            exec(code, {'__name__': modul, 'p': p})\n"
-        "            print(modul, 'warnt')\n"
-        "        except DeprecationWarning:\n"
-        "            print(modul, 'wirft')\n")
-    r = subprocess.run([sys.executable, "-c", probe], cwd=ROOT, env=environment,
-                       capture_output=True, text=True)
-    import shutil
-    shutil.rmtree(sandbox, ignore_errors=True)
-    assert r.returncode == 0, r.stderr[-800:]
-    assert "Invalid -W option" not in r.stderr, r.stderr[-800:]
-    assert r.stdout.split("\n")[:4] == ["tinysesam.router wirft", "__main__ warnt"] * 2, r.stdout
-    ok(f"run_all.py: an old name from the package raises ({len(module)} modules filtered), "
-       "from own code it only warns")
-
-
-def self_check_c() -> None:
-    """Does every tier-C rule trigger? On a probe class, not on TinySesam — its aliases
-    hopefully happen to be right, and a rule that was never red proves nothing."""
-    import tempfile
-
-    def klass(alias_type=Deprecated, real_f=False):
-        ns = {"_f": lambda self, *a, **k: ("f", a, k), "_K": (1, 2),
-              "g": lambda self: None, "K": alias_type("_K", "no replacement; internal")}
-        ns["f"] = (lambda self: None) if real_f else alias_type("_f", "use `g` instead")
-        return type("TinySesam", (), ns)
-
-    def storage(**addition):
-        e_f = {"sig": "()", "tier": "C", "target": "_f", "since": C_SINCE, "until": UNTIL}
-        e_k = {"value": "(1, 2)", "tier": "C", "target": "_K", "since": C_SINCE, "until": UNTIL}
-        d = {"TinySesam": {"f": e_f, "g": {"sig": "()", "tier": "A"}},
-             "TinySesam.constants": {"K": e_k}, "exports": {}}
-        for path, value in addition.items():
-            area, name, slot = path.split("__")
-            area = {"m": "TinySesam", "k": "TinySesam.constants", "x": "exports"}[area]
-            entry = d[area].setdefault(name, {"tier": "C"})
-            if value is None:
-                entry.pop(slot, None)
-            else:
-                entry[slot] = value
-        return d
-
-    def red(findings, piece):
-        assert any(piece in b for b in findings), (piece, findings)
-
-    clean = alias_findings(storage(), klass())
-    assert clean == [], clean
-
-    class Silent(Deprecated):
-        __slots__ = ()
-
-        def _warn(self):
-            pass
-
-    class Deep(Deprecated):
-        __slots__ = ()
-
-        def _warn(self):
-            warnings.warn(self.message, DeprecationWarning, stacklevel=2)
-
-    class Swallowed(Deprecated):
-        __slots__ = ()
-
-        def __get__(self, obj, owner=None):
-            fn = super().__get__(obj, owner)
-            return (lambda *a, **k: fn(*a)) if self.method else fn
-
-    class SilentAssignment(Deprecated):
-        __slots__ = ()
-
-        def __set__(self, obj, value):
-            obj.__dict__[self.name] = value
-
-    class Wrong(Deprecated):
-        __slots__ = ()
-
-        def __set__(self, obj, value):
-            warnings.warn("veraltet", RuntimeWarning, stacklevel=2)
-            obj.__dict__[self.name] = value
-
-    class Elsewhere(Deprecated):
-        __slots__ = ()
-
-        def __set__(self, obj, value):
-            warnings.warn_explicit(f"auf `{self.destination}` setzen", RuntimeWarning, "anderswo.py", 1)
-            obj.__dict__[self.name] = value
-
-    red(alias_findings(storage(), klass(SilentAssignment)),
-        "TinySesam.f: Alias assignment on the object raises []")
-    red(alias_findings(storage(), klass(Wrong)), "does not name the target `_f`")
-    red(alias_findings(storage(), klass(Elsewhere)), "points to anderswo.py instead of to the assignment")
-    red(alias_findings(storage(), klass(Silent)), "raises 0 warnings")
-    red(alias_findings(storage(), klass(Deep)), "instead of to the caller")
-    red(alias_findings(storage(), klass(Swallowed)), "does not pass through unchanged")
-    red(alias_findings(storage(), klass(real_f=True)), "TinySesam.f: tier C, has its own")
-    red(alias_findings(storage(m__f__tier="A"), klass()), "in the baseline not tier C")
-    red(alias_findings(storage(m__f__target="_g"), klass()), "the baseline names `target` '_g'")
-    red(alias_findings(storage(m__f__until=None), klass()), "`since`/`until` are missing")
-    red(alias_findings(storage(x__New__tier="C"), klass()), "exports.New: tier C exists only")
-    red(alias_findings(storage(m__h__target="_h"), klass()), "TinySesam.h: tier C, is missing")
-    redirected = type("TinySesam", (), {"_f": lambda self: None, "g": lambda self: None,
-                                        "_K": 1, "K": Deprecated("_K", "x"),
-                                        "f": Deprecated("g", "use `g` instead")})
-    assert alias_findings(storage(m__f__target="g"), redirected) == [], "target of tier A is allowed"
-    red(alias_findings(storage(m__f__target="g", m__g__tier="B"), redirected), "allowed is `_f`")
-    # Internal calls: AST over a probe repo — attribute everywhere, string only in the package.
-    probe = tempfile.mkdtemp(prefix="tinysesam-c-")
-    for rel, text in (("tinysesam/m.py", "auth.f(1)\nauth._f(2)\ngetattr(auth, 'f')\n# auth.f\n"),
-                      ("examples/e.py", "x = 'f'\nauth.K\n"), ("tests/t.py", "auth.f()\n")):
-        os.makedirs(os.path.join(probe, os.path.dirname(rel)), exist_ok=True)
-        with open(os.path.join(probe, rel), "w", encoding="utf-8") as fh:
-            fh.write(text)
-    inside, number = internal_calls({"f": "_f", "K": "_K"}, probe)
-    assert number == 2 and sorted(b.split(": ")[0] for b in inside) == [
-        "examples/e.py:2", "tinysesam/m.py:1", "tinysesam/m.py:3"], (number, inside)
-    # Deadline: from 1.0 every remaining alias is red, before that none.
-    assert deadline_findings(storage(), "0.22.0") == [] and deadline_findings(storage(), "0.99.3") == []
-    assert len(deadline_findings(storage(), "1.0.0")) == 2 and deadline_findings(storage(), "1.2")
-
-    # `since` against the CHANGELOG (0.22.0): The alias is under "Deprecated" in the section that
-    # introduces it; in the open section `since` is greater than the latest release, otherwise exactly that one.
-    def changelog(unclosed="", release=""):
-        return ("# Changelog\n\n## [Unreleased]\n\n### Deprecated\n\n" + unclosed + "\n\n"
-                "## [0.21.0] — 2026-09-27\n\n### Changed\n\n- `f` and `K` do not count here\n\n"
-                "### Deprecated\n\n" + release + "\n\n## [0.20.1] — 2026-09-24\n")
-    both = "- `f` → `_f`, `K` → `_K`"
-    new = storage(m__f__since="0.22.0", k__K__since="0.21.1")
-    assert since_findings(new, changelog(unclosed=both)) == [], since_findings(new, changelog(unclosed=both))
-    red(since_findings(storage(m__f__since="0.21.0"), changelog(unclosed=both)),
-        "TinySesam.f: `since` '0.21.0', but the alias is only under [Unreleased]")
-    red(since_findings(storage(k__K__since="0.19.0"), changelog(unclosed=both)),
-        "TinySesam.constants.K: `since` '0.19.0', but")
-    old = storage(m__f__since="0.21.0", k__K__since="0.21.0")
-    assert since_findings(old, changelog(release=both)) == []
-    assert since_findings(old, changelog(unclosed=both, release=both)) == [], "the oldest counts"
-    red(since_findings(storage(m__f__since="0.22.0"), changelog(release=both)),
-        "TinySesam.f: `since` '0.22.0', but the alias was introduced by [0.21.0]")
-    red(since_findings(storage(), changelog(unclosed="- `K` → `_K`")), "TinySesam.f: CHANGELOG lists")
-    red(since_findings(storage(), "# Changelog\n\n## [Unreleased]\n"), "no release section")
-    # The normal run goes through the same function and sees all four kinds.
-    findings, _ = c_findings(storage(m__f__since="0.21.0", k__K__since="0.22.0"), klass(Silent),
-                           "1.0.0", probe, changelog(unclosed=both))
-    import shutil
-    shutil.rmtree(probe, ignore_errors=True)
-    for kind in ("raises 0 warnings", "tinysesam/m.py:1", "should have fallen", "did not know it"):
-        red(findings, kind)
-    ok("Tier-C rules trigger: silent alias, wrong stacklevel, swallowed arguments, "
-       "silent assignment on the object, own implementation, baseline ≠ class, wrong target, "
-       "internal call, deadline 1.0, `since` against the CHANGELOG")
-
-
 # ---------- The names of tiers A and B: English (0.22.0) ----------
 # PO decision 2026-09-27: The public surface is named in English — renamed before 0.22.0,
 # **without an alias**, because the commitments of the tiers only begin with this release and no consumer
@@ -1307,7 +803,7 @@ class ProbeError(Exception):
                "exports": {"ProbeError": {"tier": "A"}}}
     names = surface_names(storage, klass=Probe, package=probe_package)
     assert ("TinySesam.gut()", "by_operator") in names and ("ProbeError", "field") in names, names
-    # Tier C does not count: The old names are there as aliases until 1.0.
+    # Only tiers A and B count (an entry without one of them is reported by `without_tier`, not here).
     assert not any(n in ("SICHERHEITSEREIGNISSE", "ok_feld") for _, n in names), names
     # Through the same function as the normal run: the four German names, nothing else.
     findings, number = check_names(storage, klass=Probe, package=probe_package, required=(),
@@ -2147,7 +1643,7 @@ def self_check_contract_names() -> None:
 # Until then the tiers said how firm a promise is, but not WHAT it rests on: a name could sit in tier A
 # without a line in the docs and be frozen only because it had no underscore. The rule before 1.0: a
 # Python name of tier A or B is named in the hand-written documentation; otherwise it is documented or
-# becomes internal (tier C). `API.md` does not count — it is generated from this very surface and lists
+# becomes internal (`_name`). `API.md` does not count — it is generated from this very surface and lists
 # everything, so it would prove nothing.
 
 #: The hand-written documentation (files, or folders whose `*.md` count). Not `API.md`, not `CHANGELOG.md`.
@@ -2206,8 +1702,7 @@ def check_documented(file: dict, docs: "dict | None" = None, at_least: int = 150
             needle = name.rsplit(".", 1)[-1] if area == "gate_client" else name
             if not re.search(r"(?<!\w)" + re.escape(needle) + r"(?!\w)", code):
                 findings.append(f"{area}.{name}: tier {tier}, but named in none of the docs — document it "
-                                f"(README, CONFIGURATION.md, SECURITY.md, docs/) or make it internal (tier C: "
-                                f"`_{name}` and a `Deprecated` alias until {UNTIL})")
+                                f"(README, CONFIGURATION.md, SECURITY.md, docs/) or make it internal (`_{name}`)")
     if number < at_least:
         findings.append(f"too little measured: {number} names of tiers A/B (expected at least {at_least})")
     return findings, number
@@ -2267,7 +1762,7 @@ def _report_without_tier(missing: list) -> None:
     for line in missing:
         print(f"    NO TIER     {line}")
     print("\n  Every public name needs an explicit tier — in tests/api_surface.json")
-    print('  set `"tier": "A"|"B"|"C"` on the entry (meaning: API.md, „Drei Stufen“):')
+    print('  set `"tier": "A"|"B"` on the entry (meaning: API.md, „Stufen“):')
     for tier, text in TIERS.items():
         print(f"    {tier}  {text}")
     print("  Nothing public should arise by accident: If the name is internal, it gets a")
@@ -2279,7 +1774,6 @@ def main(argv):
     self_check(now)
     self_check_signature(now)
     self_check_tiers(now)
-    self_check_c()
     self_check_names()
     self_check_values()
     self_check_contract_names()
@@ -2313,25 +1807,6 @@ def main(argv):
     else:
         ok(f"every public name has a tier ({_count_tiers(earlier_file)})")
 
-    # Tier C (0.22.0): aliases, no calls of old names in own code, deadline 1.0.
-    c_error, c_files = c_findings(earlier_file)
-    assert c_files >= 20, f"only {c_files} files searched for old names — path broken?"
-    if c_error:
-        red = True
-        print(f"\n  {len(c_error)} findings on tier C (alias until 1.0):\n")
-        for line in c_error:
-            print(f"    TIER C       {line}")
-        print("\n  Tier C means: The implementation carries an underscore, the old name is "
-              "`Deprecated(\"_name\", \"<Ersatz>\")`\n  (tinysesam/_deprecated.py), and nothing in the "
-              "package calls it. The entry in tests/api_surface.json\n  carries `target`, `since` and "
-              "`until`.\n")
-    else:
-        ok(f"Tier C: {len(c_entries(earlier_file))} aliases warn exactly once and point to "
-           f"their implementation, an assignment on the object (test fake) warns; {c_files} "
-           "files without an old name")
-    check_subclass()
-    check_warning_filter()
-
     # The names of tiers A and B are English (PO decision 2026-09-27).
     n_error, n_number = check_names(earlier_file)
     if n_error:
@@ -2354,7 +1829,7 @@ def main(argv):
         for line in d_error:
             print(f"    UNDOCUMENTED {line}")
         print("\n  The public surface is what README, CONFIGURATION.md, SECURITY.md and docs/ describe (API.md is")
-        print("  generated and does not count). Document the name, or make it internal: tier C, `_name` + alias.\n")
+        print("  generated and does not count). Document the name, or make it internal: `_name`.\n")
     else:
         ok(f"Public = documented: {d_number} Python names of tiers A/B, each named in the hand-written docs "
            f"({len(read_docs())} files, API.md not among them)")

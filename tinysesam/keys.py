@@ -31,9 +31,9 @@ Keyring file (`secrets_key_file`, `gate_key_file`, `oauth_pepper_file`, `<db>.ke
 
     # comment lines and empty lines are ignored
     <Base64 of the active key>
-    <Base64 of an older key> since=<unix time it stopped being active> [note=derived-v1]
+    <Base64 of an older key> since=<unix time it stopped being active> [note=<free text>]
 
-A file with a single Base64 line — the format up to 0.25.x — is a keyring with one active key. The environment
+A file with a single Base64 line is a keyring with one active key. The environment
 variables hold the active key; `<NAME>_PREVIOUS` holds older ones, separated by spaces or commas.
 """
 from __future__ import annotations
@@ -76,9 +76,6 @@ APPROVAL_OVERLAP_SEC = 600
 #: The overlap per signing purpose.
 OVERLAP_SEC = {GATE: GATE_OVERLAP_SEC, APPROVAL: APPROVAL_OVERLAP_SEC}
 
-#: Note on a key that a migration took over from the time of the single base key (derived from it by HKDF).
-DERIVED_V1 = "derived-v1"
-
 log = logging.getLogger("tinysesam")
 
 
@@ -97,7 +94,7 @@ class Key:
 class Keyring:
     purpose: str
     keys: list
-    #: environment | file | beside_db | beside_db_new | database | memory | legacy
+    #: environment | file | beside_db | beside_db_new | database | memory
     origin: str
     #: The keyring file, if the keys come from one (`tinysesam keys rotate` writes it).
     path: str = ""
@@ -347,31 +344,16 @@ def reloader(db_path: str, key_file: str) -> Callable[[], Optional[Keyring]]:
 
 # ---------- the keyrings in the database (gate, pepper, approval) ----------
 
-def load_stored(purpose: str, store, key_file: str = "", legacy: Optional[bytes] = None) -> Keyring:
-    """The keyring of `purpose` from the environment, its file or the database — created on the first start.
-
-    `legacy`: the material that the version before derived from the base key. On the FIRST start it is kept as a
-    previous key (note `derived-v1`), so that what it signed or digested stays valid until its natural end; the
-    new active key is random. Read-only database without a keyring: the legacy material itself, loudly."""
+def load_stored(purpose: str, store, key_file: str = "") -> Keyring:
+    """The keyring of `purpose` from the environment, its file or the database — created on the first start."""
     ring = from_override(purpose, key_file)
     if ring is not None:
         return ring
-    try:
+    rows = store.key_ring_rows(purpose)
+    if not rows:
+        store.key_ring_create(purpose, new_material(purpose))
         rows = store.key_ring_rows(purpose)
-        if not rows:
-            store.key_ring_create(purpose, new_material(purpose), legacy)
-            rows = store.key_ring_rows(purpose)
-    except Exception as e:   # noqa: BLE001 — sqlite3.OperationalError (read-only) and the like
-        if legacy is None or not _read_only(e):
-            raise
-        log.warning("TinySesam: the database is not writable — the %s key could not be created and stays the one "
-                    "derived from the base key until a start with write access.", purpose)
-        return Keyring(purpose, [Key(kid_for(purpose, legacy), legacy, None, DERIVED_V1)], "legacy")
     return Keyring(purpose, rows, "database")
-
-
-def _read_only(e: Exception) -> bool:
-    return "readonly" in str(e).replace("-", "").replace(" ", "").lower()
 
 
 def jwks(ring: Keyring, now: int) -> dict:

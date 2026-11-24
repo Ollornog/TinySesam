@@ -10,13 +10,12 @@ The READMEs show the **paths** (which method for what, how to combine them). Her
 exists at all — the question "is there already something for this?" is answered by this page, not by the
 source code.
 
-## Three tiers — what is promised
+## Two tiers — what is promised
 
 | Tier | What | Promise |
 |---|---|---|
 | **A — public, stable from 1.0** | documented and/or used by embedders | No break across two minor versions — the condition for 1.0 ([M-1](backlog/M-1-api-stable-1-0.md)). The counter starts with 0.22.0, the release that introduces the grading. |
 | **B — for advanced users** | Building blocks for your own account and admin pages, your own mail and token flows, extension points | Stays. Removal or rework only after a `DeprecationWarning` has pointed to it for two minor versions. Weaker than A: A rework with advance notice is allowed. A route cannot warn: a path in tier B is announced in the CHANGELOG under “Deprecated” at least two minor versions before it is removed or renamed. |
-| **C — internal** | Wiring of the built-in routes | None. Since 0.22.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that triggers a `DeprecationWarning` on call, and is then dropped. |
 
 The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test_api_surface.py` demands an explicit one for every public name: A new name comes in without a tier and keeps it red until someone decides — nothing is promised by accident.
 
@@ -28,9 +27,11 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 186 of 223
 
 **Beyond the Python names** (PO decision 2026-10-29): `auth.cfg` and `auth.on_security_event`, the HTTP routes (the forward and gate contract that proxies use and the paths of the identity provider and the health check in tier A, the HTML pages in tier B) and the logger names and security-log lines that fail2ban filters read (tier A) are measured and tiered like the names above — see the sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log” below. For these entries the tier-A clock starts with the release that introduces them, not with 0.22.0; the names above keep theirs.
 
-**`auth.store` is internals** (tier C): the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
+**Your own login, step-up and password pages** use the building blocks `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`, `change_password` (tier A): the same methods the built-in routes call, so they throttle, count and lock alike.
 
-**Status:** A 411 · B 312 · C 38 names.
+**`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
+
+**Status:** A 411 · B 312 names.
 
 ## A · Methods of `TinySesam`
 
@@ -1285,53 +1286,6 @@ What a filter matches. **Promised:** the logger names, the format of the log fil
 
 The shipped fail2ban filters in `deploy/fail2ban/` are held against exactly these lines by `tests/test_fail2ban_reason.py`. Audit event names (`login_fail`, `forward_denied`, …) are in the audit log, not here, and are not part of this promise.
 
-## C · Deprecated — removed with 1.0
-
-These names are not part of the promise. Since 0.22.0 the implementation is called `_name`; the old name stays until 1.0 as an alias that triggers a `DeprecationWarning` with the replacement **on call** (constants: on read), and is then dropped. **Do not use for new code** — for your own pages the building blocks are in A and B. Whoever wants to check whether their app calls one of them runs its tests once with `python -W error::DeprecationWarning`.
-
-**Caution with the inner checkers** `check_password`, `check_pin`, `check_ldap`, `check_saml`: They do not throttle themselves — lockout, failed-attempt counter and streak are set only by the built-in routes. A login page of your own that calls them is unprotected against password guessing. The safe building block is `login_password`, `login_pin`, `login_totp` (tier A): the same methods the built-in routes call. For a step-up page of your own the same applies with `confirm_password`, `confirm_pin`, `confirm_totp`, for a password change of your own with `change_password`.
-
-| Old name | Kind | Replacement |
-|---|---|---|
-| `check_ldap` | Method | Use `login_password` instead (asks the directory as a fallback, throttles and locks like `POST /auth/login`) |
-| `check_password` | Method | Use `login_password` instead (throttles, counts and locks like `POST /auth/login`), for a custom look use `set_template("login", …)` alone; `check_password` itself does not throttle |
-| `check_pin` | Method | Use `login_pin` instead (throttles, counts and locks like `POST /auth/pin`), for a custom look use `set_template("pin", …)` alone; `check_pin` itself does not throttle |
-| `check_resource` | Method | Use `POST /auth/resource/{name}` (throttles and locks) or `require_resource` instead |
-| `check_saml` | Method | Use `POST /auth/saml/acs` instead, which checks the assertion's signature; `check_saml` trusts its arguments |
-| `complete_mfa` | Method | Use `complete_totp` instead (same behaviour) |
-| `consume_admin_claim` | Method | Use the route `/auth/claim-admin`, `ensure_admin` or `admin_identifiers` instead |
-| `DEMO_USERS` | Constant | No replacement; the demo accounts are called `demo` and `demoadmin` (README) |
-| `factor_entry` | Method | No replacement; `require_user`/`require` redirect to the open factor themselves |
-| `forward_login_url` | Method | No replacement; the route `/auth/forward` builds the login address itself |
-| `forward_response_headers` | Method | No replacement; which headers `/auth/forward` sets is controlled by `forward_headers` |
-| `forwarded_url` | Method | No replacement; the route `/auth/forward` reads the proxy headers itself |
-| `IDENTIFYING` | Constant | No replacement; which factors identify is documented in docs/OPERATIONS.md |
-| `is_locked` | Method | Use `login_password`, `login_pin` or `login_totp` instead, which check and book atomically; `is_locked` only reads and lets parallel bursts through |
-| `is_password_change_locked` | Method | Use `change_password` instead (checks and books atomically like `POST /auth/password`) |
-| `is_pin_locked` | Method | Use `login_pin` instead (checks and books atomically like `POST /auth/pin`) |
-| `is_reauth_locked` | Method | Use `confirm_password`, `confirm_pin` or `confirm_totp` instead (check and book atomically like `/auth/reauth`, where `require(mfa=True)` redirects to) |
-| `is_resource_locked` | Method | Use `POST /auth/resource/{name}` instead (checks and books atomically) |
-| `is_secure` | Method | No replacement; the warning without HTTPS is controlled by `https_mode` |
-| `is_totp_setup_locked` | Method | Use `POST /auth/totp/setup` instead (checks and books atomically) |
-| `login_redirect_after` | Method | Use `next_url` or `redirect()` on the result of `login_password`, `login_pin` or `login_totp` instead (next factor or `next`) |
-| `maybe_promote_admin` | Method | Use `admin_identifiers` or `ensure_admin` instead; called directly it bypasses the address evidence |
-| `mfa_pending` | Method | No replacement (the name means “has a confirmed TOTP”); the same is returned by `auth.store.has_confirmed_totp(user_id)` — internals, no promise |
-| `next_login_step` | Method | No replacement; `require_user`/`require` redirect to the open factor themselves |
-| `purge_demo` | Method | Use `demo_mode=False` instead (clears the demo accounts at startup) |
-| `rate_ok` | Method | Use `login_password`, `login_pin` or `login_totp` instead (they throttle per IP), or your own limiter via `set_rate_limiter` |
-| `record_login` | Method | Use `login_password`, `login_pin` or `login_totp` instead, which book every attempt; called wrongly it clears other accounts' failed-attempt counters |
-| `RECOVERY_BYTES` | Constant | No replacement, an internal value |
-| `sec` | Method | Use `all_security()` instead |
-| `seed_demo` | Method | Use `demo_mode=True` instead (creates the demo accounts at startup) |
-| `send_signup_notice` | Method | No replacement; `POST /auth/register` sends the notice itself |
-| `session_from_request` | Method | Use `current_user` or `session_user` instead |
-| `unlock_resource` | Method | Use `POST /auth/resource/{name}` instead (checks the secret first) |
-| `verify_csrf` | Method | Use `require_csrf` instead |
-| `verify_recovery_code` | Method | Use `login_totp` instead (also accepts one-time codes, throttles and locks like `POST /auth/totp`); `verify_recovery_code` itself does not throttle |
-| `verify_totp` | Method | Use `login_totp` instead (throttles and locks like `POST /auth/totp`), for the step-up `confirm_totp`; `verify_totp` itself does not throttle |
-| `verify_user_password` | Method | Use `confirm_password` instead (step-up, throttles and locks like `/auth/reauth`) or `change_password` (like `POST /auth/password`); `verify_user_password` itself does not throttle |
-| `verify_user_pin` | Method | Use `confirm_pin` instead (step-up, throttles and locks like `/auth/reauth`); `verify_user_pin` itself does not throttle |
-
 ---
 
-171 methods, 3 properties, 12 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+136 methods, 3 properties, 9 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

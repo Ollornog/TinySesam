@@ -7,9 +7,8 @@ What must hold, each checked against the real code paths:
       while anything still needs a key, and works afterwards
   (b) a running service follows a rotation done by the CLI (it re-reads the keyring on an unknown key ID)
   (c) AAD (T-54): a ciphertext moved to another row or column, or with a swapped key ID, does not decrypt
-  (d) migration from 0.25.x: a database with the single base key, `v1:` values, a gate key and an OAuth pepper derived
-      from it — starts without handwork, values rewritten as `v2:`, old gate tokens stay verifiable for their lifetime,
-      old OAuth tokens stay valid; the way back (`reencrypt --to v1`) and an accidental older start are survived
+  (d) the migration from 0.25.x went with the schema baseline (T-111; tests/test_schema_baseline.py refuses its
+      leftovers)
   (e) the gate key is not derivable from the vault key; the JWKS drops a previous key after the overlap
   (f) config_check: key file readable by others, key file beside the database, gate key reachable through the data
       directory alone
@@ -32,10 +31,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from cryptography.exceptions import InvalidTag                  # noqa: E402
-from cryptography.hazmat.primitives import serialization         # noqa: E402
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM   # noqa: E402
 
-from tinysesam import TinySesam, TinySesamConfig, config_check, gate, keys, oauth, totp   # noqa: E402
+from tinysesam import TinySesam, TinySesamConfig, config_check, gate, keys, totp   # noqa: E402
 from tinysesam.errors import ConfigError                       # noqa: E402
 from _kit.report import Report                                 # noqa: E402
 
@@ -298,7 +296,7 @@ r.check("ID token survives the session rotation (bound to client and account, no
         a.store.get_oidc_id_token(new_handle) == ("*", "id-token-sub-anna"))
 a.close()
 
-# ======================================================================== (d) migration from 0.25.x
+# ======================================================================== (g) only v2 is read
 from tinysesam.store import Store  # noqa: E402
 
 old_dir = Path(tempfile.mkdtemp())
@@ -307,112 +305,18 @@ OLD = secrets.token_bytes(32)
 
 
 def v1(plain: str) -> str:
+    """A value in the format up to 0.25.x (one key, no context) — what someone with write access could plant."""
     nonce = secrets.token_bytes(12)
     return "v1:" + base64.urlsafe_b64encode(nonce + AESGCM(OLD).encrypt(nonce, plain.encode(), b"v1:")).decode()
 
 
-def v1_open(value: str) -> str:
-    raw = base64.urlsafe_b64decode(value[3:])
-    return AESGCM(OLD).decrypt(raw[:12], raw[12:], b"v1:").decode()
-
-
-# The state 0.25.x leaves behind: the base key beside the database (one Base64 line), `v1:` values, OAuth digests
-# with the pepper derived from the base key, a gate token signed with the derived gate key (`typ: JWT`).
-st = Store(old_db)
-ouid = st.create_user("olga")
+m = TinySesam(config(old_db))
+ouid = m.create_user("olga")
 OSECRET = totp.new_secret()
-st._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,1,1)", (ouid, v1(OSECRET)))
-# 0.26.0 and older stored the plain sha256 of the cookie as the handle (the pepper came with T-71).
-otok = secrets.token_urlsafe(32)
-ohandle = hashlib.sha256(otok.encode()).hexdigest()
-st._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, method) "
-         "VALUES (?, ?, ?, ?, 1, 'oidc')", (ohandle, ouid, int(time.time()), int(time.time()) + 3600))
-st._exec("INSERT INTO oidc_session(token_hash, client, sub, refresh, checked_at, client_id, success_at) "
-         "VALUES (?, '*', 'sub-olga', ?, ?, 'client-1', ?)", (ohandle, v1("rt-olga"), int(time.time()),
-                                                               int(time.time())))
-st._exec("INSERT INTO oidc_id_token(token_hash, client, id_token) VALUES (?, '*', ?)", (ohandle, v1("id-olga")))
-old_pepper = oauth.derive_pepper(OLD)
-oat = oauth.new_token(oauth.ACCESS_PREFIX)
+m.store.set_totp(ouid, OSECRET, confirmed=True)
 now = int(time.time())
-st.oauth_add_client("cid", "Probe", ["http://localhost/cb"], now, None)
-st.oauth_create_grant("no-code", "cid", ouid, RESOURCE, "mcp", now, None, None,
-                      [(oauth.OAuthServer._digest(old_pepper, oat), "access", "mcp", now + 3600)])
-st._exec("PRAGMA user_version = 18")
-st.close()
-Path(old_db + ".key").write_text(base64.b64encode(OLD).decode() + "\n")
-os.chmod(old_db + ".key", 0o600)
-_derived = gate.derive_key_name(OLD)
-_head = gate._b64u(json.dumps({"alg": "EdDSA", "typ": "JWT",
-                                "kid": gate.key_name_id(gate.public_raw(_derived))}).encode())
-_body = gate._b64u(json.dumps({"iss": BASE, "aud": "app.example.com", "sub": str(ouid), "iat": now, "nbf": now,
-                                "exp": now + 300, "ts_user": "olga"}).encode())
-old_gate_token = f"{_head}.{_body}." + gate._b64u(_derived.sign(f"{_head}.{_body}".encode()))
-
-
-def caddy_like(auth, token) -> bool:
-    """caddy-jwt with `jwk_url`: key by `kid` from the set, EdDSA signature, iss/aud/exp — and NO `typ` check."""
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    h, b, sig = token.split(".")
-    kid = json.loads(gate._read_b64u(h)).get("kid")
-    for k in auth.gate_jwks()["keys"]:
-        if k["kid"] == kid:
-            try:
-                Ed25519PublicKey.from_public_bytes(gate._read_b64u(k["x"])).verify(gate._read_b64u(sig),
-                                                                                   f"{h}.{b}".encode())
-            except Exception:   # noqa: BLE001
-                return False
-            c = json.loads(gate._read_b64u(b))
-            return c["iss"] == BASE and c["aud"] == "app.example.com" and c["exp"] > time.time()
-    return False
-
-
-m = TinySesam(config(old_db))
-counts = m.store.ciphertext_counts()
-seed = m._gate_keyring.active.material
-derived_seed = _derived.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
-                                      serialization.NoEncryption())
-r.check("(d) migration: starts without handwork; the base key is version 1 of the vault keyring (same kid)",
-        m._vault_keyring.active.kid == keys.fingerprint(keys.VAULT, OLD) and m._key_name_origin == "beside_db")
-r.check("(d) every v1 value rewritten as v2 with the base key; TOTP, refresh and ID token readable",
-        "v1" not in counts and counts.get(m._vault_keyring.active.kid) and m.store.get_totp(ouid)["secret"] == OSECRET
-        and m.store.oidc_refresh_plain(m.store._one("SELECT * FROM oidc_session")) == "rt-olga"
-        and m.store.get_oidc_id_token(m.store.session_hash(otok)) == ("*", "id-olga"), str(counts))
-r.check("(d) T-71: the sha256 handle and its rows (refresh, ID token) are rewritten with the pepper — olga stays "
-        "signed in", m.store.get_session(otok) is not None
-        and m.store._one("SELECT 1 FROM session WHERE token_hash=?", (ohandle,)) is None)
-r.check("(d)/(e) gate: a NEW random key is active, the derived one is previous (note derived-v1) and still published",
-        seed != derived_seed and m._gate_keyring.previous[0].material == derived_seed
-        and m._gate_keyring.previous[0].note == keys.DERIVED_V1
-        and len(m.gate_jwks()["keys"]) == 2)
-r.check("(d) the gate token 0.25.x signed (typ JWT, derived key) stays valid at a jwk_url proxy until it expires",
-        caddy_like(m, old_gate_token))
-r.check("(d) the OAuth token 0.25.x digested with the derived pepper is still accepted; new tokens use a new pepper",
-        oauth_ok(m, oat) and m._pepper_keyring.active.material != old_pepper
-        and m._pepper_keyring.previous[0].material == old_pepper)
-m.close()
-
-# The way back: `reencrypt --to v1` writes what 0.25.x reads (one key, AAD "v1:").
-out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "reencrypt", "--to", "v1", "--db", old_db],
-                     capture_output=True, text=True, env=ENV, timeout=120, cwd=str(ROOT))
-st = Store(old_db)
-vals = [st._one("SELECT secret FROM totp_cred")["secret"], st._one("SELECT refresh FROM oidc_session")["refresh"],
-        st._one("SELECT id_token FROM oidc_id_token")["id_token"]]
-r.check("(d) way back: `keys reencrypt --to v1` — every value readable as 0.25.x reads it",
-        out.returncode == 0 and [v1_open(v) for v in vals] == [OSECRET, "rt-olga", "id-olga"], out.stdout + out.stderr)
-# An older version started WITHOUT the way back takes a v2 value for plain text and wraps it into v1 (its
-# `extract_secrets`). Simulated on the TOTP row: the newer start must unwrap it, not hand out "v2:…" as the secret.
-st.close()
-m = TinySesam(config(old_db))
-wrapped = v1(m.store._one("SELECT secret FROM totp_cred")["secret"])
-m.store._exec("UPDATE totp_cred SET secret=?", (wrapped,))
-m.close()
-m = TinySesam(config(old_db))
-r.check("(d) after the way back the newer version starts again and rewrites v2; a value an older start wrapped "
-        "into v1 is unwrapped (secret intact)",
-        m.store.get_totp(ouid)["secret"] == OSECRET and "v1" not in m.store.ciphertext_counts())
-
-# (g) After the migration only v2 is read (attack round 2026-11-21, A-5): a `v1:` or plain-text value written behind
-# the service's back (database write access, no vault key) is refused at runtime — it carries no binding to its row.
+# Only v2 is read (attack round 2026-11-21, A-5): a `v1:` or plain-text value written behind the service's back
+# (database write access, no vault key) is refused at runtime — it carries no binding to its row.
 from tinysesam.errors import ConfigError  # noqa: E402
 from tinysesam.vault import LegacyValueError  # noqa: E402
 m.store._exec("UPDATE totp_cred SET secret=?", (v1(totp.new_secret()),))
@@ -420,22 +324,16 @@ r.check("(g) a v1 TOTP secret planted after the migration is not read at runtime
         raises(lambda: m.store.get_totp(ouid), LegacyValueError))
 m.store._exec("UPDATE totp_cred SET secret=?", (totp.new_secret(),))
 r.check("(g) … nor a plain-text one", raises(lambda: m.store.get_totp(ouid), LegacyValueError))
-# What a start that could not write leaves behind (read-only database): the start stops and names the way out …
+# A value 0.30.0 never re-encrypted (a read-only start): this version stops and names the way out.
 m.store._exec("UPDATE totp_cred SET secret=?", (v1(OSECRET),))
 try:
     m.store._check_v2_only()
     left_msg = ""
 except ConfigError as e:
     left_msg = str(e)
-r.check("(g) v1 values left after the start (not writable): the start refuses and names `tinysesam keys reencrypt`",
-        "tinysesam keys reencrypt" in left_msg and "1 stored secret" in left_msg, left_msg)
-m.close()
-# … and the way out works offline.
-out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "reencrypt", "--db", old_db],
-                     capture_output=True, text=True, env=ENV, timeout=120, cwd=str(ROOT))
-m = TinySesam(config(old_db))
-r.check("(g) `tinysesam keys reencrypt` rewrites them; the next start reads the secret",
-        out.returncode == 0 and m.store.get_totp(ouid)["secret"] == OSECRET, out.stdout + out.stderr)
+r.check("(g) a v1 value in the database: the start refuses and names 0.30.0 and `tinysesam keys reencrypt`",
+        "tinysesam keys reencrypt" in left_msg and "1 stored secret" in left_msg and "0.30.0" in left_msg, left_msg)
+m.store.set_totp(ouid, OSECRET, confirmed=True)
 # key_material was encrypted from its first row: a plain-text gate seed there is planted, never migrated.
 _seed = secrets.token_bytes(32)
 _kid = keys.kid_for(keys.GATE, _seed)
@@ -463,7 +361,7 @@ m.close()
 # ======================================================================== env and file sources
 gseed = secrets.token_bytes(32)
 os.environ["TINYSESAM_GATE_KEY"] = base64.b64encode(gseed).decode()
-os.environ["TINYSESAM_GATE_KEY_PREVIOUS"] = base64.b64encode(derived_seed).decode()
+os.environ["TINYSESAM_GATE_KEY_PREVIOUS"] = base64.b64encode(secrets.token_bytes(32)).decode()
 try:
     e = TinySesam(config(str(Path(tempfile.mkdtemp()) / "e.db")))
     e_ok = (e._gate_keyring.origin == "environment" and e._gate_keyring.active.material == gseed

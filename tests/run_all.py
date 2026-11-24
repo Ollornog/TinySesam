@@ -133,34 +133,8 @@ def _error_output(err: str) -> str:
     return err[-FAIL_END:]
 
 
-def warning_filter() -> str:
-    """`PYTHONWARNINGS`: a deprecated TinySesam name (stage C), called FROM the package itself, is
-    an error — in every suite, not just in one (0.22.0, PO decision 2026-09-26).
-
-    Since 0.22.0 the implementation of the internal names is called `_name`; the old name is an
-    alias that warns. If code in the package still calls the old name, nobody would see it: a
-    `DeprecationWarning` from a library module is not shown by Python at all without a filter. The
-    AST search in `tests/test_api_surface.py` finds `auth.check_password(…)`, but not
-    `getattr(auth, name)` — this filter finds both as soon as a suite goes through the path.
-
-    A `-W` filter compares the module LITERALLY (no prefix), hence one line per module; the
-    message begins with `TinySesam.` (see `tinysesam/_deprecated.py`). Foreign warnings, including
-    foreign `DeprecationWarning`s from tinysesam code, are left untouched.
-    """
-    module = set()
-    for root, folder, files in os.walk(os.path.join(ROOT, "tinysesam")):
-        folder[:] = [o for o in folder if o != "__pycache__"]
-        parts = os.path.relpath(root, ROOT).split(os.sep)
-        for f in files:
-            if f.endswith(".py"):
-                module.add(".".join(parts if f == "__init__.py" else parts + [f[:-3]]))
-    module = sorted(module)
-    return ",".join(f"error:TinySesam.:DeprecationWarning:{m}" for m in module)
-
-
 def environment(sandbox: str) -> dict:
-    """The environment of a suite: own throwaway directory, package on the path, warning filter."""
-    before = os.environ.get("PYTHONWARNINGS", "")
+    """The environment of a suite: own throwaway directory, package on the path."""
     return {
         **os.environ,
         "PYTHONPATH": ROOT,
@@ -169,7 +143,6 @@ def environment(sandbox: str) -> dict:
         "XDG_CACHE_HOME": os.path.join(sandbox, ".cache"),
         "XDG_CONFIG_HOME": os.path.join(sandbox, ".config"),
         "XDG_DATA_HOME": os.path.join(sandbox, ".local", "share"),
-        "PYTHONWARNINGS": ",".join(x for x in (before, warning_filter()) if x),
         # A suite that dies from a signal (segfault, abort) leaves its trail: stdout is written at
         # once instead of being lost in the pipe buffer, and faulthandler prints the Python stack of
         # every thread. Without both a crash looked like a FAIL without any reason (2026-11-20).

@@ -424,42 +424,20 @@ r.check("a plain-text token at a handle position is noticed", not silent,
         "runs into nothing — the session would silently keep its old state")
 
 
-# The switchover must not throw anybody out: the hash is computable from the plain text, so existing
-# rows can be migrated. Rebuild a database in the old format and open it.
+# The file holds neither the plain token nor its bare sha256 — only the keyed digest (T-71). (The migration of the
+# plain-text column `token` of 0.17 went with the schema baseline, T-111.)
 import sqlite3 as _sq  # noqa: E402
 
 from tinysesam.store import Store  # noqa: E402
 
 old_path = str(Path(tempfile.mkdtemp()) / "alt.db")
-auth_old, _ = _app(db_path=old_path)
-auth_old.create_user("existing", password="dummy12345")
-old_token = auth_old.store.create_session(
-    auth_old.store.get_user_by_name("existing")["id"], 3600, True, "password")
-old_handle = hashlib.sha256(old_token.encode()).hexdigest()
-auth_old.close()
-
-# back to the format before 0.18.0: the column is called `token` and holds the plain text
-raw = _sq.connect(old_path)
-raw.execute("ALTER TABLE session RENAME COLUMN token_hash TO token")
-raw.execute("UPDATE session SET token=?", (old_token,))
-raw.execute("DELETE FROM setting WHERE key='session_handles'")   # a file that old knows no pepper (T-71)
-raw.commit()
-raw.close()
-
-new_store = Store(old_path)
-columns = {z[1] for z in new_store.db.execute("PRAGMA table_info(session)")}
-r.check("the old column `token` is migrated to `token_hash`",
-        "token_hash" in columns and "token" not in columns,
-        f"columns: {sorted(columns)}")
-r.check("and the plain text is gone from the file afterwards",
-        [z["token_hash"] for z in new_store._all("SELECT token_hash FROM session")] == [old_handle],
-        "the plain text is still in the database")
-new_store.close()
-# The full start then peppers the sha256 handle (T-71) — the old cookie still signs in.
 auth_new, _ = _app(db_path=old_path)
-r.check("existing sign-ins survive the switchover",
-        auth_new.store.get_session(old_token) is not None,
-        "the old cookie is no longer valid — an update would have logged out all users")
+auth_new.create_user("existing", password="dummy12345")
+old_token = auth_new.store.create_session(auth_new.store.get_user_by_name("existing")["id"], 3600, True, "password")
+stored = [z["token_hash"] for z in auth_new.store._all("SELECT token_hash FROM session")]
+r.check("the session row holds only the keyed digest: not the token, not its bare sha256",
+        len(stored) == 1 and stored[0] != old_token and stored[0] != hashlib.sha256(old_token.encode()).hexdigest()
+        and auth_new.store.get_session(old_token) is not None, str(stored))
 new_store = auth_new.store
 
 
@@ -1115,36 +1093,18 @@ r.check("...and without configuration warning", "Configuration:" not in buffer_n
 
 
 # ── complete_mfa promised more than the method does ───────────────────────────
-# The docstring itself called the name "backwards compatible" — and it nevertheless remained the
-# only one. MFA is the whole chain; the method appends exactly one factor.
+# MFA is the whole chain; the method appends exactly one factor. Since 0.22.0 it is called `complete_totp`; the old
+# name stayed as a warning alias until the schema baseline (T-111) removed every tier-C alias.
 auth_cm, _ = _app()
-r.check("the clear name complete_totp exists", hasattr(auth_cm, "complete_totp"),
-        "only the old name — then nothing is gained")
-r.check("the old name complete_mfa is kept until 1.0", hasattr(auth_cm, "complete_mfa"),
-        "removed — that breaks existing calls for the sake of a name")
-
-# And the alias must really do the same, not only exist. Since 0.22.0 it is level C:
-# It warns when called (wording and target are checked by the guard tests/test_api_surface.py).
-import warnings as _warnings  # noqa: E402
-
-uid_cm = auth_cm.create_user("cm", password="dummy12345")
-tok_old = auth_cm.store.create_session(uid_cm, 3600, False, "password")
-with _warnings.catch_warnings(record=True) as _warned:
-    _warnings.simplefilter("always")
-    auth_cm.complete_mfa(tok_old)
-r.check("complete_mfa warns as a deprecated alias of complete_totp",
-        [w.category for w in _warned] == [DeprecationWarning]
-        and "complete_totp" in str(_warned[0].message),
-        [str(w.message) for w in _warned])
-tok_new = auth_cm.store.create_session(uid_cm, 3600, False, "password")
-auth_cm.complete_totp(tok_new)
+r.check("the clear name complete_totp exists, the old name complete_mfa is gone",
+        hasattr(auth_cm, "complete_totp") and not hasattr(auth_cm, "complete_mfa"))
 import json as _json  # noqa: E402
 
-factors = [sorted(_json.loads(auth_cm.store.get_session(t)["factors_done"] or "[]"))
-            for t in (tok_old, tok_new)]
-r.check("both names append the same factor", factors[0] == factors[1] == ["totp"],
-        f"old={factors[0]} new={factors[1]} — an alias that does something else is worse "
-        "than two methods")
+uid_cm = auth_cm.create_user("cm", password="dummy12345")
+tok_new = auth_cm.store.create_session(uid_cm, 3600, False, "password")
+auth_cm.complete_totp(tok_new)
+r.check("complete_totp appends exactly the factor totp",
+        sorted(_json.loads(auth_cm.store.get_session(tok_new)["factors_done"] or "[]")) == ["totp"])
 
 
 # ── The Host header poisoned the reset, sign-in and confirmation link (R4-01/R8-4) ──────────

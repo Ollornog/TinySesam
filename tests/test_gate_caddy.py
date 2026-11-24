@@ -50,6 +50,7 @@ assert "http.authentication.providers.jwt" in _module.split(), "this Caddy does 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import gate, gate_client, keys  # noqa: E402
 
@@ -550,7 +551,7 @@ try:
         # carry padding bits, and `…AA` instead of `…AB` is sometimes the same signature (1 in 256 runs).
         "signature altered": f"{k}.{i}." + gate._b64u(bytes([gate._read_b64u(s)[0] ^ 1]) + gate._read_b64u(s)[1:]),
         "alg none": base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode() + f".{i}.",
-        "foreign key": signed(key_name=gate.derive_key_name(b"\x00" * 32)),
+        "foreign key": signed(key_name=Ed25519PrivateKey.from_private_bytes(b"\x00" * 32)),
         "expired": signed(now_=now - 400),
         "other issuer": signed(iss="https://evil.example"),
         "other audience": signed(aud="wiki.example.com"),

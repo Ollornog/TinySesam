@@ -36,7 +36,7 @@ T-52, ASVS 13.4.6; `TINYSESAM_HEALTH_VERSION=1` adds `"version"` for monitoring 
 jobs (mails, notices, the OIDC re-check) finish within 10 s, then the database closes. An embedding app does the same
 with `FastAPI(lifespan=auth.lifespan)`; never close `auth.store.db` directly (a worker inside SQLite crashes the
 process, T-67). If you embed
-TinySesam as a library, build the same check with `auth.store.write_probe()` (internals, tier C —
+TinySesam as a library, build the same check with `auth.store.write_probe()` (internals —
 without commitment, like everything under `auth.store`): it raises the sqlite3 exception if no commit
 goes through. A `SELECT 1` is not enough — it also succeeds on a read-only file.
 It writes at most every 5 s (`Store.WRITE_PROBE_SEC`, a commit of a sign-in counts too), in between
@@ -48,7 +48,7 @@ therefore reported by the check after 5 s at the latest.
 someone calls `auth.gc()` or `tinysesam gc` (regularly, e.g. by timer). They are no longer read —
 but the tables grow. `gc` deliberately does not clean up the audit log (B5-11).
 
-**Deleting and the audit log.** A deleted account becomes `deleted#<id>` in the audit log (H-13; up to 0.24.x `gelöscht#<id>`) —
+**Deleting and the audit log.** A deleted account becomes `deleted#<id>` in the audit log (H-13) —
 also in the detail text (`actor=<name>`, the address). Name and time are searched by an index; the
 search in the detail text is a substring search that no index narrows down, and for a confirmed
 address (deleting in the panel) it reads the whole log — whose size grows without
@@ -58,7 +58,7 @@ search; the deletion itself takes as long as the log is large. Since 2026-09-27 
 also: every spelling under which someone typed the identifier (`login_fail` writes the raw input —
 compared in the counting bucket, not if a remaining account shares it), earlier names and addresses
 of the account (from its `username_changed`/`email_changed` rows, each for the time it carried them)
-and, in its own rows, the values of `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`; both spellings are found).
+and, in its own rows, the values of `old=`, `new=` and `to=`.
 Not covered: an address that came and
 went without `email_changed` (added later from OIDC/LDAP), and the name in the directory.
 
@@ -132,8 +132,8 @@ release it was `abgemeldet=1`. A bookmarked or in-flight link with the old name 
 A session is a row in `session`; the cookie holds the token, the database only an HMAC of it with the pepper
 (the **handle**, T-71; up to 0.26.0 its plain sha256). With a handle a session can be named and ended, but not taken
 over — and since the pepper is never readable from the file alone, write access to the database does not mint one
-either. The first start after 0.26.0 rewrites the stored handles once (log line *"… session handle(s) rewritten with
-the pepper"*); nobody is signed out.
+either. No start rewrites a stored handle (0.27–0.30 did so once for the handles of 0.26.0; since the schema baseline
+a planted plain sha256 row stays worthless across restarts).
 
 | Who | What | How |
 |---|---|---|
@@ -142,9 +142,9 @@ the pepper"*); nobody is signed out.
 | User | end everything (panic button) | `{"scope": "all"}` — also ends the current session **and revokes all API keys** |
 | Admin | see all sessions | panel or `GET <admin_path>/api/sessions` (`full` is the handle) |
 | Admin | end one / all of an account | `POST <admin_path>/api/sessions/revoke` with `{"token": <handle>}` or `{"user_id": …}` |
-| Admin | disable account | `POST <admin_path>/api/users/{id}/disable` — ends all sessions, revokes API keys and discards open one-time tokens (sign-in, confirmation, reset link). The block carries the operator flag: even a confirmation link that only comes into existence afterwards does not lift it — only "Unlock" in the panel does (H-18). Blocks from versions up to 0.19.x are raised to the flag by the migration to schema 10, which discards their open tokens, provided the audit log still knows the block — also one that an older version set after a rollback to a schema-10 file: every start re-reads the audit rows since the last start (setting `panel_lock_until`) and warns in the log when it finds something; an older one (row already removed, `audit_retention_days`) is blocked again by the same call with `{"disabled": true}`, without unlocking — for a disabled account the panel offers only "Unlock". |
+| Admin | disable account | `POST <admin_path>/api/users/{id}/disable` — ends all sessions, revokes API keys and discards open one-time tokens (sign-in, confirmation, reset link). The block carries the operator flag: even a confirmation link that only comes into existence afterwards does not lift it — only "Unlock" in the panel does (H-18). |
 | Code | disable account | `auth.set_disabled(user_id, True)` (tier A, since 0.22.0) — exactly the effect of the panel, which calls this method: operator flag, end sessions, revoke API keys, discard open one-time tokens, audit `user_disable`. `auth.set_disabled(user_id, False)` unlocks. An owner cannot be disabled (`StateError`), an unknown ID returns `False`. Up to 0.21.x this read `auth.store.set_disabled(user_id, True, through_operator=True)` — that only set the flag; sessions, keys and links stayed valid. |
-| Code | sessions without HTTP | only via the internals (`auth.store`, tier C — no commitment, may change with every release): `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)` |
+| Code | sessions without HTTP | only via the internals (`auth.store` — no commitment, may change with every release): `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)` |
 
 What ends a session **by itself**: inactivity (`session_idle_minutes`, default 8 h — for every
 session where "Stay signed in" was not **explicitly** ticked, also a permanent one from OIDC or a
@@ -282,8 +282,8 @@ identifier belongs to two accounts.
   name, one as address) both got through or ended with a 500. Now the loser gets
   the same answer as for a taken identifier — 409, with registration with confirmation the
   neutral page. Whoever calls the store directly (`store.create_user`, `set_username`, `set_email`)
-  gets `sqlite3.IntegrityError` ("tinysesam: identifier taken"; up to 0.24.x "tinysesam: kennung vergeben").
-- **Collisions in existing data** (from an older version, a raw UPDATE, a row from a
+  gets `sqlite3.IntegrityError` ("tinysesam: identifier taken").
+- **Collisions in existing data** (from a version before the triggers, a raw UPDATE, a row from a
   foreign writer) stay in place — the start does not fail on them, and nothing is renamed
   automatically, because which account keeps the identifier is for the operator to decide. They cannot
   be made worse any more. The start reports each with the accounts involved
@@ -294,18 +294,13 @@ identifier belongs to two accounts.
   `store.set_email(user_id, address)` (stores the address unconfirmed, `verified=True` for
   proof); as a last resort a manual UPDATE with the instance stopped — TinySesam then recomputes the bucket
   itself.
-- **Limits:** A row from a foreign writer (older version after a rollback,
-  sqlite3 tool) carries no bucket and counts for the triggers only once TinySesam has
+- **Limits:** A row from a foreign writer (raw SQL,
+  the sqlite3 tool) carries no bucket and counts for the triggers only once TinySesam has
   filled it in — at start and before every creation. If a foreign writer changes name or
   address, the identifier counts as having only just joined (triggers `trg_users_folded_name`/`_mail`):
   stricter, never looser. A raw UPDATE that renames into a collision
   is not prevented, only reported at the next start. If the triggers cannot
   be created (file read-only), TinySesam starts anyway and says so in the log.
-- **Rollback to 0.20.x:** The triggers stay in the file and keep acting there (0.20.x writes
-  the buckets along; only built-in SQL functions, so no "no such function"). In a race 0.20.x
-  then answers with 500 instead of a collision. Remove with the instance stopped:
-  `DROP TRIGGER trg_users_identifier_insert; DROP TRIGGER trg_users_identifier_update;` — a newer
-  version recreates them at the next start.
 
 ## The gateway image: no shell inside
 
@@ -416,12 +411,12 @@ for the vault how many stored values still need it — never key material.
   are removed: `DELETE FROM key_material`, then the start creates them; connected OAuth programs must reconnect).
   `tinysesam backup` reminds you of this.
 - **Wrong or incomplete key** → the start aborts (`ConfigError`) instead of letting every TOTP sign-in fail silently:
-  every key ID a stored value names must be in the vault keyring, and one value per column in the format up to 0.25.x
-  is probed. SQLite overwrites deleted data (`secure_delete`).
+  every key ID a stored value names must be in the vault keyring, and a value in a format before 0.26 stops the start
+  ("Updating" below). SQLite overwrites deleted data (`secure_delete`).
 - **`config_check` warns** when a key file is readable or writable by group or others (not for `/run/secrets/` and
   `/run/credentials/`, where Docker and systemd put them), when a configured key file lies in the database's directory,
-  and when the gate is on while the vault key sits beside the database and the gate key in it. The start warns as long
-  as the gate keyring still holds the key derived from the vault key (`note: derived-v1`, below).
+  and when the gate is on while the vault key sits beside the database and the gate key in it. A gate key or pepper
+  derived from the vault key by 0.25.x (`note: derived-v1`) stops the start ("Updating" below).
 
 ### The vault format (T-54)
 
@@ -429,14 +424,11 @@ for the vault how many stored values still need it — never key material.
 table and column, and what identifies the row for its whole life — the account for a TOTP secret, client and subject
 for a refresh token, client and account for an ID token (the session handle rotates), the token row for an OAuth
 successor, purpose and key ID for a key. A value copied into another account's row or into another column, or with an
-edited key ID, does not decrypt. Values of 0.25.x (`v1:`, no binding) are read with every key of the keyring and
-rewritten as `v2:` at the start (the log says how many); until the original key is retired, such a value restored from
-an old backup into another row would still decrypt — rotate and retire once after the update to close that.
+edited key ID, does not decrypt.
 
-Since 0.26 only the migration reads `v1:` and plain text; the service reads `v2:` only. If the start cannot rewrite
-them (a read-only database), it stops with *"… stored secret(s) are still in a format before 0.26 …"*: start once
-with write access, or run `tinysesam keys reencrypt --db <file>` as the service's user with its environment, then
-start again. A start that finds anything but `v2:` in `key_material` stops too (*"key_material holds … value(s) that
+The service reads `v2:` only. Values of 0.25.x (`v1:`, no binding) and plain text were rewritten by the releases up to
+0.30.0; this version stops with *"… stored secret(s) are still in a format before 0.26 …"* if it finds one ("Updating"
+below: re-encrypt with 0.30.0). A start that finds anything but `v2:` in `key_material` stops too (*"key_material holds … value(s) that
 are not vault ciphertext"*): TinySesam has only ever written that table encrypted, so the database was written by
 someone without the vault key, or is damaged — restore it from a backup; the rows are never used.
 
@@ -493,10 +485,9 @@ cookie itself and asks `/auth/forward` only when it is missing or expires. Templ
   successful fetch without a deadline and retries only after its interval. One failed first fetch — TinySesam not up
   yet, a 404 — and every request with a gate token hangs, without a second fetch or a fallback (measured in a rollout
   and in `tests/test_gate_caddy.py`). Up to 0.26.1 the template used `jwk_url`, and the 0.26.0 upgrade notes
-  recommended it. **After updating from 0.25.x** the gate key is new (it was derived from the vault key, ADR-12):
-  give the proxy the new one (`TS_GATE_PUBKEY` = `tinysesam gate-key`), then `tinysesam keys retire --purpose gate` —
-  as long as a proxy keeps the old `sign_key`, whoever holds the vault key can still mint tokens it accepts, and every
-  new token takes the fallback path.
+  recommended it. The gate key of 0.25.x was derived from the vault key (ADR-12); a proxy that still has it as
+  `sign_key` needs `TS_GATE_PUBKEY` = `tinysesam gate-key`, and that old key is retired before this version starts
+  ("Updating").
 - **Type:** every token carries `typ: tinysesam-gate+jwt` (RFC 8725 §3.11, T-53). caddy-jwt does not check `typ`
   (measured with 1.4.0: `JWT` and `at+jwt` pass alike); at the proxy the separation rests on the key, which signs
   nothing but gate tokens, and on `aud`, which is a bare host (`app.example.com|roles=…`) where an RFC 8707 audience is
@@ -636,7 +627,7 @@ side and does not change:
 - **Approvals per application** (several OIDC clients): `auth.store.drop_oidc_grants_for_user(user_id,
   client=None)` withdraws them immediately without ending the session — the way when the provider
   has excluded someone from an application. There is no public method for it yet;
-  `auth.store` is internals (tier C, without commitment).
+  `auth.store` is internals (without commitment).
 - **Groups from the provider** (`apply_idp_groups`) are taken over at every sign-in and
   withdrawn when they disappear at the provider — mapped roles always, since H-5 also the
   admin flag, **provided the provider granted it** (`users.is_admin=2`). An admin from panel,
@@ -886,149 +877,45 @@ For each application behind the gate, in this order:
 `app` and `direct` together: signing out "only here" holds because the application afterwards always shows the
 login page (never the direct path to the provider) — with "Continue as …" for the way back.
 
-## Rollback to 0.21.x
+## Updating: the schema baseline (two steps)
 
-(Schema **13**, after 0.22.0: two new tables `gate_abgemeldet` and `oidc_id_token`, nothing else. 0.22.0
-opens the file with the warning "newer schema version" and leaves both in place. Only
-"signed out only here" and the `id_token_hint` at the provider logout are then missing.)
+**0.30.0 is the last release with database migrations.** Since the schema baseline (T-111) a new database is created
+in one step with schema 26, and this version opens schema 26 and newer only. Whoever runs an older version updates in
+**two steps**:
 
-0.22.0 raises the schema stamp of the database to **12**. No column changes, but two
-stored values are now named in English like the rest of the public surface (PO decision
-2026-09-27): the kind of an API key (`api_key.kind`: `automat` → `automation`, `mensch` → `human`) and,
-in the open address-change link, the key for the previous address (`alt` → `old`, visible via
-`peek_magic`/`redeem_magic`). The first start rewrites them and logs it at level INFO (`… stored values
-rewritten to the English names …`; the gateway image's log shows WARNING and above only, so look at the data instead). An old value is still read correctly, and
-every start updates the API keys that an older version has meanwhile issued. The
-audit rows stayed as they were under 0.22.0: `apikey_create`/`apikey_use` kept naming the kind
-as `art=automat`/`art=mensch` (since schema 15 they say `kind=automation`/`kind=human`, see
-"Rollback to 0.24.x"). (If 0.21.x runs on the migrated file without the SQL below, it writes
-`art=automation`/`art=human` — it outputs the stored value raw.)
+1. **Back up** (`tinysesam backup --db auth.db auth-before.db`, not `cp`: WAL), then update to **0.30.0** and start it
+   once with write access: it migrates the database to schema 26, rewrites every stored secret in the format `v2`
+   and moves the session handles to the pepper. Run `tinysesam keys reencrypt --db auth.db` with 0.30.0 if it could
+   not write at start.
+2. **Check** with `tinysesam keys list --db auth.db` (same environment as the service): no line `… value(s) in a format
+   before 0.26`, and no key with `note: derived-v1`. Such a note marks a gate key or OAuth pepper that 0.26–0.30 took
+   over from the single base key of 0.25.x (derived from the vault key) and kept as a previous key. Remove each with
+   `tinysesam keys retire --db auth.db --purpose gate --kid <kid>` (for the pepper `--purpose oauth-pepper --kid <kid>
+   --force`: programs still connected with tokens of 0.25.x connect again). Then update to this version.
 
-**What 0.21.x does with a migrated file** (measured with 0.21.0): It starts and warns once at
-start: `The database carries schema version 12, this TinySesam version only knows 11. …`.
-It does not know `human` and takes such a key for an automation key — **it then acts without a
-session**, with the rights of its account without the admin flag. A human key that was previously worthless on its own
-is valid on its own under 0.21.x. `automation` keys act there like `automat`. The payload
-of the links is not read by 0.21.x. What it issues itself carries the old values again; 0.22.0 reads
-them and rewrites the keys at the next start.
+This version refuses, with a message that names the way out, and never with a partial upgrade:
 
-**Therefore before the first start of 0.21.x** — service stopped, backup taken (`tinysesam
-backup`, not `cp`):
-
-```sql
-UPDATE api_key SET kind = 'automat' WHERE kind = 'automation';
-UPDATE api_key SET kind = 'mensch'  WHERE kind = 'human';
-UPDATE magic_token SET payload = json_object('alt', json_extract(payload, '$.old'))
- WHERE purpose = 'email_change' AND json_extract(payload, '$.old') IS NOT NULL;
-PRAGMA user_version = 11;
-```
-
-For example `sqlite3 auth.db < rollback.sql`, or from Python
-`sqlite3.connect("auth.db").executescript(open("rollback.sql").read())`; `json_object` needs
-SQLite 3.38 or JSON1 (included in the Python images). Afterwards 0.21.x no longer reports a newer
-schema version, and a human key again applies only with a session. The stamp 11 is correct:
-no column was added, and a later start of 0.22.0 migrates again. `tests/test_values_english.py`
-runs exactly this block. Without the SQL 0.21.x runs too — then what was said above applies to human keys
-until 0.22.0 starts again.
-
-## Rollback to 0.24.x (schema 15)
-
-**Take a backup before the update** (`tinysesam backup`, not `cp`). The first start of the version with schema
-**15** rewrites the stored and logged key vocabulary to English (PO decision 2026-10-29; no column changes) and
-logs it at level INFO (`… stored values rewritten to the English vocabulary (schema 15 …)`; not visible in the gateway image's log):
-
-| Where | Up to 0.24.x | Since schema 15 |
+| At start | Message | Way out |
 |---|---|---|
-| `audit.event` | `oidc_widerruf`, `oidc_unbestaetigt`, `api_keys_ruhen`, `lockout_serie`, `sperrhinweis`, `recovery_verwaist_geloescht`, `login_lokal`, `<oidc\|saml\|ldap>_kennung_abgewiesen`/`_bound`/`_geloest`/`_ungueltig`/`_change`, `_namensbindung_zu`, `_ohne_kennung` | `oidc_revoked`, `oidc_unconfirmed`, `api_keys_dormant`, `lockout_series`, `lockout_notice`, `recovery_orphan_deleted`, `login_local`, `<…>_identifier_rejected`/`_bound`/`_unbound`/`_invalid`/`_change`, `_name_binding_closed`, `_without_identifier` |
-| `audit.detail` (keys) | `grund=`, `konto=`, `quelle=`, `durch=`, `akteur=`, `alt=`, `neu=`, `an=`, `anzahl=`, `beleg=`, `verlangt=`, `verwendet=`, `nachgetragen=`, `fehlversuche=`, `in_folge=`, `kennung=`, `lokal=`, `verzeichnis=`, `zweck=`, `fehlt=`, `art=`, `rollen=`, `beim_bestaetigen=`, `nach_einschreibung=`, … | `reason=`, `account=`, `source=`, `by=`, `actor=`, `old=`, `new=`, `to=`, `count=`, `proof=`, `required=`, `used=`, `backfilled=`, `failed_attempts=`, `in_a_row=`, `identifier=`, `local=`, `directory=`, `purpose=`, `missing=`, `kind=`, `roles=`, `on_confirmation=`, `after_enrollment=`, … |
-| `audit.detail` (tokens behind `reason=`, `source=`, `by=`, `kind=`) | `kein_konto`, `konto_gesperrt`, `falsches_geheimnis`, `falsches_bereichsgeheimnis`, `kein_passwort_gesetzt`, `wiederholt`, `gruppe`, `idp_nein`, `idp_unbestaetigt`, `betreiber`, `lokal`, `erst_admin`, `automat`/`mensch`, … | `no_account`, `account_locked`, `wrong_secret`, `wrong_area_secret`, `no_password_set`, `repeated`, `group`, `idp_no`, `idp_unconfirmed`, `operator`, `local`, `first_admin`, `automation`/`human`, … |
-| `audit.username` | `gelöscht#<id>` | `deleted#<id>` (also inside the details) |
-| `fehlserie.art`, `login_attempt.method` | `pin_folge` | `pin_chain` (counts of both kinds are added up if both exist) |
-| trigger message (`sqlite3.IntegrityError`) | `tinysesam: kennung vergeben` | `tinysesam: identifier taken` (the trigger is replaced on every start if its definition differs) |
+| a database below schema 26 (or without a stamp, before 0.18) | `… carries schema N; this TinySesam version opens schema 26 and newer only …` — **nothing is written**, the file stays as it was | step 1 above |
+| a stored secret in `v1:` or plain text | `N stored secret(s) are still in a format before 0.26 …` | 0.30.0 once with write access, or its `tinysesam keys reencrypt` |
+| a key with the note `derived-v1` in the gate or pepper keyring | `A key derived from the vault key … ` with the kid and the exact `tinysesam keys retire …` command | that command (with this version or 0.30.0); a keyring file or environment variable: remove the key there |
 
-The complete old → new table is in the CHANGELOG. The security log carries `reason=` instead of `grund=`
-(the OIDC and passkey lines included — the shipped fail2ban filters match them from now on, so update the filter
-files from `deploy/fail2ban/` together with the release), `remaining=` instead of `verbleibend=`, `kind=` instead
-of `art=` and `unban=yes|no` instead of `unban=ja|nein`. Existing filters of your own that match the old
-German words have to be adjusted.
+The command line answers the same with exit code 1 (no traceback). A file that holds only another program's tables
+(none of TinySesam's) is not refused: it gets the schema.
 
-**What an older version does with a migrated file** (0.24.x): it starts and warns once at start
-("newer schema version"). It shows the new event names and keys as unknown names — the panel and
-`tinysesam audit` print them — and it does not recognise them where it evaluates audit rows:
+**Going back from this version to 0.30.0** needs no SQL: the schema is the same (26). Going back further: first to
+0.30.0, then follow the docs of that release (the backup from before step 1 is the way back across the migrations).
 
-* the account page shows a rejected address-change confirmation under its real name (`email_change_taken`
-  instead of `email_change_requested`), because it looks for `beim_bestaetigen=1`, not for `on_confirmation=1`;
-* the lockout notice is throttled by the row `sperrhinweis`: after the rollback one more notice per lockout window
-  can go out;
-* deleting an account does not find `old=`/`new=`/`to=`/`actor=` in migrated rows (names and addresses stay in the
-  detail text), nor the earlier names and addresses from `username_changed old=…`.
+**Later schema changes** start from the baseline: each raises `Store.SCHEMA_VERSION` with one migration step from the
+state before and says here what an older version does with the file.
 
-An older version needs no SQL to start. If you want it to read the audit log in its own words again, restore the
-backup taken before the update. Setting the stamp back (`PRAGMA user_version = 14`) only silences the warning;
-the next start of the newer version then runs the rewrite again (idempotent). New rows written meanwhile carry the
-old words and are mapped by the newer version when it reads them.
+## OAuth for MCP clients: tables
 
-**The last breaking pass before the API freeze (2026-10-29) changes no stored data** and does not raise the schema
-version: it renames a query parameter (`abgemeldet` → `signed_out`), a message id (`err.locked_serie` →
-`err.locked_series`), the `--ja` option (→ `--yes`), the Caddy template variable (`TS_SHARE_PRAEFIX` →
-`TS_SHARE_PREFIX`) and a few log texts. Rolling back to the version before it needs no SQL; only your own
-configuration (the variable, the option, a custom message id) has to go back to the old name.
-
-## Rollback of the English database names (schema 16)
-
-**Take a backup before the update** (`tinysesam backup`, not `cp`: WAL). The first start of the version with schema
-**16** renames the German names inside the database file to English — tables, columns, the indexes and triggers built
-on them, six keys in `setting` and the placeholder prefix of `federated_identity.identifier` — in **one transaction**
-(an abort leaves the old names, the next start repeats it), and logs it at level INFO (`Database names renamed to English
-(schema 16) …`). The gateway image's log shows WARNING and above only, so the line does **not** appear there; check the result with
-`PRAGMA user_version` (16 and higher) or by looking for the new table names in `sqlite_master`. No data changes beyond the names. Whoever reads the database file with their own SQL (reports,
-dashboards, backups restored into other tools) has to use the new names:
-
-| Table / column up to schema 15 | Since schema 16 |
-|---|---|
-| table `namensbindung` (`quelle`, `bis`) | `name_binding` (`source`, `until`) |
-| table `oidc_sitzung` (`geprueft_at`, `erfolg_at`) | `oidc_session` (`checked_at`, `success_at`) |
-| table `gate_abgemeldet` | `gate_signed_out` |
-| table `fehlserie` (`topf`, `art`, `anzahl`, `seit`, `zuletzt`) | `failure_series` (`folded`, `kind`, `count`, `since`, `last_seen`) |
-| `users.topf_name`, `topf_mail` | `folded_name`, `folded_mail` |
-| `users.idp_bestaetigt_at` | `idp_confirmed_at` |
-| `users.name_versuch_ab`, `mail_versuch_ab`, `name_audit_ab`, `mail_audit_ab` | `name_attempt_from`, `mail_attempt_from`, `name_audit_from`, `mail_audit_from` |
-| `users.name_quelle`, `name_selbst_gewaehlt` | `name_source`, `name_self_chosen` |
-| `federated_identity.quelle`, `kennung`, `gebunden_at`, `name_topf` | `source`, `identifier`, `bound_at`, `directory_name_folded` |
-| `session.zuletzt`, `andere_beenden`, `bleiben_gewaehlt`, `nachfolger` | `last_seen`, `end_others`, `stay_chosen`, `successor` |
-| `login_attempt.offen` | `pending` |
-| indexes `idx_fed_quelle_user`, `ix_fed_name_topf`, `ix_users_topf_name`/`_mail` | `idx_fed_source_user`, `ix_fed_directory_name_folded`, `ix_users_folded_name`/`_mail` |
-| triggers `trg_users_topf_name`/`_mail`, `trg_users_wechsel_name`/`_mail`, `trg_users_kennung_insert`/`_update` | `trg_users_folded_name`/`_mail`, `trg_users_change_name`/`_mail`, `trg_users_identifier_insert`/`_update` |
-| `setting` keys `allowlist_nach_idp_entzug`, `idp_bestand_gesetzt`, `name_quelle_nachgetragen`, `name_selbst_nachgetragen`, `uhr_stand`, `panel_sperren_bis`, `foederation_seit:<source>` | `allowlist_after_idp_revocation`, `idp_inventory_set`, `name_source_backfilled`, `name_self_backfilled`, `clock_state`, `panel_lock_until`, `federation_since:<source>` |
-| `federated_identity.identifier` placeholder `~ohne-kennung:<…>` | `~without-identifier:<…>` |
-
-The step looks at `sqlite_master`, the column lists and the keys of `setting` on every start and writes nothing if no old
-name is left (also on a read-only file). A file with old names that cannot be written does **not** start (the new code
-needs the new names): mount it writable once. (A folder mounted read-only does not work for a WAL database in any case, see
-"Database read-only" above; and `restore` onto a read-only mount fails for the same reason: the restored backup stays in WAL
-mode and SQLite wants to create `-wal` and `-shm` next to it.)
-
-**The way back.** Schema 16 is a migration **forward only**; there is no hand-written rollback SQL. The one way back is the
-backup from before the update: stop the service, `restore` that backup (with the OLD image the option is
-`restore … --ja` — only the old version knows `--ja`, the new one says `--yes`; the restore needs the same
-`TINYSESAM_SECRETS_KEY` as the instance that wrote the backup), and only then start the old image. **Never go back
-without the restore:** 0.24.13 on a migrated file does not open it with a warning, its `Store` constructor aborts
-(`sqlite3.OperationalError: no such column: quelle`), the gateway sits in a restart loop and creates empty tables with the
-old names on the way. (The newer version merges those tables correctly at its next start — rows of the old table are
-added, then the old table is dropped, a doubled column is left alone with a warning in the log — but that is repair, not a
-way back.) Without a backup there is no way back; that is why the backup is the first step of the update.
-
-
-## OAuth for MCP clients: tables and rollback (schema 17)
-
-Schema 17 (T-36) only **adds** the tables `oauth_client`, `oauth_request`, `oauth_code`, `oauth_grant` and
-`oauth_token`; nothing existing changes. An older version opens the file with the "newer schema version" warning
-and simply has no OAuth routes — connected programs get 401 until the update is back, sessions and API keys keep
-working. No SQL is needed either way.
+The tables `oauth_client`, `oauth_request`, `oauth_code`, `oauth_grant` and `oauth_token` (T-36).
 
 - **Pepper:** the token digests are keyed with `TINYSESAM_OAUTH_PEPPER` / `oauth_pepper_file`, otherwise with a
-  random pepper of its own kept in the database (encrypted with the vault key; up to T-48 a subkey of the vault key —
-  an installation that already had connections keeps that one as a previous pepper). Rotation keeps every program
+  random pepper of its own kept in the database (encrypted with the vault key). Rotation keeps every program
   connected ("Keys" above). Back an own pepper up next to the vault key, apart from the database.
 - **Housekeeping:** `gc()` / `tinysesam gc` removes expired codes and tokens, connections without a live token,
   revoked connections after a week and registrations that never led to a connection after a day (`oauth_*` in the
@@ -1038,49 +925,21 @@ working. No SQL is needed either way.
   `oauth_revoked` (`reason=user|admin|client|account_disabled|code_reuse|refresh_reuse`), `oauth_devices_read` (panel),
   and `forward_denied` with `reason=oauth_token_<why>` for a rejected token at the proxy.
 
-## Start secret from the admin: column and rollback (schema 18)
+## Start secret from the admin
 
-Schema 18 (H2, T-46) only **adds** the column `users.password_must_change` (`0` for every existing account). It is
-set when an administrator sets a password in the panel (new account, reset) and `admin_password_must_change` is on;
+The column `users.password_must_change` (H2, T-46) is set when an administrator sets a password in the panel (new account, reset) and `admin_password_must_change` is on;
 the next password sign-in then stays half until the holder has chosen an own password on `/auth/setup` (audit
-`password_renewed`). An older version opens the file with the "newer schema version" warning and ignores the column
-— the admin's password then simply signs in fully, as before; after the update is back the mark applies again. No
-SQL is needed either way. To clear the mark of one account by hand: `UPDATE users SET password_must_change=0 WHERE
+`password_renewed`). To clear the mark of one account by hand: `UPDATE users SET password_must_change=0 WHERE
 id=?` (or set the password again with `auth.set_password(uid, …)`, which clears it).
 
-H2 also changes defaults without touching the schema — the way back is a configuration field each:
+H2 also changed defaults — the way back is a configuration field each:
 `admin_require_mfa=False` (panel without a fresh confirmation; `config_check` warns),
 `qr_login_require_second_factor=False` (single-factor accounts may approve a cross-device sign-in again),
 `admin_password_must_change=False`, `notify_new_access=False` (no mail about new access; the hook stays).
 
-## Keys and the vault format: rollback (schema 19)
+## Approvals: table
 
-Schema 19 (T-48, T-54) **adds** the table `key_material`. The stored values change, though: the first start rewrites
-every `v1:` value as `v2:<kid>:` with its binding. An older version takes a `v2:` value for plain text — it cannot use
-those TOTP secrets and refresh tokens, and its own start wraps the TOTP values once more (the newer version unwraps that
-at its next start, nothing is lost, but sign-ins with TOTP fail meanwhile).
-
-**The way back:** with the NEWER version, `tinysesam keys reencrypt --to v1 --db <file>` (the active vault key writes
-the format of 0.25.x; the table `key_material` stays and is ignored), then start the older version with only that one
-key (it refuses a key file with several lines — put the active line alone into the file or the environment). The older
-version derives the gate key from the vault key again: the proxy needs its `tinysesam gate-key` (it has no
-`/auth/gate/jwks.json`; a proxy with `jwk_url` would send every request the fallback path). OAuth did not exist before
-schema 17. Coming forward again needs nothing — the next start rewrites `v2:` and finds its keys in `key_material`.
-
-## Session handles with the pepper: rollback (0.26.1, T-71)
-
-No table changes. The values do: the first start of 0.26.1 rewrites every session handle — and the app-host links,
-area unlocks and the rows hanging on a session — from the plain sha256 to an HMAC with the pepper, and marks that in
-`setting` (`session_handles = hmac-v1`). An older version then finds no session for any cookie: **going back signs
-everyone in again once**, nothing else breaks. Coming forward again does not rewrite a second time (the marker stays,
-on purpose: a rewrite that a missing marker could trigger again would turn a planted sha256 row into a valid session),
-so the sessions the older version created meanwhile end as well.
-
-## Approvals: table and rollback (schema 22)
-
-Schema 22 (T-89, stage A) only **adds** the table `approval`; nothing existing changes. An older version opens the file
-with the "newer schema version" warning and has no approval routes: requests get 404, open ones simply expire, and the
-rest keeps working. No SQL is needed either way; `DROP TABLE approval` removes the rows if you go back for good.
+The table `approval` (T-89, stage A) holds one request per row; `DROP TABLE approval` would remove them all.
 
 - **Switch:** `approvals_enabled` (needs `base_url`, API keys and CSRF — `config_check` refuses otherwise). Without it
   there are no routes, no menu entry, no `approvals` member in `topbar_data`, and `gc()` leaves the table alone.
@@ -1097,21 +956,14 @@ rest keeps working. No SQL is needed either way; `DROP TABLE approval` removes t
   `max_age=0`; without it an account that has only the provider cannot confirm (fail-closed) — give it a passkey or a
   TOTP.
 
-## Account API for applications: columns, lock value and rollback (schema 23)
+## Account API for applications: columns and lock value
 
-Schema 23 (account API, stage A) **adds** three columns to `users` — `managed_by` (the id of the application that
+The account API (stage A) uses three columns of `users` — `managed_by` (the id of the application that
 created the account, indexed), `last_login_at` (the last complete sign-in) and `delete_after` (deletion with a grace
 period, used from stage B on) — and a fourth value of `users.disabled`: `3` = locked by the application that manages the
 account. Existing rows get `NULL` and keep their lock values. Stage B (deletion, take over, release) needs **no further
 schema change**: it writes `delete_after` and `managed_by`.
 
-- **Rollback:** an older version opens the file with the "newer schema version" warning and has no account API routes
-  (the application gets 404). It ignores the three columns: accounts created by an application stay, `last_login_at`
-  is not kept up meanwhile. The value `3` stays **fail-closed** there: every version reads `disabled <> 0` as locked,
-  and the confirmation link of an older version lifts only `1`. Unlocking in the panel lifts `3` as it lifts every
-  lock. Back for good, the marks can be removed with SQL (after a backup, `tinysesam backup`):
-  `UPDATE users SET disabled=2 WHERE disabled=3; DROP INDEX IF EXISTS ix_users_managed_by;` — the columns may stay
-  (`ALTER TABLE users DROP COLUMN …` only on SQLite 3.35 or newer, after the index is gone).
 - **Switch:** an application in `apps` with a `provisioning` block. Without one there are no routes and nothing reads
   the columns besides `last_login_at`, which is written on every complete sign-in from now on.
 - **Library or gateway:** whoever embeds TinySesam as a library (an own `TinySesamConfig(...)` in the application's
@@ -1143,10 +995,6 @@ schema change**: it writes `delete_after` and `managed_by`.
   back (`tinysesam restore`, whole database). A deletion request under Art. 17 GDPR that must take effect at once is the
   operator's: panel "Delete" (no grace period). A grace period of 7 days stays far below the one-month deadline of
   Art. 12(3) GDPR (a hint for the documentation, not legal advice).
-- **Rollback to a version without stage B:** take `users:delete`, `delete_grace_days`, `delete_per_hour` and
-  `delete_per_day` out of the configuration first (the older `config_check` refuses them). Accounts in their grace
-  period stay locked (`3`) there and are never deleted (the older cleanup knows no `delete_after`); unlock them in the
-  panel, or delete them there. `managed_by` set by "Take over" stays and counts like an account the application created.
 - **Taking accounts over, releasing them:** an application owns only what it created or what the operator hands it.
   Panel (administrators, step-up): "Take over for …" on the account page — refused with the reason unless every role of
   the account lies in the application's allowlist (at least one; never an administrator, owner, service account or
@@ -1192,9 +1040,7 @@ schema change**: it writes `delete_after` and `managed_by`.
   `actor=` the service account), `approval_approved`, `approval_executed` (`result=`), `account_access_reset` (under
   the account: `app=`, `approved_by=<name>#<id>`, the counts `password= pin= totp= recovery_codes= passkeys=
   api_keys=` and `approval=`), then `signin_link_issue` when the application picks the link up (with it a setup window
-  for the link's lifetime plus an hour). Never the link. **Rollback:** an older version has no `users:reset` (its `config_check` refuses the unknown
-  scope and member, so take them out first); open requests of this type expire there, and a request left in `approved`
-  (executed, not picked up) is cleaned up as `expired` — the factors stay deleted, the person asks the operator.
+  for the link's lifetime plus an hour). Never the link.
 - **Many team admins of one application:** the approval limits count per asking key, and every request of an
   application counts against its service account — `approval_open_per_token` (default 3) open resets of the whole
   application at once, and `approval_reject_limit` (3) rejections of the type within an hour block the application from
@@ -1202,9 +1048,9 @@ schema change**: it writes `delete_after` and `managed_by`.
   `approval_open_per_token` (up to 50); `approval_open_per_account` and `approval_requests_per_hour` still bound each
   confirming person.
 
-## Approvals for application actions: column and rollback (schema 24)
+## Approvals for application actions: column
 
-Schema 24 (T-89, stage B) **adds** one column, `approval.nonce` — the `state` an application sends with the browser
+Application actions (T-89, stage B) use the column `approval.nonce` — the `state` an application sends with the browser
 entry (it goes back in the return address and into the confirmation as `nonce`). Existing rows get `NULL`. Application
 actions use the `approval` table of schema 22 otherwise: `class='app'`, `app_id`, `requester_kind='app'`,
 `requester_ref` = the service account's id, `return_url` for the browser entry, `issued_at` when the confirmation was
@@ -1224,15 +1070,10 @@ handed out. The confirmation itself is never stored.
   refused ones included; then the limits of stage A per account and per asking service account
   (`approval_open_per_token` counts the application's open requests as a whole).
 - **A flood of requests** from an application: revoke its service account's key (panel). Open requests expire.
-- **Rollback:** an older version opens the file with the "newer schema version" warning; it ignores `nonce`, has no
-  application actions (its `config_check` refuses the `approvals` member of `apps` — take it out first) and lets open
-  requests expire. No SQL is needed; `ALTER TABLE approval DROP COLUMN nonce` (SQLite 3.35 or newer) removes the column
-  if you go back for good. The approval key stays in `key_material` (`DELETE FROM key_material WHERE
-  purpose='approval'` removes it; a version without stage B never reads it).
 
-## Role catalog: table and rollback (schema 25)
+## Role catalog: table
 
-Schema 25 **adds** the table `role_catalog` (`name`, `name_compare` = the casefold for the uniqueness check, `created_at`,
+The table `role_catalog` (`name`, `name_compare` = the casefold for the uniqueness check, `created_at`,
 `created_by`); nothing existing changes. Administrators fill it in the panel (*Accounts → Roles*), with
 `auth.create_role`, or from the command line; the panel then offers these roles next to `available_roles`. It grants
 nothing — accounts hold their roles in `users.roles` as before.
@@ -1255,14 +1096,10 @@ nothing — accounts hold their roles in `users.roles` as before.
   level ladder without an entry or an entry missing a level role among the known roles.
 - **Audit events:** `role_created`, `role_deleted` (`name=` percent-encoded, `via=panel|cli|code`, `entry=` for a role
   level entry) and `role_delete_refused` (`where=users|keys|services|links|approvals`).
-- **Rollback:** an older version opens the file with the "newer schema version" warning and ignores the table: its
-  panel no longer offers the catalog roles, accounts keep them and show them as roles outside the configuration.
-  Nothing is lost or granted. No SQL is needed; `DROP TABLE role_catalog` removes the rows if you go back for good
-  (list them first with `tinysesam roles list` and put the ones you need into `available_roles`).
 
-## Pairing code for people's programs: columns and rollback (schema 26)
+## Pairing code for people's programs: columns
 
-Schema 26 (ADR-14, T-95) only **adds** the columns `oauth_code.consent_via` and `oauth_grant.consent_via` (`NULL` for
+The columns `oauth_code.consent_via` and `oauth_grant.consent_via` (`NULL` for
 every existing row = allowed on the consent page, `pairing` = through a pairing code). The codes themselves live in
 `magic_token` (purpose `oauth_consent_pairing` until redeemed, `oauth_consent_armed` after), only as a digest, and go
 with the account's other one-time tokens on a lock, a reset or "end all sessions" and in `gc()`.
@@ -1274,11 +1111,6 @@ with the account's other one-time tokens on a lock, a reset or "end all sessions
   (an armed code did not cover a request: `reason=fetch_site|redirect|client|resource`), `oauth_consent … via=pairing`
   (or `via=page`) with `fetch_site=`, and `fetch_site=` on `oauth_authorize`. The security log has
   `reason=oauth_consent_redeem_<why>` for every failed redemption (fail2ban).
-- **Rollback:** an older version opens the file with the "newer schema version" warning and ignores both columns: its
-  device list shows such a program without "via pairing code", nothing else changes. Remove the two
-  `oauth_pairing_consent_*` fields from the configuration before you go back (an unknown field is a `TypeError`
-  there). Armed or open codes are harmless rows it never reads; `DELETE FROM magic_token WHERE purpose IN
-  ('oauth_consent_pairing', 'oauth_consent_armed')` removes them. No other SQL is needed.
 
 ## First sign-in through a one-time link: codes, hint, target (T-94)
 
@@ -1299,10 +1131,6 @@ the mailed link.
   given (`400 next_invalid`, start error for `welcome_url`) and again at the door against the configuration of the
   moment: a host removed from `trusted_redirect_hosts` meanwhile sends the person to `login_redirect`. Audit
   `signin_link_issue … next_host=<host>` (or `next=path` for a relative target), never the address.
-- **Rollback:** nothing to do in the database. An older version does not know the three fields — remove
-  `recovery_codes_enabled`, `totp_app_hint` and `welcome_url` from the configuration before you go back (an unknown
-  field is a `TypeError` there, an unknown `provisioning` member a start error). Links issued with a `next` keep
-  working; an older version reads the same payload key.
 
 ## Sign-in methods and their strength
 
@@ -1332,7 +1160,7 @@ chain — it is the next step (since 2026-09-27): In classic mode with `pin_logi
 otherwise checked the PIN for everyone who had only the password (wrong 401, right 303), and in
 `password → totp → pin` a PIN stood in the session before the TOTP whose order could afterwards never be
 fulfilled. Otherwise it is the guest path (or 404). Failed attempts there count in the
-series as `pin_chain` (up to 0.24.x `pin_folge`): A self-service reset does not clear them (like TOTP — only whoever has
+series as `pin_chain`: A self-service reset does not clear them (like TOTP — only whoever has
 the first factor produces them), the full sign-in, the password reset in the panel and `tinysesam unlock`
 do. Failed attempts of a PIN as first factor (without a session) are still cleared by the reset (R2-2). In a
 **non**-strict chain the PIN with `pin_login=True` remains at the same time a first factor, even if it comes
@@ -1346,7 +1174,7 @@ notice names only the operator (`tinysesam unlock`, password reset in the panel)
 by another way; the
 sign-in page shows everyone the same text ("Ask the operator for approval; if the failed attempts
 were for the password, a password reset also helps") — a separate text per kind would reveal that someone is guessing the
-second factor and the account therefore exists. The audit row `lockout_series` (up to 0.24.x `lockout_serie`) arises exactly at the
+second factor and the account therefore exists. The audit row `lockout_series` arises exactly at the
 transition of the settled state across the limit (since 2026-09-27; before also when a
 simultaneous full sign-in had already ended the series).
 

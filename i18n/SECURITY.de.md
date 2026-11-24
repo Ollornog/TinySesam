@@ -244,7 +244,7 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   und `change_password` (Stufe A, seit 0.22.0) drosseln, zählen, sperren und protokollieren genau
   wie die eingebauten Routen — die rufen sie. Die inneren Prüfer (`_check_password`,
-  `_verify_user_password`, `_verify_user_pin`, `_verify_totp` und ihre alten Namen der Stufe C) tun
+  `_verify_user_password`, `_verify_user_pin`, `_verify_totp`) tun
   nichts davon: Auf einer Seite darüber lassen sich Passwörter, PINs und Codes so schnell raten, wie
   der Server antwortet — ohne Zeile für fail2ban. Ein API-Key zählt bei diesen
   Bausteinen nie: Er bestätigt keinen Menschen und ändert kein Passwort (`POST /auth/password`

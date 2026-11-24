@@ -16,9 +16,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
-import re
-import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -37,7 +34,7 @@ from tinysesam.errors import ConfigError  # noqa: E402
 from tinysesam.ldap_ import LDAPClient, DirectoryNotReachable  # noqa: E402
 from tinysesam.oidc import OIDCClient  # noqa: E402
 from tinysesam.security import seclog  # noqa: E402
-from tinysesam.store import SCHEMA, Store, now  # noqa: E402
+from tinysesam.store import Store, now  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Binding via the name — grace period, existing-account binding, self-chosen names (G1, G2-N)")
@@ -740,102 +737,16 @@ r.check("SAML startup message names the mapping",
         any("SAML: 1 account(s)" in z and "mapping=" in z for z in log.lines("without a binding")),
         str(log.lines("without a binding")))
 
-# ══ Existing accounts: file at schema 11 without table and column, marker from the audit log ════════════
-# Built from SCHEMA without the two novelties (a `DROP COLUMN` fails on the comments in
-# the table definition) — like a state from before this commit, stamp 11.
-_old, _n1 = re.subn(r"(mail_audit_from\s+INTEGER),\n.*?name_self_chosen INTEGER NOT NULL DEFAULT 0\n",
-                    r"\1\n", SCHEMA, flags=re.S)
-_old, _n2 = re.subn(r"CREATE TABLE IF NOT EXISTS name_binding \(.*?\n\);\n", "", _old, flags=re.S)
-path = _db()
-os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-raw = sqlite3.connect(path)
-raw.executescript(_old)
-now_ = now()
-for name in ("sig", "ren", "alt", "op"):
-    raw.execute("INSERT INTO users(username, created_at) VALUES (?, ?)", (name, now_ - 10 * TAG))
-for event, name, prior in (("signup", "sig", 9), ("username_changed", "ren", 5), ("signup", "alt", 400),
-                         ("user_create", "op", 9), ("login", "op", 8)):
-    raw.execute("INSERT INTO audit(ts, event, username) VALUES (?,?,?)", (now_ - prior * TAG, event, name))
-raw.execute("PRAGMA user_version = 11")
-raw.commit()
-_before_sp = {z[1] for z in raw.execute("PRAGMA table_info(users)")}
-_before_tab = {z[0] for z in raw.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-raw.close()
-r.check("Precondition: file at stamp 11 without `name_binding` and without `users.name_self_chosen`",
-        _n1 == 1 and _n2 == 1 and "name_self_chosen" not in _before_sp
-        and "name_binding" not in _before_tab and "failure_series" in _before_tab, f"{_n1}/{_n2}")
-new = _ldap(path)
-tab = {z["name"] for z in new.store._all("SELECT name FROM sqlite_master WHERE type='table'")}
-fl = {z["username"]: z["name_self_chosen"] for z in new.store._all("SELECT * FROM users")}
-r.check("Schema 11 without the novelties: table and column are added, the stamp moves to the "
-        "current one (since 0.22.0: 12)",
-        "name_binding" in tab and len(fl) == 4
-        and int(new.store.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 11)
-r.check("Existing accounts: registered and self-renamed ones carry the marker, an older namesake and "
-        "an operator-created account do not",
-        fl == {"sig": 1, "ren": 1, "alt": 0, "op": 0}, str(fl))
-u = _sign_in(new, "sig", {"id": "u-sig"})
-r.check("… and the back-filled account does not bind via the name", u is None)
-new.store._exec("INSERT INTO audit(ts, event, username) VALUES (?,?,?)", (now(), "username_changed", "op"))
-new.close()
-again = _ldap(path)
-r.check("Second start: idempotent, the back-fill does not run again",
-        again.store._one("SELECT name_self_chosen AS f FROM users WHERE username='op'")["f"] == 0
-        and again.store.get_setting(Store.NAME_ITSELF_BACKFILLED) is not None)
-lo = again.create_user("loesch")
-again.federation_unbind("ldap", lo)
-again.delete_user(lo)
+# ══ Account deleted: its opened name binding goes with it ═══════════════════════════════════════════
+# (The back-fills of `name_self_chosen` and `name_source` for files at stamp 11 went with the schema baseline, T-111.)
+gone = _ldap(_db())
+lo = gone.create_user("loesch")
+gone.federation_unbind("ldap", lo)
+r.check("Precondition: the operator opened a name binding", gone.store._one("SELECT COUNT(*) AS n FROM name_binding")["n"] == 1)
+gone.delete_user(lo)
 r.check("Account deleted: its opened name binding goes with it",
-        again.store._one("SELECT COUNT(*) AS n FROM name_binding")["n"] == 0)
-
-# ══ Existing accounts: origin of the name back-filled (attack round 2026-09-26) ═══════════════════════
-# A file from the state before: stamp 11, `name_self_chosen` already back-filled, but without
-# `users.name_source`. Back-filling happens only where the origin is proven: OIDC (the callback creates
-# every linked account itself) and an LDAP/SAML binding from the same second as the creation.
-_old_q, _nq = re.subn(r"\n\s*-- From which federated source does the name originate.*?name_source\s+TEXT,", "",
-                      SCHEMA, flags=re.S)
-path = _db()
-os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-raw = sqlite3.connect(path)
-raw.executescript(_old_q)
-t0 = now() - 20 * TAG
-_bq = {}
-for name, itself, service in (("oi", 0, 0), ("ld", 0, 0), ("ph", 0, 0), ("nb", 0, 0), ("op", 0, 0),
-                             ("ren", 1, 0), ("svc", 0, 1)):
-    _bq[name] = raw.execute("INSERT INTO users(username, created_at, name_self_chosen, is_service) "
-                            "VALUES (?,?,?,?)", (name, t0, itself, service)).lastrowid
-for name in ("oi", "ren", "svc"):
-    raw.execute("INSERT INTO oidc_identity(issuer, subject, user_id) VALUES (?,?,?)",
-                (IDP, f"sub-{name}", _bq[name]))
-for source, identifier, name, offset in (("ldap", "u-ld", "ld", 0),
-                                       ("saml", f"{Store.WITHOUT_IDENTIFIER}{_bq['ph']}", "ph", 1),
-                                       ("ldap", "u-nb", "nb", 5 * TAG)):
-    raw.execute("INSERT INTO federated_identity(source, identifier, user_id, bound_at) VALUES (?,?,?,?)",
-                (source, identifier, _bq[name], t0 + offset))
-raw.execute("INSERT INTO setting(key, value) VALUES (?, ?)", (Store.NAME_ITSELF_BACKFILLED, str(t0)))
-raw.execute("PRAGMA user_version = 11")
-raw.commit()
-_sp_q = {z[1] for z in raw.execute("PRAGMA table_info(users)")}
-raw.close()
-r.check("Precondition: file at stamp 11 with `name_self_chosen`, without `users.name_source`",
-        _nq == 1 and "name_source" not in _sp_q and "name_self_chosen" in _sp_q, str(_nq))
-bq = _ldap(path)
-_hq = {z["username"]: z["name_source"] for z in bq.store._all("SELECT username, name_source FROM users")}
-r.check("Back-fill: OIDC account → oidc, binding from creation → its source (also the placeholder); "
-        "a later re-binding, the operator account, a self-chosen name and a service account not",
-        _hq == {"oi": "oidc", "ld": "ldap", "ph": "saml", "nb": None, "op": None, "ren": None, "svc": None},
-        str(_hq))
-u = _sign_in(bq, "oi", {"id": "u-oi"})
-r.check("… the back-filled OIDC account does not bind via the name over LDAP",
-        u is None and bq.store.get_federated_identifier("ldap", _bq["oi"]) is None)
-u = _sign_in(bq, "nb", {"id": "u-nb"})
-r.check("… a bound account keeps signing in (situation 1)", u is not None and u["id"] == _bq["nb"])
-bq.store._exec("UPDATE users SET name_source = NULL WHERE username = 'ld'")
-bq.close()
-bq2 = _ldap(path)
-r.check("Second start: the back-fill does not run again (marker set)",
-        bq2.store._one("SELECT name_source AS q FROM users WHERE username='ld'")["q"] is None
-        and bq2.store.get_setting(Store.NAME_SOURCE_BACKFILLED) is not None)
+        gone.store._one("SELECT COUNT(*) AS n FROM name_binding")["n"] == 0)
+gone.close()
 
 # ══ Configuration check ═════════════════════════════════════════════════════════════════════
 _, warn = _kp.check_config(TinySesamConfig(db_path=":memory:", ldap_enabled=True, ldap_url="ldaps://v.example.com",

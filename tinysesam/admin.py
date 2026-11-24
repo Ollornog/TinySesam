@@ -20,7 +20,6 @@ from fastapi.responses import HTMLResponse
 from .errors import ConfigError, RoleError, StateError
 from .router import _key_kind, _mail_base, hardened_route
 from . import _role_catalog, _role_levels, config_check, provisioning as _provisioning, security
-from ._vocabulary import audit_line_new
 from .store import name_invalid, norm_email, role_invalid, valid_email
 from . import dialog as _dialog
 from . import topbar as _topbar
@@ -952,11 +951,8 @@ def build_admin_router(auth) -> APIRouter:
     def audit(request: Request, limit: int = 100):
         guard(request)
         log(request, "audit_read", f"limit={limit}")    # B5-12, see sessions_read
-        # Always the English spelling: a row that an older version wrote after a rollback carries the
-        # old event names and keys (`_vocabulary.audit_line_new`).
-        lines = [audit_line_new(a) for a in auth.store.recent_audit(limit)]
         return [{"ts": a["ts"], "event": a["event"], "username": a["username"], "ip": a["ip"], "detail": a["detail"]}
-                for a in lines]
+                for a in auth.store.recent_audit(limit)]
 
     # ---------- built-in UI (optional) ----------
     if cfg.admin_ui_enabled:

@@ -23,7 +23,6 @@ import io
 import json
 import logging
 import os
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -91,23 +90,9 @@ def code(fn):
     return None
 
 
-# ---------- schema 25 ----------
+# ---------- rules ----------
 auth, app = build()
 path = auth.cfg.db_path
-raw = sqlite3.connect(path)
-raw.execute("DROP TABLE role_catalog")
-raw.execute("PRAGMA user_version = 24")
-raw.commit()
-raw.close()
-again = Store(path)
-assert Store.SCHEMA_VERSION >= 25 and int(again.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION
-assert again.catalog_roles() == []
-again.add_catalog_roles(["x"], None, 10)
-assert [r["name"] for r in Store(path).catalog_roles()] == ["x"]           # a second open changes nothing
-again.delete_catalog_roles_if_unused(["x"])
-ok("schema 25: a file of schema 24 gets the table and the stamp; reopening is idempotent")
-
-# ---------- rules ----------
 boss = auth.create_user("boss", password=PW, is_admin=True)
 assert auth.create_role("editor", actor=auth.store.get_user(boss)) == {"name": "editor"}
 # (Mutation: drop the casefold comparison in `_check_new` → "Editor" accepted → red.)

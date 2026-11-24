@@ -2,7 +2,7 @@
 id: T-111
 type: Task
 title: "Schema baseline and ballast removal: the current state is the starting line"
-status: offen
+status: erledigt
 milestone: M-5
 blocked_by: [B-16]
 tags: [cleanup, store, migrations, greenfield]
@@ -49,3 +49,19 @@ version first updates to the **last release with migrations** (named in the CHAN
   `tests/api_surface.json` changes only in tier C (the removed aliases).
 - Suite green; mutation proof for the refusal rules; CHANGELOG with the last release with migrations and the list of
   removed names; `docs/OPERATIONS.md` "Updating" says the two-step rule.
+
+## Done (2026-11-24)
+
+- `Store` creates schema 26 in one transaction (`SCHEMA`, `Store.INDEXES`, triggers, stamp); `_refuse_below_baseline`
+  refuses a TinySesam database below 26 before anything is written and names 0.30.0 (`Store.LAST_MIGRATING_RELEASE`).
+- Gone: the migration chain, `_vocabulary.py`, `_deprecated.py` with its 38 aliases and the warning filter of
+  `tests/run_all.py`, the derived key material (`gate.derive_key_name`, `oauth.derive_pepper`, `keys.DERIVED_V1`, the
+  `legacy` parameters), vault format `v1` (`encrypt_v1`, `reencrypt --to v1`), `Store.pepper_session_handles`.
+- Refused at start with the way out: secrets not in `v2` (re-encrypt with 0.30.0), a `derived-v1` gate key or pepper
+  (`tinysesam keys retire`, the command is in the message).
+- Kept on purpose (not tied to an old version): the trigger comparison, the bucket back-fill of foreign writers, the
+  owner catch-up for admins created by own code. Configuration fields whose docs mention an old default were left as
+  they are — they are options, not switches for old states.
+- `tests/test_schema_baseline.py` compares a fresh database with `tests/fixtures/schema_baseline.json` (generated from
+  v0.30.0; regenerated from the tag where the clone has it — the CI checkout is shallow, so there it compares with the
+  committed file).

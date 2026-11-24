@@ -21,11 +21,9 @@ with their own key. The associated data (AAD) binds the value to its place: `kid
 the row's identity (account, client, subject …, `Store._seal`). A value copied into another row or column, or one
 whose `kid` was swapped, no longer decrypts (`InvalidTag`).
 
-`v1:` + Base64url(nonce ‖ ciphertext ‖ tag) is the format up to 0.25.x — one key, no context. Only the migration
-reads it (with every key of the keyring): the start rewrites it as `v2:` (`Store.extract_secrets`), `tinysesam keys
-reencrypt` does the same offline, and `tinysesam keys reencrypt --to v1` writes it again for the way back to an older
-version. A TOTP secret without prefix is plain text from before 0.21 and is encrypted at startup. Every other read
-takes `v2:` only (attack round 2026-11-21, A-5); a start that cannot rewrite what is left stops with a message.
+Nothing else is read (attack round 2026-11-21, A-5): `v1:` (one key, no context, up to 0.25.x) and plain text (before
+0.21) were rewritten by the releases up to 0.30.0; since the schema baseline (T-111) a start that finds one stops and
+names the way out (`Store._check_v2_only`).
 """
 from __future__ import annotations
 
@@ -38,7 +36,6 @@ from typing import Callable, Optional
 from .errors import ConfigError
 from . import keys as _keys
 
-PREFIX = "v1:"
 PREFIX_V2 = "v2:"
 ENV_VAR = _keys.ENV[_keys.VAULT]
 log = logging.getLogger("tinysesam")
@@ -51,12 +48,6 @@ def _aesgcm():
         raise ConfigError("The package `cryptography` is missing — it has been required since 0.21.0 "
                           "(TOTP secrets are encrypted).") from e
     return AESGCM
-
-
-def load_key(db_path: str, key_file: str = "") -> tuple[bytes, str]:
-    """The ACTIVE vault key and its origin — the interface up to 0.25.x. `keys.load_vault` gives the keyring."""
-    ring = _keys.load_vault(db_path, key_file)
-    return ring.active.material, ring.origin
 
 
 def context(column: str, *parts) -> str:
@@ -73,7 +64,7 @@ def kid_of(value) -> Optional[str]:
 
 
 class LegacyValueError(ValueError):
-    """A stored secret is plain text or `v1:` where only `v2:` is read (A-5) — see `Vault.decrypt`."""
+    """A stored secret is not in the format `v2:` (plain text, `v1:`, or planted) — see `Vault.decrypt`."""
 
 
 class Vault:
@@ -105,12 +96,6 @@ class Vault:
         ciphertext = self._aeads[kid].encrypt(nonce, plaintext.encode("utf-8"), self._aad(kid, ctx))
         return f"{PREFIX_V2}{kid}:" + base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
 
-    def encrypt_v1(self, plaintext: str) -> str:
-        """The format up to 0.25.x, with the active key — only for `keys reencrypt --to v1` (the way back)."""
-        nonce = secrets.token_bytes(12)
-        ciphertext = self._aeads[self.active_kid].encrypt(nonce, plaintext.encode("utf-8"), PREFIX.encode("ascii"))
-        return PREFIX + base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
-
     def _key(self, kid: str):
         aead = self._aeads.get(kid)
         if aead is None and self._reload is not None:
@@ -125,16 +110,14 @@ class Vault:
                               f"the wrong {ENV_VAR}/secrets_key_file).")
         return aead
 
-    def decrypt(self, value: Optional[str], ctx: str, legacy: bool = False) -> Optional[str]:
+    def decrypt(self, value: Optional[str], ctx: str) -> Optional[str]:
         """`None` stays `None`; a `v2:` value comes back decrypted. A wrong key, a wrong context or an altered value
         raises `cryptography.exceptions.InvalidTag`.
 
-        Everything else — plain text from before 0.21 and `v1:` (no context) up to 0.25.x — raises
-        `LegacyValueError` unless `legacy=True`. Only the migration reads those (`Store.reencrypt`, called by the
-        start through `extract_secrets` and by `tinysesam keys reencrypt`). Up to the attack round of 2026-11-21 (A-5)
-        every read accepted them: whoever could write the database without the vault key planted a plain-text gate
-        seed in `key_material` and had it published as a gate key, or a `v1:`/plain TOTP secret that the binding to
-        its row (AAD) never saw."""
+        Everything else raises `LegacyValueError`. Up to the attack round of 2026-11-21 (A-5) every read accepted plain
+        text and `v1:`: whoever could write the database without the vault key planted a plain-text gate seed in
+        `key_material` and had it published as a gate key, or a `v1:`/plain TOTP secret that the binding to its row
+        (AAD) never saw."""
         if value is None:
             return None
         v = str(value)
@@ -144,28 +127,8 @@ class Vault:
                 raise ValueError("malformed v2 value")
             raw = base64.urlsafe_b64decode(v[4 + _keys.KID_LEN:].encode("ascii"))
             return self._key(kid).decrypt(raw[:12], raw[12:], self._aad(kid, ctx)).decode("utf-8")
-        if not legacy:
-            raise LegacyValueError("a stored secret is not in the current format (v2) — `tinysesam keys reencrypt` "
-                                   "rewrites values of older versions; a value that never was one was planted")
-        if not v.startswith(PREFIX):
-            return value
-        plain = self._decrypt_v1(v)
-        # An older version (≤ 0.25.x) started on this database takes a `v2:` value for plain text and encrypts it
-        # as `v1:` (its `extract_secrets`). Undo that wrapping instead of handing out the inner ciphertext as the
-        # secret — the context still has to match the inner value.
-        if plain.startswith(PREFIX_V2) and kid_of(plain) is not None:
-            return self.decrypt(plain, ctx)
-        return plain
-
-    def _decrypt_v1(self, value: str) -> str:
-        from cryptography.exceptions import InvalidTag
-        raw = base64.urlsafe_b64decode(value[len(PREFIX):].encode("ascii"))
-        for aead in self._aeads.values():
-            try:
-                return aead.decrypt(raw[:12], raw[12:], PREFIX.encode("ascii")).decode("utf-8")
-            except InvalidTag:
-                continue
-        raise InvalidTag()
+        raise LegacyValueError("a stored secret is not in the current format (v2) — a value of a version before "
+                               "0.26 (TinySesam 0.30.0 re-encrypts it), or one that was planted")
 
     def needs_rewrite(self, value: Optional[str]) -> bool:
         """Is this stored value not (yet) in the current format with the active key?"""
@@ -173,4 +136,4 @@ class Vault:
 
     @staticmethod
     def is_encrypted(value: Optional[str]) -> bool:
-        return bool(value) and (str(value).startswith(PREFIX) or str(value).startswith(PREFIX_V2))
+        return bool(value) and str(value).startswith(PREFIX_V2)

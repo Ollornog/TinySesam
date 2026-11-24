@@ -318,9 +318,7 @@ def _audit(argv) -> int:
     # timestamp, event and IP of choice — exactly in the view one relies on in
     # the case at hand. A control character (ESC) could moreover reconfigure the terminal itself.
     from .security import line_fixed as _z
-    from ._vocabulary import audit_line_new
     for z in reversed(lines):
-        z = audit_line_new(z)       # always the English spelling (rows written by an older version too)
         when = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
         print(f"{when}  {_z(z['event']):22} {_z(z['username'] or '-'):16} "
               f"{_z(z['ip'] or '-'):18} {_z(z['detail'] or '')}")
@@ -622,9 +620,6 @@ def _keys(argv) -> int:
                            help="gate/oauth-pepper/approval only: retire before the overlap has passed (tokens signed "
                                 "or digested with it stop working — gate: one fallback request, OAuth: reconnect, "
                                 "approval: a confirmation not yet checked fails)")
-        if name == "reencrypt":
-            p.add_argument("--to", choices=("v2", "v1"), default="v2",
-                           help="v1 = the format up to 0.25.x, only for going back to an older version")
     a = ap.parse_args(argv)
     import time
     from . import keys as K, vault as V
@@ -649,8 +644,10 @@ def _keys(argv) -> int:
                     extra = ("  published" if now - k.since <= K.OVERLAP_SEC[purpose] else "  no longer published")
                 note = f"  note: {k.note}" if k.note else ""
                 print(f"{purpose:<13} {k.kid}  {state}  [{ring.origin}]{extra}{note}")
-        if counts.get("v1"):
-            print(f"vault         {counts['v1']} value(s) in the format up to 0.25.x — `tinysesam keys reencrypt`")
+        old = store.old_format_count()
+        if old:
+            print(f"vault         {old} value(s) in a format before 0.26 — not read by this version; re-encrypt "
+                  f"them with TinySesam {store.LAST_MIGRATING_RELEASE} (`tinysesam keys reencrypt`)")
         return 0
 
     if a.action == "reencrypt":
@@ -658,23 +655,17 @@ def _keys(argv) -> int:
             if done == total or done % 100 == 0:
                 print(f"  {column}: {done}/{total}", flush=True)
         try:
-            if a.to == "v2":
-                store.extract_secrets()
-            result = store.reencrypt(to_v1=a.to == "v1", progress=show)
+            store.extract_secrets()
+            result = store.reencrypt(progress=show)
         except V.ConfigError as e:
             print(str(e), file=sys.stderr)
             return 1
-        print(f"Re-encrypted {sum(result.values())} value(s) with key {store.vault.active_kid}"
-              f"{' in the format v1' if a.to == 'v1' else ''}.")
+        print(f"Re-encrypted {sum(result.values())} value(s) with key {store.vault.active_kid}.")
         left = {k: n for k, n in store.ciphertext_counts().items() if k != store.vault.active_kid}
-        if a.to == "v2" and left:
+        if left:
             print(f"Still with other keys (written meanwhile by a service that was not restarted?): {left} — "
                   f"restart TinySesam and run this again.", file=sys.stderr)
             return 1
-        if a.to == "v1":
-            print("Way back: start the older version ONLY with this one key (a keyring with several lines is "
-                  "refused by it). Gate tokens: the older version derives its key from the vault key again — "
-                  "the proxy needs `tinysesam gate-key` of that version. docs/OPERATIONS.md \"Keys\".")
         return 0
 
     purpose = a.purpose
@@ -743,9 +734,9 @@ def _keys(argv) -> int:
         if purpose == K.VAULT:
             if counts.get(k.kid):
                 refusals.append(f"{k.kid}: {counts[k.kid]} stored value(s) still need it — `tinysesam keys reencrypt`")
-            elif counts.get("v1"):
-                refusals.append(f"{k.kid}: {counts['v1']} value(s) in the format up to 0.25.x may need it — "
-                                f"`tinysesam keys reencrypt`")
+            if store.old_format_count():
+                refusals.append(f"{k.kid}: {store.old_format_count()} value(s) in a format before 0.26 may need it — "
+                                f"re-encrypt them with TinySesam {store.LAST_MIGRATING_RELEASE} first")
         elif a.force:
             continue
         elif k.since is None:
@@ -814,62 +805,69 @@ def _gate_key(argv) -> int:
 
 
 def main(argv=None):
+    """The command line. A database the commands cannot open (below the schema baseline, T-111) ends with its message
+    and exit code 1 instead of a traceback."""
+    from .errors import ConfigError
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "version"
-    if cmd == "version":
-        print(current_version())
-    elif cmd == "passwd":
-        sys.exit(_passwd(argv[1:]))
-    elif cmd == "backup":
-        sys.exit(_backup(argv[1:]))
-    elif cmd == "restore":
-        sys.exit(_restore(argv[1:]))
-    elif cmd == "gc":
-        sys.exit(_gc(argv[1:]))
-    elif cmd == "audit":
-        sys.exit(_audit(argv[1:]))
-    elif cmd == "unlock":
-        sys.exit(_unlock(argv[1:]))
-    elif cmd == "owner":
-        sys.exit(_owner(argv[1:]))
-    elif cmd == "rename":
-        sys.exit(_rename(argv[1:]))
-    elif cmd == "delete":
-        sys.exit(_delete(argv[1:]))
-    elif cmd == "gate-key":
-        sys.exit(_gate_key(argv[1:]))
-    elif cmd == "keys":
-        sys.exit(_keys(argv[1:]))
-    elif cmd == "accounts":
-        from ._accounts import run as _accounts_run
-        sys.exit(_accounts_run(argv[1:], prog="tinysesam accounts"))
-    elif cmd == "roles":
-        from ._role_catalog import run as _roles_run
-        sys.exit(_roles_run(argv[1:], prog="tinysesam roles"))
-    elif cmd == "diagnose":
-        from ._diagnose import run
-        sys.exit(run(argv[1:], mode="library", prog="tinysesam diagnose"))
-    else:
-        # `--help` is a question, not an error: it belongs on stdout and ends with 0. A
-        # typo, on the other hand, goes to stderr and ends with 2, otherwise no script notices the difference.
-        help_text = cmd in ("--help", "-h", "help")
-        print("usage: python -m tinysesam version\n"
-              "       python -m tinysesam passwd --db <file> <user>\n"
-              "       python -m tinysesam backup --db <file> <target>\n"
-              "       python -m tinysesam restore --db <file> <backup>\n"
-              "       python -m tinysesam gc     --db <file>\n"
-              "       python -m tinysesam audit  --db <file> [--user X]\n"
-              "       python -m tinysesam unlock --db <file> <user>\n"
-              "       python -m tinysesam owner  --db <file> <user>\n"
-              "       python -m tinysesam rename --db <file> <user> <new-name>\n"
-              "       python -m tinysesam delete --db <file> <user> [--yes]\n"
-              "       python -m tinysesam gate-key --db <file> [--jwks]\n"
-              "       python -m tinysesam keys list|rotate|reencrypt|retire --db <file> [--purpose P]\n"
-              "       python -m tinysesam accounts list|adopt|release|restore --db <file> [--app X]\n"
-              "       python -m tinysesam roles  list|create|delete --db <file> [--config mod:attr] [<role>]\n"
-              "       python -m tinysesam diagnose [--config module:attr] [--db <file>] [--log <file>]",
-              file=sys.stdout if help_text else sys.stderr)
-        sys.exit(0 if help_text else 2)
+    try:
+        if cmd == "version":
+            print(current_version())
+        elif cmd == "passwd":
+            sys.exit(_passwd(argv[1:]))
+        elif cmd == "backup":
+            sys.exit(_backup(argv[1:]))
+        elif cmd == "restore":
+            sys.exit(_restore(argv[1:]))
+        elif cmd == "gc":
+            sys.exit(_gc(argv[1:]))
+        elif cmd == "audit":
+            sys.exit(_audit(argv[1:]))
+        elif cmd == "unlock":
+            sys.exit(_unlock(argv[1:]))
+        elif cmd == "owner":
+            sys.exit(_owner(argv[1:]))
+        elif cmd == "rename":
+            sys.exit(_rename(argv[1:]))
+        elif cmd == "delete":
+            sys.exit(_delete(argv[1:]))
+        elif cmd == "gate-key":
+            sys.exit(_gate_key(argv[1:]))
+        elif cmd == "keys":
+            sys.exit(_keys(argv[1:]))
+        elif cmd == "accounts":
+            from ._accounts import run as _accounts_run
+            sys.exit(_accounts_run(argv[1:], prog="tinysesam accounts"))
+        elif cmd == "roles":
+            from ._role_catalog import run as _roles_run
+            sys.exit(_roles_run(argv[1:], prog="tinysesam roles"))
+        elif cmd == "diagnose":
+            from ._diagnose import run
+            sys.exit(run(argv[1:], mode="library", prog="tinysesam diagnose"))
+        else:
+            # `--help` is a question, not an error: it belongs on stdout and ends with 0. A
+            # typo, on the other hand, goes to stderr and ends with 2, otherwise no script notices the difference.
+            help_text = cmd in ("--help", "-h", "help")
+            print("usage: python -m tinysesam version\n"
+                  "       python -m tinysesam passwd --db <file> <user>\n"
+                  "       python -m tinysesam backup --db <file> <target>\n"
+                  "       python -m tinysesam restore --db <file> <backup>\n"
+                  "       python -m tinysesam gc     --db <file>\n"
+                  "       python -m tinysesam audit  --db <file> [--user X]\n"
+                  "       python -m tinysesam unlock --db <file> <user>\n"
+                  "       python -m tinysesam owner  --db <file> <user>\n"
+                  "       python -m tinysesam rename --db <file> <user> <new-name>\n"
+                  "       python -m tinysesam delete --db <file> <user> [--yes]\n"
+                  "       python -m tinysesam gate-key --db <file> [--jwks]\n"
+                  "       python -m tinysesam keys list|rotate|reencrypt|retire --db <file> [--purpose P]\n"
+                  "       python -m tinysesam accounts list|adopt|release|restore --db <file> [--app X]\n"
+                  "       python -m tinysesam roles  list|create|delete --db <file> [--config mod:attr] [<role>]\n"
+                  "       python -m tinysesam diagnose [--config module:attr] [--db <file>] [--log <file>]",
+                  file=sys.stdout if help_text else sys.stderr)
+            sys.exit(0 if help_text else 2)
+    except ConfigError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

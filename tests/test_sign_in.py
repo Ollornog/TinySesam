@@ -39,7 +39,6 @@ import sys
 import tempfile
 import warnings
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -770,12 +769,10 @@ for _file, _head in (("README.md", "## Your own login page\n"), ("i18n/README.de
             f"{_sequence} {_locked.status_code} {_free.status_code} {_without_csrf.status_code}")
 
 
-# ── (j) Test fakes: ineffective on the old name, therefore loud ───────────────────────────────
-# Finding of the counter-check 2026-09-27: `auth.check_password = fake` was called 0 times, the login
-# gave 303 — and nobody warned. The routes call `_check_password` (via `login_password`).
-# Since then the assignment warns (RuntimeWarning, `Deprecated.__set__`) and names the target; a fake
-# on the new name works as one on the old name used to.
-# (Mutation probe: delete `__set__`/`__delete__` in `tinysesam/_deprecated.py` → no warning → red.)
+# ── (j) Test fakes: on the implementation name ───────────────────────────────────────────────
+# The routes call `_check_password` (via `login_password`); a fake belongs there. The old tier-C names
+# (`check_password`, `rate_ok`, …) warned on assignment until the schema baseline (T-111) removed them: they no
+# longer exist on the class, so a fake on one is a plain attribute nobody reads.
 auth, app = _app()
 auth.create_user("fritz", password=PW)
 _calls = []
@@ -786,31 +783,8 @@ def _fake(*a, **k):
     return None
 
 
-with warnings.catch_warnings(record=True) as _w_old:
-    warnings.simplefilter("always")
-    auth.check_password = _fake
-_s_old = [_post(_client(app), path, username="fritz", password=PW).status_code
-          for path in ("/auth/login", "/own/login")]
-r.check("(j) fake on the old name (`auth.check_password = fake`): exactly one RuntimeWarning, "
-        "it names `_check_password` and points to the assignment; the fake is never called (303, 303)",
-        [w.category for w in _w_old] == [RuntimeWarning] and "`_check_password`" in str(_w_old[0].message)
-        and Path(_w_old[0].filename).resolve() == Path(__file__).resolve()
-        and _s_old == [303, 303] and not _calls,
-        f"{[(w.category.__name__, str(w.message)[:80]) for w in _w_old]} {_s_old} {_calls}")
-del auth.check_password
-
-with warnings.catch_warnings(record=True) as _w_mock:
-    warnings.simplefilter("always")
-    with mock.patch.object(auth, "rate_ok", return_value=False) as _m:
-        _s_mock = _post(_client(app, ("203.0.113.10", 1)), "/auth/login", username="fritz",
-                        password=PW).status_code
-_afterwards = "rate_ok" in vars(auth)
-r.check("(j) `mock.patch.object(auth, \"rate_ok\", …)`: warns (RuntimeWarning with `_rate_ok`), "
-        "does not throttle (303, 0 calls) and cleans up on exit",
-        [w.category for w in _w_mock] == [RuntimeWarning] and "`_rate_ok`" in str(_w_mock[0].message)
-        and _s_mock == 303 and _m.call_count == 0 and not _afterwards,
-        f"{[w.category.__name__ for w in _w_mock]} {_s_mock} {_m.call_count} {_afterwards}")
-
+r.check("(j) the old tier-C names are gone from the class (`check_password`, `rate_ok`, `complete_mfa`)",
+        not any(hasattr(TinySesam, n) for n in ("check_password", "rate_ok", "complete_mfa", "verify_totp")))
 with warnings.catch_warnings(record=True) as _w_new:
     warnings.simplefilter("always")
     auth._check_password = _fake

@@ -22,7 +22,6 @@ import io
 import logging
 import os
 import re
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -723,7 +722,7 @@ finally:
 r.check("p2 V1: if the deadline is not enough, the directory counts as unreachable before it is asked "
         "(no failed attempt)", _tight_j[0] == "unreachable" and _tight_j[2] == [], str(_tight_j))
 
-# ── Without LDAP nothing is pending, and the column also lands in a file that already carries schema 11 ─
+# ── Without LDAP nothing is pending ──────────────────────────────────────────────────────────────────────
 db_o = str(Path(tempfile.mkdtemp()) / "t.db")
 auth_o = TinySesam(TinySesamConfig(db_path=db_o, cookie_secure=False, csrf_enabled=False,
                                    passkey_enabled=False, oidc_enabled=False, lang="de"))
@@ -733,16 +732,6 @@ app_o.include_router(auth_o.router())
 _sign_in(app_o, "bert", "wrong")
 r.check("without LDAP: the failed attempt is confirmed immediately (open=0)",
         [z["pending"] for z in auth_o.store._all("SELECT pending FROM login_attempt")] == [0])
-auth_o.close()
-raw = sqlite3.connect(db_o)
-raw.execute("ALTER TABLE login_attempt DROP COLUMN pending")
-stamp = raw.execute("PRAGMA user_version").fetchone()[0]
-raw.close()
-auth_o = TinySesam(TinySesamConfig(db_path=db_o, cookie_secure=False, passkey_enabled=False, oidc_enabled=False))
-columns = {z["name"] for z in auth_o.store._all("PRAGMA table_info(login_attempt)")}
-r.check("a file from schema 11 without the column gets it at start (idempotent)",
-        stamp == Store.SCHEMA_VERSION >= 11 and "pending" in columns
-        and auth_o.store.count_fails(0, username="bert", only_confirmed=True) == 1, f"{stamp} {columns}")
 auth_o.close()
 os.remove(db_o)
 

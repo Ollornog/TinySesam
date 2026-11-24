@@ -36,7 +36,7 @@ EN = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
 DE = (ROOT / "i18n" / "SECURITY.de.md").read_text(encoding="utf-8")
 
 # ---------- (a) the vault as built ----------
-assert vault.PREFIX == "v1:" and vault.ENV_VAR == "TINYSESAM_SECRETS_KEY"
+assert vault.PREFIX_V2 == "v2:" and vault.ENV_VAR == "TINYSESAM_SECRETS_KEY"
 vault_src = (ROOT / "tinysesam" / "vault.py").read_text(encoding="utf-8")
 assert "AES-256-GCM" in vault_src and "AESGCM" in vault_src
 for name, text in (("SECURITY.md", EN), ("SECURITY.de.md", DE)):

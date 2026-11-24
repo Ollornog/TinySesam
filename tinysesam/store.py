@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64, contextlib, hashlib, hmac, json, logging, os, re, secrets, sqlite3, stat, threading, time, unicodedata
 from typing import Any, Optional
 
-from . import _vocabulary
 from .keys import KID_LEN as _KID_LEN
 
 SCHEMA = """
@@ -56,7 +55,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- (R4-03), and `gc()` grew with open accounts × all accounts. Set by `create_user` and
     -- `set_email`. NULL means "not computed yet" — a row from another writer
     -- (older version after a downgrade, raw SQL, a rename by hand, see the
-    -- triggers in `_migrate`) — and is filled in later (`_backfill_pots`). '' = no address.
+    -- triggers in `_trigger_sql`) — and is filled in later (`_backfill_pots`). '' = no address.
     -- Through the buckets the database also enforces the shared identifier space (`_trigger_sql`).
     folded_name     TEXT,
     folded_mail     TEXT,
@@ -113,8 +112,7 @@ CREATE TABLE IF NOT EXISTS api_key (
     --   'human'               : only valid TOGETHER with a valid session of the same account.
     --                           In return it carries the full rights — the way for a tool that
     --                           a person operates themselves (CLI on their own machine).
-    -- Up to 0.21.x the values were called 'automat' and 'mensch' (schema 12, `_values_english`); they are
-    -- still read (`KEY_KINDS_OLD`). Up to 0.18.x there was no such distinction: every key
+    -- Up to 0.18.x there was no such distinction: every key
     -- of an admin was a complete admin write API, without a second factor and without a
     -- CSRF layer — a leaked CI key was the instance.
     kind       TEXT NOT NULL DEFAULT 'automation',
@@ -416,7 +414,7 @@ CREATE TABLE IF NOT EXISTS key_material (
     material   TEXT NOT NULL,                -- vault ciphertext
     created_at INTEGER NOT NULL,
     since      INTEGER,                      -- NULL = active; otherwise no longer active since
-    note       TEXT,                         -- derived-v1 = taken over from the single base key (≤ 0.25.x)
+    note       TEXT,                         -- free text; `derived-v1` (≤ 0.25.x) is refused at start
     PRIMARY KEY (purpose, kid)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_key_material_active ON key_material(purpose) WHERE since IS NULL;
@@ -534,18 +532,15 @@ def _email_unicode(email: str) -> str:
 
 
 def key_kind_of(row) -> str:
-    """The kind of a key row with the English name (schema 12): `automation` or `human`.
+    """The kind of a key row: `automation` or `human`.
 
-    A value up to 0.21.x (`automaton`, `human`) is mapped (`Store.KEY_KINDS_OLD`) — an older
-    version that ran on the file after a rollback writes it again. Empty or without the
-    column (file before schema 7) means `automation`. Anything else stays as it is and, because
-    it is not `human`, counts as an automation key (fail-closed, R6-6). Here and not on the manager, so that
-    router and admin panel can read it without importing the manager (no import cycle)."""
+    Empty or without the column means `automation`. Anything else stays as it is and, because it is not `human`,
+    counts as an automation key (fail-closed, R6-6). Here and not on the manager, so that router and admin panel can
+    read it without importing the manager (no import cycle)."""
     try:
-        value = str(row["kind"] or "automation")
+        return str(row["kind"] or "automation")
     except (IndexError, KeyError, TypeError):
         return "automation"
-    return Store.KEY_KINDS_OLD.get(value, value)
 
 def norm_email(email) -> Optional[str]:
     """Store an email canonically: NFKC, trimmed, lowercase, domain as A-label. `None` stays `None`.
@@ -837,32 +832,22 @@ def _now() -> int:
 
 
 def replacement_name(user_id) -> str:
-    """Who represents a deleted account in the audit log (H-13): `deleted#<id>` (up to 0.24.x `gelöscht#<id>`).
+    """Who represents a deleted account in the audit log (H-13): `deleted#<id>`.
 
     One place for the format — every deletion path writes its closing line under it, even
     one that no longer finds the account (otherwise the clear name would appear there again)."""
-    return f"{_vocabulary.REPLACEMENT_PREFIX}{int(user_id)}"
+    return f"{REPLACEMENT_PREFIX}{int(user_id)}"
 
 
-#: Keys in the payload of an address-change link up to 0.21.x and their English replacement (schema 12).
-_PAYLOAD_KEY_NAME_OLD = {"email_change": {"alt": "old"}}
+#: The name prefix of a deleted account in the audit log (`replacement_name`).
+REPLACEMENT_PREFIX = "deleted#"
 
 
-def read_payload(purpose, text) -> Optional[dict]:
-    """The payload of a one-time token as a dict — with English keys (schema 12).
-
-    An address-change link carried `{"alt": <previous address>}` up to 0.21.x, and
-    `{"old": …}` since 0.22.0. An old key is mapped, even if the migration has not
-    reached it — an older version that issued a link after a rollback writes
-    it that way again. A key that is already English wins. `None` without a payload."""
+def read_payload(text) -> Optional[dict]:
+    """The payload of a one-time token as a dict — `None` without a payload."""
     if not text:
         return None
-    data = json.loads(text)
-    for old, new in _PAYLOAD_KEY_NAME_OLD.get(purpose, {}).items():
-        if isinstance(data, dict) and old in data:
-            value = data.pop(old)
-            data.setdefault(new, value)
-    return data
+    return json.loads(text)
 
 
 class Store:
@@ -891,6 +876,9 @@ class Store:
         # as a 500 (B6-11). The PRAGMA repeats the value so that it can be read off
         # the connection itself, no matter how it was opened.
         self.db.execute(f"PRAGMA busy_timeout={int(self.BUSY_TIMEOUT_MS)}")
+        # Before anything writes (the journal mode is written into the file): a database below the baseline is refused
+        # untouched, so that the release with the migrations still finds it as it was.
+        self._refuse_below_baseline(db_path)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         # Deleted data is overwritten, not just freed: a replaced plaintext secret
@@ -903,11 +891,7 @@ class Store:
         self._lock = threading.Lock()
         self._clock_secured: Optional[float] = None   # monotonic time of the last saved clock state
         self._written: Optional[float] = None     # monotonic time of the last successful commit
-        with self._lock:
-            self._english_names()
-            self.db.executescript(SCHEMA)
-            self.db.commit()
-        self._migrate()
+        self._open_schema()
         self._check_file_permissions(db_path, new)
         _CLOCK.at_least(self._youngest_timestamp())
 
@@ -971,536 +955,104 @@ class Store:
                 "The database %s is readable by other accounts (%o). It contains password hashes "
                 "and TOTP secrets. Tighten it: chmod 600 %s", db_path, mode, db_path)
 
-    #: State of the schema. Raised by one with every change to SCHEMA/_migrate().
+    #: State of the schema (`PRAGMA user_version`). Raised by one with every change to SCHEMA after the baseline,
+    #: together with ONE migration step from the state before (`_open_schema`) and a test that opens a baseline
+    #: database (AGENTS.md, pitfalls).
     #:
-    #: 1 — up to 0.17.x (no stamp; added on first opening)
-    #: 2 — 0.18.0: `session.token` → `session.token_hash` (sha256 instead of plaintext)
-    #: 3 — 0.18.0: `totp_cred.last_step` (a TOTP code is valid exactly once)
-    #: 4 — 0.18.0: `resource_unlock.token` carries the sha256 instead of the plaintext
-    #: 5 — `users.email_verified`: the proof for the address, separate from the address itself
-    #: 6 — `oidc_grant`: approval per application (T-14)
-    #: 7 — `api_key.kind`: automation and human keys (R6-5)
-    #: 8 — `users.first_login_at`, `users.mfa_enroll_until` (R3-1) — state of 0.19.0
-    #: 9 — `federated_identity`: stable directory identifiers for LDAP/SAML (F-11)
-    #: 10 — `users.folded_name`/`folded_mail` with index and triggers, indexes for the search by name
-    #:      and address (NOCASE); existing data: lockouts from the panel to the operator mark
-    #:      (`disabled=2`), addresses of open sign-ups without proof (`_migrate`)
-    #: 11 — `failure_series`: consecutive failed attempts per identifier (B2-6); `users.is_admin=2` means
-    #:      "granted by the identity provider" (H-5) — the column itself stays as it is;
-    #:      `users.is_owner` (owner); `session.last_seen` (inactivity timeout, F-05);
-    #:      `session.end_others` (limit d); `oidc_session` (refresh token, 4a);
-    #:      `users.idp_confirmed_at` (API keys follow the IdP, finding 8); triggers
-    #:      `trg_users_identifier_insert`/`_update`: name and address are ONE identifier space, enforced
-    #:      by the database (G12c; created on every start, not at the stamp);
-    #:      `users.name_attempt_from`/`mail_attempt_from`/`name_audit_from`/`mail_audit_from`: from when an
-    #:      identifier belongs to the account (G2, NULL in existing data), plus the recompute triggers that raise them on
-    #:      a foreign writer; `federated_identity.directory_name_folded`: the name in the directory
-    #:      (G5); `login_attempt.pending`: a pre-booking whose outcome is still open (G9). All
-    #:      of it additive and idempotent on every start — state of 0.21.0.
-    #: 12 — 0.22.0: stored values of the public interface in English (PO decision
-    #:      2026-09-27): `api_key.kind` `automaton`/`human` → `automation`/`human` (on EVERY start —
-    #:      for keys that an older version issued after a rollback), in the payload of
-    #:      open address-change links `old` → `old` (on the jump to 12; `_values_english`).
-    #:      An old value is still read correctly (`KEY_KINDS_OLD`, `read_payload`). No
-    #:      column changes. The stamp rises because an older version reads the new values DIFFERENTLY:
-    #:      0.21.x takes a `human` key for an automation key (valid without a session). It
-    #:      still opens the file, but reports the newer schema version at start — way back
-    #:      with SQL in docs/OPERATIONS.md.
-    #: 13 — `gate_signed_out` (signed out of one application only, T-22) and `oidc_id_token` (the
-    #:      ID token as a sign-out hint for the provider, encrypted). Additive; an older version
-    #:      leaves both tables in place, but does not rotate them along when rotating a session — the
-    #:      rows then drop away with the old session (sign-out "here only" forgotten, provider
-    #:      logout without hint), nothing more.
-    #: 14 — `gate_link`: connection of an app host to the central session (code exchange, T-26).
-    #:      Additive; an older version leaves the table in place and does not rotate it along —
-    #:      the app host then loses its connection and fetches a new one via the code exchange.
-    #: 15 — the stored and logged key vocabulary in English (PO decision 2026-10-29,
-    #:      `Store._vocabulary_english`, `tinysesam/_vocabulary.py`): `audit.event` (`oidc_widerruf` →
-    #:      `oidc_revoked`, `ldap_kennung_gebunden` → `ldap_identifier_bound` …), the keys and tokens in
-    #:      `audit.detail` (`grund=kein_konto` → `reason=no_account` …), the replacement name in
-    #:      `audit.username` (`gelöscht#<id>` → `deleted#<id>`), `failure_series.kind`/`login_attempt.method`
-    #:      (`pin_folge` → `pin_chain`), and the message of the identifier triggers
-    #:      (`tinysesam: kennung vergeben` → `tinysesam: identifier taken`; replaced by `_set_trigger` on every start). No
-    #:      column changes. The stamp rises because an older version does not know the new values: it
-    #:      still opens the file and reports the newer schema version at start, shows the new event names
-    #:      as unknown (display only) — and does not recognise an address-change conflict
-    #:      (`on_confirmation=1`, `own_events`) or the counted lockout notice (`lockout_notice`) in a new row.
-    #:      Way back with SQL in docs/OPERATIONS.md. Read paths take the old and the new spelling.
-    #: 16 — the database names in English (PO decision 2026-10-29, T-29 follow-up; `Store._english_names`):
-    #:      tables `namensbindung` → `name_binding`, `oidc_sitzung` → `oidc_session`, `gate_abgemeldet` →
-    #:      `gate_signed_out`, `fehlserie` → `failure_series`; the columns of `users`, `federated_identity`,
-    #:      `name_binding`, `session`, `oidc_session`, `login_attempt` and `failure_series` (see `RENAMED_COLUMNS`),
-    #:      the indexes and triggers built on them, six keys in `setting` and the placeholder prefix
-    #:      `~ohne-kennung:` of `federated_identity.identifier`. No data changes beyond that. Runs
-    #:      BEFORE the schema script (the new names must not appear as empty tables next to the old ones) and
-    #:      only if an old name is present; on every other start it reads `sqlite_master` and is done. An older
-    #:      version opens the file with the "newer schema version" warning and then does not find its tables —
-    #:      way back with SQL in docs/OPERATIONS.md.
-    #: 17 — the OAuth 2.1 authorization server (T-36, ADR-11): tables `oauth_client`, `oauth_request`,
-    #:      `oauth_code`, `oauth_grant`, `oauth_token`. Additive; an older version leaves them in place and
-    #:      simply does not know the routes — connected devices stop working until the update is back.
-    #: 18 — `users.password_must_change` (T-46): a password set by an administrator is a start secret.
-    #:      Additive; an older version ignores the column — the admin's password then simply stays
-    #:      valid as before (the marker is enforced again after the update is back).
-    #: 19 — `key_material` (T-48, ADR-12): the gate key and the OAuth pepper as random keys of their own, encrypted
-    #:      with the vault; and the vault format `v2:<kid>:` with associated data (T-54) — the start rewrites every
-    #:      `v1:` value. The table is additive; the VALUES are not: an older version takes a `v2:` value for plain
-    #:      text. The way back is `tinysesam keys reencrypt --to v1` first (docs/OPERATIONS.md).
-    #: 20 — `app_password` (T-66): app passwords for Basic auth at the gate. Additive; an older version leaves the
-    #:      table in place and does not know Basic auth — the devices that use one are refused until the update is
-    #:      back.
-    #: 21 — `oauth_service_client`, `oauth_client_key`, `oauth_assertion` (T-60, ADR-13): services with
-    #:      `client_credentials` and `private_key_jwt`. Additive; an older version leaves the tables in place and does
-    #:      not know the grant type — the services are refused until the update is back. Their `oauth_client` rows
-    #:      have no redirect URI, so an older version cannot start an authorization with them either. Its cleanup
-    #:      (`gc_oauth`) does remove a service without a live token after a day — then it is paired again.
-    #: 22 — `approval` (approvals, stage A): requests to confirm one sensitive action with a step-up. Additive; an
-    #:      older version leaves the table in place and has no approval routes — open requests simply expire.
-    #: 23 — the account API for applications (`apps`, stage A): `users.managed_by` (with an index),
-    #:      `users.last_login_at`, `users.delete_after`, and the value `users.disabled = 3` (locked by the application).
-    #:      The columns are additive; an older version ignores them (accounts created by an application stay, only
-    #:      without their owner mark while it runs, and `last_login_at` is not kept up meanwhile). The value 3 is
-    #:      fail-closed there too: every version reads `disabled <> 0` as locked, and an older one never lifts it by a
-    #:      confirmation link (which lifts only 1) — the operator's unlock lifts it as it lifts every lock.
-    #: 24 — `approval.nonce` (approvals, stage B): the `state` an application sends with the browser entry; it goes back
-    #:      in the return address and into the confirmation as `nonce`. Additive; an older version ignores the column
-    #:      (and has no application actions: their requests get 400 there, open ones expire).
-    #: 25 — `role_catalog` (the role catalog): roles an administrator added, offered by the panel next to
-    #:      `available_roles`. Additive; an older version ignores the table — the roles stay on the accounts and its
-    #:      panel shows them as roles outside the configuration, nothing is lost or granted.
-    #: 26 — `oauth_code.consent_via`, `oauth_grant.consent_via` (ADR-14): how a connected program was allowed — NULL
-    #:      for the consent page, `pairing` for a pairing code. Additive; an older version ignores the columns (its
-    #:      device list shows such a program without the note, nothing else changes).
+    #: 26 — the baseline (T-111): the schema 0.30.0 reaches, created in one step by `SCHEMA`, `INDEXES` and
+    #:      `_trigger_sql`. The history up to 26 lives in the CHANGELOG of 0.30.0 and before.
     SCHEMA_VERSION = 26
 
-    #: Old table name → new table name (schema 16).
-    RENAMED_TABLES = {"namensbindung": "name_binding", "oidc_sitzung": "oidc_session",
-                      "gate_abgemeldet": "gate_signed_out", "fehlserie": "failure_series"}
+    #: The oldest schema this version opens: the baseline. A database below it was written by a version before
+    #: `LAST_MIGRATING_RELEASE` (or never reached it) and is refused at start (`ConfigError`).
+    BASELINE_SCHEMA = 26
+    #: The last release that migrates older databases to the baseline — the first step of the two-step update
+    #: (docs/OPERATIONS.md "Updating").
+    LAST_MIGRATING_RELEASE = "0.30.0"
 
-    #: Table (by its NEW name) → {old column: new column} (schema 16).
-    RENAMED_COLUMNS = {
-        "users": {"topf_name": "folded_name", "topf_mail": "folded_mail", "idp_bestaetigt_at": "idp_confirmed_at",
-                  "name_versuch_ab": "name_attempt_from", "mail_versuch_ab": "mail_attempt_from",
-                  "name_audit_ab": "name_audit_from", "mail_audit_ab": "mail_audit_from",
-                  "name_quelle": "name_source", "name_selbst_gewaehlt": "name_self_chosen"},
-        "federated_identity": {"quelle": "source", "kennung": "identifier", "gebunden_at": "bound_at",
-                               "name_topf": "directory_name_folded"},
-        "name_binding": {"quelle": "source", "bis": "until"},
-        "session": {"zuletzt": "last_seen", "andere_beenden": "end_others", "bleiben_gewaehlt": "stay_chosen",
-                    "nachfolger": "successor"},
-        "oidc_session": {"geprueft_at": "checked_at", "erfolg_at": "success_at"},
-        "login_attempt": {"offen": "pending"},
-        "failure_series": {"topf": "folded", "art": "kind", "anzahl": "count", "seit": "since",
-                           "zuletzt": "last_seen"},
-    }
+    #: Indexes outside the table definitions (the unique address index `ux_users_email` is created separately: data
+    #: with duplicate addresses must not stop the start, see `_open_schema`).
+    INDEXES = (
+        # Every lookup of an identifier goes through an index, none through the whole table (R4-03): with a scan, the
+        # runtime of a registration depended on whether the address is found — an oracle for taken addresses.
+        # `get_user_by_name`/`get_user_by_email` compare with NOCASE, which the UNIQUE index on `username` (BINARY)
+        # and `ux_users_email` (`lower(email)`) do not serve. The name in the directory (G5) counts in the identifier
+        # space — the identifier triggers ask for it on every creation and every rename.
+        "CREATE INDEX IF NOT EXISTS ix_users_folded_name ON users(folded_name)",
+        "CREATE INDEX IF NOT EXISTS ix_users_folded_mail ON users(folded_mail)",
+        "CREATE INDEX IF NOT EXISTS ix_fed_directory_name_folded ON federated_identity(directory_name_folded)",
+        "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
+        "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)",
+        # The accounts of an application (account API: list, quota).
+        "CREATE INDEX IF NOT EXISTS ix_users_managed_by ON users(managed_by)",
+    )
 
-    #: Indexes and triggers of the old names (dropped; the new names are created by the schema script, `_migrate`
-    #: and `_set_trigger`).
-    RENAMED_OBJECTS = {
-        "index": ("idx_fed_quelle_user", "ix_fed_name_topf", "ix_users_topf_name", "ix_users_topf_mail"),
-        "trigger": ("trg_users_topf_name", "trg_users_topf_mail", "trg_users_wechsel_name", "trg_users_wechsel_mail",
-                    "trg_users_kennung_insert", "trg_users_kennung_update"),
-    }
+    def _refuse_below_baseline(self, path: str) -> None:
+        """A file with TinySesam tables below `BASELINE_SCHEMA` (or without a stamp at all, before 0.18) is refused with
+        `ConfigError` — before anything is written, no partial upgrade. The way is the two-step update. Tables of
+        another program in the same file (none of TinySesam's names) do not count."""
+        present = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
+        if present >= self.BASELINE_SCHEMA:
+            return
+        tables = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if tables & set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA)):
+            self.db.close()
+            from .errors import ConfigError
+            raise ConfigError(
+                f"The database {path} carries schema {present}; this TinySesam version opens schema "
+                f"{self.BASELINE_SCHEMA} and newer only. Update in two steps: first to TinySesam "
+                f"{self.LAST_MIGRATING_RELEASE} (start it once, it migrates the database, then run `tinysesam keys "
+                f"reencrypt --db {path}`), then to this version. Nothing was written. docs/OPERATIONS.md \"Updating\".")
 
-    #: Keys in `setting` (schema 16), and the prefix of `foederation_seit:<source>`.
-    RENAMED_SETTINGS = {"allowlist_nach_idp_entzug": "allowlist_after_idp_revocation",
-                        "idp_bestand_gesetzt": "idp_inventory_set",
-                        "name_quelle_nachgetragen": "name_source_backfilled",
-                        "name_selbst_nachgetragen": "name_self_backfilled",
-                        "uhr_stand": "clock_state", "panel_sperren_bis": "panel_lock_until"}
-    RENAMED_SETTING_PREFIXES = {"foederation_seit:": "federation_since:"}
+    def _open_schema(self) -> None:
+        """Create what a new database lacks — in one transaction (`_writing`); the version check ran before
+        (`_refuse_below_baseline`).
 
-    #: The stored values up to 0.21.x and their English replacement (schema 12). The migration
-    #: rewrites them, and whoever reads still maps an old value: an older version that ran
-    #: on the same file after a rollback has left old values behind again.
-    KEY_KINDS_OLD = {"automat": "automation", "mensch": "human"}
-
-    #: From this schema state on, `folded_name`/`folded_mail` are computed with today's `norm_identifier`.
-    #: Whoever changes the folding in `norm_identifier` raises `SCHEMA_VERSION` and sets this
-    #: value to match — otherwise the buckets of the existing data would stand in the old folding in the index, and
-    #: `account_by_bucket` would no longer find namesakes.
-    BUCKET_SCHEMA = 10
-
-    def _english_names(self) -> int:
-        """Schema 16: bring the old German table, column, index, trigger and setting names of a file to
-        the English ones (before the schema script; see `SCHEMA_VERSION`). Returns the number of renamed things.
-
-        Idempotent and cheap on every start: if no old name is present, only `sqlite_master`, the column lists
-        of the seven tables and the keys of `setting` are read and nothing is written (also on a read-only file).
-        Everything happens in ONE transaction (`BEGIN IMMEDIATE`, as with the session tokens in `_migrate`): an
-        abort leaves the old names, and the next start runs it again.
-
-        * Old triggers and indexes are dropped first (SQLite would otherwise carry them along with the column
-          rename; the new ones come from the schema script and `_set_trigger`).
-        * A table that exists under the old AND the new name (a version without these names wrote into a file of
-          this one, after a rollback without the SQL) is merged: the rows of the old one are added to the new one
-          (`INSERT OR IGNORE`, the columns both have), then the old one goes.
-        * A column that exists under the old AND the new name (same cause) is left alone, with a warning.
-        * `setting` keys and the placeholder prefix of `federated_identity.identifier` are renamed row by row;
-          if the new key already exists, it wins and the old row goes.
-        """
+        * A new file gets `SCHEMA`, `INDEXES`, the triggers and the stamp in one transaction.
+        * A file at the baseline: `CREATE … IF NOT EXISTS` and `_set_trigger` find everything in place and write
+          nothing (also on a read-only file).
+        * A file from a newer version: a loud warning, as before — this version does not know all of its tables."""
         log = logging.getLogger("tinysesam")
-        names = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-
-        def sources(table):
-            """The names under which `table` may exist right now: the new one and the old one."""
-            return [t for t in (table, *[o for o, n in self.RENAMED_TABLES.items() if n == table]) if t in names]
-
-        todo = [old for old in self.RENAMED_TABLES if old in names]
-        for table, columns in self.RENAMED_COLUMNS.items():
-            for source in sources(table):
-                have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({source})")}
-                todo += [f"{source}.{old}" for old in columns if old in have]
-        if "setting" in names:
-            keys = {r[0] for r in self.db.execute("SELECT key FROM setting")}
-            todo += [old for old in self.RENAMED_SETTINGS if old in keys]
-            todo += [k for k in keys if any(k.startswith(p) for p in self.RENAMED_SETTING_PREFIXES)]
-        old_objects = [(kind, name) for kind, items in self.RENAMED_OBJECTS.items() for name in items
-                       if self.db.execute("SELECT 1 FROM sqlite_master WHERE type=? AND name=?",
-                                          (kind, name)).fetchone()]
-        placeholder = False
-        if "federated_identity" in names:
-            have = {r["name"] for r in self.db.execute("PRAGMA table_info(federated_identity)")}
-            column = "kennung" if "kennung" in have else ("identifier" if "identifier" in have else None)
-            placeholder = column is not None and self.db.execute(
-                f"SELECT 1 FROM federated_identity WHERE {column} LIKE '~ohne-kennung:%' LIMIT 1").fetchone() is not None
-        if not (todo or old_objects or placeholder):
-            return 0
-        done = 0
-        self.db.execute("BEGIN IMMEDIATE")
-        try:
-            for kind, name in old_objects:
-                self.db.execute(f"DROP {kind.upper()} IF EXISTS {name}")
-            # columns first, on whichever name the table has now: then a merge sees the same column names
-            for table, columns in self.RENAMED_COLUMNS.items():
-                for source in sources(table):
-                    have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({source})")}
-                    for old, new in columns.items():
-                        if old not in have:
-                            continue
-                        if new in have:
-                            log.warning("Table %s has the old column %s and the new column %s — left as it is "
-                                        "(a version without the new names wrote into this file).", source, old, new)
-                            continue
-                        self.db.execute(f"ALTER TABLE {source} RENAME COLUMN {old} TO {new}")
-                        done += 1
-            for old, new in self.RENAMED_TABLES.items():
-                if old not in names:
-                    continue
-                if new in names:
-                    new_cols = {c["name"] for c in self.db.execute(f"PRAGMA table_info({new})")}
-                    common = [r["name"] for r in self.db.execute(f"PRAGMA table_info({old})") if r["name"] in new_cols]
-                    cols = ", ".join(common)
-                    self.db.execute(f"INSERT OR IGNORE INTO {new}({cols}) SELECT {cols} FROM {old}")
-                    self.db.execute(f"DROP TABLE {old}")
-                else:
-                    self.db.execute(f"ALTER TABLE {old} RENAME TO {new}")
-                done += 1
-            if "setting" in names:
-                for old, new in self.RENAMED_SETTINGS.items():
-                    self.db.execute("UPDATE OR IGNORE setting SET key=? WHERE key=?", (new, old))
-                    done += self.db.execute("DELETE FROM setting WHERE key=?", (old,)).rowcount
-                for old, new in self.RENAMED_SETTING_PREFIXES.items():
-                    self.db.execute("UPDATE OR IGNORE setting SET key = ? || substr(key, ?) WHERE key LIKE ?",
-                                    (new, len(old) + 1, old + "%"))
-                    done += self.db.execute("DELETE FROM setting WHERE key LIKE ?", (old + "%",)).rowcount
-            if placeholder:
-                self.db.execute("UPDATE federated_identity SET identifier = '~without-identifier:' || "
-                                "substr(identifier, 15) WHERE identifier LIKE '~ohne-kennung:%'")
-            self.db.execute("COMMIT")
-        except Exception:
-            self.db.execute("ROLLBACK")
-            raise
-        log.info("Database names renamed to English (schema 16): %d tables, columns and settings. "
-                 "Take a backup before updating (`tinysesam backup`); the way back is in docs/OPERATIONS.md.", done)
-        return done
-
-    def _migrate(self):
-        """Additive migrations for existing DBs: add missing columns (idempotent).
-
-        At the end `PRAGMA user_version` is set to `SCHEMA_VERSION`. Up to 0.18.0 this stamp did
-        not exist: which state a file had could only be guessed from its column names —
-        and a file from a NEWER version was opened silently by an older TinySesam version,
-        with tables it does not know. The stamp turns that into an
-        announcement instead of puzzling behaviour."""
-        adds = {
-            "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
-                        ("factors_done", "TEXT NOT NULL DEFAULT '[]'"),
-                        # NULL for existing sessions: counts as `created_at` (F-05).
-                        ("last_seen", "INTEGER"),
-                        ("end_others", "INTEGER NOT NULL DEFAULT 0"),
-                        ("stay_chosen", "INTEGER NOT NULL DEFAULT 0"),
-                        # NULL = the current session; set only for a superseded token in the
-                        # grace period after rotation (A-6).
-                        ("successor", "TEXT")],
-            "totp_cred": [("last_step", "INTEGER")],
-            # The client_id to which a refresh token went: if the operator recreates the client at the
-            # provider, it rejects every old token — that is no "no" to the account.
-            "oidc_session": [("client_id", "TEXT"), ("success_at", "INTEGER")],
-            # Existing keys count as automation keys: the narrower interpretation. A key
-            # that could previously serve admin routes loses that — exactly that is
-            # the point of R6-5, and a rejected call leaves a row.
-            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automation'")],
-            # `DEFAULT 1` fills every existing row: addresses that were created before this column
-            # keep exactly their previous effect. An address only gets 0 if
-            # a caller explicitly enters it without proof (OIDC without `email_verified`).
-            "users": [("email_verified", "INTEGER NOT NULL DEFAULT 1"),
-                      # Both NULL for existing accounts: whoever has no TOTP yet should be able to set it up at
-                      # the next login — the latch applies from then on (R3-1).
-                      ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER"),
-                      # NULL = not yet computed; backfilled further below for existing data.
-                      # Without NOT NULL: an older version (rollback) keeps creating accounts.
-                      ("folded_name", "TEXT"), ("folded_mail", "TEXT"),
-                      # 0 for existing data; who becomes owner is decided by `Store._catch_up_owner`.
-                      ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
-                      # Existing data: set to "now" below for OIDC accounts (finding 8).
-                      ("idp_confirmed_at", "INTEGER"),
-                      # NULL for existing data: the limit is then the creation, as until 2026-09-26 (G2).
-                      # Do not backfill "now" — the account page would otherwise show nothing from before
-                      # the update, and own failed attempts would remain until the end of the window.
-                      ("name_attempt_from", "INTEGER"), ("mail_attempt_from", "INTEGER"),
-                      ("name_audit_from", "INTEGER"), ("mail_audit_from", "INTEGER"),
-                      # 0 for existing data; whoever registered or renamed themselves backfills
-                      # it once below (`NAME_ITSELF_BACKFILLED`, G2-N).
-                      ("name_self_chosen", "INTEGER NOT NULL DEFAULT 0"),
-                      # NULL for existing data; where the origin is proven, backfilled once below
-                      # (`NAME_SOURCE_BACKFILLED`, attack round 2026-09-26).
-                      ("name_source", "TEXT"),
-                      # 0 for existing data: no password counts as a start secret after the update (T-46).
-                      ("password_must_change", "INTEGER NOT NULL DEFAULT 0"),
-                      # NULL for existing data (schema 23): no account belongs to an application, none was signed
-                      # in since the column exists, none is scheduled for deletion.
-                      ("managed_by", "TEXT"), ("last_login_at", "INTEGER"), ("delete_after", "INTEGER")],
-            # NULL: never logged in under a different name yet (G5); arises at the next login.
-            "federated_identity": [("directory_name_folded", "TEXT")],
-            # 0 for existing data: every present row is a completed attempt (G9).
-            "login_attempt": [("pending", "INTEGER NOT NULL DEFAULT 0")],
-            # NULL for existing rows (schema 24): no request of stage A has a state of an application.
-            "approval": [("nonce", "TEXT")],
-            # NULL for existing rows (schema 26): every program connected so far was allowed on the consent page.
-            "oauth_code": [("consent_via", "TEXT")],
-            "oauth_grant": [("consent_via", "TEXT")],
-        }
-        # `_writing`, not only `_lock`: the final commit below takes DELETE and stamp with it.
-        # If something fails before that, without a rollback a transaction would stay open on the
-        # connection (the AST guard in tests/test_hardening2.py demands this for every commit).
+        present = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
         with self._writing():
-            # `failure_series` initially came with schema 11 without a column `art` (a never published
-            # intermediate state). Such a table is recreated — otherwise every login would end in
-            # a 500. The series in it are lost; that is the lesser harm.
-            _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(failure_series)")}
-            if _fs and "kind" not in _fs:
-                ddl = re.search(r"CREATE TABLE IF NOT EXISTS failure_series \(.*?\n\);", SCHEMA, re.S)
-                if ddl is None:     # it is in SCHEMA; if it is missing there, that is an error here
-                    raise RuntimeError("SCHEMA contains no table failure_series")
-                self.db.execute("DROP TABLE failure_series")
-                self.db.execute(ddl.group(0))
-            for table, cols in adds.items():
-                have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
-                for name, decl in cols:
-                    if name not in have:
-                        self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
-
-            # Session tokens were stored in plaintext in the file up to 0.18.0. The hash can be computed from
-            # the plaintext — existing logins thus survive the switch, the
-            # cookies stay valid.
-            #
-            # **In ONE transaction, with BEGIN IMMEDIATE.** The first version ran the
-            # `ALTER TABLE` alone: Python's sqlite3 opens no transaction before DDL, so the
-            # rename was followed by an immediate commit, and the rehashing ran separately. An
-            # abort in between (SIGKILL, OOM, container restart in the middle of the upgrade) left
-            # a column `token_hash` **with plaintext in it** — permanently, because the condition
-            # below never becomes true again, and the stamp then says "migrated". Exactly what
-            # the switch is meant to remove would have remained forever.
-            #
-            # `BEGIN IMMEDIATE` takes the write lock immediately. That also solves the second
-            # case: with several processes (`uvicorn --workers N`), worker A read the column list,
-            # B finished migrating, A ran its ALTER — and died with `no such column: "token"`.
-            # Now A waits for the lock and afterwards sees the finished state.
-            self.db.execute("BEGIN IMMEDIATE")
-            try:
-                columns = {r["name"] for r in self.db.execute("PRAGMA table_info(session)")}
-                if "token" in columns and "token_hash" not in columns:
-                    self.db.execute("ALTER TABLE session RENAME COLUMN token TO token_hash")
-                lines = self.db.execute(
-                    "SELECT token_hash FROM session WHERE length(token_hash) <> 64"
-                    " OR token_hash GLOB '*[^0-9a-f]*'").fetchall()
-                self.db.executemany(
-                    "UPDATE session SET token_hash=? WHERE token_hash=?",
-                    [(hashlib.sha256(z["token_hash"].encode()).hexdigest(), z["token_hash"])
-                     for z in lines if z["token_hash"]])
-                self.db.execute("COMMIT")
-            except Exception:
-                self.db.execute("ROLLBACK")
-                raise
-            if lines:
-                logging.getLogger("tinysesam").info(
-                    "Session table migrated: %d tokens hashed, sign-ins stay valid.",
-                    len(lines))
-
-            # Unlocks from the time before the switch cannot be converted: the hash
-            # is made from the plaintext, nothing from the hash. They are discarded — only open
-            # resource approvals are affected, and those are fetched back with the secret in
-            # seconds. A half-hashed table would be worse.
-            #
-            # This is detected by the VALUE, not by the schema stamp. The first version asked
-            # `0 < user_version < 4` — and thereby missed exactly the case it was
-            # written for: `user_version` itself only arrived with 0.18.0, an existing file from
-            # 0.17.0 carries 0 there, and `0 < 0` is false. The plaintext entries would therefore have
-            # remained; they would never have matched again (the hash is searched since then)
-            # and unnoticed would have occupied space until their expiry. The test for this is in
-            # tests/test_legacy_data.py.
-            # Two conditions, both necessary: the stamp says "this file has not been through yet"
-            # (and keeps the scan out of every further start), the VALUE says which row
-            # really is plaintext. The stamp alone was not enough — see above.
-            present_beforehand = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
-            if present_beforehand < self.SCHEMA_VERSION:
-                away = self.db.execute(
-                    "DELETE FROM resource_unlock WHERE length(token) <> 64"
-                    " OR token GLOB '*[^0-9a-f]*'").rowcount
-                if away:
-                    logging.getLogger("tinysesam").info(
-                        "%d resource approvals discarded (tokens are now stored hashed).", away)
-
-            # Schema 10. The steps run in the same transaction as the stamp below: if
-            # the start aborts in between, the stamp is missing too, and the next start runs them again
-            # (every step is repeatable). The existing-data steps run on EVERY start, not only
-            # on the jump over the stamp — for what an older writer may have left behind
-            # since then (`_catch_up_inventory`).
-            without_bucket = self.db.execute(
-                "SELECT * FROM users" + ("" if present_beforehand < self.BUCKET_SCHEMA else
-                                         " WHERE folded_name IS NULL OR folded_mail IS NULL")).fetchall()
-            if self.db.execute("SELECT 1 FROM setting WHERE key='idp_inventory_set'").fetchone() is None:
-                # The deadline for the API keys of an OIDC account (finding 8) starts for existing data
-                # with the update — otherwise all keys would be dormant right after the update until everyone has
-                # signed in once via the provider. Exactly once: if it ran on every start,
-                # every restart would give an unconfirmed account a new deadline.
-                #
-                # Tied to the marker, not to "column created in this run": the ALTER is immediately
-                # permanent, this UPDATE only with the final commit. An abort in between
-                # (OOM, restart in the middle of the update) left the column without a value, and no
-                # start backfilled it (attack on the third round). Marker and value go in the
-                # same commit. Here and not directly after the ALTER: an UPDATE opens a
-                # transaction in Python's sqlite3, and the `BEGIN IMMEDIATE` above would fail.
-                self.db.execute("UPDATE users SET idp_confirmed_at=? WHERE idp_confirmed_at IS NULL "
-                                "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
-                self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_inventory_set', ?)",
-                                (str(_now()),))
-            if self.db.execute("SELECT 1 FROM setting WHERE key=?",
-                               (self.NAME_ITSELF_BACKFILLED,)).fetchone() is None:
-                self._backfill_name_itself()
-            if self.db.execute("SELECT 1 FROM setting WHERE key=?",
-                               (self.NAME_SOURCE_BACKFILLED,)).fetchone() is None:
-                self._backfill_name_source()
-            self._catch_up_owner()
-            # Schema 12: the stored values in English (see `_values_english`). Read-only and
-            # values of an older version in it: that must not prevent a start that worked
-            # before — the old values are read correctly anyway. An upgrade, on the other hand, writes,
-            # like every migration.
-            try:
-                rewritten = self._values_english(links=present_beforehand < 12)
-            except sqlite3.OperationalError as e:
-                if present_beforehand < self.SCHEMA_VERSION:
-                    raise
-                rewritten = 0
-                logging.getLogger("tinysesam").warning(
-                    "Values of an older version not rewritten to the English names (%s): "
-                    "the database is not writable. They are still read correctly.", e)
-            if rewritten:
-                logging.getLogger("tinysesam").info(
-                    "%d stored values rewritten to the English names (schema 12: "
-                    "API key kinds, address-change links).", rewritten)
-            # Schema 15: the audit log and the series kinds in English (see `_vocabulary_english`). Only on
-            # the jump over the stamp: the audit log can be large, and a row that an older version writes
-            # afterwards is mapped by the read paths (`_vocabulary`). An upgrade writes, like every
-            # migration — a read-only file with an old stamp already failed at the steps above.
-            if present_beforehand < 15:
-                rewritten = self._vocabulary_english()
-                if rewritten:
-                    logging.getLogger("tinysesam").info(
-                        "%d stored values rewritten to the English vocabulary (schema 15: audit events, "
-                        "keys and tokens in the audit details, replacement names, series kinds).",
-                        rewritten)
-            if present_beforehand < 10:
-                self._catch_up_inventory(True, without_bucket)
-            else:
-                try:
-                    self._catch_up_inventory(False, without_bucket)
-                except sqlite3.OperationalError as e:
-                    # As with the bucket below: this must not prevent a start that worked before.
-                    # With this stamp the transaction contains only this step.
-                    self.db.rollback()
-                    logging.getLogger("tinysesam").warning(
-                        "Existing-data steps not applied (%s): lockouts from the panel of an older "
-                        "version only carry the operator marker after a start with "
-                        "write access.", e)
-            try:
-                self._write_pots(without_bucket)
-            except sqlite3.OperationalError:
-                # Read-only (volume mounted read-only) and rows of a foreign
-                # writer without a bucket: this must not prevent the start, which worked before —
-                # `account_by_bucket` then checks such rows itself (`_backfill_pots`). An
-                # upgrade, on the other hand, needs the buckets, like every other migration its columns.
-                if present_beforehand < self.BUCKET_SCHEMA:
-                    raise
-                logging.getLogger("tinysesam").warning(
-                    "Counting buckets of %d account(s) not filled in: the database is not "
-                    "writable. The bucket check still sees them, only more slowly.", len(without_bucket))
-
-            # A file from the future: this version does not fully know its tables
-            # and would leave gaps when writing. That is no reason to crash —
-            # but a very good one to say so loudly.
-            present = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
-            if present > self.SCHEMA_VERSION:
-                logging.getLogger("tinysesam").warning(
-                    "The database carries schema version %d, this TinySesam version only knows %d. "
-                    "It comes from a newer version — writing with this one can leave "
-                    "data incomplete. Install the matching version or restore the file "
-                    "from a backup.", present, self.SCHEMA_VERSION)
-            elif present != self.SCHEMA_VERSION:
-                self.db.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
-            # Email unique (login identifier) — partial, so that accounts without an email stay allowed.
-            # Existing data with duplicates: the index cannot be created → say so loudly, do not crash.
+            # One transaction for everything: `executescript` alone commits every statement on its own, and an abort
+            # in the middle of a new database left half a schema with the stamp missing.
+            self.db.executescript("BEGIN IMMEDIATE;" + SCHEMA)
+            for sql in self.INDEXES:
+                self.db.execute(sql)
+            # Email unique (login identifier) — partial, so that accounts without an email stay allowed. Data with
+            # duplicates (written around TinySesam): the index cannot be created → say so loudly, do not crash.
             try:
                 self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_email "
                                 "ON users(lower(email)) WHERE email IS NOT NULL AND email <> ''")
             except sqlite3.IntegrityError:
-                logging.getLogger("tinysesam").warning(
-                    "users.email contains duplicates — uniqueness index not created. "
-                    "Clean up duplicate addresses, otherwise login by e-mail is ambiguous.")
-            # Schema 10: every lookup of an identifier goes through an index, none through the whole
-            # table. With a scan, the runtime of a registration depended on whether (and how
-            # early) the address is found — with many accounts an oracle for taken addresses
-            # (R4-03). `get_user_by_name`/`get_user_by_email` compare with NOCASE; the
-            # UNIQUE index on `username` (BINARY) and `ux_users_email` (`lower(email)`) do not fit
-            # that, so SQLite read every row.
-            # The name in the directory (G5) counts in the identifier space (audit round 2026-09-27) — the
-            # identifier triggers ask for it on every creation and every rename.
-            for sql in ("CREATE INDEX IF NOT EXISTS ix_users_folded_name ON users(folded_name)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_folded_mail ON users(folded_mail)",
-                        "CREATE INDEX IF NOT EXISTS ix_fed_directory_name_folded ON federated_identity(directory_name_folded)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)",
-                        # Schema 23: the accounts of an application (account API: list, quota).
-                        "CREATE INDEX IF NOT EXISTS ix_users_managed_by ON users(managed_by)"):
-                self.db.execute(sql)
-            # The triggers over the buckets (recompute and identifier space, see `_trigger_sql`). A
-            # file on which they cannot be created (read-only) must not prevent the start:
-            # no new account is created there anyway, and the pre-check
-            # (`identifier_taken`) remains. It is still reported.
+                log.warning("users.email contains duplicates — uniqueness index not created. "
+                            "Clean up duplicate addresses, otherwise login by e-mail is ambiguous.")
+            # The triggers over the buckets (recompute and identifier space, see `_trigger_sql`). A file on which they
+            # cannot be created (read-only) must not prevent the start: no new account is created there anyway, and
+            # the pre-check (`identifier_taken`) remains. It is still reported.
             try:
                 self._set_trigger()
             except sqlite3.OperationalError as e:
-                logging.getLogger("tinysesam").warning(
-                    "Triggers over username and address not created (%s): the database "
-                    "only enforces the shared identifier space after a start with "
-                    "write access.", e)
+                log.warning("Triggers over username and address not created (%s): the database only enforces the "
+                            "shared identifier space after a start with write access.", e)
+            self._catch_up_owner()
+            if present > self.SCHEMA_VERSION:
+                log.warning("The database carries schema version %d, this TinySesam version only knows %d. It comes "
+                            "from a newer version — writing with this one can leave data incomplete. Install the "
+                            "matching version or restore the file from a backup.", present, self.SCHEMA_VERSION)
+            elif present != self.SCHEMA_VERSION:
+                self.db.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             self.db.commit()
+        # Counting buckets of rows another writer left without one (raw SQL, the sqlite3 tool; see `folded_name`).
+        # Read-only: `account_by_bucket` checks such rows itself (`_backfill_pots`), so this must not stop the start.
+        left = self._backfill_pots()
+        if left:
+            log.warning("Counting buckets of %d account(s) not filled in: the database is not writable. The bucket "
+                        "check still sees them, only more slowly.", len(left))
 
     #: Message of the identifier triggers (`sqlite3.IntegrityError`): name or address falls into the
     #: counting bucket of ANOTHER account. Callers recognise the case by `IntegrityError`, not by the text.
-    #: Up to 0.24.x the text was `tinysesam: kennung grant`; `_set_trigger` replaces the trigger
-    #: because its definition differs (schema 15).
     IDENTIFIER_GRANT = "tinysesam: identifier taken"
 
     #: The watermarks of an identifier (G2) as an SQL expression: the highest id that exists NOW.
@@ -1601,10 +1153,10 @@ class Store:
         return sql
 
     def _set_trigger(self) -> None:
-        """Create the triggers from `_trigger_sql` — or replace them if an older version created them
-        differently (without commit, under `_lock`, part of `_migrate`).
+        """Create the triggers from `_trigger_sql` — or replace them if another version created them
+        differently (without commit, under `_lock`, part of `_open_schema`).
 
-        `CREATE TRIGGER IF NOT EXISTS` alone would leave a trigger from schema 10 forever
+        `CREATE TRIGGER IF NOT EXISTS` alone would leave an older definition forever
         as it was back then. The comparison is made with the text in `sqlite_master` (SQLite stores it
         without `IF NOT EXISTS`; whitespace does not count). If it matches, nothing is written — not even
         on a read-only file."""
@@ -1618,235 +1170,12 @@ class Store:
                 self.db.execute(f"DROP TRIGGER IF EXISTS {name}")
             self.db.execute(sql)
 
-    #: Setting key: has `users.name_self_chosen` been backfilled for existing data (G2-N)?
-    NAME_ITSELF_BACKFILLED = "name_self_backfilled"
-
-    def _backfill_name_itself(self) -> None:
-        """Backfill `users.name_self_chosen` once for existing data from the audit log (G2-N;
-        without commit, under `_lock`, part of `_migrate`).
-
-        The column came after 0.20.1; until then nothing recorded where a name came from. The
-        audit log knows it for the two paths that count: `signup` (registration, also with
-        invitation) and `username_changed` (rename) stand under the name the account
-        carried afterwards. Only a row under TODAY's name and from the creation of the account on is counted —
-        an older one belonged to another account with this name. The lookup runs over
-        `idx_audit_name_ts` (name, time), not through the whole log.
-
-        Limits, deliberately in the safe direction: an account renamed by the operator carried
-        the same row until then (`username_changed`) and gets the marker too — the account
-        then no longer binds via the name, and the operator opens it with `federation_unbind`. What
-        the retention (`audit_retention_days`) has already deleted is not detected; 0.20.1 did not know
-        renaming, there only the registration remains.
-
-        Exactly once, via the marker `NAME_ITSELF_BACKFILLED` in the same commit: if it ran on every
-        start, the row of a later rename by the operator would make the account a
-        self-named one again."""
-        self.db.execute(
-            "UPDATE users SET name_self_chosen = 1 WHERE name_self_chosen = 0 AND is_service = 0 "
-            "AND EXISTS (SELECT 1 FROM audit a WHERE lower(a.username) = lower(users.username) "
-            "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
-        self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                        (self.NAME_ITSELF_BACKFILLED, str(_now())))
-
-    def _values_english(self, links: bool = True) -> int:
-        """Bring stored values of the public interface to their English names (schema
-        12, PO decision 2026-09-27) — without commit, under `_lock`, part of `_migrate`.
-
-        * `api_key.kind`: `automaton` → `automation`, `human` → `human` (`KEY_KINDS_OLD`) — the kind
-          is seen by everyone who lists keys (`list_api_keys`, `api_key_kind`, `GET /auth/apikeys`,
-          the panel). On EVERY start, not only on the jump over the stamp: an older version
-          that ran on the file after a rollback has written old values again, and it
-          does not lower the stamp. The table is small.
-        * Payload of open address-change links (`magic_token`, `purpose='email_change'`): `old` →
-          `old` (`read_payload`) — visible via `peek_magic`/`redeem_magic`. Only with
-          `links=True` (on the jump to 12): the search goes through all one-time tokens, and they grow
-          until the next `gc` — on every start that would cost a run through the table
-          (measured in `tests/test_legacy_data.py`, "Aufwand"). A link that an older version
-          issues afterwards is mapped by `read_payload` on reading; it expires soon anyway.
-
-        Idempotent; it writes only where there is something to rewrite — a read-only file
-        without old values starts as before. Returns: the number of changed rows.
-
-        Not translated here: the audit log and the kinds of the series (`failure_series.kind`) — those are
-        rewritten on the jump to schema 15 (`_vocabulary_english`) — and the column names (they stay)."""
-        n = 0
-        for old, new in self.KEY_KINDS_OLD.items():
-            if self.db.execute("SELECT 1 FROM api_key WHERE kind=? LIMIT 1", (old,)).fetchone():
-                n += self.db.execute("UPDATE api_key SET kind=? WHERE kind=?", (new, old)).rowcount
-        for purpose, key_name in (_PAYLOAD_KEY_NAME_OLD.items() if links else ()):
-            for old in key_name:
-                for z in self.db.execute(
-                        "SELECT token_hash, payload FROM magic_token WHERE purpose=? AND payload LIKE ?",
-                        (purpose, f'%"{old}"%')).fetchall():
-                    try:
-                        new_text = json.dumps(read_payload(purpose, z["payload"]))
-                    except ValueError:
-                        continue          # not JSON: not ours, do not touch
-                    if new_text != z["payload"]:
-                        self.db.execute("UPDATE magic_token SET payload=? WHERE token_hash=?",
-                                        (new_text, z["token_hash"]))
-                        n += 1
-        return n
-
-    #: Rows per block when `_vocabulary_english` walks through `audit.detail`.
-    _VOCABULARY_BLOCK = 5000
-
-    def _vocabulary_english(self) -> int:
-        """Bring the stored and logged key vocabulary to its English names (schema 15, PO decision
-        2026-10-29) — without commit, under `_lock`, part of `_migrate`, on the jump over the stamp.
-
-        What is rewritten, and only that (the mapping itself is in `tinysesam/_vocabulary.py`, pure
-        functions that the tests use as well):
-
-        * `audit.event`: the exact names (`oidc_widerruf` → `oidc_revoked`, …) and the families
-          `<oidc|saml|ldap>_kennung_gebunden` → `<…>_identifier_bound` etc. (`audit_event_new`) —
-          in ONE statement, one pass over the table.
-        * `audit.detail`: the keys of the `key=value` pairs and the tokens behind `reason=`/`source=`/…
-          (`audit_detail_new`): keys only where one stands as a key (start or after a space, directly
-          before `=`), values only behind their key, never free text that happens to contain the word.
-          Rows of free-text events (`ldap_unavailable`, `resource_unlock`, `user_create`) keep their keys.
-          Block by block over `id`, each changed row written once.
-        * `audit.username`: `gelöscht#<id>` → `deleted#<id>` (digits only; a name that merely begins with
-          it stays), likewise inside the details (`actor=`, the head of `user_create`).
-        * `failure_series.kind` and `login_attempt.method`: `pin_folge` → `pin_chain`. If both kinds exist for
-          an identifier (the old one written by an older version after a rollback), the counts are
-          ADDED up (stricter, never looser than dropping one) and the old row goes.
-
-        The trigger message (`tinysesam: kennung grant` → `identifier taken`) is not touched here:
-        `_set_trigger` replaces a trigger whose definition differs, on every start.
-
-        Idempotent (a second run changes 0 rows) and it writes only where there is something to
-        rewrite — a read-only file without old values starts as before. Returns the number of changed
-        rows (event names count per row, details per row, series per row)."""
-        V = _vocabulary
-        n = 0
-        # (1) event names: one statement for all of them.
-        pairs = dict(V.AUDIT_EVENTS_OLD)
-        for source in V.AUDIT_SOURCES:
-            for old, new in V.AUDIT_FAMILIES_OLD.items():
-                pairs[source + old] = source + new
-        place = ",".join("?" * len(pairs))
-        if self.db.execute(f"SELECT 1 FROM audit WHERE event IN ({place}) LIMIT 1", tuple(pairs)).fetchone():
-            case = " ".join("WHEN ? THEN ?" for _ in pairs)
-            args = [x for old, new in pairs.items() for x in (old, new)]
-            n += self.db.execute(
-                f"UPDATE audit SET event = CASE event {case} ELSE event END WHERE event IN ({place})",
-                (*args, *pairs)).rowcount
-        # (2) the replacement name of deleted accounts (digits only after the prefix).
-        old_prefix, new_prefix = V.REPLACEMENT_PREFIX_OLD, V.REPLACEMENT_PREFIX
-        length = len(old_prefix)
-        where_replacement = ("substr(username, 1, ?) = ? AND length(username) > ? "
-                        "AND substr(username, ?) NOT GLOB '*[^0-9]*'")
-        values_replacement = (length, old_prefix, length, length + 1)
-        if self.db.execute(f"SELECT 1 FROM audit WHERE {where_replacement} LIMIT 1", values_replacement).fetchone():
-            n += self.db.execute(
-                f"UPDATE audit SET username = ? || substr(username, ?) WHERE {where_replacement}",
-                (new_prefix, length + 1, *values_replacement)).rowcount
-        # (3) the detail text, block by block over the primary key. The event is read AFTER step 1, so
-        # it is already the new name — `audit_detail_new` takes either.
-        last = 0
-        while True:
-            lines = self.db.execute(
-                "SELECT id, event, detail FROM audit WHERE id > ? AND detail IS NOT NULL AND detail <> '' "
-                "ORDER BY id LIMIT ?", (last, self._VOCABULARY_BLOCK)).fetchall()
-            if not lines:
-                break
-            for z in lines:
-                new_detail = V.audit_detail_new(z["detail"], z["event"])
-                if new_detail != z["detail"]:
-                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (new_detail, z["id"]))
-                    n += 1
-            last = lines[-1]["id"]
-        # (4) the kinds of the streak and the methods.
-        for old, new in V.KINDS_OLD.items():
-            for z in self.db.execute("SELECT folded, count, since, last_seen FROM failure_series WHERE kind=?",
-                                     (old,)).fetchall():
-                if self.db.execute("SELECT 1 FROM failure_series WHERE folded=? AND kind=?", (z["folded"], new)).fetchone():
-                    self.db.execute(
-                        "UPDATE failure_series SET count = count + ?, since = MIN(since, ?), last_seen = MAX(last_seen, ?) "
-                        "WHERE folded=? AND kind=?", (z["count"], z["since"], z["last_seen"], z["folded"], new))
-                    self.db.execute("DELETE FROM failure_series WHERE folded=? AND kind=?", (z["folded"], old))
-                else:
-                    self.db.execute("UPDATE failure_series SET kind=? WHERE folded=? AND kind=?", (new, z["folded"], old))
-                n += 1
-            if self.db.execute("SELECT 1 FROM login_attempt WHERE method=? LIMIT 1", (old,)).fetchone():
-                n += self.db.execute("UPDATE login_attempt SET method=? WHERE method=?", (new, old)).rowcount
-        return n
-
-    #: Setting key: has `users.name_source` been backfilled for existing data (attack round 2026-09-26)?
-    NAME_SOURCE_BACKFILLED = "name_source_backfilled"
-
-    #: How far apart creation and binding of a source may be for the binding to count as "the
-    #: source created the account" (`_backfill_name_source`). On creation both happen in
-    #: the same sign-in, without a directory call in between — fractions of a second.
-    SETUP_TOLERANCE_SEC = 2
-
-    def _backfill_name_source(self) -> None:
-        """Backfill `users.name_source` once for existing data where the origin is proven (without
-        commit, under `_lock`, part of `_migrate`).
-
-        * **OIDC:** every row in `oidc_identity` has been written by the callback since v0.1 on CREATING
-          the account — it never links an existing one. The account therefore carries the provider's name.
-        * **LDAP/SAML:** a binding (also the placeholder) that arose with the creation of the account
-          (`bound_at` at most `SETUP_TOLERANCE_SEC` before or after `created_at`). A later
-          re-binding does not count — the account already existed then, and its name came from elsewhere.
-
-        Excluded: service accounts and self-chosen names (the marker above already carries them).
-        Accounts from before the identifiers (F-11, up to 0.19) have no binding from creation and stay
-        NULL — the deadline applies to them (`federation_name_binding_days`). Limit in the safe
-        direction: if the operator creates an account and binds it within two seconds, it counts as created by
-        the source; another source binds it then only if the operator opens it
-        (`federation_unbind`).
-
-        Exactly once, via the marker `NAME_SOURCE_BACKFILLED` in the same commit: if it ran on every start,
-        an account renamed by the operator would get its source back."""
-        self.db.execute(
-            "UPDATE users SET name_source = 'oidc' WHERE name_source IS NULL AND is_service = 0 "
-            "AND name_self_chosen = 0 AND id IN (SELECT user_id FROM oidc_identity)")
-        from_setup = ("FROM federated_identity f WHERE f.user_id = users.id "
-                      "AND abs(f.bound_at - users.created_at) <= ?")
-        self.db.execute(
-            f"UPDATE users SET name_source = (SELECT f.source {from_setup} "
-            "ORDER BY f.bound_at, f.source LIMIT 1) "
-            "WHERE name_source IS NULL AND is_service = 0 AND name_self_chosen = 0 "
-            f"AND EXISTS (SELECT 1 {from_setup})",
-            (self.SETUP_TOLERANCE_SEC, self.SETUP_TOLERANCE_SEC))
-        self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                        (self.NAME_SOURCE_BACKFILLED, str(_now())))
-
-    #: Setting key: up to which `audit.id` the panel lockouts of older writers have already been
-    #: caught up (`_catch_up_inventory`). If it is missing, the next start reads the audit log
-    #: in full once — that is only slower, not wrong (every step is repeatable).
-    PANEL_WATERLINE = "panel_lock_until"
-
-    #: How many identifiers at most in one `IN (…)` (SQLite up to 3.32: 999 parameters).
-    IN_PIECE = 500
-
-    @staticmethod
-    def _uid_from_detail(detail) -> Optional[int]:
-        """The account id from the detail of a panel row: `uid=<id>` or `uid=<id> …`.
-
-        The same form that the SQL version compared (`detail = 'uid=' || id` or
-        `LIKE 'uid=' || id || ' %'`): only ASCII digits without a leading zero, then end or a
-        space. The panel has written this form unchanged since 0.3.0."""
-        head = str(detail or "").split(" ", 1)[0]
-        if not head.startswith("uid="):
-            return None
-        number = head[4:]
-        if not (number.isascii() and number.isdigit()) or number != str(int(number)):
-            return None
-        return int(number)
-
     def _catch_up_owner(self) -> None:
-        """If there are admins but no owner (existing data from before the owner model), the oldest admin
-        becomes owner — preferably one that someone set by hand (`is_admin=1`), active and not a
-        service account. Once, with a row in the audit log. Runs in the migration (under the
-        write lock, directly on the connection) — BEFORE the watermark of the existing-data steps, so that
-        its own row does not count as "new since the last start". Without an admin it stays with the
-        first-admin path, which also assigns the first owner."""
-        columns = {r["name"] for r in self.db.execute("PRAGMA table_info(users)")}
-        if "is_owner" not in columns:
-            return
+        """If there are admins but no owner, the oldest admin becomes owner at start — one that someone set by hand
+        (`is_admin=1`), active and not a service account. Admins without an owner come from own code that creates
+        them with `create_user(is_admin=True)` instead of a bootstrap path, or from raw SQL. Once, with a row in the
+        audit log; part of `_open_schema` (under the write lock, directly on the connection). Without an admin it
+        stays with the first-admin path, which also assigns the first owner."""
         if self.db.execute("SELECT 1 FROM users WHERE is_owner=1 LIMIT 1").fetchone():
             return
         # ONLY an active, manually set admin (`is_admin=1`). A flag granted by the identity provider
@@ -1869,111 +1198,6 @@ class Store:
         logging.getLogger("tinysesam").warning(
             "Owner model: %s is now owner (oldest admin). Further owners are granted by an owner in the "
             "admin panel.", u["username"])
-
-    def _catch_up_inventory(self, from_start: bool, without_bucket) -> None:
-        """Bring existing data to schema 10 (without commit, under `_lock` — part of `_migrate`).
-
-        On upgrade (`from_start`) for all existing data, afterwards on **every** start for what
-        an older writer may have left behind since then. An older version opens a
-        schema-10 file, warns and keeps writing; it leaves the stamp at 10 (rollback without
-        backup). If it locks in the panel during this window, `disabled=1` stands again with an open
-        confirmation link, and if the step hung on the stamp, it would never run again: the old link
-        would lift the lock and sign in (H-18, measured with 0.19.0). The trace of the older
-        writer is different per step — audit rows since the watermark for the locks,
-        rows without a bucket (`folded_name`) for the registrations.
-
-        1. **Locks from the panel get the operator mark** (`disabled=2`). Up to this
-           version the panel lock wrote `disabled=1` — the same value as a pending
-           confirmation, and the confirmation link lifts that. Up to 0.19.x the lock
-           did not even discard the open tokens. The panel lock is recognised from the audit log: the
-           most recent entry `user_disable`/`user_enable` with `uid=<id>` is `user_disable`, and the
-           account is at 1 (today's lock writes 2, a 1 behind it therefore comes from an
-           older writer). For such accounts the open one-time tokens are discarded at the same time —
-           as with a lock of today. It is read **once in sequence**, only the rows
-           after the watermark (`PANEL_WATERLINE`, on upgrade from 0): the first version searched
-           the whole audit log for each locked account (measured 60 s with 1,000,000 rows × 1,000
-           accounts, under the write lock — a second worker failed at `busy_timeout`).
-           Limits: a lock whose row `audit_retention_days` has already deleted stays
-           undetected; for that, `POST <admin_path>/api/users/{id}/disable` with
-           `{"disabled": true}` locks again without unlocking. And in the safe direction: if an
-           app lifts a lock of today without an audit row and then locks itself (1) before the
-           service restarts, it counts as an operator lock at the next start.
-        2. **Addresses of open registrations carry no proof** (`email_verified=0`). The
-           registration created them with the marker 1 although the link was still outstanding; since
-           this version only the redeemed link sets it. Open means: locked, never
-           signed in, an unused `verify_email` token and no redeemed one. Otherwise
-           the deletion by an admin would also take the address typed in by a stranger from older rows
-           (`remove_account`) — even when a lock in the panel has discarded the tokens
-           by which the account is otherwise recognisable as open. After the upgrade only for
-           rows without a bucket (only a foreign writer creates them) and for the accounts from
-           step 1. Step 2 runs before step 1, which discards exactly these tokens."""
-        log = logging.getLogger("tinysesam")
-        # Reading and writing under ONE write lock: a second worker that is just redeeming a
-        # confirmation link sees the lock before or after, not in between. On
-        # upgrade `_migrate` already holds the transaction (DELETE above).
-        if not self.db.in_transaction:
-            self.db.execute("BEGIN IMMEDIATE")
-        line = self.db.execute("SELECT seq FROM sqlite_sequence WHERE name='audit'").fetchone()
-        until = int(line[0]) if line and line[0] else 0
-        stored = self.db.execute("SELECT value FROM setting WHERE key=?",
-                                      (self.PANEL_WATERLINE,)).fetchone()
-        stored = stored[0] if stored else None
-        start_from = 0
-        if not from_start and stored is not None and str(stored).isdigit():
-            start_from = int(stored)
-        if start_from > until:
-            start_from = 0          # counter smaller than the watermark (table recreated): read everything
-        youngest = {}
-        for event, detail in self.db.execute(
-                "SELECT event, detail FROM audit WHERE id > ? AND id <= ? "
-                "AND event IN ('user_disable', 'user_enable') ORDER BY id", (start_from, until)):
-            uid = self._uid_from_detail(detail)
-            if uid is not None:
-                youngest[uid] = event
-        candidates = sorted(uid for uid, event in youngest.items() if event == "user_disable")
-
-        def pieces(ids):
-            ids = list(ids)
-            for i in range(0, len(ids), self.IN_PIECE):
-                part = ids[i:i + self.IN_PIECE]
-                yield part, ",".join("?" * len(part))
-
-        addresses = 0
-        destination = None if from_start else {z["id"] for z in without_bucket} | set(candidates)
-        if destination is None or destination:
-            unclosed = sorted(z[0] for z in self.db.execute(
-                "SELECT user_id FROM magic_token WHERE purpose = 'verify_email' AND user_id IS NOT NULL "
-                "GROUP BY user_id HAVING SUM(used_at IS NULL) > 0 AND SUM(used_at IS NOT NULL) = 0")
-                if destination is None or z[0] in destination)
-            for part, ph in pieces(unclosed):
-                addresses += self.db.execute(
-                    f"UPDATE users SET email_verified=0 WHERE id IN ({ph}) AND email_verified <> 0 "
-                    "AND disabled <> 0 AND first_login_at IS NULL", part).rowcount
-        panel = []
-        for part, ph in pieces(candidates):
-            ids = [z[0] for z in self.db.execute(
-                f"SELECT id FROM users WHERE id IN ({ph}) AND disabled = ?",
-                (*part, self.LOCKED_CONFIRMATION))]
-            if not ids:
-                continue
-            ph = ",".join("?" * len(ids))
-            self.db.execute(f"UPDATE users SET disabled=? WHERE id IN ({ph}) AND disabled = ?",
-                            (self.LOCKED_OPERATOR, *ids, self.LOCKED_CONFIRMATION))
-            self.db.execute(f"DELETE FROM magic_token WHERE user_id IN ({ph}) AND used_at IS NULL", ids)
-            panel += ids
-        if stored is None or str(stored) != str(until):
-            self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
-                            (self.PANEL_WATERLINE, str(until)))
-        if from_start and (addresses or panel):
-            log.info("Schema 10: %d lockout(s) from the panel now carry the operator marker (open "
-                     "one-time tokens discarded), %d address(es) of open registrations count as "
-                     "unproven until confirmed.", len(panel), addresses)
-        elif addresses or panel:
-            log.warning("An older TinySesam version has written to this database (downgrade "
-                        "without a backup?): %d lockout(s) from its panel now carry the "
-                        "operator marker (open one-time tokens discarded), %d address(es) of its "
-                        "open registrations count as unproven until confirmed.",
-                        len(panel), addresses)
 
     def _write_pots(self, lines) -> None:
         """Compute `folded_name`/`folded_mail` for these account rows (without commit, under `_lock`).
@@ -2049,8 +1273,7 @@ class Store:
         written before the failure.
 
         Every write path therefore runs through here (or through `_exec`, which does so too); whoever manages the
-        transaction themselves (`reserve_attempt`, `rotate_session`, `_clock_record`, the
-        inner block of `_migrate`) puts each commit in a `try` whose broad `except`
+        transaction themselves (`reserve_attempt`, `rotate_session`, `_clock_record`) puts each commit in a `try` whose broad `except`
         (without type, `Exception` or `BaseException` — `sqlite3.Error` does not catch a binding error such as
         OverflowError) or `finally` rolls back. tests/test_hardening2.py checks this via the
         syntax tree for every commit in this class — not merely whether `rollback()`
@@ -2078,7 +1301,7 @@ class Store:
     def _write_clock_state(self) -> None:
         """Raise `clock_state` to `now()` — only UPWARDS (without commit, under `_lock`).
 
-        `_migrate()` already writes before `Store()` has raised the clock from the database;
+        `_open_schema()` already writes before `Store()` has raised the clock from the database;
         there `now()` is still the wrong wall clock of a boot with an old date. A blind
         overwrite would delete exactly the state that is about to raise the clock."""
         now_s = _now()
@@ -2415,8 +1638,7 @@ class Store:
         The marker `email_verified` AND no pending confirmation: an open account —
         locked, an unused `verify_email` token and no redeemed one — carries an address
         that someone typed in and never confirmed. Since schema 10 the registration creates it
-        without the marker (which only the redeemed link sets), and `_migrate` backfills this for
-        open registrations from existing data. The token check here additionally catches
+        without the marker (which only the redeemed link sets). The token check here additionally catches
         an app that calls `create_user` with the default `email_verified=True` and then itself
         sends a confirmation link."""
         if not (user["email"] and user["email_verified"]):
@@ -2685,7 +1907,7 @@ class Store:
             "ORDER BY n.id LIMIT ?", (int(limit),))
 
     def bucket_collisions(self, limit: int = 50) -> list:
-        """All identifiers that belong to more than one account — as `[{"kennung", "ids"}, …]`.
+        """All identifiers that belong to more than one account — as `[{"identifier", "ids"}, …]`.
 
         Counted in the counting bucket (`norm_identifier`) over names AND addresses: `Alice`/`alice`,
         name = foreign address, two spellings of the same address (`u@bücher.example` and
@@ -2985,18 +2207,17 @@ class Store:
             d["secret"] = self._open(d["secret"], "totp_cred.secret", user_id)
         return d
 
-    def extract_secrets(self) -> int:
-        """At startup: check that the vault keyring fits the stored secrets, encrypt plain text from the time
-        before encryption, and rewrite `v1:` values (one key, no context) as `v2:` with their context (T-54).
+    def extract_secrets(self) -> None:
+        """At startup: check that the vault keyring fits the stored secrets and that every one is in the format `v2`.
 
         A key that does not fit is a `ConfigError`: a start with the wrong key would otherwise let every TOTP
-        sign-in fail silently. Returns how many plain-text secrets were encrypted."""
+        sign-in fail silently. So is a value in a format before 0.26 (`_check_v2_only`)."""
         from .errors import ConfigError
         if self.vault is None:
-            return 0
-        # Every key a stored value names must be in the keyring; for `v1:` values one probe per column decides.
-        # All encrypted columns: if there are only refresh tokens (OIDC instance without TOTP), a wrong key would
-        # otherwise start — and every request with an old cookie ended in a 500.
+            return
+        # Every key a stored value names must be in the keyring. All encrypted columns: if there are only refresh
+        # tokens (OIDC instance without TOTP), a wrong key would otherwise start — and every request with an old
+        # cookie ended in a 500.
         wrong = ("The key does not match the stored secrets (TOTP, OIDC tokens, the gate key or OAuth pepper kept "
                  "in the database; wrong TINYSESAM_SECRETS_KEY/secrets_key_file, or the key file next to the "
                  "database is missing or a different one). Use the right key — without it all accounts have to set "
@@ -3007,40 +2228,28 @@ class Store:
                                     f"WHERE {column} LIKE 'v2:%'"):
                 if self.vault.keyring.find(kid) is None:
                     raise ConfigError(f"{wrong} (Key {kid} is not in the keyring — retired too early?)")
-            probe = self._one(f"SELECT {column} AS value FROM {table} WHERE {column} LIKE 'v1:%' LIMIT 1")
-            if probe is not None:
-                try:
-                    self.vault._decrypt_v1(probe["value"])
-                except Exception:
-                    raise ConfigError(wrong) from None
-        clear = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%' "
-                          "AND secret NOT LIKE 'v2:%'")
-        for z in clear:
-            self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
-                       (self._seal(z["secret"], "totp_cred.secret", z["user_id"]), z["user_id"], z["secret"]))
-        if clear:
-            logging.getLogger("tinysesam").info(
-                "%d TOTP secret(s) encrypted (previously plaintext in the database).", len(clear))
-        try:
-            upgraded = sum(self.reencrypt(only_v1=True).values())
-        except sqlite3.OperationalError as e:
-            upgraded = 0
-            logging.getLogger("tinysesam").warning(
-                "Secrets in the format up to 0.25.x not rewritten (%s): the database is not writable. Since "
-                "0.26 they are no longer read (A-5) — see the error that follows.", e)
-        if upgraded:
-            logging.getLogger("tinysesam").info(
-                "%d stored secret(s) rewritten in the format v2 (key ID and binding to their row).", upgraded)
         self._check_v2_only()
-        return len(clear)
+
+    def old_format_count(self) -> int:
+        """Stored secrets outside `key_material` that are not in the format `v2` — `v1:` or plain text, written by a
+        version before 0.26 and never re-encrypted. This version reads none of them (`_check_v2_only`)."""
+        left = 0
+        for column, _select in self.ENCRYPTED:
+            if column == "key_material.material":
+                continue
+            table, col = column.split(".")
+            left += self._one(f"SELECT COUNT(*) AS n FROM {table} WHERE {col} IS NOT NULL "
+                              f"AND {col} NOT LIKE 'v2:%'")["n"]
+        return int(left)
 
     def _check_v2_only(self) -> None:
-        """After the migration every encrypted column holds `v2:` only — the runtime reads nothing else (A-5).
+        """Every encrypted column holds `v2:` only — the runtime reads nothing else (A-5).
 
         `key_material` was encrypted from its first row: anything else there was planted or damaged, and is never
-        "migrated" (encrypting it now would turn a planted gate seed into a real one). Elsewhere a `v1:` value is
-        left when the start could not write (read-only database): it would no longer be read, so the start stops
-        and names the way out instead of failing every TOTP sign-in with a 500."""
+        "migrated" (encrypting it now would turn a planted gate seed into a real one). Elsewhere a `v1:` or plain value
+        comes from a version before 0.26 that 0.30.0 never re-encrypted (a read-only start, `keys reencrypt` not run):
+        this version cannot rewrite it, so the start stops and names the way out instead of failing every TOTP
+        sign-in with a 500."""
         from .errors import ConfigError
         planted = self._one("SELECT COUNT(*) AS n FROM key_material WHERE material IS NULL "
                             "OR material NOT LIKE 'v2:%'")["n"]
@@ -3049,26 +2258,23 @@ class Store:
                               "only ever written that table encrypted, so the database was written without the vault "
                               "key or is damaged — restore it from a backup (docs/OPERATIONS.md \"Keys\"). The rows "
                               "are not used.")
-        left = 0
-        for column, _select in self.ENCRYPTED:
-            table, col = column.split(".")
-            left += self._one(f"SELECT COUNT(*) AS n FROM {table} WHERE {col} IS NOT NULL "
-                              f"AND {col} NOT LIKE 'v2:%'")["n"]
+        left = self.old_format_count()
         if left:
-            raise ConfigError(f"{left} stored secret(s) are still in a format before 0.26 (v1: or plain text) and "
-                              "could not be rewritten — the database is not writable at startup. Since 0.26 only the "
-                              "format v2 is read. Start once with write access, or rewrite them offline: "
-                              "`tinysesam keys reencrypt --db <path>` (docs/OPERATIONS.md \"Keys\").")
+            raise ConfigError(f"{left} stored secret(s) are still in a format before 0.26 (v1: or plain text). This "
+                              "version reads the format v2 only and no longer rewrites older ones. Re-encrypt them "
+                              f"with TinySesam {self.LAST_MIGRATING_RELEASE}: start it once with write access, or run "
+                              "its `tinysesam keys reencrypt --db <path>`; then start this version "
+                              "(docs/OPERATIONS.md \"Updating\").")
 
     # ---------- the vault: context, re-encryption (T-48, T-54) ----------
     def _seal(self, plaintext: str, column: str, *parts) -> str:
         from .vault import context
         return self.vault.encrypt(plaintext, context(column, *parts))
 
-    def _open(self, value, column: str, *parts, legacy: bool = False):
-        """Decrypt a stored value — `v2:` only; `legacy=True` (the migration in `reencrypt`) also `v1:` (A-5)."""
+    def _open(self, value, column: str, *parts):
+        """Decrypt a stored value — `v2:` only (A-5)."""
         from .vault import context
-        return self.vault.decrypt(value, context(column, *parts), legacy=legacy)
+        return self.vault.decrypt(value, context(column, *parts))
 
     #: Every encrypted column: (table.column, SELECT of rowid, value and the context parts, extra WHERE).
     #: The context names the row by what does NOT change in its life — not the session handle, which rotates.
@@ -3082,28 +2288,23 @@ class Store:
         ("key_material.material", "SELECT rowid AS rid, material AS value, purpose, kid FROM key_material"),
     )
 
-    def reencrypt(self, *, only_v1: bool = False, to_v1: bool = False, limit: int = 0,
-                  progress=None) -> dict:
-        """Rewrite stored secrets with the ACTIVE key and their context — after `keys rotate`, or (`only_v1`) the
-        values of the format up to 0.25.x. Compare-and-swap per row: a value the service changed meanwhile stays.
-        `to_v1`: the old format, for the way back to an older version. `progress(column, done, total)`.
-        Returns {column: rewritten}."""
+    def reencrypt(self, *, limit: int = 0, progress=None) -> dict:
+        """Rewrite stored secrets with the ACTIVE key and their context — after `keys rotate`. Compare-and-swap per
+        row: a value the service changed meanwhile stays. `progress(column, done, total)`. Returns {column:
+        rewritten}."""
         out = {}
         for column, select in self.ENCRYPTED:
-            if to_v1 and column == "key_material.material":
-                continue          # an older version does not know the table — and the keys in it stay readable
             table, col = column.split(".")
             rows = [r for r in self._all(select)
-                    if r["value"] is not None and str(r["value"]).startswith(("v1:", "v2:"))
-                    and (str(r["value"]).startswith("v2:") if to_v1 else
-                         str(r["value"]).startswith("v1:") if only_v1 else self.vault.needs_rewrite(r["value"]))]
+                    if r["value"] is not None and str(r["value"]).startswith("v2:")
+                    and self.vault.needs_rewrite(r["value"])]
             if limit:
                 rows = rows[:limit]
             done = 0
             for r in rows:
                 parts = [r[k] for k in r.keys() if k not in ("rid", "value")]
-                plain = self._open(r["value"], column, *parts, legacy=True)
-                new = self.vault.encrypt_v1(plain) if to_v1 else self._seal(plain, column, *parts)
+                plain = self._open(r["value"], column, *parts)
+                new = self._seal(plain, column, *parts)
                 done += self._exec(f"UPDATE {table} SET {col}=? WHERE rowid=? AND {col}=?",
                                    (new, r["rid"], r["value"])).rowcount
                 if progress is not None:
@@ -3112,13 +2313,12 @@ class Store:
         return out
 
     def ciphertext_counts(self) -> dict:
-        """{kid or 'v1': number of stored values} over every encrypted column — what still needs which key."""
+        """{kid: number of stored values} over every encrypted column — what still needs which key."""
         out: dict = {}
         for column, _select in self.ENCRYPTED:
             table, col = column.split(".")
-            for kid, n in self._all(f"SELECT CASE WHEN {col} LIKE 'v1:%' THEN 'v1' "
-                                    f"ELSE substr({col}, 4, {_KID_LEN}) END, COUNT(*) FROM {table} "
-                                    f"WHERE {col} LIKE 'v1:%' OR {col} LIKE 'v2:%' GROUP BY 1"):
+            for kid, n in self._all(f"SELECT substr({col}, 4, {_KID_LEN}), COUNT(*) FROM {table} "
+                                    f"WHERE {col} LIKE 'v2:%' GROUP BY 1"):
                 out[kid] = out.get(kid, 0) + int(n)
         return out
 
@@ -3146,10 +2346,9 @@ class Store:
                                                   "key_material.material", purpose, kid), _now(), since, note))
         return kid
 
-    def key_ring_create(self, purpose: str, material: bytes, legacy: Optional[bytes] = None) -> bool:
+    def key_ring_create(self, purpose: str, material: bytes) -> bool:
         """The first keyring of `purpose` — only if there is none yet (several workers starting at once: one
-        creates it, the others read it). `legacy` becomes a previous key with note `derived-v1`."""
-        from . import keys as _keys
+        creates it, the others read it)."""
         if self.vault is None:
             raise RuntimeError("Keys are only stored encrypted (vault.Vault).")
         with self._writing():
@@ -3158,8 +2357,6 @@ class Store:
                 self.db.rollback()
                 return False
             self._key_insert(purpose, material, None)
-            if legacy is not None and _keys.kid_for(purpose, legacy) != _keys.kid_for(purpose, material):
-                self._key_insert(purpose, legacy, _now(), _keys.DERIVED_V1)
             self.db.commit()
         return True
 
@@ -3614,14 +2811,9 @@ class Store:
     # (`gate_link.link_hash`) and the area unlock (`resource_unlock.token`).
     session_peppers: tuple = ()
 
-    #: Every column that holds a session handle or a digest made by `session_hash` (`pepper_session_handles`).
-    SESSION_HANDLE_COLUMNS = ("session.token_hash", "session.successor", "oidc_grant.token_hash",
-                              "oidc_session.token_hash", "gate_signed_out.token_hash", "oidc_id_token.token_hash",
-                              "gate_link.token_hash", "gate_link.link_hash", "resource_unlock.token")
-
     @staticmethod
     def _session_digest(pepper: bytes, plain_sha256: str) -> str:
-        """HMAC over the sha256 that 0.26.0 stored — so the migration can rewrite an old handle without its token."""
+        """HMAC with the pepper over the sha256 of the token (T-71; the label names the format)."""
         return hmac.new(pepper, b"tinysesam/session-handle/v1\x00" + plain_sha256.encode("ascii"),
                         hashlib.sha256).hexdigest()
 
@@ -3645,42 +2837,6 @@ class Store:
             if r is not None:
                 return str(r["h"])
         return candidates[0]
-
-    def pepper_session_handles(self) -> int:
-        """Rewrite the plain sha256 handles of 0.26.0 and older with the active pepper — once, in one transaction.
-
-        No one is signed out: the new digest is an HMAC over the old one, so every row is rewritten without its
-        token (`_session_digest`). The marker `setting.session_handles = hmac-v1` is written in the same transaction; a second worker that
-        starts at the same moment waits for the write lock and then finds it. Returns how many rows were rewritten.
-
-        A transition: the step runs again whenever the marker is missing. Whoever can write the file could delete
-        the marker, plant a plain sha256 row and wait for a restart — the reach of the digests that are still
-        unpeppered (API keys, sign-in links, T-72). The step is removed together with them."""
-        if not self.session_peppers:
-            raise RuntimeError("Store.session_peppers is not set.")
-        if self.get_setting("session_handles") == "hmac-v1":
-            return 0
-        pepper = self.session_peppers[0]
-        self.db.create_function("tinysesam_session_pepper", 1,
-                                lambda v: None if v is None else self._session_digest(pepper, str(v)),
-                                deterministic=True)
-        done = 0
-        with self._writing():
-            self._begin_immediate()
-            r = self.db.execute("SELECT value FROM setting WHERE key='session_handles'").fetchone()
-            if r is not None and r[0] == "hmac-v1":
-                self.db.rollback()
-                return 0
-            # The handle is the parent key of five tables: checked at the commit, when every column carries the new
-            # digest, instead of at the first UPDATE.
-            self.db.execute("PRAGMA defer_foreign_keys=ON")
-            for spec in self.SESSION_HANDLE_COLUMNS:
-                table, column = spec.split(".")
-                done += self.db.execute(f"UPDATE {table} SET {column}=tinysesam_session_pepper({column}) "
-                                        f"WHERE {column} IS NOT NULL").rowcount
-            self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('session_handles', 'hmac-v1')")
-            self.db.commit()
-        return done
 
     def sessions_live_before(self, when: int, now: int) -> int:
         """Sessions and app-host links created up to `when` that still run — what a pepper retired at `when` would
@@ -3868,7 +3024,7 @@ class Store:
         """Back up a database file WITHOUT touching it — the path for `tinysesam backup`.
 
         Why not simply `Store(quelle).backup(destination)`: the constructor sets
-        `PRAGMA journal_mode=WAL`, creates missing tables and runs `_migrate()`. It
+        `PRAGMA journal_mode=WAL` and creates missing tables. It
         **writes**, and does so before anything has been copied. Whoever does the
         only right thing before an update and makes a backup would thereby have lifted the running installation to the new
         schema while the old code is still running — the way back would be closed, and a file
@@ -4687,8 +3843,8 @@ class Store:
         additional identifiers (the email address): under it, sign-in attempts stand in the
         column `username` (`find_user` accepts the address), and it occurs in the detail text.
 
-        In the detail text the USERNAME is replaced only where one stands — `actor=<name>` (up to 0.24.x
-        `akteur=<name>`, both are found) and the head of `user_create`. Freely replacing every identical word hit
+        In the detail text the USERNAME is replaced only where one stands — `actor=<name>` and the head of
+        `user_create`. Freely replacing every identical word hit
         foreign rows: with the account `admin`, `admin=0->1` in the role change of an
         OTHER account became `deleted#2=0->1`, with `password` the method of every failed attempt. An
         identifier with `@`, on the other hand, is unmistakable and is replaced everywhere.
@@ -4725,10 +3881,10 @@ class Store:
           REMAINING account shares the bucket (namesake from existing data, as with
           `delete_attempts_for`), it stays with `lower()` — otherwise it would hit its rows.
         * **Earlier names and addresses** (4b): from the own rows `username_changed old=…` and
-          `email_changed old=…` (up to 0.24.x `alt=…`, `_earlier_identifiers`), each in the span in which the account
+          `email_changed old=…` (`_earlier_identifiers`), each in the span in which the account
           carried them — the sign-in under the old name would otherwise keep standing with its IP.
         * **Values in the own rows** (4c): in every row whose `username` is afterwards
-          the replacement name, the values of `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`) — the never redeemed address change,
+          the replacement name, the values of `old=`, `new=` and `to=` — the never redeemed address change,
           the address from LDAP/SAML, the old name.
         """
         if not username:
@@ -4770,7 +3926,7 @@ class Store:
             if "@" in value:
                 pattern = _re.compile(r"(?<![\w@.-])" + w + end, _re.IGNORECASE)
             else:
-                pattern = _re.compile(r"(?<![\w@.-])(akteur|actor)=" + w + end, _re.IGNORECASE)
+                pattern = _re.compile(r"(?<![\w@.-])(actor)=" + w + end, _re.IGNORECASE)
             bucket = norm_identifier(value)
             folded = bucket in fold
 
@@ -4836,12 +3992,11 @@ class Store:
     _EARLIER_MAX = 100
     #: The old name in `username_changed` (`old=<name>[ by=operator][ source=cli][ actor=…]`)
     #: and the old address in `email_changed` (`old=<address> new=<address>`). A name may
-    #: carry spaces, an address may not (`valid_email`). Up to 0.24.x the keys were `alt=`, `durch=`,
-    #: `quelle=`, `akteur=`, `neu=`: both spellings are read (a row of an older version after a rollback).
-    _OLD_NAME = re.compile(r"^(?:alt|old)=(.*?)(?= (?:durch|by)=| (?:quelle|source)=| (?:akteur|actor)=|$)")
-    _OLD_MAIL = re.compile(r"^(?:alt|old)=(\S*)")
+    #: carry spaces, an address may not (`valid_email`).
+    _OLD_NAME = re.compile(r"^old=(.*?)(?= by=| source=| actor=|$)")
+    _OLD_MAIL = re.compile(r"^old=(\S*)")
     #: The values in the own rows that carry an identifier (4c): up to the next ` key=`.
-    _OWN_VALUES = re.compile(r"(?<![\w@.-])(alt|old|neu|new|an|to)=(\S.*?)(?=\s[\w-]+=|$)")
+    _OWN_VALUES = re.compile(r"(?<![\w@.-])(old|new|to)=(\S.*?)(?=\s[\w-]+=|$)")
 
     def _earlier_identifiers(self, current, setup, limit) -> list:
         """Earlier names and addresses of an account, each with the span in which it carried them —
@@ -4850,7 +4005,7 @@ class Store:
         without an upper bound.
 
         Read from the own rows: `username_changed` stands under the NEW name and names the
-        old one (`old=`, up to 0.24.x `alt=`), `email_changed` under the name at the time of the change and
+        old one (`old=`), `email_changed` under the name at the time of the change and
         names the old address. Backwards from today's name: the most recent rename in its span names the
         predecessor. It belonged to the account until that row, from the row that introduced IT — the
         most recent rename under it before that, not before creation —, otherwise from creation. Likewise the
@@ -4890,7 +4045,7 @@ class Store:
 
     def _replace_own_values(self, replacement, above) -> None:
         """In the rows of the deleted account (`username` = replacement name, up to `above`) replace the values of
-        `old=`, `new=` and `to=` (up to 0.24.x `alt=`, `neu=`, `an=`; H-13, audit round 2026-09-27, 4c): the
+        `old=`, `new=` and `to=` (H-13, audit round 2026-09-27, 4c): the
         requested, never redeemed address change (`email_change_requested new=…`), the address from LDAP/SAML
         (`federation_email_confirm to=…`), the old name (`username_changed old=…`). Empty values
         stay empty. Via `idx_audit_name_ts`; written per `_ANONYMOUS_BLOCK` rows, the row
@@ -4920,21 +4075,17 @@ class Store:
         `seit` (Unix seconds, inclusive) also filters in SQL; from the second `seit`
         itself only rows from `since_id` (see `setup_limit`). `from_id`: only rows with a
         larger id — the watermark of an identifier (`identifier_limits`, G2). `without_events`
-        leaves out these events (in the new and the old spelling, `_vocabulary.event_forms`), likewise in SQL: a display that discards rows only afterwards
+        leaves out these events, likewise in SQL: a display that discards rows only afterwards
         would show fewer than `limit` — and the gap would reveal that there had been one (G12b).
         """
         conditions: list[str] = []
         values: list[object] = []
         if without_events:
-            # Both spellings: a row that an older version wrote after a rollback carries the old name.
-            forms = _vocabulary.event_forms(*without_events)
-            conditions.append(f"event NOT IN ({','.join('?' * len(forms))})")
-            values.extend(forms)
+            conditions.append(f"event NOT IN ({','.join('?' * len(without_events))})")
+            values.extend(without_events)
         if username:
-            # A replacement name in both spellings (`deleted#4`, up to 0.24.x `gelöscht#4`).
-            names = _vocabulary.replacement_forms(username)
-            conditions.append("lower(username) IN (" + ",".join("lower(?)" for _ in names) + ")")
-            values.extend(names)
+            conditions.append("lower(username) = lower(?)")
+            values.append(username)
         if since:
             conditions.append("(ts > ? OR (ts = ? AND id >= ?))")
             values.extend((int(since), int(since), int(since_id or 0)))
@@ -4972,14 +4123,13 @@ class Store:
         the successful send) or rejected because the address is taken or
         reserved (`email_change_taken`/`_reserved` from this path, attack round 2026-09-26 —
         otherwise every worker wrote its own row, and the account page counted along). Recognised by the
-        detail that begins with `account=<id> ` (up to 0.24.x `konto=<id> `, both are taken); self-service
+        detail that begins with `account=<id> `; self-service
         does not write it. Via
         `idx_audit_ts`, in the database and thus across all workers and every restart.
         The id instead of the name: a rename does not reset the daily quota."""
         return bool(self._one(
-            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND (detail LIKE ? OR detail LIKE ?) "
-            "LIMIT 1",
-            (int(since), *self.SOURCE_MAIL_DONE, f"account={int(user_id)} %", f"konto={int(user_id)} %")))
+            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND detail LIKE ? LIMIT 1",
+            (int(since), *self.SOURCE_MAIL_DONE, f"account={int(user_id)} %")))
 
     def open_token(self, user_id, purpose, email=None) -> bool:
         """Is there already an open (unused, valid) link of this purpose for this account —
@@ -5305,14 +4455,6 @@ class Store:
             except (ValueError, TypeError):
                 continue
         return sorted(out)
-
-    def has_sessions(self) -> bool:
-        """Is there any session? A first start after an update has some, a new installation none."""
-        return self._one("SELECT 1 FROM session LIMIT 1") is not None
-
-    def oauth_has_grants(self) -> bool:
-        """Has this installation ever connected a program (OAuth)? Decides whether the old pepper is kept."""
-        return self._one("SELECT 1 FROM oauth_grant LIMIT 1") is not None
 
     def oauth_live_tokens_before(self, when: int, now: int) -> int:
         """Codes and tokens created up to `when` that are still valid — what a pepper retired at `when` would cut."""

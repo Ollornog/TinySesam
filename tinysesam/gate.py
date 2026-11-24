@@ -17,8 +17,8 @@ The building blocks, deliberately small and without a dependency of their own (`
   at rest. Up to 0.25.x it was derived by HKDF from that base key — whoever read `<db>.key` could mint a token
   for any account. It comes from `TINYSESAM_GATE_KEY`, `gate_key_file` or the database (encrypted with the
   vault), is a keyring with an active and previous keys (`keys.py`), and the proxy learns it from
-  `/auth/gate/jwks.json` (`jwk_url`) or as `sign_key` (`tinysesam gate-key`). `derive_key_name` remains only for
-  the migration: the derived key stays a previous key for one token lifetime.
+  `/auth/gate/jwks.json` (`jwk_url`) or as `sign_key` (`tinysesam gate-key`). A derived key of 0.25.x still kept
+  as a previous key (note `derived-v1`) is refused at start since the schema baseline (T-111).
 * **`typ: tinysesam-gate+jwt`** (RFC 8725 §3.11, T-53): a token says what it is, and `check` refuses any other
   type — no other JWT passes as a gate token. caddy-jwt cannot check `typ` (v1.4.0 has no such option); at the
   proxy the separation rests on the key that signs nothing else, and on `aud`.
@@ -34,9 +34,6 @@ import hashlib
 import json
 import secrets
 from typing import Optional
-
-#: Fixed context of the derivation up to 0.25.x (only for the migration, see `derive_key_name`).
-_HKDF_INFO = b"tinysesam gate-token v1"
 
 #: The explicit type of a gate token (RFC 8725 §3.11; RFC 7515 §4.1.9 allows leaving out `application/`).
 TOKEN_TYPE = "tinysesam-gate+jwt"
@@ -56,16 +53,6 @@ def _b64u(data: bytes) -> str:
 
 def _read_b64u(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
-def derive_key_name(base_key: bytes):
-    """The Ed25519 signing key as versions up to 0.25.x derived it from the base key — only for the migration
-    (it stays a previous key for one token lifetime, `keys.DERIVED_V1`). Never the active key."""
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-    seed = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=_HKDF_INFO).derive(base_key)
-    return Ed25519PrivateKey.from_private_bytes(seed)
 
 
 def public_raw(private) -> bytes:

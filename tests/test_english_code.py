@@ -36,10 +36,9 @@ After the identifiers and the database names were renamed, this guard keeps it t
      `Anmelden bei {app}` is asserted as `Anmelden bei Wiki`), a word that is a whole German interface text of its own
      (`Konto`) next to other text, an all-caps word of such a text (`NIE`), a passage in curly quotation marks
      “…”/„…“, and — in the tests that read `i18n/` — a phrase from the German documentation;
-   * the old names the migrations must name, as whole tokens: a compound from the tables of `_vocabulary.py`,
-     `Store.RENAMED_*`, `Store.KEY_KINDS_OLD`, `Store._english_names` (`oidc_widerruf`, `kein_konto`), a single old
-     key before `=` (`akteur=`), and the code that defines or reads them (`old_value_nodes`); the three tests whose
-     INPUT is the old data (`OLD_DATA_TESTS`);
+   * the old German names (`_german_words.OLD_NAMES`, the migration tables of 0.30.0) as whole tokens, so that a
+     test can prove one does not come back: a compound (`oidc_widerruf`, `kein_konto`) always, a single old key only
+     before `=` (`akteur=`);
    * names that the kit dictates (`KIT_NAMES`, its identifier-like strings with an underscore), the HMAC domain
      label `PROTOCOL_CONSTANTS`, and the guards' own probes and word lists (`GUARD_FILES`: German on purpose).
 
@@ -51,8 +50,6 @@ Explicit and small exceptions (everything else is a finding):
   `.githooks/pre-push`, `backlog/README-KONVENTION.md`, `.github/workflows/dependabot-auto-merge.yml`,
   `.github/release-automatik.json` (its keys are the kit script's interface), and the names the
   Python ones define or read (computed, not listed); what the repo takes from them stays quoted in `backticks`;
-* the migration code that has to name the OLD names: `Store._english_names` and the tables `Store.RENAMED_*`,
-  `Store.KEY_KINDS_OLD` (SQL check only);
 * the word lists of the guards themselves (strings, not identifiers, so they need no exception).
 
 Self-test: a German identifier, parameter, class, constant, file name, SQL column, docstring and comment are each found
@@ -79,7 +76,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from _german_words import ENGLISH_HOMOGRAPHS, GERMAN_WORDS, history_lines     # noqa: E402
+from _german_words import ENGLISH_HOMOGRAPHS, GERMAN_WORDS, OLD_NAMES, history_lines     # noqa: E402
 from _kit.report import Report                                 # noqa: E402
 
 r = Report("English code: identifiers, file names, SQL, comments, docstrings, string literals")
@@ -102,13 +99,6 @@ ROOT_TEXT_FILES = ("Dockerfile", ".dockerignore", ".gitignore", "MANIFEST.in", "
 DOC_FILES = ("README.md", "API.md", "SECURITY.md", "CONFIGURATION.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "TODO.md",
              "docs/OPERATIONS.md")
 SKIP_SUFFIXES = (".py", ".pyc", ".png", ".ico", ".svg", ".woff2")
-#: Where the OLD names have to stand: (file, qualified name) — the schema-16 migration and its tables.
-OLD_NAMES_ALLOWED = {("tinysesam/store.py", "_english_names"), ("tinysesam/store.py", "RENAMED_TABLES"),
-                     ("tinysesam/store.py", "RENAMED_COLUMNS"), ("tinysesam/store.py", "RENAMED_OBJECTS"),
-                     ("tinysesam/store.py", "RENAMED_SETTINGS"), ("tinysesam/store.py", "RENAMED_SETTING_PREFIXES"),
-                     ("tinysesam/store.py", "KEY_KINDS_OLD"), ("tinysesam/store.py", "anonymize_audit"),
-                     ("tinysesam/store.py", "source_mail_since"), ("tinysesam/store.py", "_OLD_NAME"),
-                     ("tinysesam/store.py", "_OLD_MAIL"), ("tinysesam/store.py", "_OWN_VALUES")}
 SQL_KEYWORDS = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|WHERE|FROM|PRAGMA|TRIGGER|VALUES)\b")
 
 
@@ -280,21 +270,13 @@ def sql_findings(path: str, text: str, skip_defs=()) -> list:
     """[(path:line, name, words)] — German words in SQL: the schema and every SQL string constant of the package."""
     out = []
     tree = ast.parse(text)
-    allowed = set()
-    for n in ast.walk(tree):
-        if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and (path, n.name) in OLD_NAMES_ALLOWED:
-            allowed |= {id(k) for k in ast.walk(n)}
-        if isinstance(n, ast.Assign):
-            for t in n.targets:
-                if isinstance(t, ast.Name) and (path, t.id) in OLD_NAMES_ALLOWED:
-                    allowed |= {id(k) for k in ast.walk(n)}
     docs = set()
     for n in ast.walk(tree):
         if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef)) and n.body and isinstance(n.body[0], ast.Expr) \
                 and isinstance(getattr(n.body[0], "value", None), ast.Constant):
             docs.add(id(n.body[0].value))
     for n in ast.walk(tree):
-        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in allowed and id(n) not in docs \
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs \
                 and (SQL_KEYWORDS.search(n.value) and len(n.value) > 12):
             # the words of the statement outside 'string literals' (those are values) and `-- comments`
             found = set()
@@ -328,10 +310,6 @@ GUARD_FILES = ("tests/test_english_code.py", "tests/_german_words.py", "tests/te
 #: `tests/voraussetzung.py`), which `tests/run_all.py` reads and `tests/test_runner.py` imitates.
 KIT_NAMES = re.compile(r"CI_KERNE|PFLICHT_WORKFLOWS|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*"
                         r"|--seit\b|\$FOLGE\b|\bstatus: offen\b|\bFEHL\b|\b\d+ ok, \d+ Fehler\b|, \d+ übersprungen\b|\buebersprungen:")
-#: Tests whose INPUT is the old German data (audit lines, key kinds, table and column names of the old schema, free text of
-#: the old messages): whole files, because the fixtures are the subject — they are the tests that prove the migrations.
-OLD_DATA_TESTS = ("tests/test_vocabulary_migration.py", "tests/test_db_names_migration.py",
-                  "tests/test_values_english.py")
 #: Patterns that must NOT appear in the English and the German docs (the German half is the point): exact strings.
 GERMAN_DOC_PATTERNS = frozenset({"within a few days|innerhalb weniger Tage"})
 #: Strings that are part of a stored or derived value and must not change: the HMAC domain label of the password-
@@ -396,22 +374,6 @@ def german_ui_nodes(path: str, tree) -> set:
     return out
 
 
-def old_value_nodes(path: str, tree) -> set:
-    """ids of the nodes that DEFINE or READ the old names of the migrations: the module-level tables of `_vocabulary.py`
-    and what `OLD_NAMES_ALLOWED` lists (`Store.RENAMED_*`, `_english_names`, the readers of old audit rows)."""
-    out = set()
-    if path == "tinysesam/_vocabulary.py":
-        for n in tree.body:
-            if isinstance(n, ast.Assign):
-                out |= _within(n)
-    for n in ast.walk(tree):
-        if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and (path, n.name) in OLD_NAMES_ALLOWED:
-            out |= _within(n)
-        if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and (path, t.id) in OLD_NAMES_ALLOWED for t in n.targets):
-            out |= _within(n)
-    return out
-
-
 def german_ui_corpus() -> list:
     """The German interface texts of the library, to see whether a test string is a fragment of one."""
     out = []
@@ -431,35 +393,12 @@ def german_docs_text() -> str:
 
 
 def old_value_tokens() -> frozenset:
-    """The OLD names the migrations must name, as whole tokens: every string of a module-level table of
-    `_vocabulary.py`, of `Store.RENAMED_*` / `KEY_KINDS_OLD` and of `Store._english_names`, the words in it
-    (split at everything but letters, digits, `_` and `#`: `reason=kein_konto` → `kein_konto`) and the audit event
-    families (`<source>_kennung_gebunden`). A string that names such a token (`oidc_widerruf`, `akteur=`,
-    `gelöscht#7`) quotes an old value on purpose (see `is_old_name`)."""
-    tokens = set()
-    tables = {}
-    for path in ("tinysesam/_vocabulary.py", "tinysesam/store.py"):
-        tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
-        roots = []
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and (
-                    path.endswith("_vocabulary.py") and t.id.isupper() or (path, t.id) in OLD_NAMES_ALLOWED)
-                    for t in n.targets):
-                roots.append(n)
-                for t in n.targets:
-                    if isinstance(t, ast.Name):
-                        try:
-                            tables[t.id] = ast.literal_eval(n.value)
-                        except ValueError:
-                            pass        # not a literal table (a regex, a computed value): only its strings count
-            elif isinstance(n, ast.FunctionDef) and (path, n.name) in OLD_NAMES_ALLOWED:
-                roots.append(n)
-        for root in roots:
-            for s in _string_nodes(root):
-                tokens.add(text_of(s).lower())
-                tokens |= {w.lower() for w in re.findall(r"[\w#]+", text_of(s)) if len(w) > 1}
-    for source in tables.get("AUDIT_SOURCES", ()):
-        tokens |= {(source + suffix).lower() for suffix in tables.get("AUDIT_FAMILIES_OLD", {})}
+    """The OLD names as whole tokens (`_german_words.OLD_NAMES`) and the words in them (split at everything but letters,
+    digits, `_` and `#`). A string that names such a token (`oidc_widerruf`, `akteur=`, `gelöscht#7`) quotes an old
+    value on purpose (see `is_old_name`)."""
+    tokens = {n.lower() for n in OLD_NAMES}
+    for n in OLD_NAMES:
+        tokens |= {w.lower() for w in re.findall(r"[\w#]+", n) if len(w) > 1}
     return frozenset(tokens)
 
 
@@ -509,13 +448,13 @@ def string_hits(path: str, text: str, ui_corpus=(), old_tokens=frozenset(), frag
     documentation (`german_docs_text`); a passage in curly quotation marks
     “…” / „…“ (an English description quoting the interface); an old name of the migrations (`old_value_tokens`);
     the names of the kit (`without_kit_tokens`)."""
-    if path in GUARD_FILES or path in OLD_DATA_TESTS:
+    if path in GUARD_FILES:
         return []
     fragments = ui_fragments(ui_corpus) if fragments is None else fragments
     words_ui, caps_ui = ui_words(ui_corpus), ui_caps(ui_corpus)
     out = []
     tree = ast.parse(text)
-    ui = german_ui_nodes(path, tree) | old_value_nodes(path, tree)
+    ui = german_ui_nodes(path, tree)
     for n in _string_nodes(tree):
         if id(n) in ui:
             continue
@@ -860,7 +799,7 @@ def mutated_string_findings(path: str, old: str, new: str) -> list:
 
 
 for _path in ("tinysesam/ldap_.py", "tests/test_cookies.py", "tests/test_hardening.py", "tinysesam/messages.py",
-              "tinysesam/_vocabulary.py", "tinysesam/store.py"):
+              "tinysesam/store.py"):
     _base = string_findings(_path, (ROOT / _path).read_text(encoding="utf-8"), _UI, _OLD, _FR)
     r.check(f"mutation baseline: the unbroken {_path} has no string finding", not _base, str(_base[:2]))
 for what, path, old, new, red in (
@@ -870,10 +809,11 @@ for what, path, old, new, red in (
         ("a German test password", "tests/test_hardening.py", '"Attacker-Password-1x"', '"Angreifer-Passwort-1x"', True),
         ("a German entry in the message catalog", "tinysesam/messages.py", '"login.signup": "Konto erstellen"',
          '"login.signup": "Neues Konto anlegen und sofort loslegen"', False),
-        ("an old name added to the migration table", "tinysesam/_vocabulary.py", '"sperrhinweis": "lockout_notice"',
-         '"sperrhinweis": "lockout_notice", "zusatz_hinweis": "extra_notice"', False),
-        ("an old table name added to the schema migration", "tinysesam/store.py", '"fehlserie": "failure_series"',
-         '"fehlserie": "failure_series", "alte_tabelle": "old_table"', False)):
+        ("an old name quoted in a test (it must not come back)", "tests/test_hardening.py", '"Attacker-Password-1x"',
+         '"Attacker-Password-1x" and "oidc_widerruf"', False),
+        ("a new German name in the package (no migration table exempts it any more)", "tinysesam/store.py",
+         '"SELECT * FROM oidc_session WHERE token_hash=?"', '"SELECT * FROM oidc_session WHERE token_hash=? AND neu_konto=1"',
+         True)):
     try:
         found = mutated_string_findings(path, old, new)
         ok_ = bool(found) == red

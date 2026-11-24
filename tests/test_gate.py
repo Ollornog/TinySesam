@@ -17,6 +17,15 @@ from fastapi.testclient import TestClient
 
 from tinysesam import TinySesam, TinySesamConfig, ConfigError
 from tinysesam import gate, config_check
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+
+def _derived_from_vault_key(base_key: bytes) -> Ed25519PrivateKey:
+    """The gate key as versions up to 0.25.x derived it from the vault key (HKDF) — the key a gate key must never be."""
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    seed = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"tinysesam gate-token v1").derive(base_key)
+    return Ed25519PrivateKey.from_private_bytes(seed)
 
 
 def ok(name):
@@ -141,7 +150,7 @@ def new_signed(content_new, head_new=None, key_name=None):
 
 
 base = json.loads(gate._read_b64u(i))
-foreign = gate.derive_key_name(b"\x00" * 32)
+foreign = Ed25519PrivateKey.from_private_bytes(b"\x00" * 32)
 cases = {
     # Flip a BYTE of the signature, do not replace the last characters: the last base64 characters
     # carry padding bits, and `…AA` instead of `…AB` is sometimes the same signature (1 in 256 runs).
@@ -241,7 +250,7 @@ finally:
     else:
         os.environ["TINYSESAM_SECRETS_KEY"] = old
 assert a1.gate_public_key() != a2.gate_public_key()
-assert gate.public_b64(gate.derive_key_name(b"\x07" * 32)) not in (a1.gate_public_key(), a2.gate_public_key())
+assert gate.public_b64(_derived_from_vault_key(b"\x07" * 32)) not in (a1.gate_public_key(), a2.gate_public_key())
 ok("header typ tinysesam-gate+jwt + kid; same database → same key; same vault key → NOT the same gate key")
 
 # ---------- CLI: tinysesam gate-key ----------

@@ -17,7 +17,7 @@ with their front door: keep the surface small, every feature optional, and prove
 | `tinysesam/router.py` | `/auth/*` routes of the built-in pages and JSON endpoints |
 | `tinysesam/admin.py` | the admin panel as a mountable router (`/auth/admin`, JSON under `<mount>/api/*`) |
 | `tinysesam/_role_levels.py` | role levels (`role_levels`): pure functions the panel and `config_check` share |
-| `tinysesam/store.py` | SQLite store, schema and migrations (`Store.SCHEMA_VERSION`) |
+| `tinysesam/store.py` | SQLite store and schema (`Store.SCHEMA_VERSION`, baseline 26) |
 | `tinysesam/security.py` | client IP behind proxies, rate limits, lockout thresholds, the `tinysesam.security` logger |
 | `tinysesam/templates.py`, `theme.py`, `topbar.py`, `dialog.py`, `c22.css` | built-in pages, design tokens (the only place with colour values), top bar, own dialogs, C22 adapter |
 | `tinysesam/oidc.py`, `saml_.py`, `ldap_.py`, `webauthn_.py`, `totp.py`, `passwords.py` | sign-in methods; optional ones live behind extras |
@@ -66,8 +66,8 @@ python tests/run_all.py test_core.py     # one suite while you work
 | `backlog/README.md` | the backlog files | `python scripts/_backlog.py index` |
 | `spec/vectors/*.json` | TinySesam's issuing path + attacks in the generator | `python scripts/_gate_vectors.py` |
 
-A new public name has **no tier** until someone decides (A stable, B advanced, C internal with a warning alias in
-`tinysesam/_deprecated.py`); the surface test stays red until then. Tier A and B names must be described in the
+A new public name has **no tier** until someone decides (A stable, B advanced); an internal name carries a leading
+underscore and is not measured. The surface test stays red until then. Tier A and B names must be described in the
 hand-written docs (README, `CONFIGURATION.md`, `SECURITY.md`, `docs/`).
 
 ## Backlog
@@ -120,8 +120,14 @@ already hold one.
 - CodeQL findings are fixed in code. A real false positive may be dismissed via the API (reason plus comment) and
   must be recorded in `.github/codeql/accepted.md`; never switch a rule off globally (`query-filters`).
 - Config fields are read at request time; `TinySesamConfig.validate()` re-checks one changed after construction.
-- Schema changes need a migration in `tinysesam/store.py`, a rollback note in `docs/OPERATIONS.md` and a test with
-  an old database (`tests/fixtures/`).
+- The schema starts from a baseline (T-111): a new database is created in one step with schema 26, and a database below
+  it is refused at start (`Store.BASELINE_SCHEMA`, `Store.LAST_MIGRATING_RELEASE` = 0.30.0). A schema change after the
+  baseline raises `Store.SCHEMA_VERSION` with ONE migration step from the state before (in `Store._open_schema`), says
+  in `docs/OPERATIONS.md` ("Updating") what an older version does with the file, and adds a test that opens a database
+  of the state before (made by `Store` and stamped back) — never a fixture from older files.
+  `tests/test_schema_baseline.py` compares a fresh database with `tests/fixtures/schema_baseline.json` (generated from
+  the tag v0.30.0); after the first schema change it compares a fresh database with a baseline database migrated by
+  the new step.
 
 A quick probe instance for experiments (database in a throwaway directory, never in the tree):
 

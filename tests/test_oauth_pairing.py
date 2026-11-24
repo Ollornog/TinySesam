@@ -15,7 +15,6 @@ import json
 import logging
 import os
 import re
-import sqlite3
 import sys
 import tempfile
 import time
@@ -530,33 +529,6 @@ assert "Zugriff erlauben?" in html_de and "möchte als <bdi>dora</bdi> in <bdi>D
 assert ">Erlauben<" in html_de and "<summary>Details</summary>" in html_de and "Programm verbinden" in de_c.get(
     "/auth/account").text
 ok("consent page: one sentence with the app's name, a large „Allow“ before the folded details; en/de; strict CSP")
-
-# ================================================================ schema 26: a schema-25 file
-path = os.path.join(tempfile.mkdtemp(), "old.db")
-s0 = Store(path)
-s0.db.close()
-raw = sqlite3.connect(path)
-raw.execute("ALTER TABLE oauth_code DROP COLUMN consent_via")
-raw.execute("ALTER TABLE oauth_grant DROP COLUMN consent_via")
-raw.execute("INSERT INTO users(username, display_name, created_at) VALUES ('old', 'old', 1)")
-raw.execute("INSERT INTO oauth_client(client_id, name, redirect_uris, created_at) VALUES ('tsc_old', 'Old', ?, 1)",
-            (json.dumps([CB]),))
-raw.execute("INSERT INTO oauth_grant(client_id, user_id, resource, scope, created_at) "
-            "VALUES ('tsc_old', 1, ?, 'mcp', 1)", (RESOURCE,))
-raw.execute("INSERT INTO oauth_token(token_hash, grant_id, kind, scope, created_at, expires_at) "
-            "VALUES ('h', 1, 'refresh', 'mcp', 1, ?)", (int(time.time()) + 3600,))
-raw.execute("PRAGMA user_version = 25")
-raw.commit()
-raw.close()
-s1 = Store(path)
-assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 26
-for table in ("oauth_code", "oauth_grant"):
-    assert "consent_via" in {r["name"] for r in s1.db.execute(f"PRAGMA table_info({table})")}, table
-g_old = s1.oauth_grants(int(time.time()))
-assert len(g_old) == 1 and g_old[0]["consent_via"] is None
-s1.db.close()
-assert Store(path).oauth_grants(int(time.time()))[0]["client_id"] == "tsc_old"
-ok("schema 26: a schema-25 file gets both columns and the stamp; old grants count as allowed on the page")
 
 logging.getLogger("tinysesam.security").removeHandler(_handler)
 print("test_oauth_pairing: all green")

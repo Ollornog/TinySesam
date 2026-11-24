@@ -31,7 +31,6 @@ from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import ConfigError, TinySesam, TinySesamConfig  # noqa: E402
-from tinysesam.store import Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("T-13 decisions (B2-4, B2-6, B2-8, F-27, H-3, H-5)")
@@ -432,15 +431,6 @@ r.check("… and Mallory's account page sees a hit like a miss (no oracle about 
         len(_ev_d1) - len(_ev_d0) == len(_ev_d2) - len(_ev_d1) == 1 and _ev_d1[0] == _ev_d2[0]
         and bool(a_d.store._one("SELECT 1 AS x FROM audit WHERE event='ldap_identifier_rejected'")),
         f"{_ev_d0[:2]} {_ev_d1[:2]} {_ev_d2[:2]}")
-# Read path with OLD rows (an older version after a rollback wrote them): the rejection under its up-to-0.24.x
-# name stays just as hidden, and the old name `login_lokal` is shown in the English spelling.
-a_d.store.audit_log("ldap_kennung_abgewiesen", "alice.new", "203.0.113.66", "grund=kennung_zweier_konten")
-a_d.store.audit_log("login_lokal", "alice.new", "203.0.113.66", "password")
-_ev_d3 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
-r.check("… old rows: `ldap_kennung_abgewiesen` stays hidden on the account page, `login_lokal` appears as `login_local`",
-        len(_ev_d3) - len(_ev_d2) == 1 and _ev_d3[0] == "login_local"
-        and "ldap_kennung_abgewiesen" not in _ev_d3 and "ldap_identifier_rejected" not in _ev_d3,
-        f"{_ev_d2[:2]} {_ev_d3[:3]}")
 r.check("… Mallory's own sign-in continues to work (counter-check)",
         _login(TestClient(ap_d), "alice.new", MPW).status_code == 303)
 a_d.change_username(_mallory_d, "mallory", by_operator=True)
@@ -1210,14 +1200,12 @@ _key_file = a14.cfg.db_path + ".key"
 r.check("… without a setting the key lies next to the database, readable only by the owner (0600)",
         _os.path.isfile(_key_file) and _stat.S_IMODE(_os.stat(_key_file).st_mode) == 0o600)
 
-# Existing data: a plaintext secret is encrypted at startup (silent lift).
+# A plaintext secret (before 0.21) is no longer encrypted on the fly since the schema baseline (T-111): the start stops
+# and names 0.30.0 (tests/test_schema_baseline.py). Here: the encrypted one survives a restart.
 _path14 = a14.cfg.db_path
-a14.store._exec("UPDATE totp_cred SET secret=? WHERE user_id=?", (secret_text14, u14))   # as before 0.21
 a14.close()
 a14b, _ = _app(db_path=_path14)
-roh14b = a14b.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
-r.check("H-14/15: a plaintext secret from before is encrypted at startup",
-        roh14b.startswith("v2:") and a14b.store.get_totp(u14)["secret"] == secret_text14)
+r.check("H-14/15: the encrypted secret survives a restart", a14b.store.get_totp(u14)["secret"] == secret_text14)
 a14b.close()
 
 # Wrong key → startup aborts instead of silently letting every TOTP sign-in fail.
@@ -1415,14 +1403,14 @@ r.check("Finding 9: an OIDC session (persistent, but without choice) ends after 
         c9.get("/auth/me").status_code == 401)
 
 # Finding 10: several workers create the key at the same time — all get the same one.
-from tinysesam import vault as _gh  # noqa: E402
+from tinysesam import keys as _gh  # noqa: E402
 _db10 = str(Path(tempfile.mkdtemp()) / "race.db")
 _erg10, _error10 = [], []
 
 
 def _load10():
     try:
-        _erg10.append(_gh.load_key(_db10)[0])
+        _erg10.append(_gh.load_vault(_db10, "").active.material)
     except Exception as e:   # noqa: BLE001
         _error10.append(repr(e))
 
@@ -1527,36 +1515,6 @@ a8.store._exec("UPDATE users SET idp_confirmed_at = 0 WHERE id=?", (local8,))
 r.check("Finding 8: an account without an OIDC binding keeps its key (even with idp_confirmed_at=0)",
         a8.verify_api_key(key8l)[0] is not None)
 
-# Existing data: the period starts with the update, exactly once.
-_path8 = str(Path(tempfile.mkdtemp()) / "existing8.db")
-_old8 = Store(_path8)
-_old8.create_user("existing-oidc", None, None, False, [], False)
-_old8.link_oidc("https://idp.example", "sub-b", 1)
-_old8.db.execute("ALTER TABLE users DROP COLUMN idp_confirmed_at")
-_old8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")   # a 0.20 file does not know it
-_old8.db.commit()
-_old8.close()
-_new8 = Store(_path8)
-_state8 = _new8.get_user(1)["idp_confirmed_at"]
-# Afterwards without state (an account bound by a route without confirmation): a restart
-# must NOT grant it a fresh period.
-_new8.db.execute("UPDATE users SET idp_confirmed_at = NULL WHERE id=1")
-_new8.db.commit()
-_new8.close()
-r.check("Finding 8, existing data: the period of an OIDC account starts with the update — and only once",
-        _state8 is not None and abs(_state8 - int(_when.time())) < 60
-        and Store(_path8).get_user(1)["idp_confirmed_at"] is None, f"{_state8}")
-# Abort in the middle of the update: the column is already there (the ALTER is durable immediately), state and
-# marker are not. The next start catches up.
-_pfad8c = str(Path(tempfile.mkdtemp()) / "abort8.db")
-_from8 = Store(_pfad8c)
-_from8.create_user("abort-oidc", None, None, False, [], False)
-_from8.link_oidc("https://idp.example", "sub-c", 1)
-_from8.db.execute("DELETE FROM setting WHERE key='idp_inventory_set'")
-_from8.db.commit()
-_from8.close()
-r.check("Finding 8, existing data: after an abort (column present, marker not) the next start sets the state",
-        Store(_pfad8c).get_user(1)["idp_confirmed_at"] is not None)
 # (Mutation probes: remove `_key_rests` in `verify_api_key` → "rests" red; remove `confirm_idp` in the
 #  callback → "wakes it again" red; remove the period check → "31: rests" red;
 #  remove `_idp_no` in the group branch → group withdrawal red; remove the binding check →
@@ -2096,36 +2054,5 @@ r.check("… oidc_session_max_unverified_hours=0 switches the limit off", c_ob0.
 # (Mutation probes: remove the check in `_oidc_recheck` → "26 hours" red; `success=True`
 #  at the exchange removed → "a yes resets the state" red; `_idp_no` instead of just deleting → keys check
 #  red.)
-
-# ── Schema 11, intermediate state: `failure_series` without column `art` is recreated (R2-3) ────────
-_path_z = str(Path(tempfile.mkdtemp()) / "between.db")
-Store(_path_z).close()
-_raw = sqlite3.connect(_path_z)
-_raw.execute("DROP TABLE failure_series")
-_raw.execute("CREATE TABLE failure_series (folded TEXT PRIMARY KEY, count INTEGER NOT NULL, "
-             "since INTEGER NOT NULL, last_seen INTEGER NOT NULL)")
-_raw.commit()
-_raw.close()
-_z = Store(_path_z)
-_columns = {z["name"] for z in _z._all("PRAGMA table_info(failure_series)")}
-r.check("Intermediate state: a `failure_series` without `art` is recreated instead of breaking every sign-in",
-        "kind" in _columns and _z.increase_failure_series("x", "password") == 1, str(_columns))
-_z.close()
-
-# ── Schema 11: a file from 0.20.x gets the table at startup ───────────────────────────────
-_path = str(Path(tempfile.mkdtemp()) / "alt.db")
-Store(_path).close()
-_raw = sqlite3.connect(_path)
-_raw.execute("DROP TABLE failure_series")
-_raw.execute("PRAGMA user_version = 10")
-_raw.commit()
-_raw.close()
-_new = Store(_path)
-_tables = {z["name"] for z in _new._all("SELECT name FROM sqlite_master WHERE type='table'")}
-r.check("Schema 10 → today: `failure_series` is created at startup, the stamp follows",
-        "failure_series" in _tables
-        and int(_new.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 11)
-_new.close()
-os.remove(_path)
 
 sys.exit(r.done())

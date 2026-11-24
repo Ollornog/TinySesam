@@ -140,41 +140,6 @@
       "sig": "(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'",
       "tier": "A"
     },
-    "check_ldap": {
-      "sig": "(username, password) -> 'Optional[dict]'",
-      "since": "0.22.0",
-      "target": "_check_ldap",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "check_password": {
-      "sig": "(username, password) -> 'Optional[dict]'",
-      "since": "0.22.0",
-      "target": "_check_password",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "check_pin": {
-      "sig": "(username, pin) -> 'Optional[dict]'",
-      "since": "0.22.0",
-      "target": "_check_pin",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "check_resource": {
-      "sig": "(name, secret) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_check_resource",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "check_saml": {
-      "sig": "(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'",
-      "since": "0.22.0",
-      "target": "_check_saml",
-      "tier": "C",
-      "until": "1.0"
-    },
     "client_ip": {
       "sig": "(request: 'Request') -> 'str'",
       "tier": "B"
@@ -182,13 +147,6 @@
     "close": {
       "sig": "(timeout: 'float' = 10.0) -> 'bool'",
       "tier": "A"
-    },
-    "complete_mfa": {
-      "sig": "(token) -> 'Optional[str]'",
-      "since": "0.22.0",
-      "target": "complete_totp",
-      "tier": "C",
-      "until": "1.0"
     },
     "complete_totp": {
       "sig": "(token) -> 'Optional[str]'",
@@ -209,13 +167,6 @@
     "confirm_totp": {
       "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
-    },
-    "consume_admin_claim": {
-      "sig": "(token, user) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_consume_admin_claim",
-      "tier": "C",
-      "until": "1.0"
     },
     "count_other_sessions": {
       "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
@@ -285,13 +236,6 @@
       "sig": "(request: 'Request', response: 'Response') -> 'str'",
       "tier": "A"
     },
-    "factor_entry": {
-      "sig": "(step, nxt='/') -> 'str'",
-      "since": "0.22.0",
-      "target": "_factor_entry",
-      "tier": "C",
-      "until": "1.0"
-    },
     "federated_only": {
       "sig": "(user_id) -> 'bool'",
       "tier": "B"
@@ -311,27 +255,6 @@
     "flow_cookie_name": {
       "sig": "(base: 'str') -> 'str'",
       "tier": "B"
-    },
-    "forward_login_url": {
-      "sig": "(orig_url: 'str', request: 'Optional[Request]' = None, direct: 'bool' = False) -> 'str'",
-      "since": "0.22.0",
-      "target": "_forward_login_url",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "forward_response_headers": {
-      "sig": "(user) -> 'dict'",
-      "since": "0.22.0",
-      "target": "_forward_response_headers",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "forwarded_url": {
-      "sig": "(request: 'Request') -> 'str'",
-      "since": "0.22.0",
-      "target": "_forwarded_url",
-      "tier": "C",
-      "until": "1.0"
     },
     "gate_issuer": {
       "sig": "() -> 'str'",
@@ -385,55 +308,6 @@
       "sig": "(user) -> 'bool'",
       "tier": "A"
     },
-    "is_locked": {
-      "sig": "(username, ip) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_is_locked",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "is_password_change_locked": {
-      "sig": "(username, ip) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_is_password_change_locked",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "is_pin_locked": {
-      "sig": "(username, ip, login: 'bool' = True) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_is_pin_locked",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "is_reauth_locked": {
-      "sig": "(username, ip) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_is_reauth_locked",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "is_resource_locked": {
-      "sig": "(username, ip) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_is_resource_locked",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "is_secure": {
-      "sig": "(request: 'Request') -> 'bool'",
-      "since": "0.22.0",
-      "target": "_is_secure",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "is_totp_setup_locked": {
-      "sig": "(username, ip) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_is_totp_setup_locked",
-      "tier": "C",
-      "until": "1.0"
-    },
     "issue_csrf": {
       "sig": "(response: 'Response') -> 'str'",
       "tier": "A"
@@ -482,13 +356,6 @@
       "sig": "(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
     },
-    "login_redirect_after": {
-      "sig": "(request, token, user_id, nxt)",
-      "since": "0.22.0",
-      "target": "_login_redirect_after",
-      "tier": "C",
-      "until": "1.0"
-    },
     "login_totp": {
       "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
@@ -505,30 +372,9 @@
       "sig": "() -> 'bool'",
       "tier": "B"
     },
-    "maybe_promote_admin": {
-      "sig": "(user, email_confirmed: 'Optional[bool]' = None, factor: 'Optional[str]' = None) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_maybe_promote_admin",
-      "tier": "C",
-      "until": "1.0"
-    },
     "mfa_enrollment_allowed": {
       "sig": "(user_id: 'int', now: 'Optional[int]' = None) -> 'bool'",
       "tier": "B"
-    },
-    "mfa_pending": {
-      "sig": "(user_id) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_mfa_pending",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "next_login_step": {
-      "sig": "(user_id, done, setup: 'bool' = False)",
-      "since": "0.22.0",
-      "target": "_next_login_step",
-      "tier": "C",
-      "until": "1.0"
     },
     "own_events": {
       "sig": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
@@ -549,27 +395,6 @@
     "public_base": {
       "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
       "tier": "A"
-    },
-    "purge_demo": {
-      "sig": "() -> 'int'",
-      "since": "0.22.0",
-      "target": "_purge_demo",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "rate_ok": {
-      "sig": "(ip, login: 'bool' = True) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_rate_ok",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "record_login": {
-      "sig": "(username, ip, success, method, attempt: 'Optional[int]' = None, source: 'str' = '', account: 'Optional[int]' = None)",
-      "since": "0.22.0",
-      "target": "_record_login",
-      "tier": "C",
-      "until": "1.0"
     },
     "recovery_codes_remaining": {
       "sig": "(user_id) -> 'int'",
@@ -671,20 +496,6 @@
       "sig": "(next_: 'str', request: 'Optional[Request]' = None) -> 'str'",
       "tier": "A"
     },
-    "sec": {
-      "sig": "(key) -> 'int'",
-      "since": "0.22.0",
-      "target": "_sec",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "seed_demo": {
-      "sig": "() -> 'None'",
-      "since": "0.22.0",
-      "target": "_seed_demo",
-      "tier": "C",
-      "until": "1.0"
-    },
     "send_login_link": {
       "sig": "(email, base_url, next='/') -> 'bool'",
       "tier": "A"
@@ -697,23 +508,9 @@
       "sig": "(email, base_url) -> 'bool'",
       "tier": "A"
     },
-    "send_signup_notice": {
-      "sig": "(email, base_url) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_send_signup_notice",
-      "tier": "C",
-      "until": "1.0"
-    },
     "send_verify_email": {
       "sig": "(user_id, email, base_url) -> 'bool'",
       "tier": "A"
-    },
-    "session_from_request": {
-      "sig": "(request)",
-      "since": "0.22.0",
-      "target": "_session_from_request",
-      "tier": "C",
-      "until": "1.0"
     },
     "session_user": {
       "sig": "(request) -> 'Optional[dict]'",
@@ -811,13 +608,6 @@
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "B"
     },
-    "unlock_resource": {
-      "sig": "(request: 'Request', response, name)",
-      "since": "0.22.0",
-      "target": "_unlock_resource",
-      "tier": "C",
-      "until": "1.0"
-    },
     "user_roles": {
       "sig": "(user) -> 'list'",
       "tier": "B"
@@ -825,41 +615,6 @@
     "verify_api_key": {
       "sig": "(key)",
       "tier": "B"
-    },
-    "verify_csrf": {
-      "sig": "(request: 'Request', submitted) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_verify_csrf",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "verify_recovery_code": {
-      "sig": "(user_id, code) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_verify_recovery_code",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "verify_totp": {
-      "sig": "(user_id, code) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_verify_totp",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "verify_user_password": {
-      "sig": "(user_id, password) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_verify_user_password",
-      "tier": "C",
-      "until": "1.0"
-    },
-    "verify_user_pin": {
-      "sig": "(user_id, pin) -> 'bool'",
-      "since": "0.22.0",
-      "target": "_verify_user_pin",
-      "tier": "C",
-      "until": "1.0"
     },
     "version": {
       "sig": "() -> 'str'",
@@ -877,13 +632,6 @@
     }
   },
   "TinySesam.constants": {
-    "DEMO_USERS": {
-      "since": "0.22.0",
-      "target": "_DEMO_USERS",
-      "tier": "C",
-      "until": "1.0",
-      "value": "('demo', 'demoadmin')"
-    },
     "FEDERATED_SOURCES": {
       "tier": "B",
       "value": "('ldap', 'saml')"
@@ -895,13 +643,6 @@
     "FORWARD_HEADERS_MANDATORY": {
       "tier": "A",
       "value": "('kind',)"
-    },
-    "IDENTIFYING": {
-      "since": "0.22.0",
-      "target": "_IDENTIFYING",
-      "tier": "C",
-      "until": "1.0",
-      "value": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')"
     },
     "MFA_ENROLLMENT_MODES": {
       "tier": "B",
@@ -918,13 +659,6 @@
     "PAGES": {
       "tier": "B",
       "value": "('account', 'account_setup', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'qr_approve', 'qr_login', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
-    },
-    "RECOVERY_BYTES": {
-      "since": "0.22.0",
-      "target": "_RECOVERY_BYTES",
-      "tier": "C",
-      "until": "1.0",
-      "value": "7"
     },
     "SECURITY_EVENTS": {
       "tier": "A",

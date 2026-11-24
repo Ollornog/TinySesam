@@ -9,7 +9,7 @@ B  the output follows the order of the list, not the order in which suites finis
    two runs deliver the same log;
 C  “parallel” is really simultaneous, `CI_TEST_JOBS=1` really the old serial run;
 D  an unusable value for `CI_TEST_JOBS` is an error, not a silent default;
-E  the warning filter (deprecated names from the package = error) also works through the starter;
+E  (the warning filter for the tier-C aliases went with them, T-111);
 F  the starter lowers only in the collective run, leaves the import order of the suite alone, and the
    suites that check hash parameters or runtimes themselves calculate with the real values;
 G  the PACKAGE has no switch that weakens hashes — no environment variable, no setting;
@@ -184,17 +184,6 @@ for broken in ("0", "-2", "two", "1.5"):
 execution_0 = collect_run([from_suites[2]], 2)
 r.check("D: the floor stays — only skipped is not a green run",
         execution_0.returncode == 1 and "not a single suite ran" in execution_0.stderr, f"Exit {execution_0.returncode}")
-
-# ── E: the warning filter works through the starter ──────────────────────────────────────────
-e = Path(tempfile.mkdtemp(prefix="collect-e-"))
-execution_e = collect_run([suite(e, "test_w_alt.py", """\
-        import warnings
-        warnings.warn_explicit("TinySesam.old is outdated", DeprecationWarning, "x.py", 1,
-                               module="tinysesam.router")
-    """), from_suites[3]], 2)
-r.check("E: a deprecated name, called from the package, makes the suite red — also in parallel",
-        execution_e.returncode == 1 and "  FAIL test_w_alt.py (exit 1)" in lines(execution_e)
-        and "DeprecationWarning" in execution_e.stderr, f"Exit {execution_e.returncode}\n{execution_e.stdout[-300:]}")
 
 # ── F: the starter ───────────────────────────────────────────────────────────────────────────
 PROBE = """\
