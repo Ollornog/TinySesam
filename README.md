@@ -170,7 +170,7 @@ Without a guard, `auth.current_user(request)` returns the signed-in account — 
 **or** an API key — or `None`, and never redirects: for a page that merely looks different when
 someone is signed in. A route that *acts on the session* (applies a factor, refreshes or ends it)
 takes the account from `auth.session_user(request)` instead, which never answers for a key
-([tier B](#public-api-three-tiers)).
+([tier B](#public-api-two-tiers)).
 
 ## Roles & groups
 
@@ -459,7 +459,7 @@ The result, a `tinysesam.LoginResult`, carries `ok` (also its truth value), `rea
 303, 400, 401, 404, 429, 503), `message` (the translated text), `next_url` (the checked target),
 `next_factor` (the open factor, e.g. `"totp"`), `done` (session complete) and `user` (only on
 success). `reason` is meant for programs; it is not the audit or security log (their event names, keys and
-tokens are English as well since schema 15, but a different vocabulary). A failure has no session and sets no cookie — ignoring the result signs no one in. A
+tokens are English as well, but a different vocabulary). A failure has no session and sets no cookie — ignoring the result signs no one in. A
 JSON route that prefers to raise writes `if not result: raise HTTPException(result.status,
 result.message)`, leaves `csrf` out (then the `X-CSRF-Token` header counts) and sets the cookie on
 its own response with `result.set_cookie(response)`. The session token is deliberately not a
@@ -474,12 +474,11 @@ comes next. All three are synchronous (a password hash, maybe the directory): ca
 `def` route, or through `run_in_threadpool` in an `async def` one.
 
 > **Without these building blocks there is no protection against guessing.** The inner checks
-> `check_password`, `check_pin`, `check_ldap`, `verify_totp` and `verify_recovery_code` only
-> compare: no lockout, no counter, no series lock, no rate limit, no line for fail2ban. Until
-> 0.21.0 this section showed `check_password` + `start_session` — a route built from that lets
-> anyone guess passwords (or a four-digit PIN, or a six-digit code) as fast as the server
-> answers. They are [tier C](#public-api-three-tiers) since 0.22.0, warn when called and go with
-> 1.0; replace them with `login_password`, `login_pin` and `login_totp`.
+> only compare: no lockout, no counter, no series lock, no rate limit, no line for fail2ban. They are
+> internal (a leading underscore, no promise); their old public names (`check_password`, `check_pin`,
+> `check_ldap`, `verify_totp`, `verify_recovery_code`, tier C up to 0.30.0) are gone. A route built
+> from an inner check lets anyone guess passwords (or a four-digit PIN, or a six-digit code) as fast as
+> the server answers — use `login_password`, `login_pin` and `login_totp`.
 
 `start_session` stays, for tests and for a factor you verified yourself — it checks nothing
 ([Accounts in code](#accounts-in-code)). It returns `(token, session_ok)`: unpack it and put the
@@ -980,8 +979,8 @@ python -m tinysesam gc     --db auth.db                      # expired sessions/
 > contain the `users` table, and you only find out when you restore it. `backup` uses SQLite's
 > online backup: it takes the locks it needs, pulls the WAL in, and writes a file that stands on
 > its own, with the same tight permissions as the source. The supported way is this command;
-> `auth.store.backup(path)` does the same from Python, but `auth.store` is internal (tier C, no
-> promise — see [Public API](#public-api-three-tiers)).
+> `auth.store.backup(path)` does the same from Python, but `auth.store` is internal (no
+> promise — see [Public API](#public-api-two-tiers)).
 
 `gc` deletes expired sessions, flows, one-time tokens and old login attempts; the audit log is
 left alone on purpose. **Nothing runs it for you** — ready-made unit files are in
@@ -1003,34 +1002,14 @@ systemctl start tinysesam
 > first, checks the backup before overwriting anything (integrity, account count, schema version),
 > and sets `0600` afterwards.
 
-> **Rolling back needs a backup in the old schema.** Each release that adds columns migrates the
-> database on first start — 0.18.0 did it once (schema 5), 0.19.0 took it to **schema 8**
-> (per-app OIDC grants, key kind, first login and enrollment window), 0.20.0 takes it to
-> **schema 10** (9: stable directory keys for LDAP/SAML; 10: indexed lockout buckets and
-> name/address lookups, and panel locks from earlier releases become operator locks). Older code then opens the
-> file without complaining, `/healthz` stays green and accounts are readable — but every session
-> operation raises. Take a backup *before* the update (`tinysesam backup` leaves the source
-> untouched) and restore that one. If older code did run on the new file, the next start of the
-> new release catches up on two things: locks set in the older panel become operator locks
-> (recognised by their audit rows), and addresses of its pending sign-ups count as unverified until
-> confirmed; the log carries a warning. Nothing else is reconciled — the safe way back is the backup.
+> **Updating from before 0.30.0 takes two steps.** 0.30.0 is the last release with database migrations;
+> this version opens schema 26 (the state of 0.30.0) and newer only and refuses an older database with a
+> message, without writing to it. First update to 0.30.0 and start it once, check `tinysesam keys list`,
+> then take this version — the steps are in `docs/OPERATIONS.md`, "Updating". Take a backup before each
+> step (`tinysesam backup` leaves the source untouched); going back from this version to 0.30.0 needs
+> no SQL (same schema).
 
-**Coming from 0.17.x or older?** `tinysesam backup` only exists since 0.18.0, and the first start
-of the new release already migrates. So take the backup with the *new* version before it starts —
-`backup` opens the source read-only and leaves it in the old schema:
-
-```bash
-# Container: pull the new tag, back up, only then start it (service name as in your compose file)
-docker compose pull
-docker compose run --rm --no-deps --entrypoint tinysesam tinysesam \
-    backup --db /data/gateway.db /data/gateway-before-update.db
-docker compose up -d
-
-# Library: after installing the new version, before restarting the service
-python -m tinysesam backup --db auth.db auth-before-update.db
-```
-
-Or stop the service and copy `auth.db` together with `auth.db-wal` and `auth.db-shm` (where they
+Instead of `tinysesam backup` you can also stop the service and copy `auth.db` together with `auth.db-wal` and `auth.db-shm` (where they
 exist) into a separate directory; to go back, put all three back with the service stopped.
 
 ### Diagnosing "I can't get in"
@@ -2794,7 +2773,7 @@ after `forward_logged_out_sec` seconds (default 10, gateway `TINYSESAM_FORWARD_L
 the gate sends you on to the provider, which is signed out as well, so a **new** sign-in begins there. The
 page uses a `meta refresh`, no script. In mode `page` the sign-in page itself says “You have been signed out”.
 
-## Public API: three tiers
+## Public API: two tiers
 
 Not everything without a leading underscore is a promise. Since 0.22.0 every public name has a
 **tier**, recorded in `tests/api_surface.json` and listed with signature and description in
@@ -2804,7 +2783,6 @@ Not everything without a leading underscore is a promise. Since 0.22.0 every pub
 |---|---|---|
 | **A — public, stable from 1.0** | what this README shows, and what embedding apps use | No breaking change across two minor releases — the condition for 1.0. The count starts with 0.22.0. |
 | **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. A route has no warning: a path in tier B is announced in the CHANGELOG under “Deprecated” at least two minor releases before it goes. |
-| **C — internal** | the wiring of the built-in routes | None. Since 0.22.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that warns when called, then goes. Don't start using them. |
 
 **Public is what the hand-written docs describe** (decided before 1.0): this README,
 `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. `API.md` is generated from the code and
@@ -2828,15 +2806,10 @@ German word in any tier-A/B name, parameter, config field or error attribute.
 accept (the report of `federation_bind_existing`, `gc()`, `create_api_key`, the reason codes), the
 `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`,
 `ctx["purpose"]`), the JSON of the account and admin routes, and the API key kinds `automation`/
-`human`. The two values that live in the database (the key kind, the `old` address in a pending
-address-change link) are migrated on start (schema 12) and still read correctly in their old form;
-rolling back to 0.21.x takes one SQL block from `docs/OPERATIONS.md`. The same guard measures them on a
-probe instance and in the source. **Audit and log lines are English too, since schema 15** (a one-time rename, PO decision
-2026-10-29): event names (`oidc_widerruf` → `oidc_revoked`), keys (`grund=` → `reason=`) and tokens
-(`kein_konto` → `no_account`), the replacement name of a deleted account (`gelöscht#<id>` →
-`deleted#<id>`) and the message of the identifier triggers. The first start rewrites an existing database
-(back it up first); filters of your own that match the old words have to be adjusted. The full old → new
-list is in the CHANGELOG, the way back in `docs/OPERATIONS.md` ("Rollback to 0.24.x").
+`human`. The same guard measures them on a probe instance and in the source. **Audit and log lines are
+English too** (PO decision 2026-10-29): event names, keys, tokens, the replacement name of a deleted account
+(`deleted#<id>`) and the message of the identifier triggers; the old → new lists are in the CHANGELOG of 0.22.0 and
+0.25.0, and since the schema baseline only the English form is read.
 
 **Beyond the Python names** (PO decision 2026-10-29). The tiers also cover what is not a Python name,
 measured in `tests/api_surface.json` and listed in [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md):
@@ -2866,22 +2839,16 @@ measured in `tests/api_surface.json` and listed in [`API.md`](https://github.com
 For these new entries the tier-A clock starts with the release that introduces them (the one after 0.24.13),
 not with 0.22.0; the names above keep theirs.
 
-**`auth.store` is internal (tier C).** It is the storage layer the built-in routes use; its methods
+**`auth.store` is internal.** It is the storage layer the built-in routes use; its methods
 have no tier, no promise and no deprecation period, and they may change in any release. Everything
 an app needs has a public method (`set_disabled`, `find_user`, `list_api_keys`, `lift_lockout` …);
 where the docs still mention an `auth.store` call (a health probe, dropping OIDC grants), they say
 so.
 
-**Tier C warns.** Calling an old tier-C name (reading one, for the constants) raises a
-`DeprecationWarning` that names the replacement; [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md)
-lists each one. Python hides these warnings outside `__main__` — to find them in your app, run its
-tests once with `python -W error::DeprecationWarning`. A subclass that overrides one of these names
-gets a `RuntimeWarning` when it is defined: the built-in routes call `_name` since 0.22.0, so the
-override no longer takes effect. The same goes for a **test fake** on an old name —
-`auth.check_password = fake` or `mock.patch.object(auth, "rate_ok", …)` is never called; the
-assignment raises a `RuntimeWarning` naming the target. Put the fake on the new name
-(`auth._check_password = fake`). Patching the class (`mock.patch.object(TinySesam, …)`) doesn't
-warn and doesn't work either.
+**Internal is a leading underscore.** Up to 0.30.0 a third tier C kept the old public names of internal
+methods as warning aliases (`check_password` → `_check_password` …); they are gone since the schema baseline
+(the list is in the CHANGELOG, "Breaking"). A test fake belongs on the name the built-in routes call
+(`auth._check_password = fake`); a fake on an old name is a plain attribute nobody reads.
 
 ### For advanced use (tier B)
 
@@ -3001,7 +2968,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**136 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**135 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
@@ -3015,7 +2982,7 @@ against a real provider on a staging host (`tests/e2e_stage.py`); the tests that
 package cover them structurally, because they cannot dial out.
 
 Two security audits went through the code in 2026-09 (see the `CHANGELOG`). The version is
-deliberately **not** 1.0 yet: the tier-A surface ([Public API](#public-api-three-tiers)) has to
+deliberately **not** 1.0 yet: the tier-A surface ([Public API](#public-api-two-tiers)) has to
 hold still for two minor releases first, counted from 0.22.0.
 
 MIT license.

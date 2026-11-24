@@ -41,6 +41,73 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   open a literal that hides every table and column up to the next apostrophe, and a `--` inside a literal does not open
   a comment. Self-probes for both cases.
 
+### Removed
+
+**Breaking — the one deliberate break before 1.0** (milestone M-5, collected for one release). **0.30.0 is the last release with
+database migrations**; this version starts from the schema baseline (T-111). Update path for every installation:
+`docs/OPERATIONS.md`, "Updating". Each point says who has to act: **[end users notice]** — people signing in see
+something; **[operators only]** — the operator or the developer of the embedding app acts, nobody else notices.
+
+- **[operators only] Two-step update.** A database below schema 26 (or without a stamp, before 0.18) is refused at
+  start with `ConfigError` naming 0.30.0 — nothing is written, not even the journal mode. Way: back up, update to
+  0.30.0, start it once with write access, then this version. Going back from this version to 0.30.0 needs no SQL
+  (same schema 26). The command line refuses the same with exit code 1 instead of a traceback.
+- **[operators only] Secrets in a format before 0.26 stop the start.** A `v1:` value or a plain-text TOTP secret is no
+  longer rewritten at start (the message names the count); re-encrypt with 0.30.0 (its start, or its `tinysesam keys
+  reencrypt`). `tinysesam keys list` shows the count; `keys retire --purpose vault` refuses while one is there.
+  `tinysesam keys reencrypt --to v1` (the way back to 0.25.x) is gone.
+- **[operators only] A key derived from the vault key stops the start.** 0.26–0.30 kept the gate key and OAuth pepper
+  of 0.25.x (derived from the vault key by HKDF) as a previous key with the note `derived-v1`; nothing derives it any
+  more, and whoever holds the vault key could compute it. Check with `tinysesam keys list` (a line `note: derived-v1`);
+  the start names each such key and the command that removes it: `tinysesam keys retire --db <file> --purpose gate
+  --kid <kid>`, for the pepper `--purpose oauth-pepper --kid <kid> --force`. A keyring file or `*_PREVIOUS` variable:
+  remove the key there.
+- **[end users notice] Programs connected with OAuth tokens of 0.25.x** (digested with the derived pepper and never
+  refreshed since) connect again once the pepper is retired with `--force`. OAuth access and refresh tokens issued by
+  0.26 or later are not affected.
+- **[operators only] Tier C is gone.** The 38 warning aliases of 0.22.0 (`tinysesam/_deprecated.py`) are removed:
+  `check_ldap`, `check_password`, `check_pin`, `check_resource`, `check_saml`, `complete_mfa`, `consume_admin_claim`,
+  `factor_entry`, `forward_login_url`, `forward_response_headers`, `forwarded_url`, `is_locked`,
+  `is_password_change_locked`, `is_pin_locked`, `is_reauth_locked`, `is_resource_locked`, `is_secure`,
+  `is_totp_setup_locked`, `login_redirect_after`, `maybe_promote_admin`, `mfa_pending`, `next_login_step`,
+  `purge_demo`, `rate_ok`, `record_login`, `sec`, `seed_demo`, `send_signup_notice`, `session_from_request`,
+  `unlock_resource`, `verify_csrf`, `verify_recovery_code`, `verify_totp`, `verify_user_password`, `verify_user_pin`
+  and the constants `DEMO_USERS`, `IDENTIFYING`, `RECOVERY_BYTES`. Each warned with its replacement since 0.22.0 (the
+  table was in `API.md`, section C): `login_password`/`login_pin`/`login_totp` for the checkers, `confirm_*` for the
+  step-up, `complete_totp`, `require_csrf`, `current_user`/`session_user`, `all_security()`, `demo_mode`,
+  `admin_identifiers`/`ensure_admin`. A subclass or test fake on an old name no longer warns; it is a plain attribute.
+  `tests/api_surface.json` changed in tier C only; tiers A and B are unchanged.
+- **[operators only] Rows of versions before the English names are no longer translated.** The panel's audit list,
+  `tinysesam audit`, the account page's "Recent activity", the lockout notice throttle and the anonymisation of a
+  deleted account read the English names only (`tinysesam/_vocabulary.py` is gone). Rows written in German by 0.24.x
+  or older AFTER the migration to schema 15 (a rollback without restore) show their old names, and an API key that
+  0.21.x wrote with the kind `automat`/`mensch` counts as an automation key. 0.30.0 itself rewrote every older row.
+- **[operators only] Internal module names** (no tier, listed for embedders who reached into them): `gate.derive_key_name`,
+  `oauth.derive_pepper`, `keys.DERIVED_V1`, the `legacy` parameter of `keys.load_stored` and `Store.key_ring_create`,
+  `vault.PREFIX` (`v1:`), `vault.load_key` (use `keys.load_vault`), `Vault.encrypt_v1`, the `legacy` parameter of
+  `Vault.decrypt`, `Store.reencrypt(only_v1=, to_v1=)`, `Store.KEY_KINDS_OLD`, `Store.RENAMED_*`,
+  `Store.pepper_session_handles`, `Store.has_sessions`, `Store.oauth_has_grants`; `store.read_payload(text)` takes the
+  text only; `Store.extract_secrets()` returns nothing. `tests/run_all.py` no longer sets a `PYTHONWARNINGS` filter.
+
+- The migration chain of `Store` (`_migrate`, `_english_names`, `_values_english`, `_vocabulary_english`, the
+  one-time back-fills of schema 10/11 and the panel-lock catch-up of older writers) and `tinysesam/_vocabulary.py`
+  (T-111). A new database is created in one transaction with `SCHEMA`, `Store.INDEXES` and the triggers — an abort
+  leaves no half schema. What stays at every start: the triggers are compared and replaced when their definition
+  differs, the counting buckets of rows another writer left without one are filled in, and the oldest hand-set admin
+  becomes owner when there are admins but no owner (own code that creates admins with `create_user(is_admin=True)`).
+- The session-handle rewrite of T-71 (`Store.pepper_session_handles`): a planted plain-sha256 session row no longer
+  becomes valid when the marker `session_handles` is deleted and the service restarts (T-111).
+- The tests that only proved migrations from old files (`tests/test_db_names_migration.py`,
+  `tests/test_vocabulary_migration.py`, the fixtures `schema14_audit.sql`/`schema15_names.sql`, the upgrade blocks of
+  eleven other suites); what still matters is checked against a fresh database.
+
+### Added
+
+- `tests/test_schema_baseline.py`: a fresh database equals the schema 0.30.0 creates (`tests/fixtures/
+  schema_baseline.json`, generated from the tag; regenerated and compared where the tag is in the clone), creation is
+  atomic, a database below the baseline is refused untouched, old-format secrets and `derived-v1` keys stop the start
+  and `keys retire` clears the latter. `Store.BASELINE_SCHEMA`, `Store.LAST_MIGRATING_RELEASE`.
+
 ## [0.30.0] — 2026-11-24
 
 **The last release with database migrations.** The next release starts from a single schema baseline, drops old

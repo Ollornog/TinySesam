@@ -22,7 +22,6 @@ import html as _html
 import secrets
 import sqlite3
 import time
-import warnings
 import contextlib
 import contextvars
 from typing import Any, Callable, Literal, NoReturn, Optional, cast
@@ -32,7 +31,6 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from . import _chain
-from . import _vocabulary
 from . import app_passwords as _ap
 from . import config_check
 from .errors import ConfigError, StateError
@@ -48,7 +46,6 @@ from . import topbar as _topbar
 from . import totp as _totp
 from . import security
 from .ldap_ import CONNECTION_TIMEOUT as _LDAP_TIMEOUT
-from ._deprecated import Deprecated
 from .login_result import LoginResult
 from .password_change_result import PasswordChangeResult
 
@@ -325,25 +322,11 @@ class TinySesam:
         self.store.vault = _vault.Vault(self._vault_keyring,
                                         reload=_keys.reloader(config.db_path, config.secrets_key_file))
         self.store.extract_secrets()
-        # What 0.25.x derived the gate key and pepper from: the base key — the OLDEST key of the keyring (the only one
-        # unless `keys rotate` ran before this version's first start).
-        legacy_base = self._vault_keyring.keys[-1].material
         # Gate token (ADR-9, T-19) — since T-48 a random key of its own, never derived from the vault key: whoever
         # reads the vault key alone mints no gate token. Always loaded, even when the gate is off: `tinysesam
-        # gate-key` should be able to prepare the proxy before the switch is flipped. On the first start after
-        # 0.25.x the key derived from the base key stays a PREVIOUS key (published for `GATE_OVERLAP_SEC`), so the
-        # tokens it signed run out instead of being cut.
-        from . import gate as _gate
-        derived_gate = None
-        # Only for a database that already has sessions — a new installation has no token signed with it.
-        if config.gate_token_enabled and self.store.has_sessions():
-            from cryptography.hazmat.primitives import serialization as _ser
-            derived_gate = _gate.derive_key_name(legacy_base).private_bytes(
-                _ser.Encoding.Raw, _ser.PrivateFormat.Raw, _ser.NoEncryption())
-        self._gate_keyring = _keys.load_stored(_keys.GATE, self.store, str(config.gate_key_file or ""),
-                                               legacy=derived_gate)
+        # gate-key` should be able to prepare the proxy before the switch is flipped.
+        self._gate_keyring = _keys.load_stored(_keys.GATE, self.store, str(config.gate_key_file or ""))
         self._gate_key_name = _keys.gate_private(self._gate_keyring.active.material)
-        self._gate_legacy_warning()
         # Approvals of application actions (stage B): the confirmations get a key of their OWN (purpose `approval`,
         # ADR-12) — never the gate key, which the proxy trusts without checking `typ`. Loaded (and on the first start
         # created) only with approvals switched on; `_approval_ring` loads it later if the switch is set afterwards.
@@ -353,28 +336,13 @@ class TinySesam:
         # Key for the password fingerprints, per process and only in memory: a leaked memory dump is no
         # dictionary target against the typos of the real passwords without it — and it never touches the vault.
         self._pw_repetition_key_name = secrets.token_bytes(32)
-        # OAuth (T-36): the pepper of the token digests, a key of its own like the gate key (ADR-12). Before
-        # 0.26 it was a subkey of the base key; an installation that already has connections keeps that one as a
-        # previous pepper, so they stay connected. The server itself is built with the router (`_oauth_server`) —
-        # the switch may be set after construction.
-        from . import oauth as _oauth_mod
-        legacy_pepper = _oauth_mod.derive_pepper(legacy_base) if self.store.oauth_has_grants() else None
-        self._pepper_keyring = _keys.load_stored(_keys.PEPPER, self.store, str(config.oauth_pepper_file or ""),
-                                                 legacy=legacy_pepper)
+        # OAuth (T-36): the pepper of the token digests, a key of its own like the gate key (ADR-12). The server
+        # itself is built with the router (`_oauth_server`) — the switch may be set after construction.
+        self._pepper_keyring = _keys.load_stored(_keys.PEPPER, self.store, str(config.oauth_pepper_file or ""))
+        self._refuse_derived_keys()
         # Session handles (T-71): an HMAC with the same keyring instead of a plain sha256, so that write access to
-        # the file alone no longer mints a session. The handles of 0.26.0 are rewritten once, nobody is signed out.
+        # the file alone no longer mints a session.
         self.store.session_peppers = tuple(k.material for k in self._pepper_keyring.keys)
-        try:
-            peppered = self.store.pepper_session_handles()
-        except sqlite3.OperationalError as e:
-            if not _keys._read_only(e):
-                raise
-            peppered = 0
-            logging.getLogger("tinysesam").warning(
-                "TinySesam: the database is not writable — the session handles of 0.26.0 could not be rewritten with "
-                "the pepper; those sessions are not recognised until a start with write access.")
-        if peppered:
-            logging.getLogger("tinysesam").info("TinySesam: %d stored session handle(s) rewritten with the pepper (T-71).", peppered)
         self._oauth: Any = None
         if config.oauth_enabled:
             self._oauth_server()
@@ -1083,10 +1051,6 @@ class TinySesam:
           together with a valid session of the same account**; in return it carries the full
           rights. Leaked on its own, it is worthless.
 
-        Up to 0.21.x the kinds were called `"automaton"` and `"human"`. Since 0.22.0 only the
-        English name applies (no alias, PO decision 2026-09-27) — an old one raises `ConfigError`, which
-        names the new one. Stored keys were rewritten by the migration (schema 12).
-
         A missing `expires_days` on an automation key is not without consequence: then
         `apikey_default_days` applies (default 90). `expires_days=0` means "unlimited" and needs
         `apikey_allow_unlimited=True` — a key without expiry outlives the person who
@@ -1111,11 +1075,9 @@ class TinySesam:
         to the downstream app.
         """
         if kind not in self._KEY_KINDS:
-            new_name = Store.KEY_KINDS_OLD.get(str(kind))
             raise ConfigError(
-                (f"API key kind {kind!r} has been called {new_name!r} since 0.22.0. " if new_name else
-                 f"There is no API key kind {kind!r}. ")
-                + "'automation' works on its own (without admin rights), 'human' only counts "
+                f"There is no API key kind {kind!r}. "
+                "'automation' works on its own (without admin rights), 'human' only counts "
                   "together with a session of the same account.")
         raw = "tsk_" + secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw.encode()).hexdigest()
@@ -1185,12 +1147,8 @@ class TinySesam:
     _KEY_KINDS = ("automation", "human")
     @staticmethod
     def _key_kind(row) -> str:
-        """The kind of a key row with its English name (schema 12).
-
-        A value up to 0.21.x (`automaton`, `human`) is mapped (`Store.KEY_KINDS_OLD`) — an
-        older version that ran on the file after a downgrade writes it again. Empty
-        or without the column (file before schema 7) means `automation`. Anything else stays as it
-        is, and counts as an automation key because it is not `human` (fail-closed, R6-6)."""
+        """The kind of a key row: `automation` or `human`. Empty means `automation`; anything else stays as it is,
+        and counts as an automation key because it is not `human` (fail-closed, R6-6)."""
         return key_kind_of(row)
 
     def verify_api_key(self, key):
@@ -1253,7 +1211,7 @@ class TinySesam:
         try:
             state = u["idp_confirmed_at"]
         except (IndexError, KeyError):
-            return None                       # row without the column: only before `_migrate`
+            return None                       # a row without the column (a dict from own code)
         if not self.store.is_oidc_account(u["id"]):
             return None
         if int(state if state is not None else 1) <= 0:
@@ -2060,9 +2018,6 @@ class TinySesam:
         CONFIRMATION (`on_confirmation=1`) keeps its name: the 409 told the person clicking
         anyway, and only whoever has the link from the mailbox gets there.
 
-        Rows written up to 0.24.x carry the old names and keys (`akteur=`, `beim_bestaetigen=1`,
-        `ldap_kennung_abgewiesen`): both spellings are read, and the event is always shown in the
-        English spelling (`_vocabulary`).
         """
         u = self.store.get_user(user_id) if user_id is not None else None
         if not u:
@@ -2075,9 +2030,10 @@ class TinySesam:
         hide = tuple(e for e, view in self._OWN_VIEW.items() if view is None)
         for z in self.store.recent_audit(max(1, int(limit)), username=name, since=since, since_id=since_id,
                                          from_id=audit_from, without_events=hide):
-            foreign = _vocabulary.detail_has_key(z["detail"], "actor")
-            event = _vocabulary.audit_event_new(z["event"])
-            if not _vocabulary.detail_has_value(z["detail"], "on_confirmation", "1"):
+            detail = f' {z["detail"] or ""} '
+            foreign = " actor=" in detail
+            event = z["event"]
+            if " on_confirmation=1 " not in detail:
                 event = self._OWN_VIEW.get(event, event)
             from_.append({"ts": z["ts"], "event": event,
                         "ip": None if foreign else z["ip"], "by_admin": foreign})
@@ -2651,9 +2607,7 @@ class TinySesam:
                                   "(federation_name_binding_days)",
     }
     #: The same reasons in the security log (the audit line `<source>_name_binding_closed … reason=` carries
-    #: the code itself). Up to 0.24.x the codes in audit and log were German (`adresse_als_name`,
-    #: `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_self_chosen`, `name_aus_quelle`, `deadline`);
-    #: the migration to schema 15 rewrote them (`_vocabulary.TOKENS_OLD`).
+    #: the code itself).
     _REBINDING_LOG = {
         "address_as_name": "the name says nothing about the person "
                            "(control characters, or the unverified mail value of a source that "
@@ -4831,8 +4785,7 @@ class TinySesam:
     def redeem_magic(self, raw, purpose=None) -> Optional[dict]:
         """Redeem a token (one-shot). Returns {purpose,user_id,email,payload} or None (invalid/expired/used).
 
-        `payload` with English keys (schema 12): an address-change link carries `old`, the
-        previous address — up to 0.21.x `old`, which is mapped on reading (`read_payload`)."""
+        `payload`: an address-change link carries `old`, the previous address."""
         if not raw:
             return None
         h = hashlib.sha256(raw.encode()).hexdigest()
@@ -4842,7 +4795,7 @@ class TinySesam:
         if not self.store.use_magic_token(h):
             return None
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
-                "payload": read_payload(row["purpose"], row["payload"])}
+                "payload": read_payload(row["payload"])}
 
     def _app_link_refused(self, data: Optional[dict]) -> bool:
         """Is this sign-in link one an application obtained (account API: creation, a new link, an access reset) for
@@ -4884,7 +4837,7 @@ class TinySesam:
         if purpose and row["purpose"] != purpose:
             return None
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
-                "payload": read_payload(row["purpose"], row["payload"])}
+                "payload": read_payload(row["payload"])}
 
     def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=None) -> dict:
         """Create an invitation (+ optionally send it). Return {url, token}. The token carries the
@@ -5400,7 +5353,7 @@ class TinySesam:
         row = self.store.get_magic_token(self._qr_hash(c)) if c else None
         if not row or row["purpose"] != "qr_login" or row["used_at"] or row["expires_at"] < _now():
             return None
-        p = read_payload("qr_login", row["payload"]) or {}
+        p = read_payload(row["payload"]) or {}
         return {"code": c, "user_id": row["user_id"], "ip": p.get("ip"), "agent": p.get("agent"),
                 "next": p.get("next") or "/", "device": p.get("device") or "", "match": str(p.get("match") or ""),
                 "created_at": row["created_at"], "expires_at": row["expires_at"]}
@@ -7198,10 +7151,8 @@ class TinySesam:
             # with several workers each has its own (finding 11). The audit log applies to
             # all processes and forgets nothing before the deadline.
             since = _now() - self._sec("lockout_window_sec")
-            # Both spellings: a notice that an older version wrote after a rollback counts as well.
-            old_new = _vocabulary.event_forms("lockout_notice")
-            if self.store._one("SELECT 1 FROM audit WHERE event IN (?, ?) AND lower(username)=lower(?) "
-                               "AND ts >= ? LIMIT 1", (*old_new, u["username"], since)):
+            if self.store._one("SELECT 1 FROM audit WHERE event = 'lockout_notice' AND lower(username)=lower(?) "
+                               "AND ts >= ? LIMIT 1", (u["username"], since)):
                 return
             subject = self.t("mail.lockout.subject")
             # Name the reset only if it also clears the streak (it does not clear TOTP and the PIN in the chain step,
@@ -7812,19 +7763,36 @@ class TinySesam:
         from . import keys as _keys
         return _keys.jwks(self._approval_ring(), _wall_now())
 
-    def _gate_legacy_warning(self) -> None:
-        """Say so while the gate key derived from the vault key (≤ 0.25.x) is still in the keyring: a proxy that still
-        has ITS public key as `sign_key` accepts tokens anyone with the vault key can mint."""
+    #: The note 0.26–0.30 put on a gate key or pepper it took over from the single base key of 0.25.x (derived from the
+    #: vault key by HKDF). Such a key is refused at start (`_refuse_derived_keys`).
+    _BASE_KEY_NOTE = "derived-v1"
+
+    def _refuse_derived_keys(self) -> None:
+        """Refuse to start while a gate key or pepper derived from the vault key (≤ 0.25.x) is still in a keyring.
+
+        0.26–0.30 kept it as a previous key, so tokens and connections of 0.25.x ran out instead of being cut. Since
+        the schema baseline (T-111) nothing derives it any more — and as long as it stays, whoever holds the vault
+        key alone can compute it: a gate key a proxy may still trust, a pepper that looks up stored digests. The
+        message names the key and the command that removes it (`tinysesam keys retire`, docs/OPERATIONS.md
+        "Updating")."""
+        from .errors import ConfigError
         from . import keys as _keys
-        old = [k for k in self._gate_keyring.previous if k.note == _keys.DERIVED_V1]
-        if not old:
-            return
-        security.seclog.warning(
-            "gate: the gate key is now a key of its own (T-48, kid %s). The proxy must learn it — `sign_key` = "
-            "`tinysesam gate-key` (deploy/forward-auth/Caddyfile.gate, TS_GATE_PUBKEY); until then it sends every "
-            "request the fallback way. The old key derived from the vault key (kid %s) is still in the keyring: as long "
-            "as a proxy has it as `sign_key`, whoever holds the vault key can mint gate tokens. Then: `tinysesam keys "
-            "retire --purpose gate`.", self._gate_keyring.active.kid, old[0].kid)
+        found = []
+        for ring in (self._gate_keyring, self._pepper_keyring):
+            for k in ring.keys:
+                if k.note != self._BASE_KEY_NOTE:
+                    continue
+                if ring.origin in ("environment", "file"):
+                    where = (f"remove it from {_keys.ENV[ring.purpose]}_PREVIOUS" if ring.origin == "environment"
+                             else f"remove its line from {ring.path}")
+                else:
+                    where = (f"tinysesam keys retire --db {self.cfg.db_path} --purpose {ring.purpose} --kid {k.kid}"
+                             + (" --force" if ring.purpose == _keys.PEPPER else ""))
+                found.append(f"{ring.purpose} {k.kid}: {where}")
+        if found:
+            raise ConfigError("A key derived from the vault key by a version up to 0.25.x is still in a keyring (note "
+                              f"{self._BASE_KEY_NOTE}); this version no longer starts with it. Remove it, then start "
+                              "again — `tinysesam keys list` shows the keys:\n  " + "\n  ".join(found))
 
     def gate_issuer(self) -> str:
         """`iss` of the gate tokens: `base_url` without a trailing slash, without it `"tinysesam"`.
@@ -9681,127 +9649,3 @@ class TinySesam:
                 raise HTTPException(401, self.t("api.resource_locked"))
             return True
         return dep
-
-    # ---------- Stage C: deprecated names, dropped with 1.0 ----------
-    # PO decision 2026-09-26: these names are wiring of the built-in routes and do not belong
-    # to the commitment (stage C). Up to 0.21.x they carried no underscore and looked like any other
-    # method — `check_password` even stood as a building block in the README, although it does not throttle.
-    # Since 0.22.0 the implementation is called `_name`, and TinySesam calls only that. The old
-    # name remains until 1.0 as an alias that triggers exactly one
-    # `DeprecationWarning` with the replacement on call (constants: on read). `tests/test_api_surface.py` holds the list against
-    # `tests/api_surface.json` (stage C), checks warning and target of each alias and forbids
-    # code in the package from using an old name; `tests/run_all.py` turns such a warning from the
-    # package itself into an error.
-
-    def __init_subclass__(cls, **kwargs):
-        """A subclass that overrides an old name gets a `RuntimeWarning`.
-
-        Up to 0.21.x an overridden `check_password` took effect on the built-in routes; since
-        0.22.0 they call `_check_password`, and the override silently runs into nothing. For
-        a checking method that is exactly the kind of change nobody notices until it matters —
-        hence a warning that is visible without a filter (not a `DeprecationWarning`)."""
-        super().__init_subclass__(**kwargs)
-        for name, value in vars(cls).items():
-            alias = next((vars(b)[name] for b in cls.__mro__[1:] if name in vars(b)), None)
-            if isinstance(alias, Deprecated) and not isinstance(value, Deprecated):
-                warnings.warn(
-                    f"{cls.__name__}.{name} overrides a deprecated name and has had no effect since "
-                    f"0.22.0: TinySesam internally calls `{alias.destination}`. {alias.message}",
-                    RuntimeWarning, stacklevel=2)
-
-    check_ldap = Deprecated(
-        "_check_ldap", "use `login_password` instead (asks the directory as a fallback, "
-        "throttles and locks like `POST /auth/login`)")
-    check_password = Deprecated(
-        "_check_password", "use `login_password` instead (throttles, counts and locks like "
-        "`POST /auth/login`), for a custom look use `set_template(\"login\", …)` alone; "
-        "`check_password` itself does not throttle")
-    check_pin = Deprecated(
-        "_check_pin", "use `login_pin` instead (throttles, counts and locks like `POST /auth/pin`), "
-        "for a custom look use `set_template(\"pin\", …)` alone; `check_pin` itself does not "
-        "throttle")
-    check_resource = Deprecated(
-        "_check_resource", "use `POST /auth/resource/{name}` (throttles and locks) or "
-        "`require_resource` instead")
-    check_saml = Deprecated(
-        "_check_saml", "use `POST /auth/saml/acs` instead, which checks the assertion's signature; "
-        "`check_saml` trusts its arguments")
-    complete_mfa = Deprecated("complete_totp", "use `complete_totp` instead (same behaviour)")
-    consume_admin_claim = Deprecated(
-        "_consume_admin_claim", "use the route `/auth/claim-admin`, `ensure_admin` or "
-        "`admin_identifiers` instead")
-    factor_entry = Deprecated(
-        "_factor_entry", "no replacement; `require_user`/`require` redirect to the open factor themselves")
-    forward_login_url = Deprecated(
-        "_forward_login_url", "no replacement; the route `/auth/forward` builds the login address itself")
-    forward_response_headers = Deprecated(
-        "_forward_response_headers", "no replacement; which headers `/auth/forward` sets is controlled by "
-        "`forward_headers`")
-    forwarded_url = Deprecated(
-        "_forwarded_url", "no replacement; the route `/auth/forward` reads the proxy headers itself")
-    is_locked = Deprecated(
-        "_is_locked", "use `login_password`, `login_pin` or `login_totp` instead, which "
-        "check and book atomically; `is_locked` only reads and lets parallel bursts through")
-    is_password_change_locked = Deprecated(
-        "_is_password_change_locked", "use `change_password` instead (checks and books atomically like "
-        "`POST /auth/password`)")
-    is_pin_locked = Deprecated(
-        "_is_pin_locked", "use `login_pin` instead (checks and books atomically like `POST /auth/pin`)")
-    is_reauth_locked = Deprecated(
-        "_is_reauth_locked", "use `confirm_password`, `confirm_pin` or `confirm_totp` instead "
-        "(check and book atomically like `/auth/reauth`, where `require(mfa=True)` redirects to)")
-    is_resource_locked = Deprecated(
-        "_is_resource_locked", "use `POST /auth/resource/{name}` instead (checks and books atomically)")
-    is_secure = Deprecated(
-        "_is_secure", "no replacement; the warning without HTTPS is controlled by `https_mode`")
-    is_totp_setup_locked = Deprecated(
-        "_is_totp_setup_locked", "use `POST /auth/totp/setup` instead (checks and books atomically)")
-    login_redirect_after = Deprecated(
-        "_login_redirect_after", "use `next_url` or `redirect()` on the result of "
-        "`login_password`, `login_pin` or `login_totp` instead (next factor or `next`)")
-    maybe_promote_admin = Deprecated(
-        "_maybe_promote_admin", "use `admin_identifiers` or `ensure_admin` instead; called "
-        "directly it bypasses the address evidence")
-    mfa_pending = Deprecated(
-        "_mfa_pending", "no replacement (the name means “has a confirmed TOTP”); the same is "
-        "returned by `auth.store.has_confirmed_totp(user_id)` — internals, no promise")
-    next_login_step = Deprecated(
-        "_next_login_step", "no replacement; `require_user`/`require` redirect to the open "
-        "factor themselves")
-    purge_demo = Deprecated(
-        "_purge_demo", "use `demo_mode=False` instead (clears the demo accounts at startup)")
-    rate_ok = Deprecated(
-        "_rate_ok", "use `login_password`, `login_pin` or `login_totp` instead (they throttle "
-        "per IP), or your own limiter via `set_rate_limiter`")
-    record_login = Deprecated(
-        "_record_login", "use `login_password`, `login_pin` or `login_totp` instead, which "
-        "book every attempt; called wrongly it clears other accounts' failed-attempt counters")
-    sec = Deprecated("_sec", "use `all_security()` instead")
-    seed_demo = Deprecated(
-        "_seed_demo", "use `demo_mode=True` instead (creates the demo accounts at startup)")
-    send_signup_notice = Deprecated(
-        "_send_signup_notice", "no replacement; `POST /auth/register` sends the notice itself")
-    session_from_request = Deprecated(
-        "_session_from_request", "use `current_user` or `session_user` instead")
-    unlock_resource = Deprecated(
-        "_unlock_resource", "use `POST /auth/resource/{name}` instead (checks the secret first)")
-    verify_csrf = Deprecated("_verify_csrf", "use `require_csrf` instead")
-    verify_recovery_code = Deprecated(
-        "_verify_recovery_code", "use `login_totp` instead (also accepts one-time codes, throttles "
-        "and locks like `POST /auth/totp`); `verify_recovery_code` itself does not throttle")
-    verify_totp = Deprecated(
-        "_verify_totp", "use `login_totp` instead (throttles and locks like `POST /auth/totp`), "
-        "for the step-up `confirm_totp`; `verify_totp` itself does not throttle")
-    verify_user_password = Deprecated(
-        "_verify_user_password", "use `confirm_password` instead (step-up, throttles and locks like "
-        "`/auth/reauth`) or `change_password` (like `POST /auth/password`); "
-        "`verify_user_password` itself does not throttle")
-    verify_user_pin = Deprecated(
-        "_verify_user_pin", "use `confirm_pin` instead (step-up, throttles and locks like "
-        "`/auth/reauth`); `verify_user_pin` itself does not throttle")
-
-    DEMO_USERS = Deprecated(
-        "_DEMO_USERS", "no replacement; the demo accounts are called `demo` and `demoadmin` (README)")
-    IDENTIFYING = Deprecated(
-        "_IDENTIFYING", "no replacement; which factors identify is documented in docs/OPERATIONS.md")
-    RECOVERY_BYTES = Deprecated("_RECOVERY_BYTES", "no replacement, an internal value")

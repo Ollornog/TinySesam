@@ -244,14 +244,6 @@ def metadata_path(resource: str) -> str:
     return "/.well-known/oauth-protected-resource" + ("/" + parts[3] if len(parts) > 3 else "")
 
 
-# ---------- pepper ----------
-
-def derive_pepper(master_key: bytes) -> bytes:
-    """The pepper up to 0.25.x: a subkey of the base key. Kept only so that an installation's existing connections
-    stay valid after the update (a previous key of the pepper keyring, `keys.DERIVED_V1`)."""
-    return hmac.new(master_key, b"tinysesam/oauth-token-pepper/v1", hashlib.sha256).digest()
-
-
 # ---------- the server ----------
 
 class OAuthServer:

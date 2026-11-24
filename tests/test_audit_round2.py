@@ -721,35 +721,6 @@ r.check("after restoring, the backed-up state is there", names == ["alt0", "alt1
         f"{names} — the WAL replayed the old state")
 
 
-# ── A migration that aborts halfway ──────────────────────────────
-folder3 = Path(tempfile.mkdtemp())
-half = folder3 / "half.db"
-raw3 = sqlite3.connect(str(half))
-raw3.executescript("""
-CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, email TEXT, display_name TEXT,
-    is_admin INT DEFAULT 0, disabled INT DEFAULT 0, roles TEXT DEFAULT '[]',
-    created_at INT DEFAULT 0, is_service INT DEFAULT 0);
-CREATE TABLE session (token_hash TEXT PRIMARY KEY, user_id INT, created_at INT, expires_at INT,
-    mfa_ok INT DEFAULT 0, method TEXT);
-INSERT INTO users(id, username) VALUES (1, 'admin');
-INSERT INTO session VALUES ('ALWAYS-STILL-PLAINTEXT', 1, 0, 99999999999, 1, 'password');
-PRAGMA user_version = 2;""")
-raw3.commit()
-raw3.close()
-st3 = Store(str(half))
-values = [z["token_hash"] for z in st3._all("SELECT token_hash FROM session")]
-r.check("a half-migrated file is healed at the next start",
-        all(len(w) == 64 for w in values),
-        f"{values} — plaintext stays forever because the detection never applies again")
-# Since T-71 the handle is an HMAC with the pepper keyring; the start of `TinySesam` rewrites the sha256 handles once.
-st3.session_peppers = (b"p" * 32,)
-st3.pepper_session_handles()
-r.check("and the old cookie remains valid afterwards",
-        st3.get_session("ALWAYS-STILL-PLAINTEXT") is not None,
-        "the healing discarded the session")
-st3.close()
-
-
 # ── The healthcheck that does not see database damage ──────────────────
 environment = dict(os.environ, TINYSESAM_OIDC_ISSUER="https://id.example.com",
                 TINYSESAM_OIDC_CLIENT_ID="x", TINYSESAM_OIDC_CLIENT_SECRET="y",
@@ -1234,15 +1205,6 @@ _after = {z["event"]: z["detail"] for z in auth_d.store.recent_audit(2)}
 r.check("A-2: where a name stands (actor=, head of user_create), it is still replaced",
         _after == {"apikey_create": "key=9 actor=deleted#99",
                   "user_create": "deleted#99 service=False"}, f"{_after}")
-# Old spelling as INPUT (a row from a version before schema 15, written back after a rollback): the name
-# behind `akteur=` is replaced all the same, and the replacement is the new `deleted#<id>`.
-auth_d.store.audit_log("apikey_create", "bob", None, "key=8 akteur=Altadmin")
-auth_d.store.anonymize_audit("altadmin", "deleted#98")
-_old_z = auth_d.store.recent_audit(1)[0]
-r.check("A-2 (old row): the name behind the old `akteur=` is replaced by `deleted#<id>`",
-        _old_z["event"] == "apikey_create" and "Altadmin" not in (_old_z["detail"] or "")
-        and "deleted#98" in (_old_z["detail"] or ""), f"{dict(_old_z)}")
-
 # ── A-4: the CSRF exception checks the key BEFORE current_user — the IP must already be there ─────
 auth_k, app_k = _app()
 _kboss = auth_k.create_user("chef", password="Secret12345!-long", is_admin=True)
@@ -2600,7 +2562,7 @@ _f4b.delete_user(_f4b_uid)
 _f4b_rest = [z for z in _f4b.store._all("SELECT id, event, username, ip, detail FROM audit WHERE id <= ?",
                                         (_f4b_limit,))
              if z["username"] == "bob" or any(s in f"{z['username']} {z['detail']}".casefold()
-                                               for s in ("robert", "bob.alt@", "old=bob", "alt=bob"))]
+                                               for s in ("robert", "bob.alt@", "old=bob"))]
 _f4b_later = _f4b.store._all("SELECT event, ip FROM audit WHERE id > ? AND username = 'bob'", (_f4b_limit,))
 # (Mutation probe: `_earlier_identifiers` returns [] → the sign-in under `bob` including IP and the
 #  failed attempt under the old address remain → red.)

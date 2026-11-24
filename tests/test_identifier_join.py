@@ -17,7 +17,6 @@ e  spelling only       j  the series (B2-6) is deliberately cleared completely
 """
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
 import sys
@@ -33,7 +32,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
-from tinysesam.store import SCHEMA, Store  # noqa: E402
+from tinysesam.store import Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Joining an identifier — limit a for renaming, address change, deletion")
@@ -204,36 +203,26 @@ r.check("… and his deleting does not rewrite the previous owner's rows",
         str([dict(z) for z in a.store._all("SELECT event, username, ip FROM audit")]))
 
 # ── h: existing data without watermark ───────────────────────────────────────────────────────
-# A file from before this column (schema 11 without it; the later
-# `name_self_chosen`, G2-N, behind it is recorded along): the columns are added and stay NULL,
-# the limit is then the creation as before. (Mutation probes: the fallback in `lift_lockout`
-# clears from id 0 instead of from the creation → red; likewise in `_cleanup_limit` → red.)
+# A row from before the watermark columns (migrated to the baseline by 0.30.0, the columns NULL), written here raw into
+# a database of this version: the limit is then the creation as before. (Mutation probes: the fallback in
+# `lift_lockout` clears from id 0 instead of from the creation → red; likewise in `_cleanup_limit` → red.)
 _inventory = str(Path(tempfile.mkdtemp()) / "t.db")
-_old_schema, _n_users = re.subn(r"(idp_confirmed_at INTEGER), (--[^\n]*)\n\s*-- From when does the identifier belong.*?"
-                                r"mail_audit_from\s+INTEGER,\n.*?name_self_chosen INTEGER NOT NULL DEFAULT 0\n",
-                                r"\1  \2\n", SCHEMA, flags=re.S)
-_old_schema, _n_fi = re.subn(r"\n\s*-- The name under which the account last signed in.*?directory_name_folded\s+TEXT,", "",
-                             _old_schema, flags=re.S)
-os.close(os.open(_inventory, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+Store(_inventory).close()
 _raw = sqlite3.connect(_inventory)
-_raw.executescript(_old_schema)
 _now = int(time.time())
 _raw.execute("INSERT INTO users(username, email, created_at) VALUES ('existing', 'existing@example.com', ?)",
              (_now - 1800,))
 _raw.executemany("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?, ?, ?, 0, 'password')",
                  [(_now - 3600, "existing@example.com", SPRAYER)] * 3
                  + [(_now - 60, "existing@example.com", OWN)] * 2)
-_raw.execute(f"PRAGMA user_version = {Store.SCHEMA_VERSION}")
 _raw.commit()
 _raw.close()
 a, app, _ = _app(db_path=_inventory)
 _uid = a.store.get_user_by_name("existing")["id"]
 a.set_password(_uid, PW)
 _hb = _line(a, _uid)
-_fi = {z["name"] for z in a.store.db.execute("PRAGMA table_info(federated_identity)")}
-r.check("h: existing data — the columns are added and stay NULL (no limit invented)",
-        _n_users == 1 and _n_fi == 1 and all(_hb[s] is None for s in _columns) and "directory_name_folded" in _fi,
-        f"cut {_n_users}/{_n_fi}, {[_hb[s] for s in _columns]}, {_fi}")
+r.check("h: existing data — the watermarks stay NULL (no limit invented)",
+        all(_hb[s] is None for s in _columns), f"{[_hb[s] for s in _columns]}")
 note = _login(app, "existing@example.com")
 r.check("… limit is then the creation as before: foreign data from before remains, own data goes",
         note.status_code == 303 and a.store.count_fails(0, ip=SPRAYER) == 3 and a.store.count_fails(0, ip=OWN) == 0,

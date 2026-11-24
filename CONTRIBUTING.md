@@ -26,6 +26,9 @@ the better change.
    repo URL); infrastructure is not. `tests/test_repo.py` enforces this.
 5. **Everything optional stays optional.** A feature (a new factor, a provider) must not become a
    hard dependency of the core. The frontend is replaceable; keep it that way.
+6. **The database schema starts from a baseline** (schema 26, the state of 0.30.0). A schema change brings exactly
+   one migration step from the state before and a test that opens a database of that state — no chain from older
+   versions, no fixtures of old files (`AGENTS.md`, pitfalls).
 
 ## Workflow
 

@@ -248,7 +248,7 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the
   built-in routes — those routes call them. The inner checks (`_check_password`,
-  `_verify_user_password`, `_verify_user_pin`, `_verify_totp` and their old tier-C names) do none
+  `_verify_user_password`, `_verify_user_pin`, `_verify_totp`) do none
   of that: a page built on them lets passwords, PINs and codes be guessed as fast as the server
   answers, with no line for fail2ban. An API key never counts for these building
   blocks — it confirms no person and changes no password (`POST /auth/password` refuses it with a

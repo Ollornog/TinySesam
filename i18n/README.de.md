@@ -165,7 +165,7 @@ Ohne Guard liefert `auth.current_user(request)` das angemeldete Konto — aus ei
 **oder** einem API-Key — oder `None`, und leitet nie um: für eine Seite, die angemeldet nur
 anders aussieht. Eine Route, die *auf die Sitzung wirkt* (einen Faktor anwendet, sie auffrischt
 oder beendet), nimmt das Konto stattdessen aus `auth.session_user(request)`, das für einen Key
-nie antwortet ([Stufe B](#öffentliche-api-drei-stufen)).
+nie antwortet ([Stufe B](#öffentliche-api-zwei-stufen)).
 
 ## Rollen & Gruppen
 
@@ -461,7 +461,7 @@ Das Ergebnis, ein `tinysesam.LoginResult`, trägt `ok` (auch sein Wahrheitswert)
 Seite antwortet: 303, 400, 401, 404, 429, 503), `message` (der übersetzte Text), `next_url` (das
 geprüfte Ziel), `next_factor` (der offene Faktor, etwa `"totp"`), `done` (Sitzung vollständig)
 und `user` (nur bei Erfolg). `reason` ist für Programme gedacht; mit dem Audit- und
-Sicherheits-Log hat es nichts zu tun (deren Ereignisnamen, Schlüssel und Tokens sind seit Schema 15
+Sicherheits-Log hat es nichts zu tun (deren Ereignisnamen, Schlüssel und Tokens sind
 ebenfalls englisch, aber ein eigenes Vokabular). Ein Misserfolg hat
 keine Sitzung und setzt kein Cookie — wer das Ergebnis ignoriert, meldet niemanden an. Eine
 JSON-Route, die lieber wirft, schreibt `if not result: raise HTTPException(result.status,
@@ -478,14 +478,13 @@ deiner Seite, welcher Schritt als nächster kommt. Alle drei sind synchron (ein 
 vielleicht das Verzeichnis): aus einer `def`-Route rufen, in einer `async def`-Route über
 `run_in_threadpool`.
 
-> **Ohne diese Bausteine gibt es keinen Schutz gegen Raten.** Die inneren Prüfer
-> `check_password`, `check_pin`, `check_ldap`, `verify_totp` und `verify_recovery_code`
-> vergleichen nur: keine Sperre, kein Zähler, keine Serien-Sperre, keine Drossel, keine Zeile für
-> fail2ban. Bis 0.21.0 zeigte dieser Abschnitt `check_password` + `start_session` — eine Route
-> danach lässt jeden Passwörter (oder eine vierstellige PIN, oder einen sechsstelligen Code) so
-> schnell raten, wie der Server antwortet. Sie sind seit 0.22.0 [Stufe C](#öffentliche-api-drei-stufen),
-> warnen beim Aufruf und fallen mit 1.0 weg; ersetzen durch `login_password`, `login_pin` und
-> `login_totp`.
+> **Ohne diese Bausteine gibt es keinen Schutz gegen Raten.** Die inneren Prüfer vergleichen nur:
+> keine Sperre, kein Zähler, keine Serien-Sperre, keine Drossel, keine Zeile für fail2ban. Sie sind
+> intern (führender Unterstrich, keine Zusage); ihre alten öffentlichen Namen (`check_password`,
+> `check_pin`, `check_ldap`, `verify_totp`, `verify_recovery_code`, bis 0.30.0 Stufe C) gibt es nicht
+> mehr. Eine Route aus einem inneren Prüfer lässt jeden Passwörter (oder eine vierstellige PIN, oder
+> einen sechsstelligen Code) so schnell raten, wie der Server antwortet — `login_password`,
+> `login_pin` und `login_totp` nehmen.
 
 `start_session` bleibt, für Tests und für einen Faktor, den du selbst geprüft hast — es prüft
 nichts ([Konten im Code](#konten-im-code)). Es gibt `(token, session_ok)` zurück: auspacken und das
@@ -994,7 +993,7 @@ python -m tinysesam gc     --db auth.db                      # Abgelaufenes wegr
 > nutzt SQLites Online-Backup: Es nimmt die nötigen Sperren, zieht das WAL mit und schreibt eine
 > Datei, die für sich allein stimmt — mit denselben engen Rechten wie die Quelle. Der zugesagte
 > Weg ist dieses Kommando; `auth.store.backup(pfad)` tut aus Python dasselbe, aber `auth.store` ist
-> Innenleben (Stufe C, keine Zusage — s. [Öffentliche API](#öffentliche-api-drei-stufen)).
+> Innenleben (keine Zusage — s. [Öffentliche API](#öffentliche-api-zwei-stufen)).
 
 `gc` löscht abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche; das Audit-Log
 bleibt bewusst unangetastet. **Von selbst läuft das nicht** — fertige Unit-Dateien liegen in
@@ -1016,35 +1015,14 @@ systemctl start tinysesam
 > `ok`. `restore` räumt beide vorher weg, prüft die Sicherung, bevor es irgendetwas überschreibt
 > (Integrität, Kontenzahl, Schema-Version), und setzt danach `0600`.
 
-> **Ein Rückschritt braucht eine Sicherung im alten Schema.** Jede Fassung, die Spalten
-> hinzufügt, migriert die Datenbank beim ersten Start — 0.18.0 tat es einmal (Schema 5), 0.19.0
-> hob sie auf **Schema 8** (Freigaben je Anwendung, Key-Art, Erst-Login und
-> Einrichtungsfenster), 0.20.0 hebt sie auf **Schema 10** (9: stabile
-> Verzeichnis-Kennungen für LDAP/SAML; 10: Zähl-Töpfe und die Suche nach Name und Adresse mit
-> Index, Sperren aus dem Panel früherer Fassungen tragen danach den Betreiber-Vermerk). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
-> Konten sind lesbar — aber jede Sitzungsoperation wirft. Die Sicherung also **vor** dem Update
-> ziehen (`tinysesam backup` lässt die Quelle unangetastet) und im Ernstfall die zurückspielen.
-> Lief älterer Code doch auf der neuen Datei, holt der nächste Start der neuen Fassung zweierlei
-> nach: Sperren aus dem Panel der älteren tragen danach den Betreiber-Vermerk (erkannt an ihren
-> Audit-Zeilen), und Adressen ihrer offenen Registrierungen gelten bis zur Bestätigung als
-> unbelegt; im Log steht dann eine Warnung. Mehr gleicht er nicht ab — der sichere Rückweg ist die Sicherung.
+> **Ein Update von vor 0.30.0 geht in zwei Schritten.** 0.30.0 ist die letzte Fassung mit
+> Datenbank-Migrationen; diese Fassung öffnet Schema 26 (den Stand von 0.30.0) und neuer und weist eine
+> ältere Datenbank mit einer Meldung ab, ohne in sie zu schreiben. Erst auf 0.30.0 gehen und einmal
+> starten, `tinysesam keys list` prüfen, dann diese Fassung — die Schritte stehen in
+> `docs/OPERATIONS.md`, „Updating“. Vor jedem Schritt sichern (`tinysesam backup` lässt die Quelle
+> unangetastet); zurück von dieser Fassung auf 0.30.0 braucht kein SQL (dasselbe Schema).
 
-**Von 0.17.x oder älter?** `tinysesam backup` gibt es erst seit 0.18.0, und schon der erste Start
-der neuen Fassung migriert. Die Sicherung also mit der *neuen* Fassung ziehen, bevor sie startet —
-`backup` öffnet die Quelle nur lesend und lässt sie im alten Schema:
-
-```bash
-# Container: neues Tag ziehen, sichern, erst dann starten (Dienstname wie in der eigenen compose-Datei)
-docker compose pull
-docker compose run --rm --no-deps --entrypoint tinysesam tinysesam \
-    backup --db /data/gateway.db /data/gateway-vor-update.db
-docker compose up -d
-
-# Bibliothek: nach dem Installieren der neuen Fassung, vor dem Neustart des Dienstes
-python -m tinysesam backup --db auth.db auth-vor-update.db
-```
-
-Oder den Dienst anhalten und `auth.db` zusammen mit `auth.db-wal` und `auth.db-shm` (soweit
+Statt `tinysesam backup` geht auch: den Dienst anhalten und `auth.db` zusammen mit `auth.db-wal` und `auth.db-shm` (soweit
 vorhanden) in ein eigenes Verzeichnis kopieren; zurück geht es mit allen dreien, bei angehaltenem
 Dienst.
 
@@ -2849,7 +2827,7 @@ Nach `all` erscheint die Seite „Abgemeldet“. Mit `forward_login="direct"` f�
 abgemeldet ist, dort beginnt also eine **neue** Anmeldung. Die Seite nutzt ein `meta refresh`, kein Skript.
 Im Modus `page` sagt die Anmeldeseite selbst „Du wurdest abgemeldet“.
 
-## Öffentliche API: drei Stufen
+## Öffentliche API: zwei Stufen
 
 Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.22.0 hat jeder öffentliche Name
 eine **Stufe**, festgehalten in `tests/api_surface.json` und mit Signatur und Beschreibung
@@ -2859,7 +2837,6 @@ aufgeführt in [`API.md`](../API.md):
 |---|---|---|
 | **A — öffentlich, stabil ab 1.0** | was diese README zeigt, und was einbettende Apps nutzen | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0. Gezählt wird ab 0.22.0. |
 | **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. Eine Route kann nicht warnen: ein Pfad der Stufe B wird mindestens zwei Minor-Versionen vor dem Entfernen im CHANGELOG unter „Deprecated“ angekündigt. |
-| **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Seit 0.22.0 trägt die Implementierung einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
 
 **Öffentlich ist, was die von Hand geschriebene Doku beschreibt** (entschieden vor 1.0): diese README,
 `CONFIGURATION.md`, `SECURITY.md` und `docs/OPERATIONS.md`. `API.md` wird aus dem Code erzeugt und führt
@@ -2883,16 +2860,10 @@ Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B ein deutsches W
 zurückgeben oder annehmen (der Bericht von `federation_bind_existing`, `gc()`, `create_api_key`, die
 Grund-Kürzel), die `details` an `on_security_event`, der Kontext eigener Seiten (`ctx["prefix"]`,
 `ctx["purpose"]`), das JSON der Konto- und Admin-Routen und die Arten der API-Keys `automation`/
-`human`. Die zwei Werte, die in der Datenbank stehen (die Art eines Keys, die bisherige Adresse
-`old` in einem offenen Adresswechsel-Link), schreibt der Start um (Schema 12), gelesen werden sie
-auch in alter Form richtig; der Rückschritt auf 0.21.x braucht einen SQL-Block aus
-`docs/OPERATIONS.md`. Derselbe Wächter misst sie an einer Probeinstanz und im Quelltext. **Audit- und
-Log-Zeilen sind seit Schema 15 ebenfalls englisch** (einmaliges Umbenennen, PO-Entscheidung 2026-10-29):
-Ereignisnamen (`oidc_widerruf` → `oidc_revoked`), Schlüssel (`grund=` → `reason=`) und Tokens
-(`kein_konto` → `no_account`), der Ersatzname eines gelöschten Kontos (`gelöscht#<id>` → `deleted#<id>`)
-und die Meldung der Kennungs-Trigger. Der erste Start schreibt eine bestehende Datenbank um (vorher sichern);
-eigene Filter, die auf die alten Wörter passen, müssen angepasst werden. Die ganze Liste alt → neu steht im
-CHANGELOG, der Rückweg in `docs/OPERATIONS.md` („Rollback to 0.24.x").
+`human`. Derselbe Wächter misst sie an einer Probeinstanz und im Quelltext. **Audit- und Log-Zeilen
+sind ebenfalls englisch** (PO-Entscheidung 2026-10-29): Ereignisnamen, Schlüssel, Tokens, der Ersatzname eines
+gelöschten Kontos (`deleted#<id>`) und die Meldung der Kennungs-Trigger; die Listen alt → neu stehen im CHANGELOG
+von 0.22.0 und 0.25.0, und seit der Schema-Grundlinie wird nur noch die englische Form gelesen.
 
 **Über die Python-Namen hinaus** (PO-Entscheidung 2026-10-29). Die Stufen decken auch ab, was kein
 Python-Name ist; gemessen in `tests/api_surface.json`, aufgeführt in [`API.md`](../API.md):
@@ -2923,22 +2894,17 @@ Python-Name ist; gemessen in `tests/api_surface.json`, aufgeführt in [`API.md`]
 Für diese neuen Einträge beginnt die Uhr der Stufe A mit dem Release, das sie einführt (dem nach 0.24.13),
 nicht mit 0.22.0; die Namen oben behalten ihre.
 
-**`auth.store` ist Innenleben (Stufe C).** Das ist die Speicherschicht der eingebauten Routen; ihre
+**`auth.store` ist Innenleben.** Das ist die Speicherschicht der eingebauten Routen; ihre
 Methoden haben keine Stufe, keine Zusage und keine Übergangsfrist und können sich mit jedem Release
 ändern. Was eine App braucht, hat eine öffentliche Methode (`set_disabled`, `find_user`,
 `list_api_keys`, `lift_lockout` …); wo die Doku doch einen Aufruf von `auth.store` nennt (eine
 Gesundheitsprobe, das Entziehen von OIDC-Freigaben), sagt sie es dazu.
 
-**Stufe C warnt.** Wer einen alten C-Namen aufruft (bei den Konstanten: liest), bekommt eine
-`DeprecationWarning` mit dem Ersatz; [`API.md`](../API.md) führt jeden auf. Python zeigt diese
-Warnungen ausserhalb von `__main__` nicht an — um sie in der eigenen App zu finden, deren Tests
-einmal mit `python -W error::DeprecationWarning` laufen lassen. Eine Unterklasse, die einen dieser
-Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`: Die eingebauten Routen rufen seit
-0.22.0 `_name`, die Überschreibung wirkt nicht mehr. Dasselbe gilt für einen **Test-Fake** auf einen
-alten Namen — `auth.check_password = fake` oder `mock.patch.object(auth, "rate_ok", …)` wird nie
-gerufen; die Zuweisung löst eine `RuntimeWarning` aus, die das Ziel nennt. Den Fake auf den neuen
-Namen setzen (`auth._check_password = fake`). Ein Patch an der Klasse
-(`mock.patch.object(TinySesam, …)`) warnt nicht und wirkt ebenso wenig.
+**Intern heißt führender Unterstrich.** Bis 0.30.0 hielt eine dritte Stufe C die alten öffentlichen
+Namen interner Methoden als warnende Aliase (`check_password` → `_check_password` …); seit der
+Schema-Grundlinie sind sie weg (die Liste steht im CHANGELOG, „Breaking“). Ein Test-Fake gehört auf den
+Namen, den die eingebauten Routen rufen (`auth._check_password = fake`); ein Fake auf einen alten Namen ist
+ein schlichtes Attribut, das niemand liest.
 
 ### Für Fortgeschrittene (Stufe B)
 
@@ -3065,7 +3031,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**136 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**135 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
@@ -3081,7 +3047,7 @@ sie strukturell ab, weil sie nicht nach draussen telefonieren können.
 
 Zwei Sicherheitsaudits sind im September 2026 durch den Code gegangen (siehe `CHANGELOG`). Die
 Version ist bewusst noch **nicht** 1.0: Die Oberfläche der Stufe A
-([Öffentliche API](#öffentliche-api-drei-stufen)) muss dafür zwei Minor-Versionen stillhalten,
+([Öffentliche API](#öffentliche-api-zwei-stufen)) muss dafür zwei Minor-Versionen stillhalten,
 gezählt ab 0.22.0.
 
 MIT-Lizenz.

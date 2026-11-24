@@ -28,7 +28,6 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -44,7 +43,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig, config_check  # noqa: E402
 from tinysesam import approvals as apv  # noqa: E402
-from tinysesam.store import Store  # noqa: E402
 
 BASE = "https://auth.example.com"
 PW = "a long probe password 4711"
@@ -583,24 +581,6 @@ assert any("csrf_enabled=False" in e for e in errors_of(approvals_enabled=True, 
 assert any("approval_pending_sec" in e for e in errors_of(approval_pending_sec=86400))
 assert any("approval_reject_limit" in e for e in errors_of(approval_reject_limit=0))
 ok("config_check: base_url, API keys and CSRF required; the limits have bounds")
-
-# ══ migration from schema 21 ════════════════════════════════════════════════════════════════════════════════════
-path = os.path.join(tempfile.mkdtemp(), "old.db")
-s0 = Store(path)
-s0.db.close()
-raw = sqlite3.connect(path)
-raw.execute("DROP TABLE approval")
-raw.execute("PRAGMA user_version = 21")
-raw.commit()
-raw.close()
-s1 = Store(path)
-assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 22
-assert {r["name"] for r in s1.db.execute("PRAGMA table_info(approval)")} >= {
-    "id", "class", "type", "app_id", "subject_id", "requester_kind", "requester_ref", "payload", "payload_hash",
-    "match_code", "return_url", "state", "created_at", "expires_at", "decided_at", "issued_at", "stepup_amr",
-    "auth_time", "result", "ip_request", "ip_decision"}
-s1.db.close()
-ok("migration: a schema-21 file gets the table `approval` (with the columns stage B needs) and the current stamp")
 
 # ══ without approvals_enabled nothing changes ═══════════════════════════════════════════════════════════════════
 off, off_app = build(approvals_enabled=False)

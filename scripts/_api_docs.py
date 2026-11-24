@@ -11,11 +11,9 @@ contains. The guard `tests/test_api_surface.py` measures the same set — here i
 
 Since 0.22.0 the surface is no longer merely measured but **graded** (PO decision
 2026-09-26): The tier of every name lives in `tests/api_surface.json`, and this page is organised
-by it — A "public, stable from 1.0", B "for advanced users", C "internal". C stands without
-an explanation (nobody should find a building block there), but with the replacement: Since 0.22.0 every
-C name is an alias that warns on call (`tinysesam/_deprecated.py`), and whoever sees the warning
-looks here for what to use instead. A name without a tier shows up visibly in a section of its
-own; the guard turns it red, not this page.
+by it — A "public, stable from 1.0", B "for advanced users". Internal names carry a leading underscore and
+are not listed (the tier-C aliases of 0.22.0 went with the schema baseline, T-111). A name without a tier shows up
+visibly in a section of its own; the guard turns it red, not this page.
 """
 from __future__ import annotations
 
@@ -25,7 +23,6 @@ import inspect
 import json
 import re
 import sys
-import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,15 +31,13 @@ DESTINATION = ROOT / "API.md"
 STORAGE = ROOT / "tests" / "api_surface.json"
 
 import tinysesam as package  # noqa: E402
-from tinysesam._deprecated import UNTIL, Deprecated  # noqa: E402
 
 # One import of the package, the names from it by assignment — not additionally `from tinysesam import …`
 # (CodeQL py/import-and-import-from).
 LoginResult, PasswordChangeResult = package.LoginResult, package.PasswordChangeResult
 TinySesam, TinySesamConfig, error_module = package.TinySesam, package.TinySesamConfig, package.errors
 
-#: Heading and promise per tier — the same wording as in the READMEs ("Public API: three
-#: tiers" / `"Öffentliche API: drei Stufen"`).
+#: Heading and promise per tier — the same wording as in the READMEs.
 TIERS = {
     "A": ("public, stable from 1.0",
           "documented and/or used by embedders",
@@ -56,19 +51,10 @@ TIERS = {
           "minor versions. Weaker than A: A rework with advance notice "
           "is allowed. A route cannot warn: a path in tier B is announced in the CHANGELOG under "
           "“Deprecated” at least two minor versions before it is removed or renamed."),
-    "C": ("internal",
-          "Wiring of the built-in routes",
-          "None. Since 0.22.0 the implementation carries a leading underscore; the old "
-          "name stays until 1.0 as an alias that triggers a `DeprecationWarning` on call, and "
-          "is then dropped."),
 }
 
-#: The inner checkers the C section explicitly warns about (PO finding 2026-09-26). The
-#: text names them — if one is no longer in C, the text is no longer right.
-UNTHROTTLED = ("check_password", "check_pin", "check_ldap", "check_saml")
-
-#: The safe way for your own login pages (0.22.0), which the warning sentence on C points to. If they
-#: are not in A, the sentence is no longer right.
+#: The safe way for your own login pages (0.22.0): the building blocks that throttle, count and lock like the
+#: built-in routes. The page says so; if they are not in A, the sentence is no longer right.
 BLOCKS = ("login_password", "login_pin", "login_totp")
 #: The same for the confirmation before delicate actions and for your own password change (0.22.0).
 FURTHER_BLOCKS = ("confirm_password", "confirm_pin", "confirm_totp", "change_password")
@@ -93,7 +79,7 @@ The READMEs show the **paths** (which method for what, how to combine them). Her
 exists at all — the question "is there already something for this?" is answered by this page, not by the
 source code.
 
-## Three tiers — what is promised
+## Two tiers — what is promised
 
 | Tier | What | Promise |
 |---|---|---|
@@ -406,19 +392,12 @@ def build() -> str:
     def from_(area, name):
         return st.get(area, {}).get(name)
 
-    # `getmembers` reads every attribute — including the constant aliases of tier C, which warn
-    # when read. Describing them is not using them.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        methods = [(n, f) for n, f in inspect.getmembers(TinySesam, callable)
-                    if not n.startswith("_")]
+    methods = [(n, f) for n, f in inspect.getmembers(TinySesam, callable) if not n.startswith("_")]
     properties = [(n, p) for n, p in inspect.getmembers_static(
                          TinySesam, lambda w: isinstance(w, property)) if not n.startswith("_")]
-    aliases = {n: w for n, w in vars(TinySesam).items() if isinstance(w, Deprecated)}
     constants = sorted(n for n, w in vars(TinySesam).items()
                         if not n.startswith("_") and not callable(w)
-                        and not isinstance(w, (property, staticmethod, classmethod))
-                        and not (isinstance(w, Deprecated) and w.method))
+                        and not isinstance(w, (property, staticmethod, classmethod)))
     presets = [(n, f) for n, f in inspect.getmembers(TinySesamConfig, callable)
                if not n.startswith("_")]
     fields = list(TinySesamConfig.__dataclass_fields__)
@@ -448,12 +427,9 @@ def build() -> str:
     number = {s: sum(1 for b, n in all_items if from_(b, n) == s) for s in TIERS}
     without = [(b, n) for b, n in all_items if from_(b, n) not in TIERS]
 
-    for name in UNTHROTTLED:
-        assert from_("TinySesam", name) == "C", (
-            f"{name} is no longer tier C — adjust the warning sentence in scripts/_api_docs.py")
     for name in BLOCKS + FURTHER_BLOCKS:
         assert from_("TinySesam", name) == "A", (
-            f"{name} is not tier A — the warning sentence for C names it as the safe way")
+            f"{name} is not tier A — the sentence on your own pages names it as the safe way")
 
     parts = [HEAD]
     for s, (title, was, promise) in TIERS.items():
@@ -486,7 +462,10 @@ def build() -> str:
         "like the names above — see the sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log” "
         "below. For these entries the tier-A clock starts with the release that introduces them, not with "
         "0.22.0; the names above keep theirs.\n\n"
-        "**`auth.store` is internals** (tier C): the storage layer of the built-in routes, "
+        "**Your own login, step-up and password pages** use the building blocks "
+        + ", ".join(f"`{n}`" for n in BLOCKS) + ", " + ", ".join(f"`{n}`" for n in FURTHER_BLOCKS)
+        + " (tier A): the same methods the built-in routes call, so they throttle, count and lock alike.\n\n"
+        "**`auth.store` is internals**: the storage layer of the built-in routes, "
         "without tier, without promise and without transition period — its methods can change with every "
         "release. What an app needs is listed below as a method of `TinySesam` (e.g. "
         "`set_disabled` instead of `auth.store.set_disabled`).\n\n"
@@ -557,33 +536,6 @@ def build() -> str:
             "Members of a class are listed as `Class.member`.\n\n"))
 
     parts.append(contract_sections(file))
-
-    internal = [(b, n) for b, n in all_items if from_(b, n) == "C"]
-    if internal:
-        parts.append(
-            f"## C · Deprecated — removed with {UNTIL}\n\n"
-            "These names are not part of the promise. Since 0.22.0 the implementation is called "
-            f"`_name`; the old name stays until {UNTIL} as an alias that triggers a `DeprecationWarning` "
-            "with the replacement **on call** (constants: on read), and is then dropped. "
-            "**Do not use for new code** — for your own pages the building blocks are in A and B. Whoever wants to "
-            "check whether their app calls one of them runs its tests once with "
-            "`python -W error::DeprecationWarning`.\n\n"
-            "**Caution with the inner checkers** "
-            + ", ".join(f"`{n}`" for n in UNTHROTTLED) + ": They do not throttle themselves — "
-            "lockout, failed-attempt counter and streak are set only by the built-in routes. A login "
-            "page of your own that calls them is unprotected against password guessing. The safe "
-            "building block is " + ", ".join(f"`{n}`" for n in BLOCKS) + " (tier A): the same "
-            "methods the built-in routes call. For a step-up page of your own the same "
-            "applies with " + ", ".join(f"`{n}`" for n in FURTHER_BLOCKS[:3]) + ", for a "
-            f"password change of your own with `{FURTHER_BLOCKS[3]}`.\n\n"
-            "| Old name | Kind | Replacement |\n|---|---|---|\n")
-        for b, n in sorted(internal, key=lambda bn: bn[1].lower()):
-            alias = aliases.get(n)
-            kind = "Constant" if b == "TinySesam.constants" else "Method"
-            replacement = alias.replacement if alias else "— (no alias: guard red)"
-            replacement = replacement.replace("|", "\\|")
-            parts.append(f"| `{n}` | {kind} | {replacement[:1].upper()}{replacement[1:]} |\n")
-        parts.append("\n")
 
     if without:
         parts.append("## No tier\n\nThe guard `tests/test_api_surface.py` is red until these "

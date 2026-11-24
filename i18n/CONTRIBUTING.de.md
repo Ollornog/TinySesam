@@ -23,6 +23,9 @@ durchschaubar hält, ist meistens die bessere.
    (Autor, Kontaktadresse, Repo-URL), Infrastruktur nicht. `tests/test_repo.py` erzwingt das.
 5. **Alles Optionale bleibt optional.** Ein Feature (ein neuer Faktor, ein Provider) darf keine harte
    Abhängigkeit des Kerns werden. Das Frontend ist austauschbar; halte es so.
+6. **Das Datenbankschema beginnt bei einer Grundlinie** (Schema 26, der Stand von 0.30.0). Eine Schemaänderung bringt
+   genau einen Migrationsschritt vom Stand davor und einen Test, der eine Datenbank dieses Stands öffnet — keine Kette
+   von älteren Versionen, keine Fixtures alter Dateien (`AGENTS.md`, Pitfalls).
 
 ## Ablauf
 

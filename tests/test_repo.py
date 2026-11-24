@@ -1927,20 +1927,16 @@ _empty = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.|LoginResult\.|Pas
 assert not _empty, ("these names have no docstring or `#:` comment:\n  " +
                    "\n  ".join(_empty[:8]) +
                    "\n  (a frozen method without explanation is a commitment into the blue.)")
-# Structured by tier (PO decision 2026-09-26): A and B with explanation, C as a table of old
-# name → replacement (since 0.22.0 every C name warns; whoever sees the warning looks here for the replacement).
+# Structured by tier (PO decision 2026-09-26): A and B with explanation. Tier C (warning aliases) went with the schema
+# baseline (T-111): neither the baseline nor the page carries it any more.
 for _head in ("## A · Methods of `TinySesam`", "## B · Methods of `TinySesam`",
               "## A · Result of the sign-in building blocks: `tinysesam.LoginResult`",
-              "## A · Result of the password change: `tinysesam.PasswordChangeResult`",
-              "## C · Deprecated — removed with 1.0"):
+              "## A · Result of the password change: `tinysesam.PasswordChangeResult`"):
     assert _head in _apidoc, f"API.md without section {_head!r} — structure by tier is missing"
-_c_lines = _re.findall(r"^\| `(\w+)` \| (?:Method|Constant) \| (.+) \|$", _apidoc, _re.M)
-_c_names = sorted(n for _b, _ee in _json_k.loads(_read("tests/api_surface.json")).items()
-                  for n, _e in _ee.items() if isinstance(_e, dict) and _e.get("tier") == "C")
-assert sorted(n for n, _ in _c_lines) == _c_names, (
-    "API.md: the table „Deprecated“ does not match the C names of the baseline")
-assert all(_e.strip() and not _e.startswith("—") for _, _e in _c_lines), (
-    "API.md: a C name without replacement in the table „Deprecated“")
+_c_names = sorted(n for _b, _ee in _json_k.loads(_read("tests/api_surface.json")).items() if isinstance(_ee, dict)
+                  for n, _e in _ee.items() if isinstance(_e, dict) and _e.get("tier") not in ("A", "B"))
+assert not _c_names and "## C ·" not in _apidoc, (
+    f"tier C is gone (T-111) — names outside A/B in the baseline: {_c_names[:5]}, or a C section in API.md")
 assert "## No tier" not in _apidoc, ("API.md lists names without a tier — "
                                         "`python tests/test_api_surface.py` says which")
 print(f"  API reference: {_apidoc.count(chr(10) + '### ')} entries, each explained, dump current")

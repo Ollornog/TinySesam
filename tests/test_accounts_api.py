@@ -38,7 +38,6 @@ import io
 import json
 import logging
 import os
-import sqlite3
 import sys
 import tempfile
 import time
@@ -51,7 +50,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig, config_check  # noqa: E402
 from tinysesam import provisioning as prov  # noqa: E402
-from tinysesam.store import Store  # noqa: E402
 
 BASE = "https://auth.example.com"
 PW = "a long probe password 4711"
@@ -654,28 +652,6 @@ assert client(appm).post("/auth/api/users", headers=H(km), json={"username": "ot
                                                                    "roles": ["example-member"]}).status_code == 400
 assert create(c, key, username="has@sign").status_code == 400
 ok("email mode: the username follows the address; outside it a name with @ is refused")
-
-# ══ migration from schema 22 ════════════════════════════════════════════════════════════════════════════════════
-path = os.path.join(tempfile.mkdtemp(), "old.db")
-s0 = Store(path)
-s0.db.close()
-raw = sqlite3.connect(path)
-raw.execute("DROP INDEX ix_users_managed_by")
-for col in ("managed_by", "last_login_at", "delete_after"):
-    raw.execute(f"ALTER TABLE users DROP COLUMN {col}")
-raw.execute("INSERT INTO users(username, display_name, created_at, disabled) VALUES ('old', 'old', 1, 2)")
-raw.execute("PRAGMA user_version = 22")
-raw.commit()
-raw.close()
-s1 = Store(path)
-assert int(s1.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 23
-cols = {r["name"] for r in s1.db.execute("PRAGMA table_info(users)")}
-assert {"managed_by", "last_login_at", "delete_after"} <= cols
-assert "ix_users_managed_by" in {r["name"] for r in s1.db.execute("PRAGMA index_list(users)")}
-old = s1.get_user_by_name("old")
-assert old["managed_by"] is None and old["last_login_at"] is None and old["disabled"] == 2
-s1.db.close()
-ok("migration: a schema-22 file gets managed_by (indexed), last_login_at, delete_after and stamp 23; data unchanged")
 
 # ══ without an application nothing changes ══════════════════════════════════════════════════════════════════════
 off, off_app = build(apps={})

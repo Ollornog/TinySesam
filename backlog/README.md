@@ -11,7 +11,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 86/94 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 * ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 1/15 erledigt
-* ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 1/4 erledigt
+* ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 2/4 erledigt
 * ☐ **[M-6](M-6-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 
 ## Aufgaben
@@ -126,7 +126,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md)** Stage S12 (optional) — fully headless library: register, reset password, setup status · M-4
 * ☐ **[T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md)** Stage S13 (optional) — SCIM stage 2 for IdP role sync · M-4
 * ☐ **[T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)** Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant · M-6
-* ☐ **[T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md)** Schema baseline and ballast removal: the current state is the starting line · M-5
+* ☑ **[T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md)** Schema baseline and ballast removal: the current state is the starting line · M-5
 * ☐ **[T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)** Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing · M-5
 * ☑ **[T-113](T-113-topbar-fetch-in-rust-and-php.md)** Topbar fetch in the Rust and PHP clients · M-2
 * ☑ **[T-114](T-114-test-image-nginx-on-the-stable-line.md)** Proxy test image: nginx on the stable line instead of mainline · M-2

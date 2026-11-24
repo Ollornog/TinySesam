@@ -152,6 +152,36 @@ ENGLISH_HOMOGRAPHS = frozenset("""
 
 
 # ── History context of the docs ──────────────────────────────────────────────────────────────────────────
+#: The OLD German names of the stored and logged values up to 0.24.x / schema 15 (audit events and their families,
+#: `key=` names and tokens, series kinds, the replacement prefix) and of the database up to schema 16 (tables, columns,
+#: indexes, triggers, setting keys), plus the API key kinds up to 0.21.x — taken from the migration tables of 0.30.0,
+#: the last release that knew them (`_vocabulary.py`, `Store.RENAMED_*`, `Store.KEY_KINDS_OLD`; removed by T-111).
+#: A test string may name one of them to prove it does not come back (`assert "grund=" not in line`): the string
+#: guard exempts them as whole tokens — a compound always, a single word only as a key before `=`.
+OLD_NAMES = frozenset("""
+    abgelaufen ablauf adresse_als_name akteur allowlist_nach_idp_entzug alt an andere_beenden anders_gebunden
+    anzahl api_key_ungueltig api_keys_ruhen art audit_anonymisiert automat beim_bestaetigen beleg
+    bereits_bestaetigt betreiber bis bleiben_gewaehlt durch email_unbestaetigt erfolg_at erst_admin
+    falsches_bereichsgeheimnis falsches_geheimnis fehlserie fehlt fehlversuche fehlversuche_in_folge
+    fehlversuche_verworfen foederation_seit: frist gate_abgemeldet gebunden_at gelöscht# geprueft_at grund
+    gruppe gruppe_entfallen idp_bestaetigt_at idp_bestand_gesetzt idp_nein idp_unbestaetigt idx_fed_quelle_user
+    in_folge ix_fed_name_topf ix_users_topf_mail ix_users_topf_name kein_konto kein_name kein_passwort_gesetzt
+    kennung kennung_ungueltig kennung_zweier_konten konflikt konto konto_gesperrt ldap_kennung_abgewiesen
+    ldap_kennung_gebunden ldap_kennung_geloest ldap_kennung_ungueltig ldap_kennung_wechsel ldap_namensbindung_zu
+    ldap_ohne_kennung lockout_serie login_lokal lokal lokal+ldap mail_audit_ab mail_versuch_ab mensch mfa_offen
+    minuten nach_einschreibung nachfolger nachgetragen name_audit_ab name_aus_quelle name_quelle
+    name_quelle_nachgetragen name_selbst_gewaehlt name_selbst_nachgetragen name_topf name_versuch_ab
+    namensbindung namensbindung_offen_bis neu offen ohne_konto oidc_kennung_abgewiesen oidc_kennung_gebunden
+    oidc_kennung_geloest oidc_kennung_ungueltig oidc_kennung_wechsel oidc_namensbindung_zu oidc_ohne_kennung
+    oidc_sitzung oidc_unbestaetigt oidc_widerruf panel_sperren_bis pin_folge quelle quelle_email_taken
+    recovery_codes_geloescht recovery_verwaist_geloescht rollen saml_kennung_abgewiesen saml_kennung_gebunden
+    saml_kennung_geloest saml_kennung_ungueltig saml_kennung_wechsel saml_namensbindung_zu saml_ohne_kennung
+    seit sitzung_ungueltig sperrhinweis stunden topf topf_mail topf_name trg_users_kennung_insert
+    trg_users_kennung_update trg_users_topf_mail trg_users_topf_name trg_users_wechsel_mail
+    trg_users_wechsel_name uhr_stand unbefristet unbekannt unbekannter_schluessel ungueltig veraltet verbleibend
+    verlangt verwendet verworfene_rollen verzeichnis wettlauf widerrufen wiederholt zuletzt zweck
+""".split())
+
 # The English docs quote OLD names and values on purpose (migration tables, "up to 0.24.x `ja|nein`", rollback SQL).
 # Both doc guards — `tests/test_english_code.py` (no German words) and `tests/test_repo.py` (no stale names) —
 # exempt exactly those places and nothing else; this is the one definition of "a place that talks about the past".

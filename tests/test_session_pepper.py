@@ -6,8 +6,7 @@ held a session of any account, without any key. Since T-71 the handle is an HMAC
 which never lives readable in the file. Pinned here:
 
   (a) a planted plain-sha256 row signs nobody in; a real cookie still does
-  (b) a database of 0.26.0 keeps every sign-in: handles and the rows hanging on them are rewritten once, the second
-      start leaves them alone
+  (b) no start rewrites a handle: a planted plain-sha256 row (marker deleted) stays worthless across restarts
   (c) after a pepper rotation running sessions stay valid, new ones take the active pepper, and `keys retire`
       refuses while a session from before the rotation still runs
   (d) a store without the pepper refuses instead of falling back to the plain digest
@@ -67,52 +66,34 @@ r.check("(a) a row planted with the sha256 of a chosen token signs nobody in",
 r.check("(a) the real cookie still signs in (counter-check)", auth.store.get_session(real) is not None)
 auth.close()
 
-# ---------------------------------------------------------------- (b) a database of 0.26.0
-# The rows 0.26.0 writes: the session with its successor (grace period), an OIDC approval, a refresh row, an ID token,
-# "signed out of this app", an app-host link and an area unlock — all with plain sha256 digests.
-db = os.path.join(tempfile.mkdtemp(), "old.db")
+# ---------------------------------------------------------------- (b) no rewrite at start
+# Up to 0.30.0 the start rewrote plain sha256 handles with the pepper whenever the marker `session_handles` was missing
+# (the transition from 0.26.0). Whoever could write the file deleted the marker, planted a plain sha256 row and waited
+# for a restart — the rewrite turned it into a valid session. Since the schema baseline (T-111) no start rewrites
+# anything: the planted row stays worthless across restarts.
+db = os.path.join(tempfile.mkdtemp(), "planted.db")
 prep = make(db)
 ouid = prep.create_user("olga", password="a long probe password 4711")
 prep.close()
 st = Store(db)
-cookie, previous, link, unlock = (secrets.token_urlsafe(32) for _ in range(4))
+chosen, link, unlock = (secrets.token_urlsafe(32) for _ in range(3))
 now = int(time.time())
-for tok, successor in ((cookie, None), (previous, plain(cookie))):
-    st._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, mfa_at, method, successor) "
-             "VALUES (?, ?, ?, ?, 1, ?, 'oidc', ?)", (plain(tok), ouid, now, now + 3600, now, successor))
-st._exec("INSERT INTO oidc_grant(token_hash, client, granted_at, checked_at) VALUES (?, '*', ?, ?)",
-         (plain(cookie), now, now))
-st._exec("INSERT INTO gate_signed_out(token_hash, host, at) VALUES (?, 'app.example.com', ?)", (plain(cookie), now))
+st._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, mfa_at, method) "
+         "VALUES (?, ?, ?, ?, 1, ?, 'password')", (plain(chosen), ouid, now, now + 3600, now))
 st._exec("INSERT INTO gate_link(link_hash, token_hash, host, created_at) VALUES (?, ?, 'app.example.com', ?)",
-         (plain(link), plain(cookie), now))
+         (plain(link), plain(chosen), now))
 st._exec("INSERT INTO resource_unlock(token, resource, expires_at) VALUES (?, 'file-1', ?)", (plain(unlock), now + 3600))
-st._exec("DELETE FROM setting WHERE key='session_handles'")      # 0.26.0 knows no marker
+st._exec("DELETE FROM setting WHERE key='session_handles'")      # the marker the transition looked for
 st.close()
-
-up = make(db)
-p = up._pepper_keyring.active.material
-r.check("(b) the cookie of 0.26.0 still signs in after the update — nobody is signed out",
-        up.store.get_session(cookie) is not None)
-h = up.store.session_hash(cookie)
-r.check("(b) the rows hanging on the session moved with it (approval, signed-out mark, app-host link)",
-        h == peppered(p, cookie) and up.store._one("SELECT 1 FROM oidc_grant WHERE token_hash=?", (h,)) is not None
-        and up.store.gate_is_signed_out(h, "app.example.com")
-        and up.store.gate_link_handle(up.store.session_hash(link), "app.example.com") == h)
-r.check("(b) the grace-period predecessor points to the new handle and the area unlock still holds",
-        up.store._one("SELECT successor FROM session WHERE token_hash=?",
-                      (peppered(p, previous),))["successor"] == h
-        and up.store.is_resource_unlocked(unlock, "file-1"))
-r.check("(b) no plain sha256 is left in any column",
-        not any(up.store._one(f"SELECT 1 FROM {c.split('.')[0]} WHERE {c.split('.')[1]} IN (?,?,?,?)",
-                              tuple(plain(t) for t in (cookie, previous, link, unlock)))
-                for c in Store.SESSION_HANDLE_COLUMNS),
-        "a column was left out of the rewrite")
-up.close()
-again = make(db)
-r.check("(b) the second start leaves the handles alone (the marker holds) and the cookie still signs in",
-        again.store.session_hash(cookie) == h and again.store.get_session(cookie) is not None
-        and again.store.pepper_session_handles() == 0)
-again.close()
+for round_ in ("first", "second"):
+    up = make(db)
+    r.check(f"(b) {round_} start after planting: the plain sha256 session, app-host link and area unlock grant nothing",
+            up.store.get_session(chosen) is None
+            and up.store.gate_link_handle(up.store.session_hash(link), "app.example.com") is None
+            and not up.store.is_resource_unlocked(unlock, "file-1")
+            and up.store._one("SELECT token_hash FROM session WHERE user_id=?", (ouid,))["token_hash"] == plain(chosen),
+            "a start rewrote the planted rows into valid ones")
+    up.close()
 
 # ---------------------------------------------------------------- (c) pepper rotation
 db = os.path.join(tempfile.mkdtemp(), "rot.db")

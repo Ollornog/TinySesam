@@ -93,17 +93,12 @@ r.check("… the panel list shows the new name, Remote-Id stays the account ID",
 _lines = _renamed(auth, anna)
 r.check("… EXACTLY one audit row, as operator and with the admin as actor",
         _lines == [("anna.new", "old=anna by=operator actor=helper")], str(_lines))
-# Read path: a row written up to 0.24.x (German keys) is still understood — `akteur=` marks a foreign trigger
-# (its IP is not shown), and the event comes out in the English spelling.
-auth.store.audit_log("username_changed", "anna.new", "203.0.113.9", "alt=x by=operator actor=helper")
-auth.store.audit_log("oidc_widerruf", "anna.new", "203.0.113.9", "grund=idp_nein")
+# Own view: a row with `actor=` marks a foreign trigger (its IP is not shown).
+auth.store.audit_log("username_changed", "anna.new", "203.0.113.9", "old=x by=operator actor=helper")
 _own = auth.own_events(anna, limit=50)
 _old_line = [e for e in _own if e["event"] == "username_changed" and e["by_admin"]]
-r.check("… legacy row (`akteur=`) counts as an admin action: no IP, shown as by_admin; new row too",
+r.check("… a row with `actor=` counts as an admin action: no IP, shown as by_admin",
         len(_old_line) >= 2 and all(e["ip"] is None for e in _old_line), str(_own))
-r.check("… legacy event names come out in English (`oidc_widerruf` → `oidc_revoked`), never in the old form",
-        any(e["event"] == "oidc_revoked" for e in _own) and all(e["event"] != "oidc_widerruf" for e in _own),
-        str([e["event"] for e in _own]))
 r.check("… the security event reaches the owner",
         ("username_changed", {"old": "anna", "new": "anna.new"}) in events, str(events))
 r.check("… and the “self-chosen” marker (G2-N) is cleared: the name now stands for the operator",
