@@ -3,6 +3,7 @@ id: T-30
 type: Task
 title: Launch plan — make TinySesam publicly known
 status: offen
+points: 5
 milestone: M-6
 blocked_by: [T-123]
 tags: [launch, readme, marketing]

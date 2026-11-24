@@ -3,6 +3,7 @@ id: M-5
 type: Milestone
 title: "Clean baseline and modules — before shell and headless continue"
 status: offen
+rank: 1
 tags: [cleanup, modules, greenfield, roadmap]
 created: 2026-11-23
 ---
@@ -39,6 +40,6 @@ T-111 → T-72 and T-112 (T-72 is small and touches the store; do it before or r
 | [T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md) | schema baseline and ballast removal | 8 | 12–18 |
 | [T-72](T-72-pepper-for-the-remaining-token-digests.md) | pepper for the remaining token digests | 5 | 6–10 |
 | [T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md) | modules: one building block per feature | 21 | 30–40 |
-| **Sum** | | **35** | **50–71** |
+| **Sum** | | see `dokutool offen` | |
 
 Estimates, not measured (1 SP is about one pull request of 2–3 h).

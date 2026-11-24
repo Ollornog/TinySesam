@@ -3,11 +3,14 @@ id: T-73
 type: Task
 title: Tenants — multiple hostnames, each with its own sign-in choice
 status: offen
+points: 21
 milestone: M-2
 tags: [idea, tenants, gate, forward-auth, proposal]
 created: '2026-11-21'
 ---
 # T-73 — tenants: multiple hostnames, each with its own sign-in choice
+
+**Story points:** 21 (placeholder for the whole idea; larger than 21 once built — split it into entries after the ADR decides).
 
 **Status: proposal, an idea.** No decision has been made; the maintainer is still thinking about it. Nothing here is
 planned work until it becomes a decision (ADR).

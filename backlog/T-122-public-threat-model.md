@@ -3,6 +3,7 @@ id: T-122
 type: Task
 title: "A short public threat model"
 status: offen
+points: 3
 milestone: M-6
 blocked_by: [T-112]
 tags: [security, docs]

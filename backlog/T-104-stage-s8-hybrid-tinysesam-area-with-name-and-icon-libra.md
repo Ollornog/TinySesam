@@ -3,6 +3,7 @@ id: T-104
 type: Task
 title: "Stage S8 — hybrid: TinySesam area with name and icon, library layout slot"
 status: offen
+points: 13
 milestone: M-4
 blocked_by: [T-103]
 tags: [hybrid, ui]

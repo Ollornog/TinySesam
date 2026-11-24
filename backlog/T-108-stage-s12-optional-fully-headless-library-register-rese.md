@@ -3,6 +3,7 @@ id: T-108
 type: Task
 title: "Stage S12 (optional) — fully headless library: register, reset password, setup status"
 status: offen
+points: 5
 milestone: M-4
 blocked_by: [T-96, T-112]
 tags: [library, headless, optional]

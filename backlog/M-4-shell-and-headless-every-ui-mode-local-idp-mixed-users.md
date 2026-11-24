@@ -3,6 +3,7 @@ id: M-4
 type: Milestone
 title: "Shell and headless: every UI mode, local/IdP/mixed users, library and server alike"
 status: offen
+rank: 2
 tags: [shell, headless, server, permissions]
 created: 2026-11-23
 ---
@@ -51,10 +52,10 @@ schema changes of both go through one pull request at a time. T-110 moved to [M-
 | S11 | [T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md) | acceptance matrix in CI: examples x origins | 8 | 10–14 |
 | S12 (optional) | [T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md) | fully headless library: register, reset password, setup status | 5 | 8–10 |
 | S13 (optional) | [T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md) | SCIM stage 2 for IdP role sync | 21 | 32–45 |
-| S3 (SAML) | [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md) | SAML step-up: ForceAuthn / AuthnInstant (part of S3, counted there) | (5) | (8–12) |
+| S3 (SAML) | [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md) | SAML step-up: ForceAuthn / AuthnInstant (part of S3: T-99 carries 8 of its 13, T-70 the other 5) | 5 | 8–12 |
 | ~~Diet~~ | [T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md) | moved to M-6 (2026-11-23) | – | – |
 
-Stages S0 to S11: 133 SP, 218–286 h (estimate, not measured; 1 SP is about one pull request of 2–3 h). With S12 and S13: 159 SP, 258–341 h. ~~The dependency diet comes on top (5 SP).~~ The dependency diet moved to M-6; the module cut of M-5 (35 SP, 50–71 h) comes before.
+Sums: see `dokutool offen` (the tool adds the points of the entries; 1 SP is about one pull request of 2–3 h, estimates not measured). S12 and S13 are optional. The dependency diet moved to M-6; the module cut of M-5 comes before.
 
 ## Existing entries
 

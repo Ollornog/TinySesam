@@ -3,6 +3,7 @@ id: T-98
 type: Task
 title: Stage S2 — reset a TOTP factor in the panel and CLI
 status: offen
+points: 2
 milestone: M-4
 blocked_by: [T-112]
 tags: [admin, totp]

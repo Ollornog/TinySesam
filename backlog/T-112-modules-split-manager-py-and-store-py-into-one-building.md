@@ -3,6 +3,7 @@ id: T-112
 type: Task
 title: "Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing"
 status: offen
+points: 21
 milestone: M-5
 blocked_by: [T-111]
 tags: [architecture, modules, refactor]

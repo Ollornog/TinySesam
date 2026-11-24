@@ -3,6 +3,7 @@ id: T-117
 type: Task
 title: "client-go: fuzz on time again once Go fixes the deadline report"
 status: offen
+points: 1
 milestone: M-2
 tags: [clients, go, fuzzing]
 created: 2026-11-23

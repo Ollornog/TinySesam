@@ -3,6 +3,7 @@ id: M-1
 type: Milestone
 title: 1.0 — API stable enough for PyPI
 status: offen
+rank: 4
 tags: [release, api]
 created: 2026-07-23
 ---

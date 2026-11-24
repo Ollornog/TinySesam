@@ -3,6 +3,7 @@ id: T-97
 type: Task
 title: "Stage S1 — the server can do everything: TOML configuration, parity test"
 status: offen
+points: 13
 milestone: M-4
 blocked_by: [T-96, T-112]
 tags: [gateway, server, config]

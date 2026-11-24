@@ -3,6 +3,7 @@ id: M-6
 type: Milestone
 title: "Trust, hardening and launch — before TinySesam is promoted widely"
 status: offen
+rank: 3
 tags: [security, hardening, supply-chain, launch, roadmap]
 created: 2026-11-23
 ---
@@ -37,6 +38,6 @@ the inventory and the diet need the module cut) and after the core of
 | [T-124](T-124-crypto-inventory-and-post-quantum-readiness.md) | crypto inventory and PQ readiness | 5 | 8–12 |
 | [T-123](T-123-independent-review-external-penetration-test-or-human.md) | independent review (own share) | 3 | 6–10 |
 | [T-30](T-30-launch-plan.md) | launch plan | 5 | 8–12 |
-| **Sum** | | **26** | **42–64** |
+| **Sum** | | see `dokutool offen` | |
 
 The external review itself takes calendar time outside the project. Estimates, not measured.

@@ -3,6 +3,7 @@ id: T-109
 type: Task
 title: Stage S13 (optional) — SCIM stage 2 for IdP role sync
 status: offen
+points: 21
 milestone: M-4
 blocked_by: [T-102]
 tags: [idp, scim, optional]

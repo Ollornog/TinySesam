@@ -3,6 +3,7 @@ id: T-119
 type: Task
 title: "caddy-jwt 1.5.0: back to jwk_url, disable_authorization_fallback instead of the Authorization detour; check the X-Forwarded-For warning"
 status: offen
+points: 2
 milestone: M-2
 tags: [gate, caddy, upstream, cleanup]
 created: 2026-11-23

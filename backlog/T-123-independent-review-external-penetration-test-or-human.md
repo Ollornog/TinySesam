@@ -3,6 +3,7 @@ id: T-123
 type: Task
 title: "Independent review: an external penetration test or a human code review"
 status: offen
+points: 3
 milestone: M-6
 blocked_by: [T-122]
 tags: [security, review, launch]
