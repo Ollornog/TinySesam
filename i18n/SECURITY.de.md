@@ -526,6 +526,21 @@ offene Freigaben —, geprüft und gelöscht in einer Transaktion: eine gleichze
 wird abgewiesen) oder danach (das Konto behält eine Rolle, die der Katalog nicht mehr führt, angezeigt als „nur an
 Konten“), nie dazwischen. Nichts kaskadiert.
 
+## Vertrauensgrenzen: Bibliothek, Server, Anwendung
+
+Als **Bibliothek** läuft TinySesam im Prozess Ihrer Anwendung: eine Vertrauensgrenze. Ein Fehler in jedem anderen Code
+der Anwendung (eine Injection, eine verwundbare Abhängigkeit, ein Debug-Endpunkt) erreicht die Datenbank, den
+Sitzungs-Pepper, die Signierschlüssel und jedes Geheimnis, das TinySesam hält, denn sie liegen im selben Speicher und
+im selben Dateisystem. Gegen den eigenen Wirtsprozess kann die Bibliothek sich nicht schützen.
+
+Als **Server** (der Gateway-Container) sind TinySesam und Anwendung zwei Grenzen: Die Anwendung sieht nur, was der Proxy
+ihr reicht (das Gate-Token oder die `Remote-*`-Header, `account.json`, `topbar.json`, die Konten-API mit eigenem
+Schlüssel) und hält kein TinySesam-Geheimnis; die Kompromittierung der Anwendung gibt die Konten also nicht heraus.
+Missbrauchen kann die Anwendung weiterhin, was sie bekommt: Geben Sie ihr die engsten Geltungsbereiche und
+Berechtigungen und halten Sie die Proxy-Pflichten aus Spezifikation Abschnitt 2.1 ein (jedes `Remote-*` und das
+Gate-Cookie eines Clients entfernen). Wählen Sie den Server für eine Anwendung, der Sie nicht voll vertrauen oder deren
+Code Sie nicht selbst geschrieben haben.
+
 ## Verwundbare Abhängigkeiten
 
 Fristen, in denen eine bekannte Schwachstelle in einer Abhängigkeit des Pakets oder des

@@ -1403,6 +1403,72 @@ Rezepte:
     das Konto der `Remote-Id` dieser Anfrage (nie eine ID aus einem Parameter), und mit `Cache-Control: no-store`
     antworten. `current` bleibt dort `null`: Das Gate-Token trägt keinen Sitzungsbezug.
 
+## Oberflächen, Herkünfte, Betrieb
+
+TinySesam soll ein Baustein für andere Entwickler sein. Darum sind die Wege, es in eine Anwendung einzubauen, ein Raster
+und keine Liste von Sonderfällen: vier **Oberflächen** (was die Person sieht), drei **Herkünfte** eines Kontos (wo es
+lebt) und zwei **Betriebsarten** (wie TinySesam läuft). Dieser Abschnitt ist die Karte. Die Etappen, die die fehlenden
+Zellen bauen, sind die Aufgaben des Meilensteins M-4 in `backlog/`. Was heute schon da ist, steht in jeder Tabelle.
+
+### Die vier Oberflächen
+
+| Oberfläche | Wer die Navigation zeichnet | Wo TinySesams Seiten erscheinen | Heute |
+|---|---|---|---|
+| **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Kopfleiste nach Spezifikation §8 (`topbar.json`, `auth.topbar_data`), T-103 bringt den Layout-Schalter |
+| **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | T-103 |
+| **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der App-Rahmen (T-91), T-104 bringt den Bereich |
+| **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Kontoübersicht und die Konten-API, T-105 und T-106 bringen Aktionsseiten und die Leseseite |
+
+### Die drei Herkünfte eines Kontos
+
+**Lokal** (Passwort, Passkey, TOTP, PIN, Anmeldelink), **IdP** (OIDC, SAML oder LDAP: TinySesam speichert ein Abbild
+und die Rollenzuordnung) und **gemischt** (beides in einer Installation; ein IdP-Konto lässt sich von einer Person mit
+Step-up auf beiden Seiten mit einem lokalen verknüpfen, nie stillschweigend über dieselbe Adresse).
+
+### Die zwei Betriebsarten
+
+| | **Bibliothek** | **Server** |
+|---|---|---|
+| Was läuft | TinySesam in Ihrer Python-Anwendung | der Gateway-Container, jede Sprache hinter einem Proxy; heute per Umgebungsvariablen konfiguriert, ab T-97 per TOML-Datei mit Umgebung als Überlagerung (`TINYSESAM_CONFIG`) |
+| Was die Anwendung bekommt | Funktionsaufrufe (`get_user`, `has_role`, `topbar_data`, die Konten-API) | das Gate-Token, die `Remote-*`-Header, `account.json`, `topbar.json`, die Konten-API, über die Clients (Go, Rust, JS/TS, PHP, Python) |
+| Vertrauen | eine Vertrauensgrenze: Anwendung und TinySesam teilen Prozess, Datenbank und Geheimnisse | zwei Grenzen: die Anwendung hält kein TinySesam-Geheimnis und kann dessen Datenbank nicht lesen |
+
+### Drei Regeln, die in jeder Zelle gelten
+
+1. **Zuständigkeit: Lesen ist überall erlaubt, Schreiben von einer anderen Herkunft nur durch Navigation.** Eine
+   Anwendung darf lesen, was die Person sehen darf (`account.json`, `topbar.json`, die Lesedaten der Administration im
+   eigenen Bereich). Alles, was ein Konto ändert, geschieht auf einer TinySesam-Aktionsseite, auf die die Person
+   geschickt wird, mit einem Rückweg zur Anwendung. Ein Geheimnis (Passwort, TOTP, Passkey, Wiederherstellungscode)
+   wird nur auf TinySesams eigenen Seiten eingegeben, wenn die Anwendung auf einer anderen Herkunft liegt; es läuft nie
+   durch die Anwendung. Härtung und Konfiguration bleiben instanzweit und sind aus einer Anwendung nicht erreichbar;
+   das Administrator-Kennzeichen wird nie per Link gesetzt.
+2. **Gleichwertigkeit: keine Entscheidung hängt von der Herkunft eines Kontos ab.** Dasselbe Szenario (eine Rolle, eine
+   Freigabe, eine Verwaltungsaktion) hat für ein lokales, ein IdP- und ein gemischtes Konto dasselbe Ergebnis.
+   `source` ist eine Information im Panel und in der Konten-API, nie ein Schalter für Verhalten.
+3. **Parität: jede Funktion hat eine Server-Route oder steht mit Begründung auf der Liste „nur Bibliothek“.** Ein
+   Paritätstest liest `tests/api_surface.json` und schlägt fehl, wenn ein stabiler Name keines von beidem hat. Nur
+   Bibliothek: vollständig headless Formulare mit eigenen Passwortfeldern, `set_template` und `page_layout` (sie
+   zeichnen HTML im eigenen Prozess).
+
+### Wer welche Zelle baut
+
+| Funktion | Zuständig |
+|---|---|
+| Der Server kann alles: TOML-Konfiguration, Paritätstest | T-97 |
+| TOTP-Faktor im Panel und in der CLI zurücksetzen | T-98 |
+| Jede Herkunft ist gleich: `source`, Step-up (SAML `ForceAuthn`, LDAP-Neubindung), Verknüpfen lokal und IdP | T-99, T-70 |
+| Berechtigungen: Registrierung durch die Anwendung, Zuweisung an Rollen, `has_permission` in Server und Clients | T-100, T-101 |
+| IdP-Rollenabgleich, Stufe 1 (Gruppen bei der Anmeldung) | T-102 |
+| IdP-Rollenabgleich, Stufe 2 (SCIM) | T-109, optional |
+| Hülle oben und an der Seite | T-103 |
+| Hybrid-Bereich und der Layout-Slot der Bibliothek | T-104 |
+| Headless schreiben: Aktionsseiten mit Rückweg | T-105 |
+| Headless lesen: Ereignisse, Schlüssel, Administratordaten im Bereich der Anwendung | T-106 |
+| Abnahme: eine Beispielanwendung je Oberfläche, jeweils mit lokalen, IdP- und gemischten Konten, in der CI | T-107 |
+| Vollständig headless Bibliothek (Registrieren, Passwort zurücksetzen, Einrichtungsstatus) | T-108, optional |
+| Neuschreiben des Kerns in einer anderen Sprache | nicht geplant: der Kern bleibt Python, die Clients bleiben dünn, siehe ADR-15 |
+| Eine Administrationsoberfläche auf der Herkunft der Anwendung | nicht geplant: ein XSS der Anwendung könnte TinySesam-Formulare absenden |
+
 ## Mehrere Anwendungen, ein TinySesam
 
 Eine Installation kann mehrere Anwendungen schützen — und **wer in welche darf, entscheidet der

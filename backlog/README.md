@@ -10,7 +10,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 86/94 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
-* ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 0/15 erledigt
+* ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 1/15 erledigt
 * ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 0/4 erledigt
 * ☐ **[M-6](M-6-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 
@@ -111,7 +111,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-93](T-93-follow-ups-to-0-29-0-kid-rule-proxy-duty-key-purposes.md)** Follow-ups to 0.29.0: kid rule, server-side top bar vs. proxy duty, key purposes both ways · M-2
 * ☑ **[T-94](T-94-first-sign-in-by-link-recovery-codes-off-totp-hint-target.md)** First sign-in by one-time link: recovery codes switchable, TOTP app hint, target after the setup · M-2
 * ☑ **[T-95](T-95-pairing-code-for-people-s-programs-and-a-simpler-consent-page.md)** Pairing code for people's programs (consent given in advance) and a consent page for laypeople · M-2
-* ☐ **[T-96](T-96-stage-s0-documentation-of-the-grid-surfaces-origins-dep.md)** Stage S0 — documentation of the grid: surfaces, origins, deployment · M-4
+* ☑ **[T-96](T-96-stage-s0-documentation-of-the-grid-surfaces-origins-dep.md)** Stage S0 — documentation of the grid: surfaces, origins, deployment · M-4
 * ☐ **[T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)** Stage S1 — the server can do everything: TOML configuration, parity test · M-4
 * ☐ **[T-98](T-98-stage-s2-reset-a-totp-factor-in-the-panel-and-cli.md)** Stage S2 — reset a TOTP factor in the panel and CLI · M-4
 * ☐ **[T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md)** Stage S3 — every origin is equal: source, step-up, linking local and IdP · M-4
