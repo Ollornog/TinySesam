@@ -2,7 +2,7 @@
 id: T-125
 type: Task
 title: "Attestation retry in the tag jobs of release.yml (image, SBOM)"
-status: offen
+status: erledigt
 milestone: M-2
 tags: [ci, release, supply-chain]
 created: 2026-11-23

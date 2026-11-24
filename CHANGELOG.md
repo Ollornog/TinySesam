@@ -11,6 +11,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- Release: the attestations of the tag jobs (provenance and SBOM of both images, of wheel and sdist) are tried up to
+  three times with a pause, as the dress rehearsal does since 0.29.1; the last attempt is strict. A Sigstore 404 at a tag
+  no longer needs a rerun of the release run. `tests/test_repo.py` pins the shape for every attestation of both
+  workflows (T-125).
 - CI: one aggregate job per workflow (`suite-ok`, `client-go-ok`, `client-js-ok`, `client-php-ok`, `client-rust-ok`)
   that is red unless every job it needs succeeded; the branch protection can name these instead of matrix legs such as
   `full (3.14)` or `test (php 8.4)`, so a matrix change no longer blocks every merge (T-115).

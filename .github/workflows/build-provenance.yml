@@ -128,11 +128,55 @@ jobs:
         with:
           name: sbom-dist
           path: .
-      - name: Attest the provenance of wheel and sdist
+      # Up to three attempts per attestation, the shape of `rehearsal-attest` in release.yml (T-125): attempts 1 and 2 fail
+      # softly, the pause and the next attempt run only after a failure, attempt 3 is hard. tests/test_repo.py pins it.
+      - name: Attest the provenance of wheel and sdist (attempt 1)
+        id: provenance-1
+        continue-on-error: true
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: "dist/*.whl, dist/*.tar.gz"
-      - name: Attest the SBOM of wheel and sdist
+      - name: Pause before attempt 2 (provenance)
+        if: steps.provenance-1.outcome == 'failure'
+        run: sleep 20
+      - name: Attest the provenance of wheel and sdist (attempt 2)
+        id: provenance-2
+        if: steps.provenance-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+      - name: Pause before attempt 3 (provenance)
+        if: steps.provenance-2.outcome == 'failure'
+        run: sleep 60
+      - name: Attest the provenance of wheel and sdist (attempt 3)
+        if: steps.provenance-2.outcome == 'failure'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+      - name: Attest the SBOM of wheel and sdist (attempt 1)
+        id: sbom-1
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+          sbom-path: tinysesam-sbom.spdx.json
+      - name: Pause before attempt 2 (SBOM)
+        if: steps.sbom-1.outcome == 'failure'
+        run: sleep 20
+      - name: Attest the SBOM of wheel and sdist (attempt 2)
+        id: sbom-2
+        if: steps.sbom-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+          sbom-path: tinysesam-sbom.spdx.json
+      - name: Pause before attempt 3 (SBOM)
+        if: steps.sbom-2.outcome == 'failure'
+        run: sleep 60
+      - name: Attest the SBOM of wheel and sdist (attempt 3)
+        if: steps.sbom-2.outcome == 'failure'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
         with:
           subject-path: "dist/*.whl, dist/*.tar.gz"
