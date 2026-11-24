@@ -139,7 +139,7 @@ assert r.status_code == 200, r.text
 res = r.json()
 assert res["url"].startswith(BASE + "/auth/magic/") and set(res) == {"url", "expires_at", "qr"}, res
 assert before + 30 * 60 - 5 <= res["expires_at"] <= time.time() + 30 * 60 + 5, res["expires_at"]
-row = auth.store.get_magic_token(hashlib.sha256(token_of(res["url"]).encode()).hexdigest())
+row = auth.store.get_magic_token(auth.store.token_digest(token_of(res["url"]), "magic"))
 assert row["purpose"] == "login" and row["user_id"] == bob and row["email"] is None
 ok("admin issues a link without a mailer: absolute address from base_url, TTL as asked")
 

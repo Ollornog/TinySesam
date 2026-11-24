@@ -8,7 +8,7 @@ for any account, and there was no way to change it without losing every TOTP enr
 |----------------|----------------------------------------------|-----------------------------|-----------------------------|
 | `vault`        | reversible secrets at rest (AES-256-GCM)     | 32 random bytes             | `TINYSESAM_SECRETS_KEY`, `secrets_key_file`, else `<db>.key` |
 | `gate`         | signature of the gate tokens (Ed25519)       | 32-byte seed, random        | `TINYSESAM_GATE_KEY`, `gate_key_file`, else the table `key_material` |
-| `oauth-pepper` | HMAC of the stored OAuth token digests       | at least 32 random bytes    | `TINYSESAM_OAUTH_PEPPER`, `oauth_pepper_file`, else `key_material` |
+| `oauth-pepper` | HMAC of the stored token digests (T-72)      | at least 32 random bytes    | `TINYSESAM_OAUTH_PEPPER`, `oauth_pepper_file`, else `key_material` |
 | `approval`     | signature of the approval confirmations (Ed25519) | 32-byte seed, random   | `TINYSESAM_APPROVAL_KEY`, `approval_key_file`, else `key_material` |
 
 The approval key signs only the one-time confirmations an application picks up after a person confirmed one of its

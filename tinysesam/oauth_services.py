@@ -275,7 +275,7 @@ class ServiceClients:
         code = new_pairing_code()
         ttl = int(self.cfg.oauth_pairing_minutes) * 60
         expires = _now() + ttl
-        self.store.add_magic_token(code_digest(normalize_code(code) or ""), "oauth_pairing", expires, int(u["id"]),
+        self.store.add_magic_token(self.store.token_digest(code_digest(normalize_code(code) or ""), "magic"), "oauth_pairing", expires, int(u["id"]),
                                    None, {"name": label, "resources": wanted, "roles": scope,
                                           "created_by": actor or u["username"]})
         detail = (f"user={u['id']} name={_detail(label)} resources={_detail(','.join(wanted))}"
@@ -319,7 +319,7 @@ class ServiceClients:
             raise _pair_refused("proof", "aud must be the issuer")
         if claims.get("nonce") != code_binding(code):
             raise _pair_refused("proof", "the proof belongs to another code")
-        row = self.store.get_magic_token(code_digest(code))
+        row = self.store.get_magic_token(self.store.token_digest(code_digest(code), "magic"))
         if (row is None or row["purpose"] != "oauth_pairing" or row["used_at"] is not None
                 or row["expires_at"] < now or row["user_id"] is None):
             raise _pair_refused("code")
@@ -334,7 +334,7 @@ class ServiceClients:
         client_id = CLIENT_PREFIX + secrets.token_urlsafe(18)
         lifetime = self.key_lifetime()
         key = {"kid": kid, "jwk": jwk, "expires_at": now + lifetime if lifetime else None}
-        if not self.store.oauth_pair_service(code_digest(code), now, client_id, payload.get("name") or "service",
+        if not self.store.oauth_pair_service(self.store.token_digest(code_digest(code), "magic"), now, client_id, payload.get("name") or "service",
                                              int(u["id"]), payload.get("roles"), resources,
                                              payload.get("created_by"), ip, key):
             raise _pair_refused("code")

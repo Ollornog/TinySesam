@@ -431,7 +431,7 @@ class Approvals:
             raise ApprovalError("unauthorized", 401)
         auth._remember_request(request)
         u, _scope = auth.verify_api_key(key)
-        row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest()) if u else None
+        row = self.store.get_api_key_by_hash(self.store.token_digest(key, "apikey")) if u else None
         if u is None or row is None:
             raise ApprovalError("unauthorized", 401)
         if auth._key_kind(row) == "human":

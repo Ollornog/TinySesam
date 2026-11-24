@@ -6,6 +6,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Security
 
+- API keys, one-time tokens (sign-in, invitation, confirmation and reset links, the service and consent pairing codes,
+  the QR sign-in codes) and the QR device secret are stored as an HMAC with the pepper keyring (`Store.token_digest`,
+  label per kind), like the session handles of T-71 (T-72). Until now they were a plain sha256: write access to the
+  database file alone minted a working automation key or sign-in link of any account. A pepper rotation keeps them
+  valid (an API key moves to the active pepper on its next use); `tinysesam keys retire --purpose oauth-pepper` refuses
+  while an open link or an API key not used since the rotation still needs the old pepper (`--force` cuts them). A
+  structure check pins that every store call writing or looking up such a digest gets the keyed one. Existing keys and
+  links stop working once (see "Removed").
 - The distroless runtime base is bumped to the digest that carries `libc6` 2.41-12+deb13u5, and the two Grype rules for
   the glibc findings (CVE-2026-19499, CVE-2026-5435) are removed; `.grype.yaml` is empty again (T-118).
 
@@ -65,6 +73,18 @@ something; **[operators only]** — the operator or the developer of the embeddi
 - **[end users notice] Programs connected with OAuth tokens of 0.25.x** (digested with the derived pepper and never
   refreshed since) connect again once the pepper is retired with `--force`. OAuth access and refresh tokens issued by
   0.26 or later are not affected.
+- **[end users notice] Existing API keys stop working once** (T-72): they are stored as an HMAC with the pepper now,
+  and the plain sha256 of before is not carried over (decision 2026-11-24, no migration). Create them anew
+  (`/auth/apikeys`, the panel, `auth.create_api_key`) — services and scripts with an automation key included, also the
+  service account key of an application with the account API or approvals (until it has a new one, its calls and the
+  pickup of confirmations get 401). [operators only] Check before the update which keys are in use (panel, `list_api_keys`).
+- **[end users notice] Open one-time links stop working once** (T-72): sign-in links (also the ones the account API
+  issued — creation, `signin-link`, access reset — and the panel's), invitations, address confirmations, reset links
+  and open QR sign-in requests. The person asks for a new link; an application issues a new one. **[operators only]**
+  Open service pairing codes (OAuth services, ADR-13) and consent pairing codes (ADR-14) end too —
+  issue new ones. Not affected: sessions (keyed since T-71), app passwords (T-66), OAuth access and refresh tokens and
+  authorization codes (keyed with the pepper since ADR-11), passkeys, TOTP and recovery codes, and open approval
+  requests (the `approval` row has no token digest; an application needs a working key to pick its confirmation up).
 - **[operators only] Tier C is gone.** The 38 warning aliases of 0.22.0 (`tinysesam/_deprecated.py`) are removed:
   `check_ldap`, `check_password`, `check_pin`, `check_resource`, `check_saml`, `complete_mfa`, `consume_admin_claim`,
   `factor_entry`, `forward_login_url`, `forward_response_headers`, `forwarded_url`, `is_locked`,

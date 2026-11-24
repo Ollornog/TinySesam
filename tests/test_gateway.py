@@ -127,7 +127,7 @@ _svc = _pa.store.get_user_by_name("backup-job")
 assert _svc is not None and _svc["is_service"], "the service account was not created"
 from tinysesam import oauth_services as _os_mod  # noqa: E402
 _tok = _pa.store._one("SELECT * FROM magic_token WHERE token_hash=? AND purpose='oauth_pairing'",
-                      (_os_mod.code_digest(_os_mod.normalize_code(_m.group(1))),))
+                      (_pa.store.token_digest(_os_mod.code_digest(_os_mod.normalize_code(_m.group(1))), "magic"),))
 assert _tok is not None and int(_tok["user_id"]) == int(_svc["id"]), "the printed code is not the stored one"
 assert any(z["event"] == "oauth_pairing_issued" for z in _pa.store.recent_audit(20)), "no audit line"
 _pa.close()

@@ -203,7 +203,7 @@ uid = auth.create_user("lena", password=PW)
 before = time.time()
 raw = auth.create_magic_token("login", user_id=uid)
 row = auth.store._one("SELECT expires_at FROM magic_token WHERE token_hash=?",
-                      (hashlib.sha256(raw.encode()).hexdigest(),))
+                      (auth.store.token_digest(raw, "magic"),))
 assert before + 600 - 5 <= row["expires_at"] <= time.time() + 600 + 5, row["expires_at"] - before
 assert auth.create_signin_link(uid, ttl_min=24 * 60)["expires_at"] <= time.time() + 24 * 3600 + 5
 for bad in (24 * 60 + 1, 7 * 24 * 60):

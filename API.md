@@ -442,7 +442,7 @@ All hardening thresholds as a dict (defaults, overridden by what is set in the p
 
 ### `api_key_kind(key) -> 'str'`
 
-The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automaton"`/`"human"`) — without using it. `""` for an unknown key.
+The kind of a key (`"automation"`/`"human"`) — without using it. `""` for an unknown key.
 
 ### `app_password_hosts() -> 'list'`
 
@@ -486,7 +486,7 @@ Create an app password (T-66) for HTTP clients that speak only Basic auth — We
 
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
-Create a one-time token (plaintext return). Only the sha256 hash is in the DB.
+Create a one-time token (plaintext return). Only its keyed digest is in the DB (`_token_hash`, T-72).
 
 ### `create_role(name: 'str', actor=None) -> 'dict'`
 

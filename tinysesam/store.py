@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS api_key (
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name       TEXT,
     prefix     TEXT NOT NULL,                   -- display (tsk_xxxx…), NOT the key
-    key_hash   TEXT UNIQUE NOT NULL,            -- sha256(full key)
+    key_hash   TEXT UNIQUE NOT NULL,            -- HMAC with the pepper (`Store.token_digest`, T-72)
     roles      TEXT NOT NULL DEFAULT '[]',      -- key scope; empty = inherits user roles
     -- What kind of key is this? (R6-5)
     --   'automation' (default): works on its own, NEVER carries its owner's admin flag and
@@ -273,7 +273,7 @@ CREATE TABLE IF NOT EXISTS setting (         -- runtime settings (hardening thre
     value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS magic_token (      -- one-time token (magic link / invite / e-mail verify)
-    token_hash TEXT PRIMARY KEY,               -- sha256(plaintext token)
+    token_hash TEXT PRIMARY KEY,               -- HMAC with the pepper (`Store.token_digest`, T-72)
     purpose    TEXT NOT NULL,                  -- login | invite | verify_email | …
     user_id    INTEGER,                        -- optional: bound to an existing user
     email      TEXT,
@@ -2837,6 +2837,62 @@ class Store:
             if r is not None:
                 return str(r["h"])
         return candidates[0]
+
+    # ---------- the other token digests (T-72) ----------
+    # API keys, one-time tokens (sign-in links, invitations, address confirmations, reset links, the service and consent
+    # pairing codes, the QR sign-in codes) and the QR device secret: an HMAC with the same pepper keyring, with a label
+    # per kind. Up to 0.30.0 they were a plain sha256 — whoever could write the file inserted the digest of a key or
+    # link of their own choosing and held a working automation key or sign-in link of any account.
+
+    #: The kind of a token digest → the column it is looked up in (None: compared by the caller, not looked up).
+    TOKEN_KINDS = {"apikey": ("api_key", "key_hash"), "magic": ("magic_token", "token_hash"), "qr-device": None}
+
+    @staticmethod
+    def _token_digest(pepper: bytes, kind: str, raw: str) -> str:
+        """HMAC-SHA-256 with the pepper over label, kind and the token itself (the tokens are random, no password)."""
+        return hmac.new(pepper, b"tinysesam/token/v1\x00" + kind.encode("ascii") + b"\x00" + (raw or "").encode(),
+                        hashlib.sha256).hexdigest()
+
+    def token_digests(self, raw: str, kind: str) -> list:
+        """Every candidate digest of `raw` for `kind`, the active pepper first — for a value compared in place (the QR
+        device secret in a payload). Refuses without the pepper, like `session_hash`."""
+        if kind not in self.TOKEN_KINDS:
+            raise ValueError(f"unknown token kind {kind!r}")
+        if not self.session_peppers:
+            raise RuntimeError("Store.session_peppers is not set: token digests need the pepper keyring "
+                               "(TinySesam sets it at startup).")
+        return [self._token_digest(p, kind, raw) for p in self.session_peppers]
+
+    def token_digest(self, raw: str, kind: str) -> str:
+        """The stored digest of an API key (`kind="apikey"`) or a one-time token (`"magic"`).
+
+        With one pepper the HMAC with it. After a pepper rotation a row made with a previous pepper keeps being found:
+        the candidate that exists is returned, a new row gets the active pepper (an API key moves to it on its next use,
+        `rewrite_api_key_digest`)."""
+        candidates = self.token_digests(raw, kind)
+        where = self.TOKEN_KINDS[kind]
+        if len(candidates) == 1 or where is None:
+            return candidates[0]
+        table, column = where
+        r = self._one(f"SELECT {column} AS h FROM {table} WHERE {column} IN ({','.join('?' * len(candidates))}) "
+                      "LIMIT 1", candidates)
+        return str(r["h"]) if r is not None else candidates[0]
+
+    def rewrite_api_key_digest(self, old: str, new: str) -> int:
+        """Move an API key found with a previous pepper to the active one (compare-and-swap on the old digest)."""
+        if old == new:
+            return 0
+        return self._exec("UPDATE api_key SET key_hash=?, last_used=? WHERE key_hash=?", (new, _now(), old)).rowcount
+
+    def tokens_live_before(self, when: int, now: int) -> tuple:
+        """(one-time tokens, API keys) made up to `when` that may still carry a digest of a pepper retired at `when`:
+        open one-time tokens not yet expired, and API keys neither revoked, expired nor used since (T-72)."""
+        magic = self._one("SELECT COUNT(*) AS n FROM magic_token WHERE created_at <= ? AND expires_at > ? "
+                          "AND used_at IS NULL", (when, now))["n"]
+        keys = self._one("SELECT COUNT(*) AS n FROM api_key WHERE created_at <= ? AND revoked = 0 "
+                         "AND (expires_at IS NULL OR expires_at > ?) AND (last_used IS NULL OR last_used <= ?)",
+                         (when, now, when))["n"]
+        return int(magic), int(keys)
 
     def sessions_live_before(self, when: int, now: int) -> int:
         """Sessions and app-host links created up to `when` that still run — what a pepper retired at `when` would

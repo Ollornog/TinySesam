@@ -161,7 +161,8 @@ def normalize_code(text) -> Optional[str]:
 
 
 def code_digest(code: str) -> str:
-    """What the database keeps of a pairing code (in `magic_token`; the purpose says which kind it is)."""
+    """The pre-image of a pairing code in `magic_token`: the row keeps `Store.token_digest(code_digest(code), "magic")`
+    (keyed with the pepper, T-72; the purpose says which kind of code it is)."""
     return hashlib.sha256(("tinysesam-pairing:" + code).encode("ascii")).hexdigest()
 
 
@@ -773,7 +774,7 @@ class OAuthServer:
         code = new_pairing_code()
         now = _now()
         expires = now + int(self.cfg.oauth_pairing_consent_minutes) * 60
-        self.store.oauth_replace_consent_pairing(code_digest(normalize_code(code) or ""), int(user["id"]), now,
+        self.store.oauth_replace_consent_pairing(self.store.token_digest(code_digest(normalize_code(code) or ""), "magic"), int(user["id"]), now,
                                                  expires, {"resource": wanted})
         self._audit("oauth_consent_pairing_issued", user["username"], ip,
                     f"resource={_detail(wanted or '*')} expires_at={expires}")
@@ -799,7 +800,7 @@ class OAuthServer:
         if code is None:
             raise refuse("malformed")
         now = _now()
-        row = self.store.get_magic_token(code_digest(code))
+        row = self.store.get_magic_token(self.store.token_digest(code_digest(code), "magic"))
         if row is None:
             raise refuse("unknown")
         if row["purpose"] not in (self.store.CONSENT_PAIRING, self.store.CONSENT_ARMED):

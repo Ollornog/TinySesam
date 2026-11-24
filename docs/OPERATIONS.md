@@ -390,7 +390,7 @@ single base key encrypted the secrets AND was, by HKDF, the gate signing key and
 |---|---|---|---|---|---|
 | `vault` | TOTP secrets, OIDC refresh and ID tokens, an OAuth successor pair in its grace window, the two keys below when kept in the database | AES-256-GCM, 96-bit random nonce, AAD = key ID + table/column/row | 32 random bytes | `TINYSESAM_SECRETS_KEY` (+ `TINYSESAM_SECRETS_KEY_PREVIOUS`), `secrets_key_file`, `<db_path>.key` (created at the first start, 0600) | as long as the row |
 | `gate` | signature of the gate tokens (ADR-9) | Ed25519 (`EdDSA`), header `typ: tinysesam-gate+jwt`, `kid` | 32-byte random seed — **never derived** from the vault key | `TINYSESAM_GATE_KEY` (+ `_PREVIOUS`), `gate_key_file`, otherwise the table `key_material`, encrypted with the vault key | `gate_token_ttl_sec`, at most 3600 s |
-| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11), of the app passwords (T-66) and of the session handles, app-host links and area unlocks (T-71) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords: until their next use, at most `app_password_default_days` or what the holder chose; sessions: `session_ttl_hours` |
+| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11), of the app passwords (T-66), of the session handles, app-host links and area unlocks (T-71), and of the API keys, one-time tokens (sign-in, invitation, confirmation and reset links, service and consent pairing codes, QR sign-in codes) and the QR device secret (T-72) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords and API keys: until their next use (then the active pepper), at most their expiry; sessions: `session_ttl_hours`; one-time tokens: their lifetime |
 | `approval` | signature of the approval confirmations of application actions (T-89, stage B) | Ed25519 (`EdDSA`), header `typ: tinysesam-approval+jwt`, `kid` | 32-byte random seed — never the gate key | `TINYSESAM_APPROVAL_KEY` (+ `_PREVIOUS`), `approval_key_file`, otherwise `key_material` (created at the first start with `approvals_enabled`) | `approval_token_ttl_sec`, at most 300 s |
 | (per process) | the in-memory fingerprints of repeated wrong passwords | PBKDF2-HMAC-SHA-256 | 32 random bytes per start | never stored | `password_repeat_window_sec` |
 
@@ -904,7 +904,14 @@ This version refuses, with a message that names the way out, and never with a pa
 The command line answers the same with exit code 1 (no traceback). A file that holds only another program's tables
 (none of TinySesam's) is not refused: it gets the schema.
 
-**Going back from this version to 0.30.0** needs no SQL: the schema is the same (26). Going back further: first to
+**Once with this version: API keys and open links end** (T-72). API keys, sign-in links (also the account API's),
+invitations, address confirmations, reset links, open QR requests and pairing codes are stored as an HMAC with the
+pepper now; the plain sha256 of 0.30.0 is not carried over. Issue the API keys anew (services, scripts, the service
+account of an application) and tell people to ask for a new link. Sessions, app passwords and OAuth connections are not
+affected.
+
+**Going back from this version to 0.30.0** needs no SQL: the schema is the same (26); only the API keys and links this
+version issued are unknown there (it looks for their plain sha256) — issue them again. Going back further: first to
 0.30.0, then follow the docs of that release (the backup from before step 1 is the way back across the migrations).
 
 **Later schema changes** start from the baseline: each raises `Store.SCHEMA_VERSION` with one migration step from the

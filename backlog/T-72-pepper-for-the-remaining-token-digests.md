@@ -2,7 +2,7 @@
 id: T-72
 type: Task
 title: Pepper for the remaining token digests, then drop the session-handle rewrite
-status: offen
+status: erledigt
 milestone: M-5
 blocked_by: [T-111]
 tags: [security, keys, api-keys]
@@ -33,3 +33,15 @@ Moved to [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md). Wit
 ([T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md)) there is no old data to carry: no
 migration that keeps valid keys and links — existing API keys, sign-in links and QR approvals stop working once and
 the CHANGELOG says so. The removal of the session-handle rewrite belongs to T-111.
+
+## Done (2026-11-24)
+
+`Store.token_digest(raw, kind)` / `token_digests` — HMAC with the pepper keyring over the token itself, label
+`tinysesam/token/v1` plus the kind (`apikey`, `magic`, `qr-device`); a lookup takes the candidate that exists, so a
+pepper rotation keeps keys and links valid; an API key moves to the active pepper on its next use
+(`rewrite_api_key_digest`). `keys retire --purpose oauth-pepper` refuses while open one-time tokens or API keys not used
+since the rotation need the old pepper (`Store.tokens_live_before`). No migration: existing keys, links and pairing
+codes stop working once (maintainer, 2026-11-24). The session-handle rewrite went with T-111. Pinned in
+`tests/test_session_pepper.py` (e), including a structure check over every store call that writes or looks up such a
+digest. Not changed: recovery codes (sha256; they only replace the second factor) and the code exchange of the app-host
+link (`gatecode:` in `flow`) — named as follow-ups.

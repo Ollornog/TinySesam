@@ -712,9 +712,9 @@ def _keys(argv) -> int:
                   "the new one.")
             print(f"After {K.APPROVAL_OVERLAP_SEC // 60} minutes: tinysesam keys retire --purpose approval")
         else:
-            print("Connected programs stay connected, app passwords stay valid and nobody is signed out (looked up "
-                  "with the previous pepper; a program's next refresh and an app password's next use move them to "
-                  "the new one, a session keeps its pepper until it ends). "
+            print("Connected programs stay connected, app passwords, API keys and open links stay valid and nobody is "
+                  "signed out (looked up with the previous pepper; a program's next refresh and the next use of an app "
+                  "password or API key move them to the new one, a session or link keeps its pepper until it ends). "
                   "tinysesam keys retire --purpose oauth-pepper once `keys retire` no longer refuses.")
         return 0
 
@@ -760,6 +760,12 @@ def _keys(argv) -> int:
             # still carries the old digest.
             refusals.append(f"{k.kid}: {n} app password(s) not used since the rotation still need it "
                             f"(--force: they stop working and must be created anew)")
+        elif purpose == K.PEPPER and any(live := store.tokens_live_before(k.since, now)):
+            # T-72: one-time tokens and API keys are digested with the pepper; an API key moves to the active one on
+            # its next use, an open link never does.
+            refusals.append(f"{k.kid}: {live[0]} open one-time token(s) (sign-in links, invitations, pairing codes) "
+                            f"and {live[1]} API key(s) not used since the rotation still need it (--force: those "
+                            f"links stop working, those keys must be created anew)")
     if refusals:
         print("Not retired:\n  " + "\n  ".join(refusals), file=sys.stderr)
         return 1
