@@ -11,6 +11,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
+  The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
+  `tinysesam/gate-caddy/` in the user cache directory, old builds removed); without Docker the skip names the missing tool instead of
+  turning the push red (T-116). CI still passes `TINYSESAM_GATE_CADDY`.
 - Release: the attestations of the tag jobs (provenance and SBOM of both images, of wheel and sdist) are tried up to
   three times with a pause, as the dress rehearsal does since 0.29.1; the last attempt is strict. A Sigstore 404 at a tag
   no longer needs a rerun of the release run. `tests/test_repo.py` pins the shape for every attestation of both

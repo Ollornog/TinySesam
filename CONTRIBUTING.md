@@ -14,6 +14,10 @@ the better change.
 2. **The suite must be repeatable.** The nightly repeat run (`nightly-repeat`: the CI suite twice on
    `main`) checks it; before a push the fast pre-push hook is enough, the header of `.githooks/pre-push` names the switch for the full gate. A test
    that fails on the second run is broken, not the code. The residue check enforces it.
+   A change in `deploy/forward-auth/` also runs the gate-Caddy suite in the fast hook (the repo extra in `.githooks/`): on a
+   machine with Docker the suite builds the Caddy with caddy-jwt once and keeps it by content under
+   `tinysesam/gate-caddy/` in the user cache directory (`tests/_gate_caddy_binary.py`); without Docker the hook names the missing tool and the
+   PR CI job `gate-caddy` runs the suite. `TINYSESAM_GATE_CADDY=<binary>` overrides the build.
 3. **Security changes are not cosmetic.** Anything touching sessions, guards, factor chains, token
    handling or the login flow gets a test that would fail without the fix. "It obviously works" is
    not a review.

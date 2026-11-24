@@ -2,7 +2,7 @@
 id: T-116
 type: Task
 title: "Pre-push: the gate-Caddy suite without its image counts as red"
-status: offen
+status: erledigt
 milestone: M-2
 tags: [tests, pre-push]
 created: 2026-11-23
