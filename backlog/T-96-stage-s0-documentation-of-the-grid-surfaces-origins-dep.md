@@ -2,7 +2,7 @@
 id: T-96
 type: Task
 title: "Stage S0 — documentation of the grid: surfaces, origins, deployment"
-status: offen
+status: erledigt
 milestone: M-4
 tags: [docs]
 created: 2026-11-23

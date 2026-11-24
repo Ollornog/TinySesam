@@ -27,6 +27,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Documentation of the grid (T-96): README and `i18n/README.de.md` get the section "Surfaces, origins, deployment" (four surfaces,
+  three account origins, library and server, the ownership, equivalence and parity rules, and the owner of every cell);
+  `SECURITY.md` and its German version state that the library is one trust boundary and server plus application are two.
 - Rust and PHP clients can fetch the top bar for a server-side render, like Go, JS/TS and Python: `topbar::TopBarFetcher`
   (Rust, feature `jwks`) and `Topbar::fetch` (PHP). Only TinySesam's cookies are forwarded; 5 seconds, 64 KiB, no
   redirects; anything but a `200` is the signed-out value. The browser way stays the recommendation (T-113).

@@ -525,6 +525,20 @@ and service scopes, open invitations and pairing codes, pending approvals — ch
 an assignment running at the same time lands before (the delete is refused) or after (the account keeps a role the
 catalog no longer lists, shown as "only on accounts"), never in between. Nothing cascades.
 
+## Trust boundaries: library, server, application
+
+As a **library** TinySesam runs inside your application's process: one trust boundary. A flaw in any other code of the
+application (an injection, a vulnerable dependency, a debug endpoint) reaches the database, the session pepper, the
+signing keys and every secret TinySesam holds, because they are in the same memory and the same file system. The
+library cannot defend against its own host process.
+
+As a **server** (the gateway container) TinySesam and the application are two boundaries: the application sees only
+what the proxy hands it (the gate token or the `Remote-*` headers, `account.json`, `topbar.json`, the account API with
+its own key) and holds no TinySesam secret, so a compromise of the application does not hand over the accounts. The
+application can still misuse what it is given, so give it the narrowest scopes and permissions, and keep the proxy
+duties of spec section 2.1 (strip every `Remote-*` and the gate cookie a client sends). Choose the server for an
+application you do not fully trust, or whose code you did not write.
+
 ## Vulnerable dependencies
 
 Deadlines for fixing a known vulnerability in a dependency of the package or the gateway image

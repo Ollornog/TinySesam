@@ -1375,6 +1375,70 @@ Recipes:
     the account of that request's `Remote-Id` (never an id from a parameter), and answer with
     `Cache-Control: no-store`. `current` stays `null` there: the gate token carries no session reference.
 
+## Surfaces, origins, deployment
+
+TinySesam is meant as a building block for other developers, so the ways to put it into an application are one grid,
+not a list of special cases: four **surfaces** (what the person sees), three **origins** of an account (where it
+lives) and two **modes of operation** (how TinySesam runs). This section is the map; the stages that build the missing
+cells are the tasks of milestone M-4 in `backlog/`. What exists today is named in each table.
+
+### The four surfaces
+
+| Surface | Who draws the navigation | Where TinySesam's pages appear | Today |
+|---|---|---|---|
+| **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the top bar of spec §8 (`topbar.json`, `auth.topbar_data`), T-103 adds the layout switch |
+| **Shell at the side** | the same component as a side bar | as above | T-103 |
+| **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the app frame (T-91), T-104 adds the area |
+| **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the account overview and the account API, T-105 and T-106 add the action pages and the reading side |
+
+### The three origins of an account
+
+**Local** (password, passkey, TOTP, PIN, sign-in link), **IdP** (OIDC, SAML or LDAP: TinySesam stores a mirror and the
+role mapping) and **mixed** (both in one installation, an IdP account may be linked to a local one by a person with a
+step-up on both sides, never silently by the same address).
+
+### The two modes of operation
+
+| | **Library** | **Server** |
+|---|---|---|
+| What runs | TinySesam inside your Python application | the gateway container, any language behind a proxy; configured by environment variables today, by a TOML file with an environment overlay from T-97 on (`TINYSESAM_CONFIG`) |
+| What the application gets | function calls (`get_user`, `has_role`, `topbar_data`, the account API) | the gate token, the `Remote-*` headers, `account.json`, `topbar.json`, the account API, through the clients (Go, Rust, JS/TS, PHP, Python) |
+| Trust | one trust boundary: application and TinySesam share the process, the database and the secrets | two boundaries: the application holds no TinySesam secret and cannot read its database |
+
+### Three rules that hold in every cell
+
+1. **Ownership: reading is allowed everywhere, writing from another origin only by navigation.** An application may
+   read what the person may see (`account.json`, `topbar.json`, the administrator's read data inside its own area).
+   Anything that changes an account is done on a TinySesam action page the person is sent to, with a way back to the
+   application. A secret (password, TOTP, passkey, recovery code) is typed only on TinySesam's own pages when the
+   application lives on another origin; it never travels through the application. Hardening and configuration stay
+   instance-wide and are not reachable from an application; the administrator flag is never set by a link.
+2. **Equivalence: no decision depends on the origin of an account.** The same scenario (a role, an approval, an
+   administrative action) has the same result for a local, an IdP and a mixed account. `source` is information shown in
+   the panel and the account API, never a switch for behaviour.
+3. **Parity: every function has a server route, or sits on the "library only" list with a reason.** A parity test
+   reads `tests/api_surface.json` and fails when a stable name has neither. Library only: fully headless forms with own
+   password fields, `set_template` and `page_layout` (they draw HTML inside your own process).
+
+### Who builds which cell
+
+| Function | Owner |
+|---|---|
+| The server can do everything: TOML configuration, parity test | T-97 |
+| Reset a TOTP factor in the panel and the CLI | T-98 |
+| Every origin is equal: `source`, step-up (SAML `ForceAuthn`, LDAP re-bind), linking local and IdP | T-99, T-70 |
+| Permissions: registration by the application, assignment to roles, `has_permission` in server and clients | T-100, T-101 |
+| IdP role sync, stage 1 (groups at sign-in) | T-102 |
+| IdP role sync, stage 2 (SCIM) | T-109, optional |
+| Shell on top and at the side | T-103 |
+| Hybrid area and the library layout slot | T-104 |
+| Headless writing: action pages with a way back | T-105 |
+| Headless reading: events, keys, administrator data inside the application's area | T-106 |
+| Acceptance: one example application per surface, each with local, IdP and mixed accounts, in CI | T-107 |
+| Fully headless library (register, reset password, setup status) | T-108, optional |
+| A rewrite of the core in another language | not planned: the core stays Python and the clients stay thin, see ADR-15 |
+| An administrator interface inside the application's origin | not planned: an XSS of the application could post TinySesam forms |
+
 ## Several apps, one TinySesam
 
 One installation can protect several apps — and **the identity provider decides who gets into
