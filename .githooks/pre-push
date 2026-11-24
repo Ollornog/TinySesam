@@ -16,7 +16,11 @@
 #                                        --check, clippy, cargo test of the changed workspaces), JS/TS (biome check)
 #   .githooks/pre-push.zusatz         -> the repo's own extra (kit 0.29.0), e.g. its own fast tests
 #
-# A missing tool is a visible note, not a red push: the gate is the PR CI, which has every tool.
+# A missing tool is a visible note, not a red push: the gate is the PR CI, which has every tool. That holds for the tools
+# the hook calls itself AND for a test file of the changed code: a test that lacks a prerequisite here (Docker, ansible,
+# a service) ends with exit 77 (the automake "skipped" code, kit 0.65.0). The hook shows it as NOT checked — never as
+# green, never as red; the PR CI runs it. Any other non-zero exit is red. Skip is no green in the full suite either:
+# what scripts/check.sh makes of exit 77 is the repo's choice.
 #
 # FULL RUN ON REQUEST: `PREPUSH_VOLL=1 git push …` runs what the hook did up to kit 0.58: `ci-local` (container,
 # with CI_LOCAL_AUSWEICHEN=knoten) if it is installed, else scripts/check.sh natively plus the residue check. For
@@ -39,6 +43,12 @@ cd "$ROOT"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 # Target time of the fast path in seconds; above it the hook says so (it never aborts a green check for being slow).
 FRIST="${PREPUSH_FRIST:-180}"
+# The user's tool folders (kit 0.65.0): git runs hooks from GUIs and non-login shells whose PATH lacks ~/.cargo/bin or
+# ~/go/bin. The Rust and Go stages then said "no cargo here" although cargo was installed (PO todo, PWM-Control).
+for _werkzeug in "$HOME/.cargo/bin" "$HOME/go/bin" /usr/local/go/bin; do
+    if [[ -d "$_werkzeug" && ":$PATH:" != *":$_werkzeug:"* ]]; then PATH="$PATH:$_werkzeug"; fi
+done
+unset _werkzeug
 
 # ---------------------------------------------------------------------------
 # Nativer Lauf + Rückstands-Check (nur noch im vollen Lauf, PREPUSH_VOLL=1).
@@ -502,7 +512,8 @@ schnell() {
         for f in "${sh[@]}"; do bash -n "$f" || rot "$f: bash -n (syntax)"; done
         if nutzt shellcheck; then
             if command -v shellcheck >/dev/null 2>&1; then
-                shellcheck "${sh[@]}" || rot "shellcheck"
+                # -x like scripts/check.sh (kit 0.65.0): without it every script with `source` is red (SC1091, info).
+                shellcheck -x "${sh[@]}" || rot "shellcheck"
                 echo "  shellcheck clean"
             else
                 hinweis "shellcheck is not installed here — PR CI"
@@ -554,10 +565,16 @@ for f in sys.argv[1:]:
             hinweis "no test file belongs to the changed files by name — PR CI"
         else
             python_waehlen; py="$PY_WAHL"
+            local trc
             for d in "${tests[@]}"; do
                 if skript_test "$d"; then
                     echo "  $d"
-                    "$py" "$d" || rot "$d is red"
+                    trc=0; "$py" "$d" || trc=$?
+                    if [[ $trc -eq 77 ]]; then
+                        hinweis "$d skipped itself (exit 77: a prerequisite is missing here) — NOT checked here, PR CI"
+                    elif [[ $trc -ne 0 ]]; then
+                        rot "$d is red"
+                    fi
                 elif "$py" -c 'import pytest' >/dev/null 2>&1; then
                     echo "  pytest $d"
                     "$py" -m pytest -q "$d" || rot "$d is red (pytest)"

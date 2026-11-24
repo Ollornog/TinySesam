@@ -14,6 +14,9 @@
 # the last green nightly-repeat run did not see (job `gate`: github.sha against the head_sha of the last successful
 # run of this workflow). Otherwise both passes are skipped and the run is green, "nothing new". Started by hand
 # (workflow_dispatch, e.g. at the end of a sprint) it always runs.
+# Load at failure (kit 0.64.0): `gate` and `compare` end with a step `if: failure()` that writes one load line (runner,
+# cores, loadavg, PSI, free memory, job time) — rendered from scripts/_load_note.sh. The jobs of the two passes are the
+# CI workflow's own; it adds the step itself (`run: scripts/_load_note.sh`).
 name: nightly-repeat
 
 on:
@@ -66,6 +69,7 @@ jobs:
             echo "New since the last green run (${last_sha:-none}): the two passes start on $SHA."
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
+@@LASTVERMERK@@
   run-1:
     needs: gate
     if: ${{ needs.gate.outputs.run == 'true' }}
@@ -120,3 +124,4 @@ jobs:
           echo "::error title=nightly-repeat::$message"
           printf '### nightly-repeat\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
           exit 1
+@@LASTVERMERK@@

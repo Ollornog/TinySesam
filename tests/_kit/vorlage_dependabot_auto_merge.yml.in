@@ -91,27 +91,56 @@
 # laufen nie auf eigenen Runnern) — dann laufen auch diese vier Jobs dort, auf Einmal-Runnern mit `gh` im Abbild. Sonst
 # `ubuntu-latest` (öffentlich: kostenlos). Kein Checkout, kein PR-Code: Auf dem eigenen Runner läuft nur dieser Text vom
 # Standardzweig.
+#
+# WEEKLY REBUILD (since 0.64.0, PO 2026-11-23): repos with `APP_PR: "release"` and own images (`abbilder` in
+# .github/release-automatik.json) get a second, weekly cron — weekday, hour and minute spread by the image name, so that
+# the pin PRs in the fleet repo do not arrive together. `rebuild-check` (read only) clones the default branch and runs
+# `scripts/_release_automatik.py neubau`: a patch release only if the base image of the Dockerfile is no longer the base of
+# the last released image, or grype finds a fixable High/Critical in it. Then `rebuild-dispatch` (only `gh workflow
+# run`) dispatches `release.yml` with `automatik=vorbereiten` — the same release path as after a Dependabot merge.
+# Without a reason nothing happens. Switch per repo: repository variable `WEEKLY_REBUILD=off`. By hand:
+# `gh workflow run dependabot-auto-merge.yml -f rebuild=true`.
+# DRAFTS (since 0.65.0): a draft is a hold by a human (PO 2026-11-23: risky majors are held back as drafts) — for EVERY
+# kind of PR, not only docs. Up to 0.64 only the docs PR checked it; a pin PR set to draft before `entscheiden` ran was
+# merged anyway, and `gh pr merge` ended red ("Pull Request is still a draft", FleetCommander #1080). And a PR that
+# leaves the draft state started no CI run, so no `workflow_run` came, and it waited up to six hours for the scheduled
+# run. Now `pull_request` with `ready_for_review` (only that type) checks its head at once — no checkout; `entscheiden`
+# verifies everything per API as always. Not `pull_request_target`: repos forbid it for this workflow (TinySesam,
+# tests/test_repo.py). With `pull_request` a fork gets no secrets and a read-only token, and `entscheiden` skips it (its
+# `if:`); a branch of the own repo is written by someone with write access anyway. The workflow text is the PR's — a
+# branch from before this kit version has no such trigger, and the six-hour run picks it up as before.
+# LOAD AT FAILURE (since 0.64.0): the read-only jobs end with a step `if: failure()` that writes one load line (runner,
+# cores, loadavg, PSI, free memory, job time) to the job summary and as an annotation — rendered from scripts/_load_note.sh.
 name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
   workflow_run:
     workflows: @@WORKFLOWS@@
     types: [completed]
+  # Out of the draft (since 0.65.0, see the head): only this type, and only the head is read from the event.
+  pull_request:
+    types: [ready_for_review]
   # Geplanter Nachlauf: ein Intervall, keine Uhrzeit — die Zeitzone spielt keine Rolle.
   schedule:
     - cron: "41 */6 * * *"
+@@NEUBAU_CRON@@
   # Ein Kopf zum erneuten Prüfen (von `sammeln` oder von Hand). Herkunft prüft `entscheiden` per API.
   workflow_dispatch:
     inputs:
       head_sha:
         description: "Kopf (SHA) eines offenen Dependabot-PR"
-        required: true
+        required: false
         type: string
+      rebuild:
+        description: "Weekly rebuild check now (instead of a head)"
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
 concurrency:
-  group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha || inputs.head_sha || github.run_id }}
+  group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || inputs.head_sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -120,7 +149,7 @@ jobs:
     # die Logik (API, Filter, Formatprüfung) steht hier, der Job mit Schreibrecht ruft nur `gh workflow run`
     # (seit 0.44.0; bis 0.43 beides in einem Job mit `actions: write`, das verletzte die Befehls-Erlaubnisliste
     # für Jobs mit Recht in TinySesam).
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' && github.event.schedule == '41 */6 * * *'
     runs-on: @@RUNNER@@
     timeout-minutes: 5
     permissions:
@@ -142,11 +171,12 @@ jobs:
           KOEPFE="$(gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
             -q '.[] | select(.head.repo.full_name == .base.repo.full_name and (.user.login == "dependabot[bot]"
               or (.user.login == "ollornog-auto-merge[bot]" and (.head.ref | test("^(release|pin)/")))
-              or ((.head.ref | test("^(doku/.+|backlog)$")) and (.draft | not)))) | .head.sha')"
+              or (.head.ref | test("^(doku/.+|backlog)$"))) and (.draft | not)) | .head.sha')"
           # Nur 40-stellige SHAs kommen in die Matrix — eine leere Liste lässt `anstossen` ausfallen.
           JSON="$(printf '%s\n' "$KOEPFE" | jq -Rnc '[inputs | select(test("^[0-9a-f]{40}$"))]')"
           echo "Köpfe: $JSON"
           { echo "koepfe=$JSON"; echo "datei=$DATEI"; } >>"$GITHUB_OUTPUT"
+@@LASTVERMERK@@
 
   anstossen:
     # Je Kopf ein Lauf per `workflow_dispatch` (startet auch mit dem Workflow-Token). Hält `actions: write`
@@ -177,7 +207,9 @@ jobs:
     # (workflow_dispatch). Branchname, Commit-Nachricht und Eingabe sind fälschbar — deshalb unten alles
     # noch einmal per API.
     if: >
-      github.event_name == 'workflow_dispatch' || (
+      (github.event_name == 'workflow_dispatch' && !inputs.rebuild) || (
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository) || (
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (startsWith(github.event.workflow_run.head_branch, 'dependabot/') ||
@@ -207,7 +239,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || inputs.head_sha }}
           APP_LOGIN: "ollornog-auto-merge[bot]"
           # --- je Repo: Anfang
 @@JE_REPO@@
@@ -466,6 +498,8 @@ jobs:
           [ "$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$J")" = "true" ] || { echo "Fork — Abbruch"; exit 1; }
           [ "$(jq -r '.state' <<<"$J")" = "open" ] || { ausgabe nichts "PR nicht offen"; exit 0; }
           [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf seit dem Lauf bewegt"; exit 0; }
+          # A draft is a hold by a human, for every kind of PR (since 0.65.0; up to 0.64 only docs, FleetCommander #1080).
+          [ "$(jq -r '.draft' <<<"$J")" = "false" ] || { ausgabe nichts "Entwurf — kein Auto-Merge"; exit 0; }
           # Ein Kommentar je Grund genügt — der Workflow läuft je PR mehrmals.
           schon_gesagt() {
             [ "$(gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s --arg g "$1" \
@@ -582,8 +616,7 @@ jobs:
               if beruehrt_abbild $ABBILD_PFADE <<<"$DATEIEN"; then FOLGE=vorbereiten; fi
             fi
           elif [ "$ART" = doku ]; then
-            # Doku-PR (seit 0.52.0, siehe Kopf): kein Entwurf, Autor mit Schreibrecht, nur Doku, Sprachregel.
-            [ "$(jq -r '.draft' <<<"$J")" = "false" ] || { ausgabe nichts "Entwurf — kein Auto-Merge"; exit 0; }
+            # Doku-PR (seit 0.52.0, siehe Kopf): Autor mit Schreibrecht, nur Doku, Sprachregel (Entwurf: oben, für alle).
             case "$(jq -r '.author_association' <<<"$J")" in
               OWNER|MEMBER|COLLABORATOR) ;;
               *) GRUND="Autor ohne Schreibrecht im Repo ($(jq -r '.author_association' <<<"$J"))" ;;
@@ -669,6 +702,7 @@ jobs:
             sleep 20
           done
           ausgabe nichts "nach 10 min noch nicht mergebar — der geplante Nachlauf (alle 6 h) prüft erneut"
+@@LASTVERMERK@@
 
   ausfuehren:
     timeout-minutes: 10
@@ -751,3 +785,56 @@ jobs:
           GRUND: ${{ needs.entscheiden.outputs.grund }}
         run: |
           gh pr comment "$PR" --repo "$REPO" --body "⚠️ Nicht automatisch gemergt: $GRUND. Bitte von Hand prüfen und mergen."
+
+  rebuild-check:
+    # Weekly rebuild (since 0.64.0, see the head): read only. The decision is scripts/_release_automatik.py `neubau` from
+    # the default branch (tested in repokit tests/test_release_automatik.py); this job has no checkout action, it clones.
+    if: >
+      vars.WEEKLY_REBUILD != 'off' && (
+      (github.event_name == 'schedule' && github.event.schedule != '41 */6 * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.rebuild))
+    runs-on: @@RUNNER@@
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - name: Base image moved or fixable High/Critical in the released image?
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # The grype version (Dependabot raises this pin in repokit); the program comes from anchore's GitHub release of
+          # it, checked against its checksums — no Docker daemon needed on the runner.
+          GRYPE_IMAGE: "@@GRYPE@@"
+          # Pull token for the registry of the repo's own images (private packages, `packages: read`), given to grype in
+          # its environment; other registries are read anonymously.
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          gh repo clone "$REPO" "$src" -- --depth 1 --branch "$GITHUB_REF_NAME" --quiet
+          GITHUB_REPOSITORY="$REPO" python3 "$src/scripts/_release_automatik.py" neubau --root "$src"
+@@LASTVERMERK@@
+
+  rebuild-dispatch:
+    # Holds `actions: write` and therefore ONLY calls `gh workflow run` — the same release path as after a Dependabot
+    # merge that changes the image (`vorbereiten`: patch release as a PR of the app).
+    needs: rebuild-check
+    if: needs.rebuild-check.outputs.reason != ''
+    runs-on: @@RUNNER@@
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the release automation (vorbereiten)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REASON: ${{ needs.rebuild-check.outputs.reason }}
+        run: |
+          echo "Reason: $REASON"
+          gh workflow run release.yml --repo "$REPO" --ref "$GITHUB_REF_NAME" -f automatik=vorbereiten -f version=""

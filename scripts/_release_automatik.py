@@ -30,7 +30,8 @@ Konfiguration je Repo: `.github/release-automatik.json`
                     "erlaubt": ["Fixed", "Security", "Dependencies"]} | null,   # erlaubt optional, siehe unten
       "versionsbefehl": ["scripts/_release.py", "{version}"],   # optional: eigenes Werkzeug des Repos setzt die Version
       "pruefbefehl": ["scripts/_release.py", "--check"],        # optional: vor dem Tag, rc != 0 → kein Tag
-      "abbilder": ["<registry>/<owner>/<name>"]   # was der Tag-Lauf veröffentlicht; fc-pin hebt genau diese Pins
+      "abbilder": ["<registry>/<owner>/<name>"],  # was der Tag-Lauf veröffentlicht; fc-pin hebt genau diese Pins
+      "dockerfiles": {"<registry>/<owner>/<name>": "app/Dockerfile"}   # optional (0.64.0): Dockerfile je Abbild
     }
 
 Schutz vor falschen Patch-Releases (seit 0.55.0): `vorbereiten` schneidet nur einen Patch. Steht unter [Unreleased] aber
@@ -45,6 +46,7 @@ Aufrufe (GH_TOKEN = App-Token; GITHUB_REPOSITORY wie in Actions):
     _release_automatik.py taggen --version X                # Stand von main prüfen, Tag v<X> setzen
     _release_automatik.py fc-pin --tag vX --ziel OWNER/REPO # Digests auflösen, Pin-PR im Ziel-Repo
     _release_automatik.py naechste                          # nur ausgeben, was `vorbereiten` schneiden würde
+    _release_automatik.py neubau                            # weekly rebuild check (kit 0.64.0), see below
 
 Release-Anhänge im Pin-PR (seit 0.48.0, PO 2026-11-15): Liefert ein Release neben dem Abbild Dateien, die das Ziel-Repo
 neben der Compose hält (paperlaiss: Skripte und Knöpfe samt SHA256SUMS), nimmt `fc-pin` sie mit, wenn die Repo-Variable
@@ -54,7 +56,17 @@ Release des Tags, prüft jeden Hash und schreibt nur, was sich unterscheidet (Da
 Ziels (`PIN_ANHAENGE` im Block je Repo) prüft dasselbe gegen das Release. Ohne die Variable bleibt alles wie vorher.
 Gelesen wird das Release mit `QUELLE_TOKEN` (Workflow-Token des App-Repos), sonst mit GH_TOKEN.
 
-stdlib-only. Nach außen nur `git`, `gh api` und `docker buildx imagetools inspect`.
+Weekly rebuild (kit 0.64.0, PO 2026-11-23): the dependabot auto-merge workflow (template) runs `neubau` once a week on a
+clone of the default branch, read-only. Reasons for a patch release, per image in `abbilder`, against the image of the
+last release tag: (a) no external FROM of the image's Dockerfile is the base of the released image any more (its layers
+are no prefix of the released image's layers — the base tag moved, or a base bump was merged without a release), or
+(b) grype (pinned image, GRYPE_IMAGE) finds a fixable finding of severity High or above (`.grype.yaml` exceptions count).
+With a reason it writes `reason=…` to GITHUB_OUTPUT and the workflow dispatches `vorbereiten`; without one nothing
+happens. The Dockerfile: `dockerfiles` in the config (image → path), else `Dockerfile` in the root, else the only one.
+
+stdlib-only. Nach außen nur `git`, `gh` und `docker buildx imagetools inspect` (fc-pin); `neubau` liest Abbilder nur über
+grype (Funde und Schichten aus seinem JSON) und holt grype per `gh release download` — kein Docker-Daemon, kein
+Registry-Name in dieser Datei.
 """
 from __future__ import annotations
 
@@ -65,8 +77,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 KONFIG = ".github/release-automatik.json"
 # Login des App-Bots, der die PRs öffnet. Der Auto-Merge prüft genau ihn (Vorlage, APP_LOGIN).
@@ -80,6 +94,15 @@ PIN = r"^(?P<vor>\s*image:\s*)(?P<abbild>{abbild}):(?P<tag>[A-Za-z0-9._-]+)@(?P<
 
 class Fehler(Exception):
     """Ein Zustand, in dem die Automatik nichts tun darf (Meldung für Menschen, Lauf rot)."""
+
+
+class Halt(Fehler):
+    """By design nothing to do, a human decides (since 0.65.0): a notice and a summary, the run stays green.
+
+    WHY: [Unreleased] with Added/Changed is a minor — no patch release, the release is cut by a human. Up to 0.64 that
+    ended red after every Dependabot merge in such a repo, and ci-wache reported "main red — release" for a state that is
+    intended (TinySesam, UnderDoc, paperlaiss, PWM-Control, DashMyBoard). Not silent either: the notice names what waits.
+    """
 
 
 # ── reine Funktionen (getestet in repokit tests/test_release_automatik.py) ────────────────────────────────────────────────────
@@ -97,6 +120,11 @@ def lade_konfig(root: str) -> dict:
     for a in k.get("abbilder") or []:
         if not re.fullmatch(r"[a-z0-9.-]+/[a-z0-9._-]+/[a-z0-9._/-]+", a):
             raise Fehler(f"{KONFIG}: Abbild {a!r} nicht in der Form registry/owner/name")
+    df = k.get("dockerfiles")
+    if df is not None and (not isinstance(df, dict) or any(
+            a not in (k.get("abbilder") or []) or not isinstance(p, str) or not p or p.startswith("/") or ".." in p.split("/")
+            for a, p in df.items())):
+        raise Fehler(f"{KONFIG}: dockerfiles muss Abbild (aus abbilder) → relativer Pfad sein")
     return k
 
 
@@ -319,10 +347,120 @@ def git_blob_sha(inhalt: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(inhalt) + inhalt).hexdigest()
 
 
+# ── weekly rebuild (kit 0.64.0) — pure functions ───────────────────────────────────────────────────────────────────────
+# PO 2026-11-23: an app image is rebuilt once a week only when there is a reason: (a) the base image of the Dockerfile is
+# no longer the base of the last released image, or (b) grype finds a fixable finding of severity High or above in the
+# released image. Without a reason nothing happens — every release opens a pin PR in the fleet repo.
+
+SCHWERE = ["Negligible", "Low", "Medium", "High", "Critical"]
+
+
+def _datum_schluessel(v: str) -> tuple[int, int, int, int]:
+    m = DATUM.match(v)
+    if not m:
+        raise Fehler(f"{v!r} ist keine Datumsversion")
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4) or 0)
+
+
+def letzter_release_tag(schema: str, tags: list[str]) -> str | None:
+    """The newest release tag `v…` of the schema (semver: highest X.Y.Z; datum: latest date and suffix), or None."""
+    passend = [t for t in tags if t.startswith("v") and (SEMVER if schema == "semver" else DATUM).match(t[1:])]
+    if not passend:
+        return None
+    return max(passend, key=lambda t: _sv(t[1:]) if schema == "semver" else _datum_schluessel(t[1:]))
+
+
+def basis_kandidaten(dockerfile: str) -> tuple[list[str], str | None]:
+    """External images named by FROM lines (deduplicated, in order) and the base of the final stage.
+
+    The final base is the last FROM, followed through stage names to an external image; "scratch" if it ends there.
+    `--platform=…` is dropped; `$NAME`/`${NAME}` is replaced by an `ARG NAME=default` before the first FROM. A reference
+    that still holds a `$` cannot be resolved and is left out (the final base is then None).
+    """
+    args: dict[str, str] = {}
+    stufen: dict[str, str] = {}
+    extern: list[str] = []
+    letzte: str | None = None
+    erster_from = False
+    text = re.sub(r"\\\n", " ", dockerfile)
+    for zeile in text.split("\n"):
+        z = zeile.strip()
+        if not erster_from:
+            a = re.match(r"(?i)^ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)\s*$", z)
+            if a:
+                args[a.group(1)] = a.group(2).strip("\"'")
+                continue
+        m = re.match(r"(?i)^FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?\s*$", z)
+        if not m:
+            continue
+        erster_from = True
+        bild = re.sub(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", lambda x: args.get(x.group(1), x.group(0)), m.group(1))
+        if "$" in bild:
+            ziel = None
+        elif bild.lower() in stufen:
+            ziel = stufen[bild.lower()]
+        elif bild.lower() == "scratch":
+            ziel = "scratch"
+        else:
+            ziel = bild
+            if bild not in extern:
+                extern.append(bild)
+        if m.group(2):
+            stufen[m.group(2).lower()] = ziel
+        letzte = ziel
+    return extern, letzte
+
+
+def basis_unveraendert(release_schichten: list[str], kandidaten: dict[str, list[str]]) -> str | None:
+    """The candidate whose layers (rootfs diff_ids) are a non-empty prefix of the released image's — that image is still
+    the base. None: no FROM of the Dockerfile is the base of the released image any more."""
+    for ref, schichten in kandidaten.items():
+        if schichten and release_schichten[:len(schichten)] == schichten:
+            return ref
+    return None
+
+
+def behebbare_treffer(grype_json: str, schwelle: str = "High") -> list[str]:
+    """Findings of a grype JSON report with a fix (fix.state "fixed" and a version) at `schwelle` or above, one line each
+    (`<id> <severity> <package> <version> → <fix>`), sorted and without duplicates. Ignored matches (`.grype.yaml`) are
+    not in `matches` and do not count."""
+    try:
+        bericht = json.loads(grype_json)
+    except ValueError as e:
+        raise Fehler(f"grype: keine JSON-Ausgabe ({e})") from e
+    if not isinstance(bericht, dict) or not isinstance(bericht.get("matches"), list):
+        raise Fehler("grype: Bericht ohne `matches` — Format unbekannt, kein Urteil")
+    grenze = SCHWERE.index(schwelle)
+    aus: set[str] = set()
+    for t in bericht["matches"]:
+        v = t.get("vulnerability") or {}
+        fix = v.get("fix") or {}
+        schwere = v.get("severity", "")
+        if schwere not in SCHWERE or SCHWERE.index(schwere) < grenze:
+            continue
+        if fix.get("state") != "fixed" or not fix.get("versions"):
+            continue
+        a = t.get("artifact") or {}
+        aus.add(f"{v.get('id', '?')} {schwere} {a.get('name', '?')} {a.get('version', '?')} → {', '.join(fix['versions'])}")
+    return sorted(aus)
+
+
+def dockerfile_fuer(abbild: str, konfig: dict, dateien: list[str]) -> str | None:
+    """The Dockerfile of `abbild`: `dockerfiles` in the config (image → path), else `Dockerfile` in the root, else the
+    only tracked file named `Dockerfile`. None if that is not clear."""
+    nach_konfig = (konfig.get("dockerfiles") or {}).get(abbild)
+    if nach_konfig:
+        return nach_konfig
+    if "Dockerfile" in dateien:
+        return "Dockerfile"
+    alle = [d for d in dateien if d.rsplit("/", 1)[-1] == "Dockerfile"]
+    return alle[0] if len(alle) == 1 else None
+
+
 # ── nach außen: git, gh, docker ─────────────────────────────────────────────────────────────────────────────────────
 
-def _lauf(argv: list[str], eingabe: str | None = None, cwd: str | None = None) -> str:
-    r = subprocess.run(argv, input=eingabe, capture_output=True, text=True, check=False, cwd=cwd)
+def _lauf(argv: list[str], eingabe: str | None = None, cwd: str | None = None, env: dict[str, str] | None = None) -> str:
+    r = subprocess.run(argv, input=eingabe, capture_output=True, text=True, check=False, cwd=cwd, env=env)
     if r.returncode != 0:
         raise Fehler(f"{' '.join(argv[:4])} … rc={r.returncode}: {r.stderr.strip()[:500]}")
     return r.stdout
@@ -406,15 +544,21 @@ def alter_pin_zweig(ref: str, name: str, aktuell: str) -> bool:
     return ref == f"pin/{name}" or bool(re.fullmatch(rf"pin/{re.escape(name)}-(?:v|main-)[A-Za-z0-9._-]+", ref))
 
 
-def _offene_prs(repo: str) -> list[dict]:
-    prs: list[dict] = []
+def gh_seiten(pfad: str) -> list[dict]:
+    """All pages of a list endpoint (100 per page)."""
+    aus: list[dict] = []
     seite = 1
+    trenner = "&" if "?" in pfad else "?"
     while True:
-        teil = gh(f"repos/{repo}/pulls?state=open&per_page=100&page={seite}") or []
-        prs += teil
+        teil = gh(f"{pfad}{trenner}per_page=100&page={seite}") or []
+        aus += teil
         if len(teil) < 100:
-            return prs
+            return aus
         seite += 1
+
+
+def _offene_prs(repo: str) -> list[dict]:
+    return gh_seiten(f"repos/{repo}/pulls?state=open")
 
 
 def pin_pr_fortschreiben(repo: str, basis: str, zweig: str, name: str, dateien: dict[str, str | bytes], titel: str,
@@ -520,7 +664,7 @@ def vorbereiten(root: str, repo: str, basis: str, trocken: bool = False) -> str:
             erlaubt = cl0.get("erlaubt") or ERLAUBT.get(cl0.get("sprache", "en"), ERLAUBT["en"])
             schlecht = unreleased_unerlaubt(fh.read(), erlaubt)
         if schlecht:
-            raise Fehler(f"{cl0['datei']}: unter [Unreleased] steht {', '.join(schlecht)} — das ist kein Patch-Release "
+            raise Halt(f"{cl0['datei']}: unter [Unreleased] steht {', '.join(schlecht)} — das ist kein Patch-Release "
                          f"(erlaubt: {', '.join(erlaubt)}; changelog.erlaubt). Kein Release-PR; das Release schneidet ein Mensch.")
     if k.get("versionsbefehl"):
         # Das Repo hat ein eigenes Werkzeug, das die Version überall setzt (TinySesam: scripts/_release.py) — es wird
@@ -606,6 +750,172 @@ def digest_von(abbild: str, tag: str) -> str:
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", d):
         raise Fehler(f"{abbild}:{tag}: kein Digest aus der Registry ({d!r})")
     return d
+
+
+PLATTFORM = "linux/amd64"
+GRYPE_PIN = re.compile(r"anchore/grype:v([0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64}")
+
+
+def grype_holen(bild: str, ziel: str) -> str:
+    """The grype program of the pinned version (GRYPE_IMAGE `anchore/grype:v<version>@sha256:…`, raised by Dependabot in
+    repokit) from anchore's GitHub release of that version, checked against the release's checksums file. Through `gh`
+    (no Docker daemon, no registry host in this file). Returns the path."""
+    import platform
+    import tarfile
+    m = GRYPE_PIN.fullmatch(bild)
+    if not m:
+        raise Fehler(f"GRYPE_IMAGE {bild!r}: anchore/grype:v<version>@sha256:<digest> erwartet")
+    version = m.group(1)
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower())
+    if arch is None:
+        raise Fehler(f"grype: keine Fassung für {platform.machine()}")
+    archiv, summen = f"grype_{version}_linux_{arch}.tar.gz", f"grype_{version}_checksums.txt"
+    _lauf(["gh", "release", "download", f"v{version}", "--repo", "anchore/grype", "--dir", ziel,
+           "--pattern", archiv, "--pattern", summen])
+    with open(os.path.join(ziel, summen), encoding="utf-8") as fh:
+        soll = [z.split()[0] for z in fh if z.split()[1:] == [archiv]]
+    with open(os.path.join(ziel, archiv), "rb") as fh:
+        ist = hashlib.sha256(fh.read()).hexdigest()
+    if len(soll) != 1 or soll[0] != ist:
+        raise Fehler(f"grype {version}: {archiv} passt nicht zu {summen}")
+    pfad = os.path.join(ziel, "grype")
+    with tarfile.open(os.path.join(ziel, archiv), "r:gz") as tar:
+        eintrag = tar.getmember("grype")
+        if not eintrag.isfile():
+            raise Fehler(f"grype {version}: kein Programm im Archiv")
+        with tar.extractfile(eintrag) as quelle, open(pfad, "wb") as aus:
+            aus.write(quelle.read())
+    os.chmod(pfad, 0o755)
+    return pfad
+
+
+def schichten_aus(grype_json: str) -> list[str]:
+    """The rootfs diff_ids of the scanned image from a grype JSON report (source.target.config, else its layers)."""
+    try:
+        ziel = json.loads(grype_json)["source"]["target"]
+        if ziel.get("config"):
+            return list(json.loads(base64.b64decode(ziel["config"]))["rootfs"]["diff_ids"])
+        return [s["digest"] for s in ziel["layers"]]
+    except (ValueError, KeyError, TypeError) as e:
+        raise Fehler(f"grype: Bericht ohne Schichten des Abbilds ({e})") from e
+
+
+def _grype(ref: str, root: str, grype: str, eigene: set[str]) -> str:
+    """grype over `ref` in the registry (linux/amd64), JSON on stdout. For the registries of the repo's own images
+    (`eigene`) grype gets REGISTRY_TOKEN in its environment (GRYPE_REGISTRY_AUTH_* — the value never stands on a command
+    line); every other registry is read anonymously. The repo's `.grype.yaml` (exceptions) counts."""
+    env = dict(os.environ)
+    host = ref.split("/", 1)[0]
+    if env.get("REGISTRY_TOKEN") and host in eigene:
+        env.update(GRYPE_REGISTRY_AUTH_AUTHORITY=host, GRYPE_REGISTRY_AUTH_PASSWORD=env["REGISTRY_TOKEN"],
+                   GRYPE_REGISTRY_AUTH_USERNAME=env.get("REGISTRY_USER") or "token")
+    argv = [grype, f"registry:{ref}", "--platform", PLATTFORM, "-o", "json"]
+    if os.path.exists(os.path.join(root, ".grype.yaml")):
+        argv += ["-c", os.path.join(root, ".grype.yaml")]
+    return _lauf(argv, env=env)
+
+
+def _getrackt(root: str) -> list[str]:
+    return [z for z in _lauf(["git", "-C", root, "ls-files"]).split("\n") if z]
+
+
+def _ausgabe(schluessel: str, wert: str) -> None:
+    pfad = os.environ.get("GITHUB_OUTPUT")
+    if pfad:
+        with open(pfad, "a", encoding="utf-8") as fh:
+            fh.write(f"{schluessel}={wert}\n")
+
+
+def _zusammenfassung(text: str) -> None:
+    """Append to the job summary. A summary that cannot be written is a warning, never silent and never the verdict."""
+    pfad = os.environ.get("GITHUB_STEP_SUMMARY")
+    if pfad:
+        try:
+            with open(pfad, "a", encoding="utf-8") as fh:
+                fh.write(text)
+        except OSError as e:
+            print(f"::warning::job summary not written ({pfad}): {e}", file=sys.stderr)
+
+
+def neubau(root: str, repo: str) -> list[str]:
+    """Weekly rebuild check: the reasons for a patch release of the own image(s), empty = nothing to do.
+
+    Writes `reason=<short>` to GITHUB_OUTPUT only when there is a reason (the workflow then dispatches `vorbereiten`) and
+    a section to the job summary in every case. Red (Fehler) when the released image or grype cannot be read: a check
+    that saw nothing is no "no reason".
+    """
+    k = lade_konfig(root)
+    abbilder = k.get("abbilder") or []
+    if not abbilder:
+        _zusammenfassung("### Weekly rebuild\n\nNo own image (`abbilder` in .github/release-automatik.json is empty).\n")
+        return []
+    offen = [p["head"]["ref"] for p in _offene_prs(repo)
+             if p.get("user", {}).get("login") == APP_LOGIN and p["head"]["ref"].startswith("release/")]
+    if offen:
+        _zusammenfassung(f"### Weekly rebuild\n\nA release PR of the automation is open ({', '.join(offen)}): nothing to do.\n")
+        return []
+    tags = [t["name"] for t in gh_seiten(f"repos/{repo}/tags")]
+    tag = letzter_release_tag(k["schema"], tags)
+    if tag is None:
+        _zusammenfassung("### Weekly rebuild\n\nNo release tag yet: the first release is cut by a human.\n")
+        return []
+    dateien = _getrackt(root)
+    werkbank = tempfile.mkdtemp(prefix="neubau-")
+    try:
+        return _neubau_pruefen(root, k, tag, abbilder, dateien, werkbank)
+    finally:
+        shutil.rmtree(werkbank, ignore_errors=True)
+
+
+def _neubau_pruefen(root: str, k: dict, tag: str, abbilder: list[str], dateien: list[str], werkbank: str) -> list[str]:
+    zeilen: list[str] = []
+    gruende: list[str] = []
+    grype = os.environ.get("GRYPE_BIN") or grype_holen(os.environ.get("GRYPE_IMAGE", ""), werkbank)
+    eigene = {a.split("/", 1)[0] for a in abbilder}
+    for abbild in abbilder:
+        ref = f"{abbild}:{tag}"
+        bericht = _grype(ref, root, grype, eigene)
+        release = schichten_aus(bericht)
+        if not release:
+            raise Fehler(f"{ref}: keine Schichten — das veröffentlichte Abbild ist nicht lesbar")
+        df = dockerfile_fuer(abbild, k, dateien)
+        if df is None:
+            zeilen.append(f"- `{ref}` base: not checked — no single Dockerfile; name it in `dockerfiles` of the config")
+        else:
+            with open(os.path.join(root, df), encoding="utf-8") as fh:
+                extern, final = basis_kandidaten(fh.read())
+            kandidaten: dict[str, list[str]] = {}
+            for kand in extern:
+                try:
+                    kandidaten[kand] = schichten_aus(_grype(kand, root, grype, eigene))
+                except Fehler as e:
+                    zeilen.append(f"- `{kand}` ({df}) not readable: {e}")
+            treffer = basis_unveraendert(release, kandidaten)
+            if treffer:
+                zeilen.append(f"- `{ref}` base unchanged: `{treffer}` ({df})")
+            elif final == "scratch":
+                zeilen.append(f"- `{ref}` base: final stage is `FROM scratch` — nothing to compare")
+            elif final is None:
+                zeilen.append(f"- `{ref}` base: final FROM of {df} not resolvable — not checked")
+            else:
+                g = f"{abbild}: base image changed (`{final}` in {df} is not the base of `{ref}`)"
+                gruende.append(g)
+                zeilen.append(f"- {g}")
+        funde = behebbare_treffer(bericht)
+        if funde:
+            g = f"{abbild}: grype finds {len(funde)} fixable High/Critical in `{ref}`"
+            gruende.append(g)
+            zeilen.append(f"- {g}:")
+            zeilen += [f"  - {f}" for f in funde[:20]] + ([f"  - … {len(funde) - 20} more"] if len(funde) > 20 else [])
+        else:
+            zeilen.append(f"- `{ref}`: grype finds nothing fixable at High or above")
+    urteil = ("**Reason for a patch release** — `vorbereiten` follows." if gruende
+              else "**No reason** — no release, no pin PR.")
+    _zusammenfassung(f"### Weekly rebuild (last release {tag})\n\n{urteil}\n\n" + "\n".join(zeilen) + "\n")
+    print("\n".join(zeilen))
+    if gruende:
+        _ausgabe("reason", "; ".join(gruende).replace("\n", " ")[:900])
+    return gruende
 
 
 def anhaenge(repo: str, tag: str, ziel: str, basis: str, regeln: list[tuple[str, str]]) -> tuple[dict[str, bytes], dict[str, str]]:
@@ -709,7 +1019,7 @@ def fc_pin(root: str, repo: str, tag: str, ziel: str, digests: dict[str, str] | 
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="_release_automatik.py")
-    p.add_argument("schritt", choices=["vorbereiten", "taggen", "fc-pin", "naechste"])
+    p.add_argument("schritt", choices=["vorbereiten", "taggen", "fc-pin", "naechste", "neubau"])
     p.add_argument("--version", default="")
     p.add_argument("--tag", default="")
     # --target: dieselbe Option englisch — Repos mit Englisch-Wächter über ihre Workflows (TinySesam) rufen sie so.
@@ -728,6 +1038,8 @@ def main(argv: list[str]) -> int:
             vorbereiten(a.root, repo, a.basis)
         elif a.schritt == "taggen":
             taggen(a.root, repo, a.version)
+        elif a.schritt == "neubau":
+            neubau(a.root, repo)
         else:
             if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", a.ziel):
                 raise Fehler("--ziel OWNER/REPO fehlt oder ist unzulässig")
@@ -735,15 +1047,13 @@ def main(argv: list[str]) -> int:
             if not re.fullmatch(r"(v|main-)[A-Za-z0-9._-]+", a.tag):
                 raise Fehler("--tag v… oder main-… fehlt oder ist unzulässig")
             fc_pin(a.root, repo, a.tag, a.ziel)
+    except Halt as e:
+        print(f"::notice::{e}")
+        _zusammenfassung(f"### Release automation skipped (a human cuts this release)\n\n{e}\n")
+        return 0
     except Fehler as e:
         print(f"::error::{e}", file=sys.stderr)
-        zusammenfassung = os.environ.get("GITHUB_STEP_SUMMARY")
-        if zusammenfassung:
-            try:
-                with open(zusammenfassung, "a", encoding="utf-8") as fh:
-                    fh.write(f"### Release automation stopped\n\n{e}\n")
-            except OSError:
-                pass
+        _zusammenfassung(f"### Release automation stopped\n\n{e}\n")
         return 1
     return 0
 

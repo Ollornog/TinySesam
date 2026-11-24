@@ -14,6 +14,9 @@
 # the last green nightly-repeat run did not see (job `gate`: github.sha against the head_sha of the last successful
 # run of this workflow). Otherwise both passes are skipped and the run is green, "nothing new". Started by hand
 # (workflow_dispatch, e.g. at the end of a sprint) it always runs.
+# Load at failure (kit 0.64.0): `gate` and `compare` end with a step `if: failure()` that writes one load line (runner,
+# cores, loadavg, PSI, free memory, job time) — rendered from scripts/_load_note.sh. The jobs of the two passes are the
+# CI workflow's own; it adds the step itself (`run: scripts/_load_note.sh`).
 name: nightly-repeat
 
 on:
@@ -66,6 +69,40 @@ jobs:
             echo "New since the last green run (${last_sha:-none}): the two passes start on $SHA."
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Load at failure (from scripts/_load_note.sh)
+        if: failure()
+        run: |
+          fields=()
+          fields+=("runner=${RUNNER_NAME:-?}" "host=$(uname -n 2>/dev/null || echo '?')")
+          cpus=""
+          if read -r cpuset 2>/dev/null < /sys/fs/cgroup/cpuset.cpus.effective && [ -n "$cpuset" ]; then
+            cpus="$(awk -v s="$cpuset" 'BEGIN { n = split(s, t, ","); for (i = 1; i <= n; i++) c += (split(t[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print c }')"
+          fi
+          [ -n "$cpus" ] || cpus="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)" || cpus='?'
+          cores_field="cores=$cpus"
+          [ -n "${CI_KERNE:-}" ] && cores_field+=" ci_cores=$CI_KERNE"
+          if read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max && [ "$q" != max ] && [ "${p:-0}" -gt 0 ] 2>/dev/null; then
+            cores_field+=" cpu_quota=$(awk -v q="$q" -v p="$p" 'BEGIN { printf "%.1f", q / p }')"
+          fi
+          fields+=("$cores_field")
+          if read -r l1 l5 l15 _ 2>/dev/null < /proc/loadavg; then fields+=("loadavg=$l1/$l5/$l15"); fi
+          for art in cpu memory io; do
+            z="$(grep -m1 '^some' "/proc/pressure/$art" 2>/dev/null)" || continue
+            a10="${z#*avg10=}"; a10="${a10%% *}"; a60="${z#*avg60=}"; a60="${a60%% *}"
+            fields+=("psi_${art/memory/mem}=$a10/$a60")
+          done
+          mem="$(awk '/^MemAvailable:/ { a = $2 } /^MemTotal:/ { t = $2 } END { if (a && t) printf "%d/%d", a / 1024, t / 1024 }' /proc/meminfo 2>/dev/null)"
+          [ -n "$mem" ] && fields+=("mem_free=${mem}MiB")
+          if [ -n "${GITHUB_EVENT_PATH:-}" ] && start="$(stat -c %Y "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+            d=$(( $(date +%s) - start )); fields+=("job=$((d / 60))m$((d % 60))s")
+          fi
+          line="load-at-failure: $(printf '%s · ' "${fields[@]}")"; line="${line% · }"
+          echo "$line"
+          echo "::notice title=load-at-failure::$line"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && ! { printf -- '- %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+            echo "job summary not writable — the line is in the log and the annotation"
+          fi
+          exit 0
   run-1:
     needs: gate
     if: ${{ needs.gate.outputs.run == 'true' }}
@@ -120,3 +157,37 @@ jobs:
           echo "::error title=nightly-repeat::$message"
           printf '### nightly-repeat\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
           exit 1
+      - name: Load at failure (from scripts/_load_note.sh)
+        if: failure()
+        run: |
+          fields=()
+          fields+=("runner=${RUNNER_NAME:-?}" "host=$(uname -n 2>/dev/null || echo '?')")
+          cpus=""
+          if read -r cpuset 2>/dev/null < /sys/fs/cgroup/cpuset.cpus.effective && [ -n "$cpuset" ]; then
+            cpus="$(awk -v s="$cpuset" 'BEGIN { n = split(s, t, ","); for (i = 1; i <= n; i++) c += (split(t[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print c }')"
+          fi
+          [ -n "$cpus" ] || cpus="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)" || cpus='?'
+          cores_field="cores=$cpus"
+          [ -n "${CI_KERNE:-}" ] && cores_field+=" ci_cores=$CI_KERNE"
+          if read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max && [ "$q" != max ] && [ "${p:-0}" -gt 0 ] 2>/dev/null; then
+            cores_field+=" cpu_quota=$(awk -v q="$q" -v p="$p" 'BEGIN { printf "%.1f", q / p }')"
+          fi
+          fields+=("$cores_field")
+          if read -r l1 l5 l15 _ 2>/dev/null < /proc/loadavg; then fields+=("loadavg=$l1/$l5/$l15"); fi
+          for art in cpu memory io; do
+            z="$(grep -m1 '^some' "/proc/pressure/$art" 2>/dev/null)" || continue
+            a10="${z#*avg10=}"; a10="${a10%% *}"; a60="${z#*avg60=}"; a60="${a60%% *}"
+            fields+=("psi_${art/memory/mem}=$a10/$a60")
+          done
+          mem="$(awk '/^MemAvailable:/ { a = $2 } /^MemTotal:/ { t = $2 } END { if (a && t) printf "%d/%d", a / 1024, t / 1024 }' /proc/meminfo 2>/dev/null)"
+          [ -n "$mem" ] && fields+=("mem_free=${mem}MiB")
+          if [ -n "${GITHUB_EVENT_PATH:-}" ] && start="$(stat -c %Y "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+            d=$(( $(date +%s) - start )); fields+=("job=$((d / 60))m$((d % 60))s")
+          fi
+          line="load-at-failure: $(printf '%s · ' "${fields[@]}")"; line="${line% · }"
+          echo "$line"
+          echo "::notice title=load-at-failure::$line"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && ! { printf -- '- %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+            echo "job summary not writable — the line is in the log and the annotation"
+          fi
+          exit 0
