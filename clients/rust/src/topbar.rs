@@ -138,3 +138,43 @@ pub fn safe_href(href: Option<&Value>) -> Option<String> {
         || (href.starts_with('/') && !href.starts_with("//") && !href.starts_with("/\\"));
     ok.then(|| href.to_owned())
 }
+
+/// Fetches the top bar data server-side (feature `jwks`, which brings the HTTP client): a GET to `url`
+/// (`https://<auth host>/.tinysesam/topbar.json` on the application's host, or the same path on the auth host; plain
+/// `http` only to a loopback address) forwarding only TinySesam's cookies, with a deadline of 5 seconds and a body
+/// limit of 64 KiB. Anything but a `200` is "no bar": the signed-out answer.
+///
+/// The browser way stays the recommendation (spec §8): the page fetches `topbar.json` itself, with its own cookies, and
+/// the application's server renders nothing that depends on the person. Use this for a server-side render only, and
+/// never cache the answer across sessions.
+#[cfg(feature = "jwks")]
+#[derive(Debug, Clone)]
+pub struct TopBarFetcher(crate::remote::HttpFetcher);
+
+#[cfg(feature = "jwks")]
+impl TopBarFetcher {
+    /// A fetcher for one URL; create it once and share it.
+    pub fn new(url: &str) -> Result<TopBarFetcher, crate::ConfigError> {
+        crate::remote::HttpFetcher::new(url).map(TopBarFetcher)
+    }
+
+    /// The same fetcher with a shorter deadline (above 0, at most the 5 seconds of the default).
+    pub fn with_deadline(
+        self,
+        deadline: std::time::Duration,
+    ) -> Result<TopBarFetcher, crate::ConfigError> {
+        self.0.with_deadline(deadline).map(TopBarFetcher)
+    }
+
+    /// The top bar for a request with this `Cookie` header — forwarding only TinySesam's cookies. Signed out on any
+    /// failure: a status other than 200, a timeout, a body above 64 KiB, a body that is no strict JSON.
+    pub async fn fetch(&self, cookie_header: Option<&str>) -> TopBar {
+        let cookies = cookie_header.and_then(crate::account::tinysesam_cookies);
+        match self.0.get(cookies.as_deref()).await {
+            crate::FetchOutcome::Response {
+                status: 200, body, ..
+            } => normalize_json(&body),
+            _ => normalize(&Value::Null),
+        }
+    }
+}

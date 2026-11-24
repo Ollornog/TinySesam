@@ -57,6 +57,7 @@ switch ($path) {
         echo $jwks;
         break;
     case '/account':
+    case '/topbar':
         // The account overview (spec section 8a): the body of TS_JWKS, and the Cookie header it saw in TS_HITS.
         if (is_string($hits) && $hits !== '') {
             $cookie = $_SERVER['HTTP_COOKIE'] ?? '';
@@ -65,6 +66,9 @@ switch ($path) {
         header('Content-Type: application/json');
         header('Cache-Control: no-store');
         echo $jwks;
+        break;
+    case '/topbar-204':
+        http_response_code(204);
         break;
     case '/account-401':
         http_response_code(401);

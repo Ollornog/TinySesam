@@ -25,6 +25,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - The proxy test image runs nginx on the stable line (1.30.x) instead of mainline (1.31.x); Dependabot ignores the
   mainline minors, and `tests/test_proxies.py` fails on an odd minor, also without Docker (T-114).
 
+### Added
+
+- Rust and PHP clients can fetch the top bar for a server-side render, like Go, JS/TS and Python: `topbar::TopBarFetcher`
+  (Rust, feature `jwks`) and `Topbar::fetch` (PHP). Only TinySesam's cookies are forwarded; 5 seconds, 64 KiB, no
+  redirects; anything but a `200` is the signed-out value. The browser way stays the recommendation (T-113).
+
 ## [0.30.0] — 2026-11-24
 
 **The last release with database migrations.** The next release starts from a single schema baseline, drops old

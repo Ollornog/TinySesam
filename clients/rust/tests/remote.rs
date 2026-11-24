@@ -566,3 +566,128 @@ async fn account_fetch_forwards_only_tinysesam_cookies() {
     );
     assert!(AccountFetcher::new("http://auth.example.com/auth/account.json").is_err());
 }
+
+#[tokio::test]
+async fn topbar_fetch_runs_every_vector_through_the_fetch_path() {
+    use tinysesam_gate::topbar::TopBarFetcher;
+    let doc = load("topbar.json");
+    let vectors = doc["vectors"].as_array().unwrap();
+    assert!(vectors.len() >= 5);
+    for v in vectors {
+        let (url, heads) = record(
+            "/.tinysesam/topbar.json",
+            "200 OK",
+            serde_json::to_vec(&v["input"]["topbar"]).unwrap(),
+        )
+        .await;
+        let bar = TopBarFetcher::new(&url)
+            .unwrap()
+            .fetch(Some("app=private; tinysesam_session=abc; x=1"))
+            .await;
+        assert_eq!(
+            serde_json::to_value(&bar).unwrap(),
+            v["expected"]["topbar"],
+            "{}",
+            v["id"]
+        );
+        // Mutation (cookie filter): forwarding the whole header turns this red.
+        let head = heads.lock().unwrap()[0].to_ascii_lowercase();
+        assert!(head.contains("cookie: tinysesam_session=abc\r\n"), "{head}");
+        assert!(!head.contains("private"), "{head}");
+    }
+}
+
+#[tokio::test]
+async fn topbar_fetch_anything_but_200_is_no_bar() {
+    use tinysesam_gate::topbar::TopBarFetcher;
+    let doc = load("topbar.json");
+    let signed_in = doc["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["expected"]["topbar"]["signed_in"] == true)
+        .expect("a signed-in vector");
+    let body = serde_json::to_vec(&signed_in["input"]["topbar"]).unwrap();
+    for status in [
+        "204 No Content",
+        "401 Unauthorized",
+        "404 Not Found",
+        "429 Too Many Requests",
+        "500 Internal Server Error",
+    ] {
+        let (url, _) = record("/.tinysesam/topbar.json", status, body.clone()).await;
+        let bar = TopBarFetcher::new(&url).unwrap().fetch(None).await;
+        assert!(
+            !bar.signed_in && bar.links.is_empty() && bar.name.is_none(),
+            "{status}"
+        );
+    }
+    // A valid signed-in answer padded above 64 KiB is no bar (mutation: raise the limit → red); at the limit it is one.
+    let mut padded = body.clone();
+    padded.resize(64 * 1024, b' ');
+    let (url, _) = record("/.tinysesam/topbar.json", "200 OK", padded.clone()).await;
+    assert!(
+        TopBarFetcher::new(&url)
+            .unwrap()
+            .fetch(None)
+            .await
+            .signed_in
+    );
+    padded.push(b' ');
+    let (url, _) = record("/.tinysesam/topbar.json", "200 OK", padded).await;
+    assert!(
+        !TopBarFetcher::new(&url)
+            .unwrap()
+            .fetch(None)
+            .await
+            .signed_in
+    );
+    // A body that is no JSON is no bar.
+    let (url, _) = record("/.tinysesam/topbar.json", "200 OK", b"<html>".to_vec()).await;
+    assert!(
+        !TopBarFetcher::new(&url)
+            .unwrap()
+            .fetch(None)
+            .await
+            .signed_in
+    );
+    // Only https, or http to a loopback address.
+    assert!(TopBarFetcher::new("http://auth.example.com/.tinysesam/topbar.json").is_err());
+}
+
+#[tokio::test]
+async fn topbar_fetch_gives_up_after_the_deadline() {
+    use tinysesam_gate::topbar::TopBarFetcher;
+    let held = Arc::new(Mutex::new(Vec::new()));
+    let keep = held.clone();
+    let url = serve(move |c| {
+        keep.lock().unwrap().push(c);
+        async {}
+    })
+    .await;
+    let limit = Duration::from_millis(300);
+    let fetcher = TopBarFetcher::new(&url)
+        .unwrap()
+        .with_deadline(limit)
+        .unwrap();
+    let start = Instant::now();
+    let bar = tokio::time::timeout(limit * 5, fetcher.fetch(Some("tinysesam_session=abc")))
+        .await
+        .expect("the fetch hung");
+    let took = start.elapsed();
+    assert!(!bar.signed_in);
+    assert!(
+        took >= limit - Duration::from_millis(50) && took < limit + Duration::from_millis(900),
+        "took {took:?}"
+    );
+    assert!(
+        !held.lock().unwrap().is_empty(),
+        "the server never saw the connection"
+    );
+    assert!(
+        TopBarFetcher::new(&url)
+            .unwrap()
+            .with_deadline(Duration::from_secs(6))
+            .is_err()
+    );
+}

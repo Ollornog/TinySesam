@@ -2,7 +2,7 @@
 id: T-113
 type: Task
 title: "Topbar fetch in the Rust and PHP clients"
-status: offen
+status: erledigt
 milestone: M-2
 tags: [clients, topbar]
 created: 2026-11-23

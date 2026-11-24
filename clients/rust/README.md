@@ -27,7 +27,7 @@ tinysesam-gate = { git = "https://github.com/ollornog/TinySesam", rev = "<full c
 | Feature | What | Extra dependencies |
 |---|---|---|
 | *(none, default)* | header mode, token mode with fixed keys, key set parsing, the cache rules, guards, top bar, account overview, approval check with fixed keys | `ed25519-dalek`, `serde_json`, `base64`, `sha2`, `http` — no network, no async runtime |
-| `jwks` | `RemoteKeys` / `JwksVerifier`: fetches `/auth/gate/jwks.json` with a deadline and shares a running fetch; `ApprovalJwksVerifier` (the approval key set), `account::AccountFetcher` | `reqwest` (rustls), `tokio` (`sync`, `time`) |
+| `jwks` | `RemoteKeys` / `JwksVerifier`: fetches `/auth/gate/jwks.json` with a deadline and shares a running fetch; `ApprovalJwksVerifier` (the approval key set), `account::AccountFetcher`, `topbar::TopBarFetcher` | `reqwest` (rustls), `tokio` (`sync`, `time`) |
 
 Tested with the current stable Rust (edition 2024). `#![forbid(unsafe_code)]`.
 
@@ -185,6 +185,12 @@ any doubt, only links with an absolute `http`/`https` URL or a path starting wit
 `menu_links`, the account menu). Titles and names are
 text, never markup; do not cache the answer across sessions. `approvals` is `Some` when TinySesam has approvals
 switched on (`pending` of at least 0 and a safe `href`); show the number with a word, never a coloured dot alone.
+
+With the feature `jwks`, `topbar::TopBarFetcher::new(url)?.fetch(cookie_header).await` fetches it server-side with only
+TinySesam's cookies (`account::tinysesam_cookies`), 5 seconds and 64 KiB (`with_deadline` shortens the deadline); anything
+but a `200`, a failure or a body that is no strict JSON is the signed-out value. The browser way stays the recommendation
+(spec §8): behind the proxy templates the session cookie never reaches the application, so a server-side fetch reads
+signed out unless you let exactly that cookie through. Never cache the answer across sessions.
 
 ## Account overview
 
