@@ -5,5 +5,5 @@
 # nginx stands on the STABLE line (even minor: 1.30.x), not on mainline (odd minor: 1.31.x) — operators run stable, the
 # templates are measured against that (T-114). The next stable line (1.32) is a deliberate bump by hand; Dependabot
 # ignores the mainline minors (dependabot.yml, `docker` entry).
-FROM nginx:1.30.8-alpine@sha256:6437a63b5c529f0e06162b3f593c0154cff6fa2ea0f94fd7c27928cb399e022d AS nginx
+FROM nginx:1.31.0-alpine@sha256:2f07d83bf561b506400dc183b1b2003803e39efbd22451f848adaba14d28c7c7 AS nginx
 FROM traefik:v3.7.19@sha256:a6c0194dda77bcb804824580f36fa7edc56e315b1acfe933366c8b52844a78a4 AS traefik
