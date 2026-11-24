@@ -1488,7 +1488,7 @@ there.
 
 For **machine access** (scripts, other services, system daemons) — alongside the interactive login:
 
-- An API key belongs to a user, sits **hashed** (sha256) in the DB, optionally with an **expiry** and **role scope**.
+- An API key belongs to a user, sits in the DB only as an **HMAC with the pepper** (never the key, T-72), optionally with an **expiry** and **role scope**.
 - Sent as `Authorization: Bearer tsk_…` **or** `X-API-Key: tsk_…`.
 - **`require_user` accepts a session OR a valid key** — protected routes are reachable by key without any change; `require_role(...)` honors the key scope.
 - **System daemons** = **service account** (`auth.create_service("backup-daemon", roles=["reader"])`, no login/MFA) + key (`auth.create_api_key(uid, name=…, expires_days=…)` → plaintext **once**). Least privilege via the roles.

@@ -459,7 +459,7 @@ _e_ok = _post(c, "/own/password", current=PW, new=PW_NEW)
 
 
 def _link_unclosed(raw):
-    return auth.store.get_magic_token(hashlib.sha256(raw.encode()).hexdigest()) is not None
+    return auth.store.get_magic_token(auth.store.token_digest(raw, "magic")) is not None
 
 
 r.check("(e) new password too weak: 400 `policy` with the violated rule as text",

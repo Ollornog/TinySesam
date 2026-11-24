@@ -1519,7 +1519,7 @@ darauf stützen, sondern dort selbst nachfragen.
 
 Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — parallel zum interaktiven Login:
 
-- Ein API-Key gehört einem User, liegt **gehasht** (sha256) in der DB, optional mit **Ablauf** und **Rollen-Scope**.
+- Ein API-Key gehört einem User, liegt in der DB nur als **HMAC mit dem Pepper** (nie der Key, T-72), optional mit **Ablauf** und **Rollen-Scope**.
 - Gesendet als `Authorization: Bearer tsk_…` **oder** `X-API-Key: tsk_…`.
 - **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
 - **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.

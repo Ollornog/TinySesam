@@ -1080,7 +1080,7 @@ class TinySesam:
                 "'automation' works on its own (without admin rights), 'human' only counts "
                   "together with a session of the same account.")
         raw = "tsk_" + secrets.token_urlsafe(32)
-        key_hash = hashlib.sha256(raw.encode()).hexdigest()
+        key_hash = self.store.token_digests(raw, "apikey")[0]   # keyed with the active pepper (T-72)
         prefix = raw[:12] + "…"
         # Expiry: 0 explicitly means "unlimited" and needs permission; None means
         # "not specified" and gets the default. Telling the two apart is the point —
@@ -1162,10 +1162,14 @@ class TinySesam:
         self._last_key_kind = "automation"
         if not key or not key.startswith("tsk_"):
             return None, None
-        row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
+        digest = self.store.token_digest(key, "apikey")
+        row = self.store.get_api_key_by_hash(digest)
         if not row:
             self._key_log(None, "unknown")
             return None, None
+        # Found with a previous pepper (after `keys rotate --purpose oauth-pepper`): move it to the active one, so that
+        # retiring the old pepper does not cut it (T-72).
+        self.store.rewrite_api_key_digest(digest, self.store.token_digests(key, "apikey")[0])
         if row["revoked"]:
             self._key_log(row, "revoked")
             return None, None
@@ -1275,9 +1279,8 @@ class TinySesam:
                                 security.for_log(owner or "-"), security.for_log(ip), reason)
 
     def api_key_kind(self, key) -> str:
-        """The kind of a key (`"automation"`/`"human"`, up to 0.21.x `"automaton"`/`"human"`) —
-        without using it. `""` for an unknown key."""
-        row = self.store.get_api_key_by_hash(hashlib.sha256((key or "").encode()).hexdigest())
+        """The kind of a key (`"automation"`/`"human"`) — without using it. `""` for an unknown key."""
+        row = self.store.get_api_key_by_hash(self.store.token_digest(key or "", "apikey"))
         return self._key_kind(row) if row else ""
 
     def _extract_api_key(self, request: Request):
@@ -4687,9 +4690,9 @@ class TinySesam:
         self.audit("mail_ratelimit", detail=f"{purpose} to={address}")
         return False
 
-    @staticmethod
-    def _token_hash(raw) -> str:
-        return hashlib.sha256(str(raw).encode()).hexdigest()
+    def _token_hash(self, raw) -> str:
+        """The stored digest of a one-time token: an HMAC with the pepper keyring (T-72), never a plain sha256."""
+        return self.store.token_digest(str(raw), "magic")
 
     def _token_mail(self, raw, to, subject, text, html=None) -> bool:
         """Send a mail with a one-time token. If delivery fails, the token is consumed
@@ -4750,9 +4753,9 @@ class TinySesam:
 
     # ---------- Magic / one-time tokens ----------
     def create_magic_token(self, purpose, user_id=None, email=None, ttl_min=None, payload=None) -> str:
-        """Create a one-time token (plaintext return). Only the sha256 hash is in the DB."""
+        """Create a one-time token (plaintext return). Only its keyed digest is in the DB (`_token_hash`, T-72)."""
         raw = secrets.token_urlsafe(32)
-        h = hashlib.sha256(raw.encode()).hexdigest()
+        h = self._token_hash(raw)
         ttl = int(ttl_min if ttl_min is not None else self.cfg.magiclink_ttl_min) * 60
         self.store.add_magic_token(h, purpose, _now() + ttl, user_id, email, payload)
         return raw
@@ -4788,7 +4791,7 @@ class TinySesam:
         `payload`: an address-change link carries `old`, the previous address."""
         if not raw:
             return None
-        h = hashlib.sha256(raw.encode()).hexdigest()
+        h = self._token_hash(raw)
         row = self.store.get_magic_token(h)
         if not row or (purpose and row["purpose"] != purpose):
             return None
@@ -4831,7 +4834,7 @@ class TinySesam:
         Return as for `redeem_magic`."""
         if not raw:
             return None
-        row = self.store.get_magic_token(hashlib.sha256(raw.encode()).hexdigest())
+        row = self.store.get_magic_token(self._token_hash(raw))
         if not row or row["used_at"] or row["expires_at"] < _now():
             return None
         if purpose and row["purpose"] != purpose:
@@ -5326,7 +5329,7 @@ class TinySesam:
         # approving device has to type. Whoever got the approval link sent (consent phishing) does not
         # see the number — it stands only on the screen of the device that asks.
         match = f"{secrets.randbelow(90) + 10}"
-        payload = {"device": self._token_hash(secret), "ip": ip, "agent": agent, "next": str(nxt or "/"),
+        payload = {"device": self.store.token_digests(secret, "qr-device")[0], "ip": ip, "agent": agent, "next": str(nxt or "/"),
                    "match": match}
         for _ in range(5):
             code = "".join(secrets.choice(self._QR_ALPHABET) for _ in range(self._QR_LENGTH))
@@ -5361,7 +5364,8 @@ class TinySesam:
     def _qr_own(self, code, secret) -> Optional[dict]:
         """The request, if `secret` is the one of the device that opened it — otherwise None."""
         info = self._qr_peek(code)
-        if not info or not secret or not hmac.compare_digest(info["device"], self._token_hash(secret)):
+        if not info or not secret or not any(hmac.compare_digest(info["device"], d)
+                                             for d in self.store.token_digests(secret, "qr-device")):
             return None
         return info
 

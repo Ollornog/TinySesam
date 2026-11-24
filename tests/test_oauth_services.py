@@ -139,7 +139,7 @@ assert len(code) == 19 and code.count("-") == 3, code
 pair_issued = audit_details("oauth_pairing_issued")
 assert pair_issued and code not in pair_issued[0] and code.replace("-", "") not in pair_issued[0]
 row = auth.store._one("SELECT * FROM magic_token WHERE purpose='oauth_pairing'")
-assert row["token_hash"] == OS.code_digest(OS.normalize_code(code)) and code not in json.dumps(dict(row))
+assert row["token_hash"] == auth.store.token_digest(OS.code_digest(OS.normalize_code(code)), "magic") and code not in json.dumps(dict(row))
 ok("pairing code: 80 bits in groups, only its digest stored, not in the audit line")
 
 sc = SC.ServiceClient.pair(BASE, code, keyfile("a"), transport=T)
@@ -169,7 +169,7 @@ ok("pairing code: single use")
 # Expired.
 code2 = code_for()
 auth.store._exec("UPDATE magic_token SET expires_at=? WHERE token_hash=?",
-                 (int(time.time()) - 1, OS.code_digest(OS.normalize_code(code2))))
+                 (int(time.time()) - 1, auth.store.token_digest(OS.code_digest(OS.normalize_code(code2)), "magic")))
 try:
     SC.ServiceClient.pair(BASE, code2, keyfile("exp"), transport=T)
     raise AssertionError("an expired pairing code paired")

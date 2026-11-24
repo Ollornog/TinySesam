@@ -61,7 +61,7 @@ def session_client(auth, app, uid, *, age=0, method="password", factors=None, fu
 
 def expires_in(auth, raw):
     row = auth.store._one("SELECT expires_at FROM magic_token WHERE token_hash=?",
-                          (hashlib.sha256(raw.encode()).hexdigest(),))
+                          (auth.store.token_digest(raw, "magic"),))
     return row["expires_at"] - time.time()
 
 

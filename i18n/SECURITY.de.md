@@ -30,7 +30,7 @@ Grund; Schweigen ist keine Antwort. Nennung im Advisory und im CHANGELOG, wenn g
 TinySesam ist ein selbst gebautes Auth-Modul und **nicht extern auditiert**. Es setzt bewusst auf
 etablierte Bausteine (argon2id/scrypt für Passwörter & PINs, server-seitige revozierbare Sessions,
 `SameSite`/`HttpOnly`/`Secure`-Cookies, OIDC-ID-Token gegen JWKS + `iss`/`aud`/`exp`/`nonce`,
-WebAuthn mit `sign_count`-Klon-Erkennung, sha256-gehashte Einmal-/API-Tokens, Sitzungs-Handles als HMAC mit einem Pepper außerhalb der Datenbankdatei, Brute-Force-Lockout +
+WebAuthn mit `sign_count`-Klon-Erkennung, Einmal-/API-Tokens und Sitzungs-Handles als HMAC mit einem Pepper außerhalb der Datenbankdatei, Brute-Force-Lockout +
 Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Einsatz selbst prüfen.
 
 ## Betriebshinweise (wichtig)

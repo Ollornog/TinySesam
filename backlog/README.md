@@ -11,7 +11,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 86/94 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 * ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 1/15 erledigt
-* ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 2/4 erledigt
+* ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 3/4 erledigt
 * ☐ **[M-6](M-6-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 
 ## Aufgaben
@@ -87,7 +87,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-69](T-69-attack-round-a-oauth-services-app-passwords-keys.md)** Attack round A (2026-11-21) — OAuth, services, app passwords, keys · M-2
 * ☐ **[T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md)** SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap) · M-4
 * ☑ **[T-71](T-71-session-handles-keyed-with-the-pepper.md)** Session handles keyed with the pepper instead of a plain sha256 · M-2
-* ☐ **[T-72](T-72-pepper-for-the-remaining-token-digests.md)** Pepper for the remaining token digests, then drop the session-handle rewrite · M-5
+* ☑ **[T-72](T-72-pepper-for-the-remaining-token-digests.md)** Pepper for the remaining token digests, then drop the session-handle rewrite · M-5
 * ☐ **[T-73](T-73-tenants-multiple-hostnames-each-with-its-own-sign-in-choice.md)** Tenants — multiple hostnames, each with its own sign-in choice · M-2
 * ☑ **[T-74](T-74-delegated-admins.md)** Delegated admins — a team admin who manages accounts within listed roles · M-2
 * ☑ **[T-75](T-75-sign-in-kind-in-forward-auth.md)** Sign-in kind in forward auth: a Remote-Auth header · M-2

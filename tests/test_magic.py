@@ -86,7 +86,7 @@ ok("token is one-shot (second redemption invalid)")
 
 # expired token
 raw = auth.create_magic_token("login", user_id=uid, email="admin@example.com", ttl_min=15, payload={"next": "/"})
-h = __import__("hashlib").sha256(raw.encode()).hexdigest()
+h = auth.store.token_digest(raw, "magic")
 auth.store._exec("UPDATE magic_token SET expires_at=0 WHERE token_hash=?", (h,))
 assert auth.redeem_magic(raw) is None
 ok("expired token → invalid")

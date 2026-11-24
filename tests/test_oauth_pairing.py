@@ -179,7 +179,7 @@ assert out["redeem_url"] == BASE + "/auth/oauth/pairing/redeem" and out["resourc
 assert out["expires_at"] - int(time.time()) in range(15 * 60 - 5, 15 * 60 + 1)
 assert r.headers["cache-control"] == "no-store"
 raw = auth.store._all("SELECT * FROM magic_token WHERE user_id=? AND purpose=?", (alice, Store.CONSENT_PAIRING))
-assert len(raw) == 1 and raw[0]["token_hash"] == O.code_digest(O.normalize_code(code))
+assert len(raw) == 1 and raw[0]["token_hash"] == auth.store.token_digest(O.code_digest(O.normalize_code(code)), "magic")
 dump = json.dumps([dict(x) for x in auth.store._all("SELECT * FROM magic_token")])
 assert code not in dump and O.normalize_code(code) not in dump, "the code itself must never be stored"
 assert audit("oauth_consent_pairing_issued")[0]["username"] == "alice"
@@ -229,7 +229,7 @@ ok("redeem: without a session, case/blank tolerant, once; used/unknown/malformed
    "in the audit log; the code never in a log")
 
 # A redeemed or unknown kind of code: a service pairing code (T-60) is never taken here and stays usable.
-svc_hash = O.code_digest("ABCDEFGHJKLMNPQR")
+svc_hash = auth.store.token_digest(O.code_digest("ABCDEFGHJKLMNPQR"), "magic")
 auth.store.add_magic_token(svc_hash, "oauth_pairing", int(time.time()) + 600, bob, None, {"resources": [RESOURCE]})
 assert redeem("ABCD-EFGH-JKLM-NPQR").status_code == 400
 row = auth.store.get_magic_token(svc_hash)
@@ -240,7 +240,7 @@ ok("a service pairing code is refused and left untouched (purpose is part of the
 # Expired.
 code_x = create(browser(bob)).json()["code"]
 auth.store._exec("UPDATE magic_token SET expires_at=? WHERE token_hash=?",
-                 (int(time.time()) - 1, O.code_digest(O.normalize_code(code_x))))
+                 (int(time.time()) - 1, auth.store.token_digest(O.code_digest(O.normalize_code(code_x)), "magic")))
 assert redeem(code_x).status_code == 400 and audit("oauth_consent_pairing_denied")[0]["detail"] == "reason=expired"
 assert armed_row(bob) is None
 ok("an expired code is refused")
@@ -396,7 +396,7 @@ answers = [gc_.post("/auth/oauth/pairing/redeem", json={"code": f"ABCD-EFGH-JKLM
 assert answers[:O.CONSENT_PAIRING_REDEEM_PER_IP_HOUR] == [400] * O.CONSENT_PAIRING_REDEEM_PER_IP_HOUR, answers
 assert answers[-1] == 429
 u_g = g_auth.create_user("gina", password="gina-pw-123456")
-g_auth.store.oauth_replace_consent_pairing(O.code_digest("WXYZWXYZWXYZWXYZ"), u_g, int(time.time()),
+g_auth.store.oauth_replace_consent_pairing(g_auth.store.token_digest(O.code_digest("WXYZWXYZWXYZWXYZ"), "magic"), u_g, int(time.time()),
                                            int(time.time()) + 600, {"resource": None})
 assert gc_.post("/auth/oauth/pairing/redeem", json={"code": "WXYZ-WXYZ-WXYZ-WXYZ"}).status_code == 429
 assert "oauth_consent_redeem_ratelimit" in seclog.getvalue() and "oauth_consent_redeem_unknown" in seclog.getvalue()
@@ -480,9 +480,9 @@ oc.get("/auth/account")
 assert oc.post("/auth/oauth/pairing", json={},
                headers={"X-CSRF-Token": oc.cookies.get(off_auth.csrf_cookie_name)}).status_code == 404
 assert oc.post("/auth/oauth/pairing/redeem", json={"code": "ABCD-EFGH-JKLM-NPQR"}).status_code == 404
-off_auth.store.oauth_replace_consent_pairing(O.code_digest("ABCDEFGHJKLMNPQR"), u_off, int(time.time()),
+off_auth.store.oauth_replace_consent_pairing(off_auth.store.token_digest(O.code_digest("ABCDEFGHJKLMNPQR"), "magic"), u_off, int(time.time()),
                                              int(time.time()) + 600, {"resource": None})
-assert off_auth.store.oauth_arm_consent_pairing(O.code_digest("ABCDEFGHJKLMNPQR"), int(time.time()))
+assert off_auth.store.oauth_arm_consent_pairing(off_auth.store.token_digest(O.code_digest("ABCDEFGHJKLMNPQR"), "magic"), int(time.time()))
 r = oc.post("/auth/oauth/register", json={"client_name": "x", "redirect_uris": [CB], "token_endpoint_auth_method": "none"})
 r = oc.get("/auth/oauth/authorize", params={"response_type": "code", "client_id": r.json()["client_id"],
                                            "redirect_uri": CB, "code_challenge": pkce()[1],
