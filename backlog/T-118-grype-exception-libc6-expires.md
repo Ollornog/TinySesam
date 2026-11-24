@@ -2,7 +2,7 @@
 id: T-118
 type: Task
 title: "Grype exception for libc6 expires on 2026-11-28 — rebuild the base images or drop it"
-status: offen
+status: erledigt
 milestone: M-2
 tags: [supply-chain, images, deadline]
 created: 2026-11-23

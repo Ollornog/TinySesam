@@ -4,6 +4,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Security
+
+- The distroless runtime base is bumped to the digest that carries `libc6` 2.41-12+deb13u5, and the two Grype rules for
+  the glibc findings (CVE-2026-19499, CVE-2026-5435) are removed; `.grype.yaml` is empty again (T-118).
+
 ## [0.30.0] — 2026-11-24
 
 **The last release with database migrations.** The next release starts from a single schema baseline, drops old
