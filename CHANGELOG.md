@@ -34,6 +34,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   (Rust, feature `jwks`) and `Topbar::fetch` (PHP). Only TinySesam's cookies are forwarded; 5 seconds, 64 KiB, no
   redirects; anything but a `200` is the signed-out value. The browser way stays the recommendation (T-113).
 
+### Fixed
+
+- The SQL check of `tests/test_english_code.py` no longer goes blind after an apostrophe in a `--` comment of the
+  schema (B-16): literals and comments are blanked in one left-to-right scan, so `the requester's channel` does not
+  open a literal that hides every table and column up to the next apostrophe, and a `--` inside a literal does not open
+  a comment. Self-probes for both cases.
+
 ## [0.30.0] — 2026-11-24
 
 **The last release with database migrations.** The next release starts from a single schema baseline, drops old

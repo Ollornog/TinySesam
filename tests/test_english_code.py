@@ -265,6 +265,17 @@ def prose_findings(path: str, text: str) -> list:
     return out
 
 
+def sql_code(statement: str) -> str:
+    """The statement with its 'string literals' (values) and `-- comments` blanked, scanned left to right in one pass:
+    an apostrophe inside a comment ("the requester's channel") does not open a literal, and a `--` inside a literal
+    does not open a comment (B-16; stripping literals first went blind up to the next apostrophe).
+
+    One token is a closed 'literal' ('' escapes a quote), a `-- comment`, a run of plain code, or a single `'`/`-` that
+    opens neither (an unclosed quote at the end of a fragment such as `"WHERE name = '"` hides nothing)."""
+    tokens = re.findall(r"'(?:[^']|'')*'|--[^\n]*|[^'-]+|['-]", statement)
+    return "".join(" " if t[0] == "'" or t.startswith("--") else t for t in tokens)
+
+
 def sql_findings(path: str, text: str, skip_defs=()) -> list:
     """[(path:line, name, words)] — German words in SQL: the schema and every SQL string constant of the package."""
     out = []
@@ -286,12 +297,9 @@ def sql_findings(path: str, text: str, skip_defs=()) -> list:
         if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in allowed and id(n) not in docs \
                 and (SQL_KEYWORDS.search(n.value) and len(n.value) > 12):
             # the words of the statement outside 'string literals' (those are values) and `-- comments`
-            statement = re.sub(r"'[^']*'", " ", n.value)
             found = set()
-            for w in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", statement):
+            for w in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", sql_code(n.value)):
                 found |= set(german_in_identifier(w))
-            comment_free = re.sub(r"--[^\n]*", "", statement)
-            found = {w for w in found if re.search(r"(?<![A-Za-z0-9_])[A-Za-z_0-9]*" + re.escape(w), comment_free)} or set()
             if found:
                 out.append((f"{path}:{n.lineno}", n.value[:70].replace("\n", " "), sorted(found)))
     return out
@@ -515,7 +523,7 @@ def string_hits(path: str, text: str, ui_corpus=(), old_tokens=frozenset(), frag
             continue
         value = CURLY_QUOTED.sub(" ", text_of(n))
         if path.startswith("tinysesam/") and SQL_KEYWORDS.search(value) and len(value) > 12:
-            value = re.sub(r"'[^']*'|--[^\n]*", " ", value)          # SQL: values and comments (as in `sql_findings`)
+            value = sql_code(value)          # SQL: values and comments (as in `sql_findings`)
         if path.startswith("tests/") and "i18n/" in text and len(value.strip()) >= 8 \
                 and (" " in value.strip() or value.strip()[0] in "/#") and value.strip() in german_docs_text():
             continue                # a test finds or runs a piece of the German documentation
@@ -732,10 +740,17 @@ r.check("self-test file names: a German file name is found, an English one is no
 sql_bad = 'CREATE_SQL = "CREATE TABLE IF NOT EXISTS namensbindung (quelle TEXT, user_id INTEGER)"\n'
 sql_bad2 = 'Q = "SELECT topf_name FROM users WHERE id = ?"\n'
 sql_good = 'Q = "SELECT folded_name FROM users WHERE id = ? AND name_source = \'ldap\' AND kind = \'kein_konto\'"\n'
-r.check("self-test SQL: a German table or column is found, English names and German VALUES in quotes are not",
-        bool(sql_findings("tinysesam/x.py", sql_bad)) and bool(sql_findings("tinysesam/x.py", sql_bad2))
-        and not sql_findings("tinysesam/x.py", sql_good),
-        f"{sql_findings('tinysesam/x.py', sql_bad)} {sql_findings('tinysesam/x.py', sql_good)}")
+# B-16: an apostrophe in a `--` comment must not open a literal that hides the names up to the next apostrophe, a `--`
+# inside a literal must not open a comment
+sql_bad3 = ('SCHEMA = """\nCREATE TABLE IF NOT EXISTS approval (\n    channel TEXT  -- the requester\'s channel\n);\n'
+            'CREATE TABLE IF NOT EXISTS fehlserie (id INTEGER, note TEXT DEFAULT \'it\'\'s\');\n"""\n')
+sql_bad4 = 'Q = "SELECT id FROM users WHERE note = \'a--b\' AND topf_name = ?"\n'
+sql_good2 = 'Q = "SELECT id FROM users -- the owner\'s row, Konto\\nWHERE note = \'it\'\'s a Konto\'"\n'
+sql_probes = {"bad": [bool(sql_findings("tinysesam/x.py", t)) for t in (sql_bad, sql_bad2, sql_bad3, sql_bad4)],
+              "good": [bool(sql_findings("tinysesam/x.py", t)) for t in (sql_good, sql_good2)]}
+r.check("self-test SQL: a German table or column is found — also after an apostrophe in a comment, after `--` in a "
+        "literal; English names, comments and German VALUES in quotes are not",
+        all(sql_probes["bad"]) and not any(sql_probes["good"]), str(sql_probes))
 prose_bad = ('"""Die Funktion löscht das Konto und gibt nichts zurück."""\n'
              "def f():\n    # das Passwort wird nicht gespeichert\n    return 1\n")
 prose_good = ('"""Deletes the account; the old name `konto_entfernen` and "Konto gelöscht" are quoted on purpose."""\n'
