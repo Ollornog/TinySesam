@@ -733,7 +733,7 @@ for what, path, old, new in (
         ("a German column in a query", "tinysesam/_store_gate.py", '"SELECT * FROM oidc_session WHERE token_hash=?"',
          '"SELECT * FROM oidc_session WHERE sitzung_hash=?"'),
         ("a German class", "tinysesam/gate.py", "def audience(", "def zielgruppe("),
-        ("a German comment", "tinysesam/manager.py", "# Own line (B5-07/B2-7).", "# Eigene Zeile und kein Passwort (B5-07/B2-7)."),
+        ("a German comment", "tinysesam/_manager_factors.py", "# Own line (B5-07/B2-7).", "# Eigene Zeile und kein Passwort (B5-07/B2-7)."),
         ("a German docstring", "tinysesam/totp.py", '"""', '"""Prüft das Passwort nicht. ', )):
     try:
         found = mutated_findings(path, old, new)

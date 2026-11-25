@@ -5,10 +5,8 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
-    _KID_LEN,
-    base64,
-)
+import base64
+from .keys import KID_LEN as _KID_LEN
 
 
 # ---------- the vault: context, re-encryption (T-48, T-54) ----------

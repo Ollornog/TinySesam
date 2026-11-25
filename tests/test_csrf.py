@@ -871,11 +871,18 @@ for _file in sorted(_package.glob("*.py")):
     _v = _Calls()
     _v.visit(ast.parse(_file.read_text(encoding="utf-8")))
     _hits += [(_file.name,) + f for f in _v.hits]
+
+
+def _of_tinysesam(file_name: str) -> bool:
+    """manager.py or one of TinySesam's building blocks (`_manager_<part>.py`, T-112)."""
+    return file_name == "manager.py" or file_name.startswith("_manager_")
+
+
 _setup = [f for f in _hits if f[1] == "create_session"]
 _cookie = [f for f in _hits if f[1] == "session_cookie"]
-assert _setup and all(f[0] == "manager.py" and f[2][-1:] == ("_create_session",) for f in _setup), \
+assert _setup and all(_of_tinysesam(f[0]) and f[2][-1:] == ("_create_session",) for f in _setup), \
     f"a session is created bypassing `_create_session` (not flagged): {_setup}"
-assert _cookie and all(f[0] == "manager.py" and f[2][-1:] == ("set_cookie",) for f in _cookie), \
+assert _cookie and all(_of_tinysesam(f[0]) and f[2][-1:] == ("set_cookie",) for f in _cookie), \
     f"a session cookie is set bypassing `set_cookie` (rotates no CSRF token): {_cookie}"
 ok(f"guard: {len(_setup)} session creation(s) only in _create_session, session cookie only in set_cookie")
 print("\nCSRF 0.20.1 (ensure_csrf, rotation, sign-out) OK ✅")

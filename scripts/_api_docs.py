@@ -207,7 +207,8 @@ def value(w) -> str:
 
 def deliver(type_name) -> list:
     """The public methods of `TinySesam` that return `type_name` (recognised by the return type)."""
-    return sorted(n for n, f in vars(TinySesam).items()
+    # getmembers, not vars: the methods sit in building blocks until first use (T-112)
+    return sorted(n for n, f in inspect.getmembers(TinySesam)
                   if inspect.isfunction(f) and not n.startswith("_")
                   and inspect.signature(f).return_annotation in (type_name, type_name.__name__))
 
