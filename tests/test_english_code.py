@@ -644,9 +644,11 @@ tree_findings = all_findings()
 r.check("no German identifier, file name, SQL name, comment, docstring or string literal in tinysesam/, web/, examples/, scripts/, tests/",
         not tree_findings, report(tree_findings))
 store_text = (ROOT / "tinysesam" / "store.py").read_text(encoding="utf-8")
+# The schema text lives in `_store_schema.py` since the store parts (T-112); `store.SCHEMA` re-exports it.
+schema_text = (ROOT / "tinysesam" / "_store_schema.py").read_text(encoding="utf-8")
 r.check("the guard sees the schema: `store.SCHEMA` is SQL text and is measured (more than 20 tables)",
-        store_text.count("CREATE TABLE IF NOT EXISTS") > 20
-        and any(k == "sql" for k, *_ in [("sql", 0)]) and len(sql_findings("tinysesam/store.py", store_text)) == 0)
+        schema_text.count("CREATE TABLE IF NOT EXISTS") > 20
+        and len(sql_findings("tinysesam/_store_schema.py", schema_text)) == 0)
 
 # ── self-test: probes ─────────────────────────────────────────────────────────────────────────────
 PROBE_BAD = {
@@ -722,13 +724,13 @@ baseline_store = (identifier_findings("tinysesam/store.py", store_text, set()) +
                   + sql_findings("tinysesam/store.py", store_text))
 r.check("mutation baseline: the unbroken store.py has no finding", not baseline_store, str(baseline_store[:3]))
 for what, path, old, new in (
-        ("a German method name", "tinysesam/store.py", "def remove_account(", "def konto_entfernen("),
-        ("a German parameter", "tinysesam/store.py", "def reserve_attempt(self, username, ip, method, rules, series=None,",
+        ("a German method name", "tinysesam/_store_users.py", "def remove_account(", "def konto_entfernen("),
+        ("a German parameter", "tinysesam/_store_throttle.py", "def reserve_attempt(self, username, ip, method, rules, series=None,",
          "def reserve_attempt(self, username, ip, method, regeln, series=None,"),
-        ("a German column in the schema", "tinysesam/store.py", "    folded_name     TEXT,", "    topf_name     TEXT,"),
-        ("a German table in the schema", "tinysesam/store.py", "CREATE TABLE IF NOT EXISTS failure_series",
+        ("a German column in the schema", "tinysesam/_store_schema.py", "    folded_name     TEXT,", "    topf_name     TEXT,"),
+        ("a German table in the schema", "tinysesam/_store_schema.py", "CREATE TABLE IF NOT EXISTS failure_series",
          "CREATE TABLE IF NOT EXISTS fehlserie"),
-        ("a German column in a query", "tinysesam/store.py", '"SELECT * FROM oidc_session WHERE token_hash=?"',
+        ("a German column in a query", "tinysesam/_store_gate.py", '"SELECT * FROM oidc_session WHERE token_hash=?"',
          '"SELECT * FROM oidc_session WHERE sitzung_hash=?"'),
         ("a German class", "tinysesam/gate.py", "def audience(", "def zielgruppe("),
         ("a German comment", "tinysesam/manager.py", "# Own line (B5-07/B2-7).", "# Eigene Zeile und kein Passwort (B5-07/B2-7)."),
@@ -799,7 +801,7 @@ def mutated_string_findings(path: str, old: str, new: str) -> list:
 
 
 for _path in ("tinysesam/ldap_.py", "tests/test_cookies.py", "tests/test_hardening.py", "tinysesam/messages.py",
-              "tinysesam/store.py"):
+              "tinysesam/store.py", "tinysesam/_store_gate.py"):
     _base = string_findings(_path, (ROOT / _path).read_text(encoding="utf-8"), _UI, _OLD, _FR)
     r.check(f"mutation baseline: the unbroken {_path} has no string finding", not _base, str(_base[:2]))
 for what, path, old, new, red in (
@@ -811,7 +813,7 @@ for what, path, old, new, red in (
          '"login.signup": "Neues Konto anlegen und sofort loslegen"', False),
         ("an old name quoted in a test (it must not come back)", "tests/test_hardening.py", '"Attacker-Password-1x"',
          '"Attacker-Password-1x" and "oidc_widerruf"', False),
-        ("a new German name in the package (no migration table exempts it any more)", "tinysesam/store.py",
+        ("a new German name in the package (no migration table exempts it any more)", "tinysesam/_store_gate.py",
          '"SELECT * FROM oidc_session WHERE token_hash=?"', '"SELECT * FROM oidc_session WHERE token_hash=? AND neu_konto=1"',
          True)):
     try:

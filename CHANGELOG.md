@@ -47,7 +47,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   the `jwtauth` block and delete the four lines `@no_gate_cookie`, `@has_authorization` and their two `error … 401`;
   `TS_GATE_PUBKEY` is no longer read. Nothing has to change at once: the old template keeps working with 1.5.0. Never
   `jwk_url` with caddy-jwt 1.4.0.
-
+- Internal: the store is split into parts (T-112, part 1). `tinysesam/store.py` (4,835 lines) keeps the core —
+  connection, schema stamp, flow state, settings, backup — and an index of the other 275 methods, which moved verbatim
+  into 13 modules `tinysesam/_store_<part>.py` (users, factors, keys, federation, gate, sessions, throttle, tokens,
+  audit, approvals, API keys, OAuth, roles); the schema text is in `_store_schema.py` (`store.SCHEMA` stays). A part is
+  imported on the first use of one of its methods, on a store or on the class — an installation without OAuth never
+  loads its queries. No behaviour change; `Store`'s methods keep their names and signatures.
+  `tests/test_store_parts.py` pins index, lazy loading and the size limits (`store.py` below 1,500 lines, a part below
+  2,000).
 - Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
   The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
   `tinysesam/gate-caddy/` in the user cache directory, old builds removed); without Docker the skip names the missing tool instead of

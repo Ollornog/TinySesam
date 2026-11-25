@@ -246,7 +246,8 @@ def _setting_read_paths(sources):
                 p = parents.get(k)
                 whole = not (isinstance(p, _ast.JoinedStr) or _sql_text(p) is not None
                             and isinstance(p, _ast.BinOp))
-                if name != "store.py" and whole and not isinstance(p, _ast.Expr):
+                # store.py and its parts (`_store_<part>.py`, T-112) are the store
+                if not (name == "store.py" or name.startswith("_store_")) and whole and not isinstance(p, _ast.Expr):
                     if _SQL_SETTING.search(text):
                         violations.append(f"{name}:{k.lineno} raw SQL on the settings table")
                     elif _SQL_START.search(text) and _SQL_TABLE_UNCLOSED.search(text):
