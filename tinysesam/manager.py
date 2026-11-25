@@ -3939,10 +3939,8 @@ class TinySesam:
     #: REPLACES the second factor and stays valid indefinitely: a TOTP code has only a
     #: million possibilities, but is valid for 30 seconds — a recovery code is valid until it is used.
     #: 112 bits is the threshold from which NIST SP 800-63B lets a simple
-    #: one-way hash suffice for a "look-up secret"; below that it requires salt and a password hashing scheme. Since
-    #: the codes are stored here with sha256, the threshold is the right choice.
-    #: Existing codes remain valid (only the hash is stored anyway); newly generated ones
-    #: are longer.
+    #: one-way hash suffice for a "look-up secret"; below that it requires salt and a password hashing scheme. The
+    #: codes are stored as an HMAC with the pepper (`Store.token_digest`, kind `recovery`), never as a plain hash.
     _RECOVERY_BYTES = 7
     #: At this few remaining codes the account page shows a warning and the
     #: security log a line — whoever uses them up should generate new ones in time.
@@ -3958,15 +3956,23 @@ class TinySesam:
         n = int(n or self.cfg.recovery_code_count)
         codes = ["-".join(secrets.token_hex(self._RECOVERY_BYTES) for _ in range(2)) for _ in range(n)]
         self.store.delete_recovery_codes(user_id)
-        self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
+        self.store.add_recovery_codes(user_id, [self.store.token_digests(self._rc_norm(c), "recovery")[0]
+                                                for c in codes])
         self.audit("recovery_generate", self._account_name(user_id), detail=f"user={user_id} n={n}")
         self._security_event("recovery_codes_generated", user_id, count=n)
         return codes
 
     @staticmethod
-    def _rc_hash(code) -> str:
-        norm = str(code or "").strip().lower().replace(" ", "")
-        return hashlib.sha256(norm.encode()).hexdigest()
+    def _rc_norm(code) -> str:
+        """A recovery code as typed (spaces, capitals) in the one form its digest is made of."""
+        return str(code or "").strip().lower().replace(" ", "")
+
+    def _rc_hash(self, code) -> str:
+        """The stored digest of a recovery code: an HMAC with the pepper (kind `recovery`; T-72 for the other tokens).
+        Up to 0.30.0 it was a plain sha256 — whoever could write the database file put the digest of a code of their
+        own choosing next to an account and held its second factor. After a pepper rotation a code made with a previous
+        pepper keeps being found (`Store.token_digest`); `keys retire` refuses while such a code is unused."""
+        return self.store.token_digest(self._rc_norm(code), "recovery")
 
     def _verify_recovery_code(self, user_id, code) -> bool:
         """Check and consume a one-time code. A code is valid exactly once.

@@ -766,6 +766,10 @@ def _keys(argv) -> int:
             refusals.append(f"{k.kid}: {live[0]} open one-time token(s) (sign-in links, invitations, pairing codes) "
                             f"and {live[1]} API key(s) not used since the rotation still need it (--force: those "
                             f"links stop working, those keys must be created anew)")
+        elif purpose == K.PEPPER and (n := store.recovery_codes_before(k.since)):
+            # @344f94: a recovery code keeps the pepper of its creation until it is used — nothing moves it.
+            refusals.append(f"{k.kid}: {n} unused recovery code(s) from before the rotation still need it (--force: "
+                            f"they stop working; those people generate new ones on their account page)")
     if refusals:
         print("Not retired:\n  " + "\n  ".join(refusals), file=sys.stderr)
         return 1

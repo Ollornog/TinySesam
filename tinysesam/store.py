@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS totp_cred (
 CREATE TABLE IF NOT EXISTS recovery_code (   -- one-time codes as 2FA substitute (lost authenticator)
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    code_hash  TEXT NOT NULL,                 -- sha256(normalized code)
+    code_hash  TEXT NOT NULL,                 -- HMAC with the pepper (`Store.token_digest`, kind `recovery`)
     created_at INTEGER NOT NULL,
     used_at    INTEGER
 );
@@ -2840,12 +2840,14 @@ class Store:
 
     # ---------- the other token digests (T-72) ----------
     # API keys, one-time tokens (sign-in links, invitations, address confirmations, reset links, the service and consent
-    # pairing codes, the QR sign-in codes) and the QR device secret: an HMAC with the same pepper keyring, with a label
-    # per kind. Up to 0.30.0 they were a plain sha256 — whoever could write the file inserted the digest of a key or
-    # link of their own choosing and held a working automation key or sign-in link of any account.
+    # pairing codes, the QR sign-in codes), the QR device secret and the recovery codes: an HMAC with the same pepper
+    # keyring, with a label per kind. Up to 0.30.0 they were a plain sha256 — whoever could write the file inserted the
+    # digest of a key, link or recovery code of their own choosing and held a working automation key, sign-in link or
+    # second factor of any account.
 
     #: The kind of a token digest → the column it is looked up in (None: compared by the caller, not looked up).
-    TOKEN_KINDS = {"apikey": ("api_key", "key_hash"), "magic": ("magic_token", "token_hash"), "qr-device": None}
+    TOKEN_KINDS = {"apikey": ("api_key", "key_hash"), "magic": ("magic_token", "token_hash"), "qr-device": None,
+                   "recovery": ("recovery_code", "code_hash")}
 
     @staticmethod
     def _token_digest(pepper: bytes, kind: str, raw: str) -> str:
@@ -2893,6 +2895,13 @@ class Store:
                          "AND (expires_at IS NULL OR expires_at > ?) AND (last_used IS NULL OR last_used <= ?)",
                          (when, now, when))["n"]
         return int(magic), int(keys)
+
+    def recovery_codes_before(self, when: int) -> int:
+        """Unused recovery codes made up to `when` — their digest carries a pepper retired at `when`. A code is not
+        moved to the active pepper (only its digest is stored, and it is used once), so it needs the old pepper until
+        it is used or the account generates new ones."""
+        return int(self._one("SELECT COUNT(*) AS n FROM recovery_code WHERE created_at <= ? AND used_at IS NULL",
+                             (when,))["n"])
 
     def sessions_live_before(self, when: int, now: int) -> int:
         """Sessions and app-host links created up to `when` that still run — what a pepper retired at `when` would

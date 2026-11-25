@@ -390,7 +390,7 @@ single base key encrypted the secrets AND was, by HKDF, the gate signing key and
 |---|---|---|---|---|---|
 | `vault` | TOTP secrets, OIDC refresh and ID tokens, an OAuth successor pair in its grace window, the two keys below when kept in the database | AES-256-GCM, 96-bit random nonce, AAD = key ID + table/column/row | 32 random bytes | `TINYSESAM_SECRETS_KEY` (+ `TINYSESAM_SECRETS_KEY_PREVIOUS`), `secrets_key_file`, `<db_path>.key` (created at the first start, 0600) | as long as the row |
 | `gate` | signature of the gate tokens (ADR-9) | Ed25519 (`EdDSA`), header `typ: tinysesam-gate+jwt`, `kid` | 32-byte random seed — **never derived** from the vault key | `TINYSESAM_GATE_KEY` (+ `_PREVIOUS`), `gate_key_file`, otherwise the table `key_material`, encrypted with the vault key | `gate_token_ttl_sec`, at most 3600 s |
-| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11), of the app passwords (T-66), of the session handles, app-host links and area unlocks (T-71), and of the API keys, one-time tokens (sign-in, invitation, confirmation and reset links, service and consent pairing codes, QR sign-in codes) and the QR device secret (T-72) | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords and API keys: until their next use (then the active pepper), at most their expiry; sessions: `session_ttl_hours`; one-time tokens: their lifetime |
+| `oauth-pepper` | HMAC-SHA-256 of the stored OAuth codes and tokens (ADR-11), of the app passwords (T-66), of the session handles, app-host links and area unlocks (T-71), and of the API keys, one-time tokens (sign-in, invitation, confirmation and reset links, service and consent pairing codes, QR sign-in codes), the QR device secret (T-72) and the recovery codes | HMAC-SHA-256 | ≥ 32 random bytes | `TINYSESAM_OAUTH_PEPPER` (+ `_PREVIOUS`), `oauth_pepper_file`, otherwise `key_material` | refresh tokens: `oauth_refresh_idle_days`; app passwords and API keys: until their next use (then the active pepper), at most their expiry; sessions: `session_ttl_hours`; one-time tokens: their lifetime; recovery codes: until used or replaced |
 | `approval` | signature of the approval confirmations of application actions (T-89, stage B) | Ed25519 (`EdDSA`), header `typ: tinysesam-approval+jwt`, `kid` | 32-byte random seed — never the gate key | `TINYSESAM_APPROVAL_KEY` (+ `_PREVIOUS`), `approval_key_file`, otherwise `key_material` (created at the first start with `approvals_enabled`) | `approval_token_ttl_sec`, at most 300 s |
 | (per process) | the in-memory fingerprints of repeated wrong passwords | PBKDF2-HMAC-SHA-256 | 32 random bytes per start | never stored | `password_repeat_window_sec` |
 
@@ -460,7 +460,9 @@ log (`key_rotated`, `key_retired`).
   the active one on its next use; `retire` also refuses while an app password not used since the rotation still
   needs the old one (`--force`: it stops working and must be created anew). **Session handles** (T-71) keep the pepper
   they were made with until the session ends (a new session takes the active one); `retire` refuses while a session
-  or an app-host link from before the rotation still runs (`--force`: those people sign in again).
+  or an app-host link from before the rotation still runs (`--force`: those people sign in again). **Recovery codes**
+  keep the pepper they were made with until they are used or replaced; `retire` refuses while one from before the
+  rotation is unused (`--force`: those codes stop working, the people generate new ones on their account page).
 - **Approval:** `tinysesam keys rotate --purpose approval` → restart. Applications that check confirmations fetch
   `/auth/approvals/jwks.json` (active key + previous keys for `keys.APPROVAL_OVERLAP_SEC`, 10 minutes) and follow by
   themselves: a confirmation with an unknown `kid` makes them fetch once more. An application configured with a fixed
@@ -908,7 +910,8 @@ The command line answers the same with exit code 1 (no traceback). A file that h
 **Once with this version: API keys and open links end** (T-72). API keys, sign-in links (also the account API's),
 invitations, address confirmations, reset links, open QR requests and pairing codes are stored as an HMAC with the
 pepper now; the plain sha256 of 0.30.0 is not carried over. Issue the API keys anew (services, scripts, the service
-account of an application) and tell people to ask for a new link. Sessions, app passwords and OAuth connections are not
+account of an application) and tell people to ask for a new link. **Recovery codes end too** (same reason): TOTP keeps
+working, the people generate new codes on their account page. Sessions, app passwords and OAuth connections are not
 affected.
 
 **Going back from this version to 0.30.0** needs no SQL: the schema is the same (26); only the API keys and links this

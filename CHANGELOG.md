@@ -14,6 +14,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   while an open link or an API key not used since the rotation still needs the old pepper (`--force` cuts them). A
   structure check pins that every store call writing or looking up such a digest gets the keyed one. Existing keys and
   links stop working once (see "Removed").
+- Recovery codes are stored as an HMAC with the pepper keyring too (`Store.token_digest`, kind `recovery`) instead of
+  the plain sha256 of the normalised code (@344f94, a follow-up of T-72). Whoever could write the database file put the
+  digest of a code of their own choosing next to an account and held its second factor. A pepper rotation keeps unused
+  codes valid; `tinysesam keys retire --purpose oauth-pepper` refuses while an unused code from before the rotation
+  still needs the old pepper (`--force` cuts them; the people generate new ones). Existing codes stop working once (see
+  "Removed").
 - The distroless runtime base is bumped to the digest that carries `libc6` 2.41-12+deb13u5, and the two Grype rules for
   the glibc findings (CVE-2026-19499, CVE-2026-5435) are removed; `.grype.yaml` is empty again (T-118).
 - Gate template: `Authorization` is never a token source for caddy-jwt any more — the option
@@ -111,8 +117,13 @@ something; **[operators only]** — the operator or the developer of the embeddi
   and open QR sign-in requests. The person asks for a new link; an application issues a new one. **[operators only]**
   Open service pairing codes (OAuth services, ADR-13) and consent pairing codes (ADR-14) end too —
   issue new ones. Not affected: sessions (keyed since T-71), app passwords (T-66), OAuth access and refresh tokens and
-  authorization codes (keyed with the pepper since ADR-11), passkeys, TOTP and recovery codes, and open approval
-  requests (the `approval` row has no token digest; an application needs a working key to pick its confirmation up).
+  authorization codes (keyed with the pepper since ADR-11), passkeys, TOTP, and open approval requests (the `approval`
+  row has no token digest; an application needs a working key to pick its confirmation up).
+- **[end users notice] Existing recovery codes stop working once** (@344f94): they are stored as an HMAC with the pepper
+  now, and the plain sha256 of before is not carried over (no migration, like T-72). TOTP itself keeps working;
+  whoever wants recovery codes generates new ones on the account page (`/auth/account`, `generate_recovery_codes`).
+  [operators only] Tell the people with TOTP before the update; a person whose authenticator is gone AND who relied on
+  an old code needs the admin path instead (the panel's access reset).
 - **[operators only] Tier C is gone.** The 38 warning aliases of 0.22.0 (`tinysesam/_deprecated.py`) are removed:
   `check_ldap`, `check_password`, `check_pin`, `check_resource`, `check_saml`, `complete_mfa`, `consume_admin_claim`,
   `factor_entry`, `forward_login_url`, `forward_response_headers`, `forwarded_url`, `is_locked`,
