@@ -9,7 +9,7 @@ import re
 from . import security
 from .store import role_invalid
 
-from .config_check import (
+from ._config_check_base import (
     _an,
     _frame_target_ok,
     _integer,

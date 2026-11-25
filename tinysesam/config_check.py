@@ -27,6 +27,13 @@ from . import _chain
 from . import _role_levels
 from . import security
 from .store import role_invalid
+from ._config_check_base import (  # noqa: F401
+    _an,
+    _integer,
+    _t,
+    _topbar_link_findings,
+    _urlsplit_host,
+)
 
 #: Method → which config field switches it on. The same list serves the chain check.
 PROCEDURE = {
@@ -100,113 +107,6 @@ def _is_loopback(value: str) -> bool:
         return ipaddress.ip_address(value).is_loopback
     except ValueError:
         return False
-
-
-def _urlsplit_host(url: str) -> str:
-    """The host of an address, without port and without the brackets of an IPv6 literal."""
-    from urllib.parse import urlsplit
-    return (urlsplit(url).hostname or "").lower()
-
-
-def _topbar_link_findings(config, f: str, links, hosts: set, roles_known: set, error: list, warnings: list,
-                          frame: bool = False) -> None:
-    """The checks of one top bar link field (`topbar_links`, `topbar_menu_links`, `forward_apps[host]['links']` —
-    named by `f` in the findings): shape, visibility, target. `frame`: the links of an app frame (T-91), whose
-    targets lie on exactly the application's host (`hosts` = that one host)."""
-    links = links or []
-    if not isinstance(links, (list, tuple)):
-        links = [links]
-    for link in links:
-        if (not isinstance(link, (list, tuple)) or len(link) not in (2, 3) or not isinstance(link[0], str)
-                or not 1 <= len(link[0].strip()) <= 60 or not isinstance(link[1], str)
-                or any(z < " " or z == "\x7f" for z in link[0])):
-            error.append(_t(
-                config,
-                "{f}: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters",
-                f=f, v=link))
-            continue
-        # Visibility (T-76): a third element {"admin": True} or {"role": "…"} — exactly one of them. Anything else
-        # would hide the link from everyone (topbar.link_visible is fail-closed) without saying why.
-        if len(link) == 3:
-            rule = link[2]
-            admin_rule = isinstance(rule, dict) and set(rule) == {"admin"} and rule["admin"] is True
-            role_rule = (isinstance(rule, dict) and set(rule) == {"role"} and isinstance(rule["role"], str)
-                         and bool(rule["role"].strip()))
-            if not (admin_rule or role_rule):
-                error.append(_t(
-                    config,
-                    "{f}: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}",
-                    f=f, v=link))
-                continue
-            if role_rule and rule["role"] not in roles_known:
-                warnings.append(_t(
-                    config,
-                    "{f}: the link {title!r} is shown only to the role {role!r}, which is not in "
-                    "available_roles — a typo hides it from everyone. List the role in available_roles.",
-                    f=f, title=link[0], role=rule["role"]))
-        href = link[1]
-        if not _frame_target_ok(href, hosts):
-            if frame:
-                error.append(_t(
-                    config,
-                    "{f}: {h!r} — a target of the app frame is a path (\"/spaces\", on this host) or an https "
-                    "address on exactly this host, without quotation marks, angle brackets, backslash and spaces",
-                    f=f, h=href))
-                continue
-            error.append(_t(
-                config,
-                "{f}: {h!r} — a target is a path on the own origin (\"/wiki\") or an https address on "
-                "the host of base_url or of trusted_redirect_hosts, without quotation marks, angle brackets, "
-                "backslash and spaces",
-                f=f, h=href))
-
-
-def _frame_target_ok(href, hosts: set) -> bool:
-    """A link target of the top bar or the app frame: a path (not `//`) or an https address on one of `hosts`, without
-    quotation marks, angle brackets, backslash and white space (the bar writes it into a single-quoted attribute)."""
-    if not isinstance(href, str):
-        return False
-    bad = not href or any(z in href for z in "'\"<>\\ \t\n\r")
-    if bad:
-        return False
-    if href.startswith("/") and not href.startswith("//"):
-        return True
-    if href.startswith("https://"):
-        try:
-            return _urlsplit_host(href) in hosts and "@" not in href.split("/", 3)[2]
-        except ValueError:
-            return False
-    return False
-
-
-def _t(config, template: str, **values) -> str:
-    """Finding text in the language of `config.lang`: English (default) or German.
-
-    `template` is the English text with named placeholders (`str.format`); for `lang == "de"` the
-    German template with the same key is taken from `_DE` (fallback: English if the key is missing).
-    Literal braces in a template are written doubled (`{{` / `}}`)."""
-    if getattr(config, "lang", "en") == "de":
-        template = _DE.get(template, template)
-    return template.format(**values)
-
-
-def _an(config, slot: str) -> bool:
-    return bool(getattr(config, slot, False))
-
-
-def _integer(config, slot: str, missing: int | None = 0):
-    """Read a number field for a combination check — or None if it is not an integer.
-
-    Type and range are reported by `_number_limits` (including `True`, text, `inf`, `nan`); the combination
-    is then not evaluated. An `int()` on the raw value crashed the whole check
-    before the type message came, and `TinySesam(cfg)` raised ValueError/OverflowError instead of a
-    collected ConfigError (second attack round, config)."""
-    value = getattr(config, slot, missing)
-    if value is None:
-        return missing
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return value
 
 
 #: The directives a Content-Security-Policy knows (CSP Level 3 plus the common
@@ -1598,14 +1498,11 @@ def _combinations(config, error: list, warnings: list) -> None:
 
 # The rules by feature (T-112): split into parts, every name re-exported here.
 from ._config_check_roles import (  # noqa: E402
-    DELEGATE_ACTIONS,
-    _DELEGATE_KEYS,
     _admin_delegates,
     _mapped_roles,
     _role_level_ladders,
     _role_names,
     _roles_without_list,
-    _strings,
     app_visible,
     configured_roles,
     delegate_may_manage,
@@ -1615,55 +1512,23 @@ from ._config_check_roles import (  # noqa: E402
     may_manage,
 )
 from ._config_check_apps import (  # noqa: E402
-    APPROVAL_FIELD,
-    APPROVAL_FIELDS_MAX,
-    APPROVAL_FIELD_KEYS,
     APPROVAL_FINDINGS,
-    APPROVAL_INT_LIMIT,
     APPROVAL_KEYS,
-    APPROVAL_PATTERN_MAX,
-    APPROVAL_RETURN_URLS_MAX,
-    APPROVAL_STRING_MAX,
-    APPROVAL_SUMMARY_MAX,
-    APPROVAL_TITLE_MAX,
-    APPROVAL_TYPE,
     APPROVAL_TYPES_MAX,
-    APPROVAL_TYPE_KEYS,
-    APPROVAL_TYPE_MAX,
-    APPROVAL_URL_MAX,
     APP_ID,
-    APP_KEYS,
-    FORWARD_APP_KEY_NAME,
-    FORWARD_FRAME_KEYS,
-    FORWARD_FRAME_LINKS_MAX,
-    FORWARD_LOGIN,
-    FORWARD_LOGOUT,
-    LINK_NEXT_MAX,
     PROVISIONING_DEFAULTS,
     PROVISIONING_GRACE_MAX,
-    PROVISIONING_KEYS,
     PROVISIONING_LIMITS,
     PROVISIONING_LIMIT_MAX,
     PROVISIONING_MAX_ACCOUNTS,
     PROVISIONING_SCOPES,
-    TOTP_APP_HINT_LANGS,
-    TOTP_APP_HINT_MAX,
-    _LANG,
-    _LANG_TAG,
-    _PREFIX_MARK,
     _app_approvals,
     _approvals,
-    _approver_roles,
     _apps,
-    _bad_text,
     _delegates_and_app_allowlists,
     _first_sign_in,
     _forward_apps,
-    _forward_frame,
-    _forward_frame_default,
     _gate,
-    _placeholders,
-    _plain_int,
     approval_return_url_ok,
     approval_type_findings,
     link_next_ok,
@@ -1673,3 +1538,33 @@ from ._config_check_apps import (  # noqa: E402
 from ._config_check_de import (  # noqa: E402
     _DE,
 )
+
+#: Names other modules and the tests take from `config_check` although they live in a part (T-112): listed so
+#: the re-exports above are visibly deliberate.
+__all__ = [
+    "APPROVAL_FINDINGS",
+    "APPROVAL_KEYS",
+    "APPROVAL_TYPES_MAX",
+    "APP_ID",
+    "PROVISIONING_DEFAULTS",
+    "PROVISIONING_GRACE_MAX",
+    "PROVISIONING_LIMITS",
+    "PROVISIONING_LIMIT_MAX",
+    "PROVISIONING_MAX_ACCOUNTS",
+    "PROVISIONING_SCOPES",
+    "_DE",
+    "_mapped_roles",
+    "app_visible",
+    "approval_return_url_ok",
+    "approval_type_findings",
+    "check_config",
+    "configured_roles",
+    "delegate_may_manage",
+    "delegate_scopes",
+    "delegation_graph",
+    "ladder_coverage",
+    "link_next_ok",
+    "may_manage",
+    "read_approval_types_file",
+    "totp_app_hint_ok",
+]

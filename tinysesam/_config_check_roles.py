@@ -8,7 +8,7 @@ from __future__ import annotations
 from . import _role_levels
 from .store import role_invalid
 
-from .config_check import (
+from ._config_check_base import (
     _an,
     _t,
 )

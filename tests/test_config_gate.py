@@ -174,12 +174,14 @@ _foreign["{where} is not in trusted_redirect_hosts — there is no redirect back
 assert _real is config_check._DE and _gaps(_real) == []
 assert _gaps(_without) and _gaps(_renamed) and _gaps(_place) and _gaps(_foreign)
 # … and the effect: with the key missing, lang="de" falls back to English and the language check goes red.
-_secured = config_check._DE
-config_check._DE = _without
+# `_t` reads the table in the shared helpers of the rules (`_config_check_base`, T-112) — the patch goes there.
+from tinysesam import _config_check_base  # noqa: E402
+_secured = _config_check_base._DE
+_config_check_base._DE = _without
 try:
     assert not _language_matches(), "the German finding fell back to English and the check did not notice"
 finally:
-    config_check._DE = _secured
+    _config_check_base._DE = _secured
 assert _language_matches()
 ok("mutation on a copy of _DE (key removed, renamed, placeholder changed) → completeness and language check go red")
 
