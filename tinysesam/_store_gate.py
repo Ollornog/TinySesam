@@ -5,12 +5,10 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
-    Optional,
+from .store import (
     json,
-    now,
 )
-from .store import Store
+from typing import Optional
 
 
 # The key is the **hash** of the session, not the plaintext — the same rule as in

@@ -5,17 +5,16 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
-    Optional,
+from .store import (
     _email_unicode,
     json,
     norm_email,
     norm_identifier,
-    now,
     replacement_name,
-    sqlite3,
     time,
 )
+import sqlite3
+from typing import Optional
 
 
 # ---------- Users ----------

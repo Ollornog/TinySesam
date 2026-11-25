@@ -4,9 +4,6 @@ Methods of `Store`, loaded on first use (`Store.__getattr__`, the index `store._
 store as `self`, exactly as it did inside the class (T-112).
 """
 
-from .store import (  # noqa: F401
-    now,
-)
 
 
 def add_approval(self, row: dict) -> None:

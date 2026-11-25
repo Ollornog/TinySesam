@@ -37,9 +37,9 @@ for part, path in parts.items():
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             defined[node.name] = part
-core = {n.name for n in ast.walk(ast.parse((PKG / "store.py").read_text(encoding="utf-8")))
-        if isinstance(n, ast.ClassDef) and n.name == "Store" for n in n.body
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+store_class = next(c for c in ast.walk(ast.parse((PKG / "store.py").read_text(encoding="utf-8")))
+                   if isinstance(c, ast.ClassDef) and c.name == "Store")
+core = {f.name for f in store_class.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
 for name, part in defined.items():
     if S._PARTS.get(name) != part:
         mismatch.append(f"{name}: defined in _store_{part}.py, indexed under {S._PARTS.get(name)!r}")

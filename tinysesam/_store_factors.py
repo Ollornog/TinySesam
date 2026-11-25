@@ -5,13 +5,12 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
-    Optional,
+from .store import (
     _KID_LEN,
     json,
-    now,
-    sqlite3,
 )
+import sqlite3
+from typing import Optional
 
 
 # ---------- Password ----------

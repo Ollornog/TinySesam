@@ -5,12 +5,11 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
-    Optional,
+from .store import (
     json,
-    now,
     sqlite3,
 )
+from typing import Optional
 
 
 # ---------- the role catalog (schema 25) ----------

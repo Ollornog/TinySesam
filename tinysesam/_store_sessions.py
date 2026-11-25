@@ -5,16 +5,13 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
-    Optional,
+from .store import (
     hashlib,
-    hmac,
     json,
-    now,
     secrets,
-    sqlite3,
 )
-from .store import Store
+import sqlite3
+from typing import Optional
 
 
 def session_hash(self, token: str) -> str:

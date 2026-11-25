@@ -5,11 +5,10 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
-    Optional,
-    now,
+from .store import (
     time,
 )
+from typing import Optional
 
 
 # ---------- OIDC link ----------
