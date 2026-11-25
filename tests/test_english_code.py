@@ -290,7 +290,7 @@ def sql_findings(path: str, text: str, skip_defs=()) -> list:
 # ── string literals of the Python sources ───────────────────────────────────────────────────────
 #: Module-level tables whose strings are German on purpose, as (file, name): the German finding templates and the German
 #: password blocklist (a list of what German speakers try first).
-GERMAN_DATA_TABLES = {("tinysesam/config_check.py", "_DE"), ("tinysesam/passwords.py", "BLOCKLIST"),
+GERMAN_DATA_TABLES = {("tinysesam/_config_check_de.py", "_DE"), ("tinysesam/passwords.py", "BLOCKLIST"),
                       ("tinysesam/passwords.py", "CONTEXT_BASE_WORDS"),
                       # the probe of the API-name guard in section (k): its German names are its test data
                       ("tests/test_sign_in.py", "_probe_source"), ("tests/test_sign_in.py", "_PROBE_GERMAN"),
@@ -770,7 +770,7 @@ STR_BAD = {
 STR_GOOD = {
     "English log text": ("tinysesam/x.py", 'log.warning("database unreachable: %s", error)\n'),
     "German interface text under a de key": ("tinysesam/x.py", 'MESSAGES = {"en": {"a": "Account"}, "de": {"a": "Konto gelöscht"}}\n'),
-    "German table of the findings": ("tinysesam/config_check.py", '_DE = {"English": "Deutsch und nicht gesperrt"}\n'),
+    "German table of the findings": ("tinysesam/_config_check_de.py", '_DE = {"English": "Deutsch und nicht gesperrt"}\n'),
     "German password blocklist": ("tinysesam/passwords.py", 'BLOCKLIST = frozenset("passwort kennwort geheimnis".split())\n'),
     "old compound value": ("tests/test_x.py", 'assert "oidc_widerruf" not in line\n'),
     "old key before =": ("tests/test_x.py", 'detail = "old=x akteur=helper"\n'),

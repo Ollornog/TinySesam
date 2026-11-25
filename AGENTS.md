@@ -13,7 +13,7 @@ with their front door: keep the surface small, every feature optional, and prove
 |---|---|
 | `tinysesam/manager.py` | the `TinySesam` class: every public method, guards, sign-in building blocks, sessions |
 | `tinysesam/config.py` | `TinySesamConfig` dataclass and presets (`local_accounts`, `oidc_gateway`, `active_directory`, `entra_id`) |
-| `tinysesam/config_check.py` | every contradiction of a configuration at construction (errors abort, warnings log) |
+| `tinysesam/config_check.py` | every contradiction of a configuration at construction (errors abort, warnings log); rules by feature in `_config_check_roles.py`, `_config_check_apps.py`, the German findings in `_config_check_de.py` (re-exported) |
 | `tinysesam/router.py` | `/auth/*` routes of the built-in pages and JSON endpoints |
 | `tinysesam/admin.py` | the admin panel as a mountable router (`/auth/admin`, JSON under `<mount>/api/*`) |
 | `tinysesam/_role_levels.py` | role levels (`role_levels`): pure functions the panel and `config_check` share |

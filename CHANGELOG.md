@@ -55,6 +55,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   loads its queries. No behaviour change; `Store`'s methods keep their names and signatures.
   `tests/test_store_parts.py` pins index, lazy loading and the size limits (`store.py` below 1,500 lines, a part below
   2,000).
+- Internal: `config_check.py` (3,882 lines) is split by feature (T-112, part 2): the role and delegation rules
+  (`_config_check_roles.py`), the application rules — forward-auth apps, gate, approvals, provisioning
+  (`_config_check_apps.py`) — and the German findings table (`_config_check_de.py`). `config_check` re-exports every
+  name; no rule changed. The checks that read the rules by file (templates in `tests/test_config_gate.py`, number reads
+  in `tests/test_security_findings.py`, the German data table in `tests/test_english_code.py`) read the parts too.
 - Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
   The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
   `tinysesam/gate-caddy/` in the user cache directory, old builds removed); without Docker the skip names the missing tool instead of

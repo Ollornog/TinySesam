@@ -127,11 +127,13 @@ def _placeholder(text):
 
 
 def _used_key_name():
-    """Every template that `config_check` passes to `_t(...)` (AST of config_check.py and config.py)
+    """Every template that `config_check` passes to `_t(...)` (AST of config_check.py, its parts and config.py)
     plus the values of the label dicts, which `_t(config, for_what)` takes as variable."""
     key_name, variable = set(), 0
-    for file in ("config_check.py", "config.py"):
-        tree = ast.parse((Path(config_check.__file__).parent / file).read_text(encoding="utf-8"))
+    package = Path(config_check.__file__).parent
+    # config_check and its parts by feature (`_config_check_<part>.py`, T-112)
+    for path in [package / "config_check.py", *sorted(package.glob("_config_check_*.py")), package / "config.py"]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                     and node.func.id == "_t" and len(node.args) > 1):
