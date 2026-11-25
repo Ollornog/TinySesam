@@ -2,7 +2,7 @@
 id: T-112
 type: Task
 title: "Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing"
-status: offen
+status: in-arbeit
 points: 21
 milestone: M-5
 blocked_by: [T-111]
@@ -43,3 +43,15 @@ only what is switched on is loaded — no routes, no code in the request path.
   proves that (a) none of its routes is in `app.routes`, (b) its module is not in `sys.modules` after start and a
   first request. A mutation (an unconditional import or route) turns it red.
 - Suite green twice (`nightly-repeat`), import time of a minimal configuration measured before and after.
+
+## Progress
+
+- **Part 1 — the store (2026-11-25):** `store.py` 4,835 → below 1,500 lines. The core (connection, schema stamp,
+  flow state, settings, backup) stays; 280 methods moved verbatim into 13 parts `tinysesam/_store_<part>.py` (users,
+  factors, keys, federation, gate, sessions, throttle, tokens, audit, approvals, API keys, OAuth, roles), the schema
+  text into `_store_schema.py`. A part is imported on the first use of one of its methods (`Store` looks it up in the
+  index `_PART_METHODS` and fixes the method on the class); `tests/test_store_parts.py` pins index, lazy loading and
+  the size limits for the store files. No behaviour change. The cut follows the sections of the old file; the parts
+  move into the feature packages when manager, router and `config_check` are split.
+- Next: `manager.py` (facade + feature modules, registry from `TinySesamConfig`), then `router.py`/`config_check.py`,
+  last the general size guard (no module above 2,000 lines) and the "a feature that is off loads nothing" test.

@@ -17,7 +17,8 @@ with their front door: keep the surface small, every feature optional, and prove
 | `tinysesam/router.py` | `/auth/*` routes of the built-in pages and JSON endpoints |
 | `tinysesam/admin.py` | the admin panel as a mountable router (`/auth/admin`, JSON under `<mount>/api/*`) |
 | `tinysesam/_role_levels.py` | role levels (`role_levels`): pure functions the panel and `config_check` share |
-| `tinysesam/store.py` | SQLite store and schema (`Store.SCHEMA_VERSION`, baseline 26) |
+| `tinysesam/store.py` | SQLite store core: connection, schema stamp (`Store.SCHEMA_VERSION`, baseline 26), flow state, settings; the index `_PART_METHODS` |
+| `tinysesam/_store_<part>.py`, `_store_schema.py` | the other store methods by feature (users, factors, sessions, OAuth, …), loaded on first use (T-112; `tests/test_store_parts.py`); the schema text |
 | `tinysesam/security.py` | client IP behind proxies, rate limits, lockout thresholds, the `tinysesam.security` logger |
 | `tinysesam/templates.py`, `theme.py`, `topbar.py`, `dialog.py`, `c22.css` | built-in pages, design tokens (the only place with colour values), top bar, own dialogs, C22 adapter |
 | `tinysesam/oidc.py`, `saml_.py`, `ldap_.py`, `webauthn_.py`, `totp.py`, `passwords.py` | sign-in methods; optional ones live behind extras |

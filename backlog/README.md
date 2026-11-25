@@ -127,7 +127,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md)** Stage S13 (optional) — SCIM stage 2 for IdP role sync · M-4
 * ☐ **[T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)** Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant · M-6
 * ☑ **[T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md)** Schema baseline and ballast removal: the current state is the starting line · M-5
-* ☐ **[T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)** Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing · M-5
+* ◐ **[T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)** Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing · M-5
 * ☑ **[T-113](T-113-topbar-fetch-in-rust-and-php.md)** Topbar fetch in the Rust and PHP clients · M-2
 * ☑ **[T-114](T-114-test-image-nginx-on-the-stable-line.md)** Proxy test image: nginx on the stable line instead of mainline · M-2
 * ☑ **[T-115](T-115-one-aggregate-ci-job-per-client.md)** One aggregate CI job per client, so required checks do not depend on matrix names · M-2

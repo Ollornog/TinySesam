@@ -274,6 +274,11 @@ def _check_commits(tree):
 
 
 _STORE_TREE = ast.parse(STORE_SOURCE)
+# The store parts (`tinysesam/_store_<part>.py`, T-112) hold methods of `Store` as module functions: they join the class
+# here, so every commit is checked wherever the method lives now.
+for _part in sorted((Path(__file__).resolve().parent.parent / "tinysesam").glob("_store_*.py")):
+    _store_class(_STORE_TREE).body.extend(
+        n for n in ast.parse(_part.read_text("utf-8")).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))
 assert not _shadowed(_STORE_TREE), \
     f"store.py rebinds {_shadowed(_STORE_TREE)} — `except` there would mean something else"
 unprotected, without_rollback = _check_commits(_STORE_TREE)

@@ -1346,7 +1346,7 @@ def _calls_outside(method: str, recipient, permitted: set, sources=None) -> list
                         and (k, f) not in permitted):
                     hits.append(f"{path_name}:{kind.lineno} ({k}.{f})")
                 go(kind, k, f)
-        go(tree)
+        go(tree, "Store" if path_name.startswith("_store_") else None)   # a store part (T-112)
     return hits
 
 
@@ -2272,7 +2272,8 @@ def _node_with_place(name, text):
                 f = kind.name
             from_.append((name, kind, k, f))
             go(kind, k, f)
-    go(tree)
+    # A store part (`_store_<part>.py`, T-112) holds methods of `Store` as module functions — same place.
+    go(tree, "Store" if name.startswith("_store_") else None)
     return from_
 
 
