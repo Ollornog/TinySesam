@@ -30,6 +30,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - CI: one aggregate job per workflow (`suite-ok`, `client-go-ok`, `client-js-ok`, `client-php-ok`, `client-rust-ok`)
   that is red unless every job it needs succeeded; the branch protection can name these instead of matrix legs such as
   `full (3.14)` or `test (php 8.4)`, so a matrix change no longer blocks every merge (T-115).
+- Hygiene test ready for the shared test kit 0.65–0.67: the release automation's refusal of a minor under `[Unreleased]`
+  is green with a notice ("Release automation skipped") from kit 0.65 on, and the probe now also proves that nothing
+  was prepared (no commit, no branch); the Dependabot auto-merge's fast-forward (kit 0.67) may move the base with
+  `PATCH git/refs/heads/<base>` (`force=false`) in `ausfuehren` and delete the head branch in `aufraeumen` — each
+  exactly that one command line in exactly that job, never `gh api` wholesale; its `pull_request` trigger may carry
+  only `ready_for_review`, with the own-repo check in `entscheiden`.
 - The proxy test image runs nginx on the stable line (1.30.x) instead of mainline (1.31.x); Dependabot ignores the
   mainline minors, and `tests/test_proxies.py` fails on an odd minor, also without Docker (T-114).
 
