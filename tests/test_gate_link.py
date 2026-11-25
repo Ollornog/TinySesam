@@ -156,6 +156,30 @@ for evil in ("//evil.example/x", "https://evil.example/", "\\\\evil", "evil"):
     assert auth.store.pop_flow("gatelink:" + flow)["rd"] == "/", evil
 ok("rd takes only paths of this host (//, foreign address, backslash → /)")
 
+# @51b7a1: whoever can WRITE the database file sees the session handles there. Up to 0.30.0 the exchange stored the code
+# and the binding as their plain sha256, so a `gatecode:` row for a chosen code and binding next to a known handle
+# was redeemed at the app host — a connection into that session, without its cookie. Both are an HMAC with the pepper
+# now (kinds `gatecode`/`gatebinding`). The counter-check plants the keyed form and gets through — the plain form
+# fails on the digest, nothing else. (Mutation probe: router back to a plain sha256 for code and binding → red.)
+import hashlib as _hl  # noqa: E402
+
+handle = auth.store.session_hash(b["gw"].cookies.get(auth.session_cookie_name))
+for keyed, want in ((False, 400), (True, 303)):
+    chosen_code, chosen_binding = f"chosen-code-{keyed}", f"chosen-binding-{keyed}"
+    if keyed:
+        key, bound = (auth.store.token_digests(chosen_code, "gatecode")[0],
+                      auth.store.token_digests(chosen_binding, "gatebinding")[0])
+    else:
+        key, bound = (_hl.sha256(chosen_code.encode()).hexdigest(), _hl.sha256(chosen_binding.encode()).hexdigest())
+    auth.store.put_flow("gatecode:" + key, {"handle": handle, "host": "app.example.com", "rd": "/", "binding": bound},
+                        ttl=120)
+    intruder = TestClient(fa, base_url=APP)
+    intruder.cookies.set("__Host-tinysesam_linkflow", chosen_binding)
+    got = intruder.get(f"/.tinysesam/callback?code={chosen_code}", follow_redirects=False)
+    assert got.status_code == want and bool(got.cookies.get("__Host-tinysesam_link")) is keyed, (keyed, got.status_code)
+ok("a code exchange planted in the database as plain sha256 (code and binding next to a known session handle) "
+   "→ 400, no link; only the HMAC with the pepper is redeemed (counter-check)")
+
 assert TestClient(fa, base_url=GW).get("/auth/gate/authorize?flow=invented").status_code == 400
 assert TestClient(fa, base_url="https://foreign.example.net").get("/.tinysesam/start").status_code == 404
 ok("unknown flow → 400, unprotected host → 404")

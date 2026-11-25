@@ -20,6 +20,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   codes valid; `tinysesam keys retire --purpose oauth-pepper` refuses while an unused code from before the rotation
   still needs the old pepper (`--force` cuts them; the people generate new ones). Existing codes stop working once (see
   "Removed").
+- The code exchange of the central gateway (`gate_link_enabled`, T-26) stores the one-time code (`gatecode:` flow key)
+  and the browser binding as an HMAC with the pepper keyring (kinds `gatecode`, `gatebinding`) instead of their plain
+  sha256 (@51b7a1). The session handles stand in the database file; whoever could write it put a `gatecode:` row for a
+  chosen code and binding next to a handle and redeemed it at the app host — a connection into that session. An
+  exchange begun before a pepper rotation still ends (every pepper of the keyring is tried). An exchange running at the
+  update (at most ten minutes) fails once; the person starts it again by reloading the application.
 - The distroless runtime base is bumped to the digest that carries `libc6` 2.41-12+deb13u5, and the two Grype rules for
   the glibc findings (CVE-2026-19499, CVE-2026-5435) are removed; `.grype.yaml` is empty again (T-118).
 - Gate template: `Authorization` is never a token source for caddy-jwt any more — the option
@@ -124,6 +130,9 @@ something; **[operators only]** — the operator or the developer of the embeddi
   whoever wants recovery codes generates new ones on the account page (`/auth/account`, `generate_recovery_codes`).
   [operators only] Tell the people with TOTP before the update; a person whose authenticator is gone AND who relied on
   an old code needs the admin path instead (the panel's access reset).
+- **[end users notice] A gateway code exchange running at the update fails once** (@51b7a1, `gate_link_enabled`): its
+  code and binding were stored as a plain sha256 (at most ten minutes old). The person reloads the application, which
+  starts a new exchange; existing app-host links are not affected.
 - **[operators only] Tier C is gone.** The 38 warning aliases of 0.22.0 (`tinysesam/_deprecated.py`) are removed:
   `check_ldap`, `check_password`, `check_pin`, `check_resource`, `check_saml`, `complete_mfa`, `consume_admin_claim`,
   `factor_entry`, `forward_login_url`, `forward_response_headers`, `forwarded_url`, `is_locked`,

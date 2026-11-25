@@ -1553,10 +1553,24 @@ def build_router(auth) -> APIRouter:
 
         # ---------- Code exchange: central gateway, session stays on its host (T-26) ----------
         if cfg.gate_link_enabled:
-            import hashlib as _hashlib
+            # The one-time code and the browser binding are stored as an HMAC with the pepper (`Store.token_digest`,
+            # kinds `gatecode`/`gatebinding`, @51b7a1). Up to 0.30.0 they were a plain sha256: whoever could write the
+            # database file put a `gatecode:` row for a chosen code and binding next to a session handle (the handles
+            # stand in the file) and redeemed it at the app host — a connection into that session. Looked up with
+            # every pepper of the keyring, the active one first: an exchange begun before a rotation still ends.
+            def _binding_digest(value: str) -> str:
+                return auth.store.token_digests(str(value or ""), "gatebinding")[0]
 
-            def _h(value: str) -> str:
-                return _hashlib.sha256(str(value or "").encode()).hexdigest()
+            def _binding_matches(value: str, stored: str) -> bool:
+                return any(secrets.compare_digest(d, str(stored or ""))
+                           for d in auth.store.token_digests(str(value or ""), "gatebinding"))
+
+            def _pop_code(code: str):
+                for d in auth.store.token_digests(str(code or ""), "gatecode"):
+                    f = auth.store.pop_flow("gatecode:" + d)
+                    if f is not None:
+                        return f
+                return None
 
             @r.get("/.tinysesam/start")
             def gate_link_start(request: Request, rd: str = "/", signed_out: str = ""):
@@ -1572,7 +1586,7 @@ def build_router(auth) -> APIRouter:
                     destination = "/"
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                 expiry, binding = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-                auth.store.put_flow("gatelink:" + expiry, {"host": host, "rd": destination, "binding": _h(binding),
+                auth.store.put_flow("gatelink:" + expiry, {"host": host, "rd": destination, "binding": _binding_digest(binding),
                                                            "proto": "http" if proto == "http" else "https",
                                                            "signed_out": signed_out == "1"}, ttl=600)
                 base = auth.gate_issuer()
@@ -1620,8 +1634,9 @@ def build_router(auth) -> APIRouter:
                     return RedirectResponse(f"{auth.browser_path(request, '/auth/oidc/start')}?next={_q(here)}"
                                             f"&app={_q(application)}", 303)
                 code = secrets.token_urlsafe(32)
-                auth.store.put_flow("gatecode:" + _h(code), {"handle": s["token_hash"], "host": host,
-                                                              "rd": f["rd"], "binding": f.get("binding") or ""}, ttl=120)
+                auth.store.put_flow("gatecode:" + auth.store.token_digests(code, "gatecode")[0],
+                                    {"handle": s["token_hash"], "host": host, "rd": f["rd"],
+                                     "binding": f.get("binding") or ""}, ttl=120)
                 return RedirectResponse(f"{f['proto']}://{host}/.tinysesam/callback?code={_q(code)}", 303)
 
             @r.get("/auth/gate/logout")
@@ -1664,10 +1679,10 @@ def build_router(auth) -> APIRouter:
                 """On the app host: redeem the code (exactly once, only here, only in the browser that
                 began the flow) and create the connection for this host."""
                 host = _gate_host_or_404(request)
-                f = auth.store.pop_flow("gatecode:" + _h(code)) if code else None
+                f = _pop_code(code) if code else None
                 binding = request.cookies.get(auth._GATE_LINKFLOW_COOKIE) or ""
                 if (not f or f.get("host") != host or not binding
-                        or not secrets.compare_digest(_h(binding), str(f.get("binding") or ""))):
+                        or not _binding_matches(binding, f.get("binding") or "")):
                     security.seclog.warning("gate-link: return path without a matching code or without a binding — rejected (host=%s)",
                                             security.for_log(host))
                     raise HTTPException(400, auth.t("api.invalid", reason="code"))

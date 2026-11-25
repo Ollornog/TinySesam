@@ -2840,14 +2840,14 @@ class Store:
 
     # ---------- the other token digests (T-72) ----------
     # API keys, one-time tokens (sign-in links, invitations, address confirmations, reset links, the service and consent
-    # pairing codes, the QR sign-in codes), the QR device secret and the recovery codes: an HMAC with the same pepper
-    # keyring, with a label per kind. Up to 0.30.0 they were a plain sha256 — whoever could write the file inserted the
+    # pairing codes, the QR sign-in codes), the QR device secret, the recovery codes and the app-host code exchange
+    # (`gatecode:` flow key and the browser binding, T-26): an HMAC with the same pepper keyring, with a label per kind. Up to 0.30.0 they were a plain sha256 — whoever could write the file inserted the
     # digest of a key, link or recovery code of their own choosing and held a working automation key, sign-in link or
     # second factor of any account.
 
     #: The kind of a token digest → the column it is looked up in (None: compared by the caller, not looked up).
     TOKEN_KINDS = {"apikey": ("api_key", "key_hash"), "magic": ("magic_token", "token_hash"), "qr-device": None,
-                   "recovery": ("recovery_code", "code_hash")}
+                   "recovery": ("recovery_code", "code_hash"), "gatecode": None, "gatebinding": None}
 
     @staticmethod
     def _token_digest(pepper: bytes, kind: str, raw: str) -> str:
