@@ -1,11 +1,12 @@
 """The German version of the configuration findings (`_DE`, selected with `config.lang == "de"`).
 
-Split from `config_check.py` (T-112); `config_check` re-exports every name, so callers and tests keep
-`config_check.<name>`.
+Split from `config_check.py` (T-112); `config_check` re-exports what other modules and the tests take from it
+(its `__all__`), so they keep `config_check.<name>`.
 """
 from __future__ import annotations
 
-
+#: The one name of this module, read by `_config_check_base._t`.
+__all__ = ["_DE"]
 
 # --- German version of the findings (selected with `config.lang == "de"`) ---------------
 #

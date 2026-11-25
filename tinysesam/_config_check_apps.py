@@ -1,7 +1,7 @@
 """Configuration rules for applications: forward-auth apps and their frame, the gate, approvals, registered apps with provisioning and approval types.
 
-Split from `config_check.py` (T-112); `config_check` re-exports every name, so callers and tests keep
-`config_check.<name>`.
+Split from `config_check.py` (T-112); `config_check` re-exports what other modules and the tests take from it
+(its `__all__`), so they keep `config_check.<name>`.
 """
 from __future__ import annotations
 
