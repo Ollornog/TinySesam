@@ -1045,7 +1045,7 @@ def values_of_constants(file: dict) -> list:
 
 
 #: Modules with routes: What is returned there is a JSON response.
-ROUTES_MODULE = ("router.py", "admin.py", "webauthn_.py", "oidc.py", "saml_.py", "gateway.py")
+ROUTES_MODULE = ("router.py", "_routes_forward.py", "admin.py", "webauthn_.py", "oidc.py", "saml_.py", "gateway.py")
 
 
 def values_in_code(sources: dict) -> list:
@@ -1307,13 +1307,13 @@ def self_check_contract(now: dict) -> None:
         assert any(away in z and z.startswith("[A]") for z in b), (area, away, b)
 
     routes = CT.routes_static
-    check("http.routes", routes, bent("router.py", '@r.get("/auth/forward")', '@r.get("/auth/forwards")'),
+    check("http.routes", routes, bent("_routes_forward.py", '@r.get("/auth/forward")', '@r.get("/auth/forwards")'),
            "GET /auth/forward", "GET /auth/forwards")
-    check("http.routes", routes, bent("router.py", '@r.post("/.tinysesam/logout")', '@r.get("/.tinysesam/logout2")'),
+    check("http.routes", routes, bent("_routes_forward.py", '@r.post("/.tinysesam/logout")', '@r.get("/.tinysesam/logout2")'),
            "POST /.tinysesam/logout", "GET /.tinysesam/logout2")
     # a dropped parameter is a break (list value), a gained one an extension
     before = routes(sources)["GET /.tinysesam/start"]
-    copy = bent("router.py", "def gate_link_start(request: Request, rd: str = \"/\", signed_out: str = \"\"):",
+    copy = bent("_routes_forward.py", "def gate_link_start(request: Request, rd: str = \"/\", signed_out: str = \"\"):",
                      "def gate_link_start(request: Request, rd: str = \"/\"):")
     b, e = assess({"http.routes": {"GET /.tinysesam/start": before}},
                      {"http.routes": {"GET /.tinysesam/start": routes(copy)["GET /.tinysesam/start"]}},
@@ -1331,19 +1331,19 @@ def self_check_contract(now: dict) -> None:
         else:
             raise AssertionError(f"{foreign}: the route scan accepted a registration it cannot see")
     atoms = CT.contract_atoms
-    check("http.contract", atoms, bent("router.py", 'headers={"X-TinySesam-Reason": "role"}',
+    check("http.contract", atoms, bent("_routes_forward.py", 'headers={"X-TinySesam-Reason": "role"}',
                                             'headers={"X-TinySesam-Reason": "denied"}'),
            "reason:role", "reason:denied")
-    check("http.contract", atoms, bent("router.py", '"X-TinySesam-Reason": "app-signed-out"',
+    check("http.contract", atoms, bent("_routes_forward.py", '"X-TinySesam-Reason": "app-signed-out"',
                                             '"X-TinySesam-Reason": "app-out"'), "reason:app-signed-out")
     check("http.contract", atoms, bent("manager.py", '_GATE_LINK_COOKIE = "__Host-tinysesam_link"',
                                             '_GATE_LINK_COOKIE = "__Host-tinysesam_conn"'),
            "cookie:__Host-tinysesam_link", "cookie:__Host-tinysesam_conn")
     check("http.contract", atoms, bent("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")', -1),
            "request-header:X-Forwarded-Uri", "request-header:X-Fwd-Uri")
-    check("http.contract", atoms, bent("router.py", 'getlist("roles")', 'getlist("role")'),
+    check("http.contract", atoms, bent("_routes_forward.py", 'getlist("roles")', 'getlist("role")'),
            "request-param:roles", "request-param:role")
-    check("http.contract", atoms, bent("router.py", 'head["X-TinySesam-Gate-Cookie"]', 'head["X-Gate-Cookie"]'),
+    check("http.contract", atoms, bent("_routes_forward.py", 'head["X-TinySesam-Gate-Cookie"]', 'head["X-Gate-Cookie"]'),
            "header:X-TinySesam-Gate-Cookie")
     check("log.loggers", CT.loggers_static,
            bent("security.py", 'getLogger("tinysesam.security")', 'getLogger("tinysesam.sec")'),

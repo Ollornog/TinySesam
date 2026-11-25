@@ -60,6 +60,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   (`_config_check_apps.py`) — and the German findings table (`_config_check_de.py`). `config_check` re-exports every
   name; no rule changed. The checks that read the rules by file (templates in `tests/test_config_gate.py`, number reads
   in `tests/test_security_findings.py`, the German data table in `tests/test_english_code.py`) read the parts too.
+- Internal: the forward-auth routes (`/auth/forward`, the gate and the app-host code exchange) are a building block of
+  their own, `tinysesam/_routes_forward.py` (T-112, part 3): `build_router` imports and registers it only with
+  `forward_auth_enabled`; `router.py` 2,379 → 1,868 lines. No path, parameter or header changed: the HTTP-contract
+  measurement (`tests/_contract.py`) reads the routes and the proxy inputs from the new module, and a listed input
+  reader that moves is found in whichever module holds it.
 - Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
   The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
   `tinysesam/gate-caddy/` in the user cache directory, old builds removed); without Docker the skip names the missing tool instead of
