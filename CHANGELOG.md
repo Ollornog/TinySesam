@@ -16,8 +16,25 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   links stop working once (see "Removed").
 - The distroless runtime base is bumped to the digest that carries `libc6` 2.41-12+deb13u5, and the two Grype rules for
   the glibc findings (CVE-2026-19499, CVE-2026-5435) are removed; `.grype.yaml` is empty again (T-118).
+- Gate template: `Authorization` is never a token source for caddy-jwt any more — the option
+  `disable_authorization_fallback` (caddy-jwt 1.5.0, ggicci/caddy-jwt#90) replaces the detour of 0.26.1, which sent
+  every request with `Authorization` or without a gate cookie around jwtauth. caddy-jwt 1.5.0 also logs no token text
+  (`token_string`) at all. `tests/test_gate_caddy.py` proves that not even a valid gate token in `Authorization: Bearer`
+  passes Caddy, and that the log holds no piece of a key, app password or token (T-119).
 
 ### Changed
+
+- **Gate template back on `jwk_url`, caddy-jwt 1.5.0** (T-119). The image `tinysesam-caddy-gate` carries caddy-jwt
+  1.5.0, which no longer hangs every request with a gate token after one failed first fetch of the key set
+  (ggicci/caddy-jwt#117; measured: key set answering 404 at the first token — 1.4.0 times out, 1.5.0 answers at once and
+  fetches again with the next token). `deploy/forward-auth/Caddyfile.gate` fetches `/auth/gate/jwks.json` again
+  instead of the fixed `sign_key {$TS_GATE_PUBKEY}`, so a gate rotation needs nothing at the proxy: the first tokens of
+  the new key take the way back once and make Caddy fetch the set. **[operators only] Who copied the template:** with
+  caddy-jwt 1.5.0 or later (this release's image), replace `sign_key {$TS_GATE_PUBKEY}` by
+  `jwk_url http://{$TS_AUTH_UPSTREAM:127.0.0.1:8000}/auth/gate/jwks.json`, add `disable_authorization_fallback` in
+  the `jwtauth` block and delete the four lines `@no_gate_cookie`, `@has_authorization` and their two `error … 401`;
+  `TS_GATE_PUBKEY` is no longer read. Nothing has to change at once: the old template keeps working with 1.5.0. Never
+  `jwk_url` with caddy-jwt 1.4.0.
 
 - Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
   The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
@@ -50,6 +67,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- The warning "X-Forwarded-For from … is ignored: the peer is not in trusted_proxies" could name a client's address: a
+  server in front of TinySesam that had already applied the header (uvicorn's default `proxy_headers=True`) hands the
+  client on as the peer in the notation of the header (`2001:DB8::7`), and the check that recognises this case compared
+  it raw with the canonical entries. Now both sides are canonical, and the warning says what it is — the server
+  evaluated the header first, start it with `--no-proxy-headers` (T-119).
 - The SQL check of `tests/test_english_code.py` no longer goes blind after an apostrophe in a `--` comment of the
   schema (B-16): literals and comments are blanked in one left-to-right scan, so `the requester's channel` does not
   open a literal that hides every table and column up to the next apostrophe, and a `--` inside a literal does not open

@@ -1584,7 +1584,7 @@ CONTRACT_NAMES_REQUIRED = (("GET /.tinysesam/start parameter", "signed_out"), ("
                          ("log.loggers", "tinysesam.security"), ("log.lines event", "failed login"),
                          ("log.lines keys", "unban"), ("log.lines value", "reason=account_locked"),
                          ("messages id", "login.logged_out"), ("messages placeholder", "reason"),
-                         ("command line option", "db"), ("deploy/forward-auth/Caddyfile.gate", "TS_GATE_PUBKEY"))
+                         ("command line option", "db"), ("deploy/forward-auth/Caddyfile.gate", "TS_GATE_ISSUER"))
 
 
 def check_contract_names(file: dict, sources: "dict | None" = None, required=CONTRACT_NAMES_REQUIRED,

@@ -702,9 +702,9 @@ def _keys(argv) -> int:
                   "tinysesam keys retire --purpose vault. Back up the key file again — apart from the database.")
         elif purpose == K.GATE:
             from . import gate as G
-            print(f"Give the proxy the new sign_key (TS_GATE_PUBKEY): {G.public_b64(K.gate_private(material))} — "
-                  f"until then tokens of the new key take the fallback path (caddy-jwt's jwk_url: do not use, it can "
-                  f"hang, docs/OPERATIONS.md).")
+            print("A proxy with jwk_url (/auth/gate/jwks.json, the template) follows by itself. One with a fixed "
+                  f"sign_key needs the new value: {G.public_b64(K.gate_private(material))} — until then tokens of the "
+                  "new key take the fallback path.")
             print(f"After {K.GATE_OVERLAP_SEC // 60} minutes: tinysesam keys retire --purpose gate")
         elif purpose == K.APPROVAL:
             print("Applications that check confirmations fetch /auth/approvals/jwks.json and learn the new key there "

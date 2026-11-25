@@ -2622,11 +2622,13 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
   [`deploy/forward-auth/caddy-gate/`](../deploy/forward-auth/caddy-gate/)).
 - **Schlüssel:** ein eigener, zufälliger Ed25519-Schlüssel (seit T-48, ADR-12 — bis 0.25.x aus dem
   Tresor-Schlüssel abgeleitet): `TINYSESAM_GATE_KEY`, `gate_key_file`, sonst mit dem Tresor-Schlüssel verschlüsselt
-  in der Datenbank. Der Proxy nimmt `tinysesam gate-key --db …` als `sign_key` (`TS_GATE_PUBKEY`; nach einer
-  Gate-Rotation neu, bis dahin gehen die neuen Tokens den Rückweg). **Nicht `jwk_url`** mit caddy-jwt 1.4.0, obwohl
-  TinySesam `/auth/gate/jwks.json` veröffentlicht: Ein einziger gescheiterter erster Abruf lässt danach jede Anfrage
-  mit Gate-Token hängen. Jedes Token trägt `typ: tinysesam-gate+jwt` und seine `kid`.
-- **`caddy reload` unter systemd:** Der Reload liest das Caddyfile im *aufrufenden* Prozess, `{$TS_GATE_PUBKEY}` und
+  in der Datenbank. Der Proxy holt die öffentlichen Schlüssel von `/auth/gate/jwks.json` (`jwk_url`, caddy-jwt 1.5.0
+  oder neuer — mit 1.4.0 ließ ein einziger gescheiterter erster Abruf danach jede Anfrage mit Gate-Token hängen); eine
+  Gate-Rotation braucht am Proxy nichts, die ersten Tokens des neuen Schlüssels gehen den Rückweg, bis Caddy die Menge
+  neu geholt hat. Jedes Token trägt `typ: tinysesam-gate+jwt` und seine `kid`. `Authorization` ist für den Proxy nie
+  eine Token-Quelle (`disable_authorization_fallback`): API-Keys und Zugriffstokens kommen dort weder durch noch ins
+  Log.
+- **`caddy reload` unter systemd:** Der Reload liest das Caddyfile im *aufrufenden* Prozess, `{$TS_AUTH_UPSTREAM}` und
   jeder andere `{$…}`-Platzhalter (auch `{$CREDENTIALS_DIRECTORY}`) wird also dort aufgelöst. Ein `ExecReload=` ohne
   die Umgebung lässt sie leer; der Reload scheitert (z. B. `open /tls.crt`), und Caddy läuft still mit der alten
   Konfiguration weiter. Die Variablen gehören in `EnvironmentFile=` auf Unit-Ebene — das gilt auch für `ExecReload=` —,

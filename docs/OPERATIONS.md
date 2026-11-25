@@ -445,12 +445,13 @@ log (`key_rotated`, `key_retired`).
   loaded re-reads its key file) → `tinysesam keys retire --purpose vault`, which refuses while any stored value still
   names the old key. Then back up the key file again. From the environment: the new key into
   `TINYSESAM_SECRETS_KEY`, the old one into `TINYSESAM_SECRETS_KEY_PREVIOUS`, restart, `reencrypt`, then drop it.
-- **Gate:** `tinysesam keys rotate --purpose gate` → restart. The proxy's `sign_key` (`TS_GATE_PUBKEY`) needs the
-  printed value (`tinysesam gate-key`); until it has it, tokens of the new key take the fallback path — slower, nobody
-  is signed out — and tokens of the old key keep passing until they expire. After the overlap: `tinysesam keys retire
-  --purpose gate` (refuses earlier; `--force` cuts tokens that may still live — they take the fallback path once).
-  `/auth/gate/jwks.json` publishes the active and the previous key for a proxy that fetches keys, but caddy-jwt
-  1.4.0's `jwk_url` must not be used (next section).
+- **Gate:** `tinysesam keys rotate --purpose gate` → restart. Nothing to do at the proxy: the template's `jwk_url`
+  fetches `/auth/gate/jwks.json` (the active and the previous key). The first token of the new key names a `kid` Caddy
+  does not know yet: it takes the fallback path once (nobody is signed out) and makes Caddy fetch the set again; from
+  then on such tokens pass Caddy alone, and tokens of the old key keep passing until they expire. After the overlap:
+  `tinysesam keys retire --purpose gate` (refuses earlier; `--force` cuts tokens that may still live — they take the
+  fallback path once). A proxy with a fixed key instead (`sign_key`, the value of `tinysesam gate-key`) needs the
+  printed value; until it has it, tokens of the new key take the fallback path.
 - **OAuth pepper:** `tinysesam keys rotate --purpose oauth-pepper` → restart. Codes and tokens are looked up with the
   active pepper and then with the previous ones, so every connected program stays connected; its next refresh issues
   tokens under the new pepper. `tinysesam keys retire --purpose oauth-pepper` refuses while a code or token from before
@@ -476,18 +477,17 @@ cookie itself and asks `/auth/forward` only when it is missing or expires. Templ
   `ghcr.io/ollornog/tinysesam-caddy-gate:<version>` with it (built from `deploy/forward-auth/caddy-gate/`, Caddy and
   plugin pinned in its go.mod, Dependabot bumps both). A Caddy without the plugin does not start at all with the
   template (`unrecognized directive: jwtauth`).
-- **Public key for the proxy:** one fixed key, `tinysesam gate-key --db <file>` — with the same environment as the
-  service (in the gateway container `python -m tinysesam gate-key --db /data/gateway.db`); it never creates a key. In
-  the Caddyfile as `TS_GATE_PUBKEY` for `sign_key`; after every gate rotation anew. Caddy refuses to start without it
-  (`invalid sign_key: ""`). **Do not use caddy-jwt's `jwk_url`** (version 1.4.0), although `/auth/gate/jwks.json`
-  publishes the set (active and previous keys, `--jwks` prints it): the first request with a token registers the URL
-  with `Cache.Register(context.Background(), …)` under the plugin's write lock, and jwx/httprc waits for the first
-  successful fetch without a deadline and retries only after its interval. One failed first fetch — TinySesam not up
-  yet, a 404 — and every request with a gate token hangs, without a second fetch or a fallback (measured in a rollout
-  and in `tests/test_gate_caddy.py`). Up to 0.26.1 the template used `jwk_url`, and the 0.26.0 upgrade notes
-  recommended it. The gate key of 0.25.x was derived from the vault key (ADR-12); a proxy that still has it as
-  `sign_key` needs `TS_GATE_PUBKEY` = `tinysesam gate-key`, and that old key is retired before this version starts
-  ("Updating").
+- **Public keys for the proxy:** the template fetches them, `jwk_url http://{$TS_AUTH_UPSTREAM}/auth/gate/jwks.json`
+  (the active key and the previous ones within their overlap; `tinysesam gate-key --jwks` prints the same set). The
+  token's `kid` picks the key, and the key's `alg: EdDSA` decides the algorithm. **caddy-jwt 1.5.0 or later**: with
+  1.4.0 one failed first fetch (TinySesam not up yet, a 404) made every later request with a gate token hang — the
+  plugin waited for the set without a deadline while holding a lock (ggicci/caddy-jwt#117). 1.5.0 gives a fetch five
+  seconds, lets that request take the fallback path and fetches again with the next token (measured in
+  `tests/test_gate_caddy.py`: the key set answers 404 first, then TinySesam comes up). 0.26.2 to 0.30.0 used a fixed
+  `sign_key` (`TS_GATE_PUBKEY`) because of that hang; it still works (`tinysesam gate-key --db <file>`, anew after
+  every gate rotation), but a proxy that has it needs no change to keep working. A token with a `kid` the set does not
+  have (a forgery, or a key Caddy has not fetched yet) makes Caddy fetch the set again in the background — at most one
+  extra request to TinySesam per such token, besides the fallback path it takes anyway.
 - **Type:** every token carries `typ: tinysesam-gate+jwt` (RFC 8725 §3.11, T-53). caddy-jwt does not check `typ`
   (measured with 1.4.0: `JWT` and `at+jwt` pass alike); at the proxy the separation rests on the key, which signs
   nothing but gate tokens, and on `aud`, which is a bare host (`app.example.com|roles=…`) where an RFC 8707 audience is
@@ -509,8 +509,9 @@ cookie itself and asks `/auth/forward` only when it is missing or expires. Templ
   effective. Restore after the lifetime has expired. **Do not** change the base key: the
   TOTP secrets hang on it, TinySesam does not start with a different one (above).
 - **Caddy log:** An expired or foreign token is written by caddy-jwt as `invalid token` at level
-  `error` — that is the fallback path, not an outage. So is every request with an
-  `Authorization` header that is not a gate token: caddy-jwt always checks this header too.
+  `error` — that is the fallback path, not an outage. `Authorization` is no token source
+  (`disable_authorization_fallback`, caddy-jwt 1.5.0): an API or MCP call with a key or an access token leaves no line
+  of caddy-jwt, and no line carries token text (`token_string` is gone in 1.5.0).
 
 ### `Remote-Kind` and gate clients after spec v2: the upgrade
 
@@ -523,7 +524,7 @@ Applications on a gate client after spec version 2 refuse a request without it �
    `"Remote-Kind"` in `authResponseHeaders` of every middleware). Check with `deploy/forward-auth/acceptance.sh`.
 2. **Wait `gate_token_ttl_sec`** (default 300 s). A gate token issued before the update has no `ts_kind`, and caddy-jwt
    still accepts it on the fast path: the application then gets `Remote-Kind` with an empty value (measured with Caddy
-   2.11.9 and caddy-jwt 1.4.0 in `tests/test_gate_caddy.py`; never placeholder text), and a spec v2 client refuses the
+   2.11.9 and caddy-jwt 1.4.0, again with 1.5.0, in `tests/test_gate_caddy.py`; never placeholder text), and a spec v2 client refuses the
    request (401) until the token expires. The proxy does **not** fall back to `/auth/forward` for it.
 3. **The applications** on clients after spec v2.
 

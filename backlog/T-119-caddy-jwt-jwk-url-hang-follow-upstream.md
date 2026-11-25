@@ -2,7 +2,7 @@
 id: T-119
 type: Task
 title: "caddy-jwt 1.5.0: back to jwk_url, disable_authorization_fallback instead of the Authorization detour; check the X-Forwarded-For warning"
-status: offen
+status: erledigt
 points: 2
 milestone: M-2
 tags: [gate, caddy, upstream, cleanup]
@@ -34,3 +34,15 @@ after its cooldown). Both upstream issues that forced workarounds are fixed ther
 - caddy-jwt 1.5.0 pinned; `jwk_url` in the templates with the hang measured away; the Authorization detour gone in
   favour of `disable_authorization_fallback`, with the no-parse/no-log test; CHANGELOG with the operator steps (both
   are changes to the Caddyfile an operator copied); the warning question answered with a test.
+
+## Result (2026-11-25)
+- caddy-jwt 1.5.0 pinned by hand (no Dependabot pull request existed yet; 1.5.0 already runs on the maintainer's gates).
+- `jwk_url` back in `Caddyfile.gate`; measured with a key set that answers 404 at the first token: 1.4.0 times out
+  (20 s, three of three requests), 1.5.0 answers at once and reaches the fast path after TinySesam comes up. A rotation
+  is followed without a reload; a refetch started just before a rotation can put the old set back for a moment (the
+  new key's token then takes the way back once more — never a wrong accept). The quickstart has no `jwtauth` block.
+- `disable_authorization_fallback` replaces the `@no_gate_cookie`/`@has_authorization` detour; a valid gate token in
+  `Authorization: Bearer` does not pass Caddy, the log holds no `token_string`.
+- The X-Forwarded-For warning: a double evaluation, not a false alarm — the server in front had applied the header
+  (uvicorn `proxy_headers=True`). The dedicated warning naming `--no-proxy-headers` (since #283) missed a client
+  handed on in another notation and fell through to "is ignored"; fixed and tested in `tests/test_gateway.py`.

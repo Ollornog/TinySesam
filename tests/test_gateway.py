@@ -218,9 +218,18 @@ try:
     _caught.clear()
     assert security.client_ip(_Peer("198.51.100.3", "203.0.113.41"), ["127.0.0.1/32"]) == "198.51.100.3"
     assert _caught and not any("--no-proxy-headers" in m for m in _caught), _caught
+    # T-119: the server hands on the entry as it stands in the header, not in canonical notation. Compared raw, such a
+    # client counted as an untrusted proxy and the warning "is ignored: the peer is not in trusted_proxies" named the
+    # client's address. (Mutation probe: compare `peer` raw again → the first two cases fall.)
+    for peer, xff in (("2001:DB8::7", "2001:db8::7"), ("2001:db8:0:0::8", "198.51.100.9, 2001:db8::8"),
+                      ("203.0.113.42", "203.0.113.42:51234")):
+        _caught.clear()
+        assert security.client_ip(_Peer(peer, xff), ["127.0.0.1/32"]) == peer
+        assert len(_caught) == 1 and "--no-proxy-headers" in _caught[0] and "is ignored" not in _caught[0], (peer, _caught)
 finally:
     security.seclog.removeHandler(_h)
-ok("X-Forwarded-For already applied by the server: the warning names --no-proxy-headers; an untrusted proxy does not")
+ok("X-Forwarded-For already applied by the server: the warning names --no-proxy-headers (also for an address the "
+   "server hands on in another notation); an untrusted proxy does not")
 
 del os.environ["TINYSESAM_OIDC_ISSUER"]
 try:

@@ -197,12 +197,14 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   `webdav`-Profil des Schnellstarts braucht das nicht (der WebDAV-Server dort hat keine eigene Anmeldung).
   `tests/test_attack_round_a.py` prüft jede Vorlage unter `deploy/` darauf, auch eine neue; `tests/test_gate_caddy.py`
   misst es durch ein echtes Caddy.
-- **Zugangsdaten landen auch nicht im Proxy-Log.** Das Gate-Plugin caddy-jwt (v1.4.0) nimmt `Authorization` als
-  Token-Kandidaten, egal was konfiguriert ist, und protokolliert einen Kandidaten, der kein JWT ist, auf Level error mit
-  einem Drittel von Anfang und Ende. Bis 0.26.0 schrieb `deploy/forward-auth/Caddyfile.gate` so einen halben API-Key,
-  ein halbes OAuth-Token oder App-Passwort jedes API- und MCP-Aufrufs ins Caddy-Log. Seit 0.26.1 geht eine Anfrage mit
-  `Authorization` oder ohne Gate-Cookie direkt an `/auth/forward`; jwtauth sieht nur das Gate-Cookie. Das protokolliert
-  Caddy weiterhin gekürzt (ein JWT von höchstens `gate_token_ttl_sec`) bei jeder Anfrage, die es durchlässt.
+- **Zugangsdaten landen auch nicht im Proxy-Log.** Ohne `disable_authorization_fallback` nimmt das Gate-Plugin
+  caddy-jwt `Authorization` als Token-Kandidaten, egal was konfiguriert ist, und protokollierte bis 1.4.0 einen
+  Kandidaten, der kein JWT ist, auf Level error mit einem Drittel von Anfang und Ende. Bis 0.26.0 schrieb
+  `deploy/forward-auth/Caddyfile.gate` so einen halben API-Key, ein halbes OAuth-Token oder App-Passwort jedes API- und
+  MCP-Aufrufs ins Caddy-Log; 0.26.1 bis 0.30.0 leiteten solche Anfragen an jwtauth vorbei. Seit T-119 setzt die Vorlage
+  (mit caddy-jwt 1.5.0) `disable_authorization_fallback`: jwtauth liest nur das Gate-Cookie, nie `Authorization` —
+  nicht einmal ein gültiges Gate-Token, das dort steht —, und caddy-jwt protokolliert gar keinen Token-Text
+  (`token_string`) mehr.
 - **Ein Kopplungscode gibt die Zustimmung vorab (ADR-14, Vorgabe aus).** Mit `oauth_pairing_consent_enabled` holt
   das Konto in seiner eigenen, frisch bestätigten Browser-Sitzung einen Einmal-Code (CSRF; nie ein API-Key, ein
   Access-Token, ein Administrator oder eine Anwendung im Auftrag), und ein Einrichtungsskript löst ihn ohne Sitzung
