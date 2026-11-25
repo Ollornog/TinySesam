@@ -74,6 +74,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   feature's switch, building blocks and routes; `TinySesam` imports the blocks of the features that are on, the
   others never load. qrcode (and Pillow) is imported only when an enrollment QR is drawn, no longer with `totp`.
   Names, signatures and behaviour are unchanged.
+- Internal: the guards of the building blocks (T-112, part 5). `tests/test_store_parts.py` now also pins TinySesam's
+  index, that a feature which is off loads nothing (with every feature of the registry off, none of its building
+  blocks is imported and none of its routes exists after start, a page and a sign-in attempt; switched on, forward
+  auth, QR sign-in, resource locks and magic links load theirs — the counter-probe), and the size limits for the whole
+  package: no module in `tinysesam/` reaches 2,000 lines, `manager.py` and `store.py` stay below 1,500.
+  `CONTRIBUTING.md` (and its German version) gets a module map; `AGENTS.md` names the limits.
 - Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
   The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
   `tinysesam/gate-caddy/` in the user cache directory, old builds removed); without Docker the skip names the missing tool instead of

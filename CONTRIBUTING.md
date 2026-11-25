@@ -60,6 +60,23 @@ changed extra that leaves packages missing.
 
 Restart the service afterwards; `pip freeze | grep -i tinysesam` names the commit that is installed.
 
+## Module map
+
+The core is split into building blocks, one per feature (T-112); a feature that is switched off loads none of its code.
+
+- `tinysesam/manager.py`: the `TinySesam` class — constructor, class attributes, the index `_PART_METHODS`. Its methods
+  live in `tinysesam/_manager_<part>.py` (users, API keys, factors, sign-in, account, forward auth, LDAP, SAML, QR, …)
+  and load on first use.
+- `tinysesam/store.py`: the SQLite core; the other queries in `tinysesam/_store_<part>.py`, the schema in
+  `_store_schema.py`, loaded the same way.
+- `tinysesam/_features.py`: the feature registry — per feature its configuration switch, building blocks and routes.
+  A new feature registers here; its routes are added by the router only when the switch is on (as
+  `_routes_forward.py` for forward auth), and heavy optional libraries are imported inside its functions.
+- `tinysesam/config_check.py`: every contradiction of a configuration; rules by feature in `_config_check_<part>.py`,
+  shared helpers in `_config_check_base.py`.
+- Limits: no module in `tinysesam/` reaches 2,000 lines, `manager.py` and `store.py` stay below 1,500;
+  `tests/test_store_parts.py` checks them, the indexes and that switched-off features load nothing.
+
 ## Style
 
 Match the surrounding code: same naming, same comment density. A comment states a constraint the

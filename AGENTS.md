@@ -36,6 +36,10 @@ with their front door: keep the surface small, every feature optional, and prove
 | `spec/` | the gate client specification (`gate-client.md`) and its generated language-neutral vectors (`vectors/`) |
 | `clients/` | gate clients in other languages (Go, Rust, JS/TS, PHP), conventions in `clients/README.md` |
 
+Building blocks (T-112): a feature registers in `tinysesam/_features.py` (switch, building blocks, routes); a switched-off
+feature loads none of its modules or routes, no module in `tinysesam/` reaches 2,000 lines, `manager.py` and `store.py`
+stay below 1,500 — `tests/test_store_parts.py` checks all of it. Module map: `CONTRIBUTING.md`.
+
 ## Test
 
 ```bash

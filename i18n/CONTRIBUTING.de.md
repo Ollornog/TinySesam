@@ -59,6 +59,23 @@ einem geänderten Extra fehlen damit Pakete.
 
 Danach den Dienst neu starten; `pip freeze | grep -i tinysesam` nennt den installierten Commit.
 
+## Modulkarte
+
+Der Kern ist in Bausteine geteilt, einen je Funktion (T-112); eine abgeschaltete Funktion lädt nichts von ihrem Code.
+
+- `tinysesam/manager.py`: die Klasse `TinySesam` — Konstruktor, Klassenattribute, der Index `_PART_METHODS`. Ihre
+  Methoden liegen in `tinysesam/_manager_<teil>.py` (Konten, API-Keys, Faktoren, Anmeldung, Konto, Forward-Auth, LDAP,
+  SAML, QR, …) und laden beim ersten Gebrauch.
+- `tinysesam/store.py`: der SQLite-Kern; die übrigen Abfragen in `tinysesam/_store_<teil>.py`, das Schema in
+  `_store_schema.py`, genauso geladen.
+- `tinysesam/_features.py`: das Funktionsregister — je Funktion ihr Schalter in der Konfiguration, ihre Bausteine und
+  Routen. Eine neue Funktion trägt sich hier ein; ihre Routen fügt der Router nur bei eingeschaltetem Schalter hinzu
+  (wie `_routes_forward.py` für Forward-Auth), und schwere optionale Bibliotheken werden in ihren Funktionen importiert.
+- `tinysesam/config_check.py`: jeder Widerspruch einer Konfiguration; Regeln je Funktion in `_config_check_<teil>.py`,
+  gemeinsame Helfer in `_config_check_base.py`.
+- Grenzen: kein Modul in `tinysesam/` erreicht 2.000 Zeilen, `manager.py` und `store.py` bleiben unter 1.500;
+  `tests/test_store_parts.py` prüft sie, die Indizes und dass abgeschaltete Funktionen nichts laden.
+
 ## Stil
 
 Schreib wie der Code drumherum: gleiche Benennung, gleiche Kommentardichte. Ein Kommentar nennt eine
