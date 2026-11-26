@@ -129,6 +129,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      # T-127: tests/test_schema_baseline.py regenerates its fixture from the tag of the last release with
+      # migrations and fails without it; the checkout is shallow and carries no tags.
+      - name: Fetch the tag v0.30.0 (schema baseline)
+        run: git fetch --no-tags --depth=1 origin tag v0.30.0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.13"

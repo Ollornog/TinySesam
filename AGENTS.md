@@ -131,8 +131,9 @@ already hold one.
   in `docs/OPERATIONS.md` ("Updating") what an older version does with the file, and adds a test that opens a database
   of the state before (made by `Store` and stamped back) — never a fixture from older files.
   `tests/test_schema_baseline.py` compares a fresh database with `tests/fixtures/schema_baseline.json` (generated from
-  the tag v0.30.0); after the first schema change it compares a fresh database with a baseline database migrated by
-  the new step.
+  the tag v0.30.0, and regenerated from the tag and compared: a clone without the tag fails the suite, so every CI job
+  that runs it fetches the tag, T-127); after the first schema change it compares a fresh database with a baseline
+  database migrated by the new step.
 
 A quick probe instance for experiments (database in a throwaway directory, never in the tree):
 

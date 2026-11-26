@@ -2,7 +2,7 @@
 id: T-127
 type: Task
 title: "CI compares the schema baseline with the tag v0.30.0, not only with the checked-in file"
-status: offen
+status: erledigt
 milestone: M-1
 tags: [ci, schema, baseline]
 created: 2026-11-26
