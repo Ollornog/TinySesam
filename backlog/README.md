@@ -11,7 +11,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 1/15 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 87/97 erledigt
+* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 88/97 erledigt
 * ☑ **[M-6](M-6-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -164,7 +164,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-14](B-14-late-key-list-overwrites-the-sign-in-link-browser-test-reauth-flakes.md)** Admin panel: a late key list overwrote the sign-in link; browser test ran out after a dialog that navigates · M-5
 * ☑ **[B-15](B-15-totp-codes-in-the-suites-flip-at-a-step-boundary.md)** Test flake: TOTP codes in the suites flip at a 30-second step boundary · M-5
 * ☑ **[B-16](B-16-the-sql-check-of-test-english-code-goes-blind-afte.md)** The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment · M-1
-* ☐ **[B-17](B-17-scorecard-red-upstream-image-of-scorecard-action-2-6-0.md)** Scorecard red: the image of scorecard-action 2.6.0 cannot be pulled (upstream) · M-5
+* ☑ **[B-17](B-17-scorecard-red-upstream-image-of-scorecard-action-2-6-0.md)** Scorecard red: the image of scorecard-action 2.6.0 cannot be pulled (upstream) · M-5
 
 ## Entscheidungen (ADR)
 

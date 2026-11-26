@@ -2,7 +2,7 @@
 id: B-17
 type: Bug
 title: "Scorecard red: the image of scorecard-action 2.6.0 cannot be pulled (upstream)"
-status: offen
+status: erledigt
 milestone: M-5
 tags: [ci, supply-chain, upstream]
 created: 2026-11-26
@@ -13,6 +13,9 @@ created: 2026-11-26
 
 The `scorecard` workflow fails since scorecard-action 2.6.0: its image index on ghcr points at deleted manifests
 (ossf/scorecard-action#1752).
+
+**Done (2026-11-26):** fixed upstream on 2026-11-24 (the v2.6.0 image pulls again, issue closed as completed); a
+manual `scorecard` run on main is green with v2.6.0 unchanged. No fallback pin and no Dependabot ignore were needed.
 
 ## Content
 - Wait for the upstream fix until 2026-11-27. Without one: pin v2.5.0 by SHA, ignore 2.6.0 in Dependabot, and undo
