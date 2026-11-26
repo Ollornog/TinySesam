@@ -208,9 +208,13 @@ something; **[operators only]** — the operator or the developer of the embeddi
 ### Added
 
 - `tests/test_schema_baseline.py`: a fresh database equals the schema 0.30.0 creates (`tests/fixtures/
-  schema_baseline.json`, generated from the tag; regenerated and compared where the tag is in the clone), creation is
-  atomic, a database below the baseline is refused untouched, old-format secrets and `derived-v1` keys stop the start
+  schema_baseline.json`, generated from the tag), creation is atomic, a database below the baseline is refused untouched, old-format secrets and `derived-v1` keys stop the start
   and `keys retire` clears the latter. `Store.BASELINE_SCHEMA`, `Store.LAST_MIGRATING_RELEASE`.
+- CI compares the schema baseline with the tag itself, not only with the checked-in file (T-127): every job that runs
+  the suite (`full`, `minimal`, `repeat`, the nightly prerelease leg, the release check) fetches the tag v0.30.0
+  (`git fetch --depth=1 origin tag v0.30.0`), and `tests/test_schema_baseline.py` regenerates the fixture from it and
+  compares. A fixture edited by hand — even together with the schema in the code — turns red; a clone without the tag
+  fails the suite with the fetch command instead of skipping the comparison.
 
 ## [0.30.0] — 2026-11-24
 

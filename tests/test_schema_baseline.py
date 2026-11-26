@@ -4,8 +4,9 @@ What must hold, each against the real code paths:
 
   (a) a new database equals the schema the last release with migrations reaches — `sqlite_master` of a fresh
       database of this version against `tests/fixtures/schema_baseline.json`, which was generated from the release
-      tag (`python tests/test_schema_baseline.py --update`); where the tag is in the clone (a full clone, the release
-      job), the fixture itself is regenerated from it and compared
+      tag (`python tests/test_schema_baseline.py --update`); the fixture itself is regenerated from the tag and
+      compared, so a fixture edited by hand turns red (T-127) — without the tag in the clone the suite fails instead
+      of skipping (every CI job that runs it fetches the tag)
   (b) a database below the baseline (stamp 25, or no stamp at all with TinySesam tables) is refused with a message
       that names the release with the migrations — and the file is left byte for byte as it was; the command line
       says the same with exit code 1 instead of a traceback; the tables of another program in the same file do not
@@ -110,15 +111,22 @@ r.check("(a) the baseline constants agree: schema, baseline and the release name
         Store.SCHEMA_VERSION == Store.BASELINE_SCHEMA == expected["user_version"]
         and f"v{Store.LAST_MIGRATING_RELEASE}" == expected["generated_from"] == TAG,
         f"{Store.SCHEMA_VERSION} {Store.BASELINE_SCHEMA} {Store.LAST_MIGRATING_RELEASE}")
+# The fixture is only as good as its source: regenerated from the tag, it must be identical — a fixture edited by hand
+# (together with the schema in the code, so that the comparison above stays green) turns this red (T-127). Without
+# the tag there is nothing to compare with, and that is a failure, not a skip: every CI job that runs this suite
+# fetches the tag (`git fetch --depth=1 origin tag v0.30.0`), a local clone has it anyway.
 from_tag = schema_from_tag(tempfile.mkdtemp(dir=work))
-if from_tag is None:
-    r.check(f"(a) the fixture names its tag and carries a full schema (the tag {TAG} itself is not in this shallow "
-            "clone; a full clone regenerates the fixture from it)",
-            expected.get("generated_from") == TAG and "table users" in expected["objects"], str(expected.keys()))
-else:
+r.check(f"(a) the tag {TAG} is in this clone, so the fixture can be regenerated from it",
+        from_tag is not None,
+        f"the tag {TAG} is missing (a shallow clone without tags?): git fetch --depth=1 origin tag {TAG}")
+if from_tag is not None:
+    tag_differ = sorted(k for k in set(from_tag["objects"]) & set(expected["objects"])
+                        if from_tag["objects"][k] != expected["objects"][k])
     r.check(f"(a) the fixture is what {TAG} creates: regenerated from the tag in this clone, it is identical",
             from_tag == {k: v for k, v in expected.items() if k != "generated_from"},
-            str(sorted(set(from_tag["objects"]) ^ set(expected["objects"]))))
+            f"only in the tag {sorted(set(from_tag['objects']) - set(expected['objects']))} "
+            f"only in the fixture {sorted(set(expected['objects']) - set(from_tag['objects']))} "
+            f"different {tag_differ} stamp {from_tag['user_version']} / {expected['user_version']}")
 # the self-probe of the comparison: a changed column type, a dropped index and a comment are told apart
 probe = json.loads(json.dumps(mine))
 probe["objects"]["table users"] = probe["objects"]["table users"].replace("username TEXT", "username BLOB", 1)
