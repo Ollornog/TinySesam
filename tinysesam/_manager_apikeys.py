@@ -149,7 +149,10 @@ def verify_api_key(self, key):
     digest = self.store.token_digest(key, "apikey")
     row = self.store.get_api_key_by_hash(digest)
     if not row:
-        self._key_log(None, "unknown")
+        # A key of 0.30.x (plain sha256, T-72 without migration) is refused like any unknown one, but the audit and
+        # security log say why and whose it is (`pre_pepper`): the operator re-issues it instead of searching (T-126).
+        before = self.store.api_key_before_pepper(key)
+        self._key_log(before, "pre_pepper" if before is not None else "unknown")
         return None, None
     # Found with a previous pepper (after `keys rotate --purpose oauth-pepper`): move it to the active one, so that
     # retiring the old pepper does not cut it (T-72).

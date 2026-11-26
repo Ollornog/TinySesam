@@ -6,6 +6,7 @@ store as `self`, exactly as it did inside the class (T-112).
 
 from . import store as _store
 from .store import (
+    hashlib,
     json,
 )
 import sqlite3
@@ -32,6 +33,15 @@ def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=No
 
 def get_api_key_by_hash(self, key_hash):
     return self._one("SELECT * FROM api_key WHERE key_hash=?", (key_hash,))
+
+
+def api_key_before_pepper(self, raw: str):
+    """The key row (id, user_id, kind) whose digest is the plain sha256 of `raw` — how 0.30.x and older stored an API
+    key, before T-72 keyed it with the pepper (no migration). Only to name the reason of a refusal (`pre_pepper`) when
+    such a key knocks after the update; it never lets a key in (`verify_api_key` refuses it either way). Goes with the
+    next breaking release, when no 0.30.x key can be left (T-126)."""
+    return self._one("SELECT id, user_id, kind FROM api_key WHERE key_hash=?",
+                     (hashlib.sha256((raw or "").encode()).hexdigest(),))
 
 
 def list_api_keys(self, user_id):

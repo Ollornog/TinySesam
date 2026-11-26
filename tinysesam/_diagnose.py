@@ -11,8 +11,8 @@ What the report holds:
 * the **shape** of the configuration: which fields differ from the default. Switches and numbers are shown, a choice
   from a fixed set only when it is one of the known values, everything else as a placeholder (`<url-1>`,
   `<host-2>`) or as `<set>` / `<3 entries>`. Secrets are only ever `<set>`;
-* the built-in checks: `config_check` (errors, warnings), proxy headers, the clock, the database schema, where the
-  vault key lies, gate token and JWKS;
+* the built-in checks: `config_check` (errors, warnings), proxy headers, the clock, the database schema and what
+  blocks an update to this version (each with its command, T-126), where the vault key lies, gate token and JWKS;
 * the latest warnings and errors of the security log (`--log`), redacted.
 
 Redaction works in layers, so that one gap does not leak (`Redactor`): every configured value outside the known-safe
@@ -685,6 +685,46 @@ def _key_file_state(path: str, db_path: str) -> str:
     return f"beside the database: {'yes' if beside else 'no'}, present, readable by owner only: {private}"
 
 
+def _update_blockers(db: sqlite3.Connection, present: Any) -> list[str]:
+    """What stops this version's start on this database, each with the command that clears it (T-126) — read from the
+    file only, the same refusals as the start (`Store._refuse_below_baseline`, `Store._check_v2_only`,
+    `TinySesam._refuse_derived_keys`). A key in a keyring file or `*_PREVIOUS` variable is not in the database: the
+    start names it. The database path is written `<db>`, like everything that identifies a setup."""
+    from .store import SCHEMA, Store
+    release = Store.LAST_MIGRATING_RELEASE
+    found: list[str] = []
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    ours = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", SCHEMA))
+    if isinstance(present, int) and present < Store.BASELINE_SCHEMA and tables & ours:
+        found.append(f"schema {present} is below the baseline {Store.BASELINE_SCHEMA}: update to TinySesam {release} "
+                     "first, start it once with write access and run its `tinysesam keys reencrypt --db <db>`, then "
+                     "this version")
+    else:
+        old = sum(int(_scalar(db, sql) or 0) for sql in Store.old_format_queries())
+        if old:
+            found.append(f"{old} stored secret(s) in a format before 0.26: re-encrypt them with TinySesam {release} "
+                         "(its `tinysesam keys reencrypt --db <db>`, or start it once with write access)")
+        planted = int(_scalar(db, "SELECT COUNT(*) FROM key_material WHERE material IS NULL "
+                                  "OR material NOT LIKE 'v2:%'") or 0)
+        if planted:
+            found.append(f"key_material holds {planted} value(s) that are not vault ciphertext: restore the database "
+                         "from a backup (docs/OPERATIONS.md \"Keys\")")
+        try:
+            derived = db.execute("SELECT purpose, kid FROM key_material WHERE note = 'derived-v1' "
+                                 "ORDER BY purpose, kid").fetchall()
+        except sqlite3.Error:
+            derived = []
+        for purpose, kid in derived:
+            force = " --force" if purpose == "oauth-pepper" else ""
+            found.append(f"{purpose} key {kid} was derived from the vault key by 0.25.x (note derived-v1): "
+                         f"`tinysesam keys retire --db <db> --purpose {purpose} --kid {kid}{force}` (with this "
+                         f"version or {release})")
+    if not found:
+        return ["- Update blockers: none in the database (a key in a keyring file or variable is checked at start)"]
+    return ([f"- Update blockers: {len(found)} — this version does not start until each is cleared"]
+            + [f"  - {line}" for line in found])
+
+
 def _checks(cfg: Any, mode: str, db_path: str, red: Redactor, log_lines: list[str]) -> list[str]:
     from .store import Store
 
@@ -735,11 +775,15 @@ def _checks(cfg: Any, mode: str, db_path: str, red: Redactor, log_lines: list[st
         expected = Store.SCHEMA_VERSION
         if present == expected:
             state = "current"
+        elif isinstance(present, int) and present < Store.BASELINE_SCHEMA:
+            state = (f"below the baseline {Store.BASELINE_SCHEMA} — this version refuses it at start (see the update "
+                     "blockers)")
         elif isinstance(present, int) and present < expected:
             state = "older — the next start migrates it (take a backup first)"
         else:
             state = "NEWER than this version — written by a later TinySesam"
         lines.append(f"- Database schema: {present} (this version: {expected}) — {state}")
+        lines += _update_blockers(db, present)
 
     from . import keys as K
     key_file = getattr(cfg, "secrets_key_file", "") if cfg is not None else ""

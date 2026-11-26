@@ -372,7 +372,7 @@ def read_payload(text) -> Optional[dict]:
 #: OAuth never loads its queries. `tests/test_store_parts.py` pins that this index and the parts agree.
 _PART_METHODS = {
     "apikeys": (
-        "add_api_key", "api_key_owner", "app_password", "app_password_add", "app_password_by_digest",
+        "add_api_key", "api_key_before_pepper", "api_key_owner", "app_password", "app_password_add", "app_password_by_digest",
         "app_password_revoke", "app_password_used", "app_passwords", "app_passwords_active",
         "app_passwords_revoke_all", "app_passwords_with_kid", "count_active_api_keys", "get_api_key",
         "get_api_key_by_hash", "list_api_keys", "open_token", "revoke_api_key", "revoke_user_api_keys",
@@ -1050,6 +1050,18 @@ class Store(metaclass=_StoreParts):
                                   "WHERE successor IS NOT NULL"),
         ("key_material.material", "SELECT rowid AS rid, material AS value, purpose, kid FROM key_material"),
     )
+
+    @classmethod
+    def old_format_queries(cls) -> tuple:
+        """One `SELECT COUNT(*)` per encrypted column outside `key_material`: its values not in the format `v2` (a
+        `v1:` or plain value of a version before 0.26). `old_format_count` and `tinysesam diagnose` (read-only, T-126)
+        count with the same text."""
+        out = []
+        for column, _select in cls.ENCRYPTED:
+            if column != "key_material.material":
+                table, col = column.split(".")
+                out.append(f"SELECT COUNT(*) AS n FROM {table} WHERE {col} IS NOT NULL AND {col} NOT LIKE 'v2:%'")
+        return tuple(out)
 
     #: Prefix of the origin placeholders in `federated_identity.identifier` (see `TinySesam._WITHOUT_IDENTIFIER`).
     WITHOUT_IDENTIFIER = "~without-identifier:"

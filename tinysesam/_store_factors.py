@@ -100,14 +100,7 @@ def extract_secrets(self) -> None:
 def old_format_count(self) -> int:
     """Stored secrets outside `key_material` that are not in the format `v2` — `v1:` or plain text, written by a
     version before 0.26 and never re-encrypted. This version reads none of them (`_check_v2_only`)."""
-    left = 0
-    for column, _select in self.ENCRYPTED:
-        if column == "key_material.material":
-            continue
-        table, col = column.split(".")
-        left += self._one(f"SELECT COUNT(*) AS n FROM {table} WHERE {col} IS NOT NULL "
-                          f"AND {col} NOT LIKE 'v2:%'")["n"]
-    return int(left)
+    return int(sum(self._one(sql)["n"] for sql in self.old_format_queries()))
 
 
 def _check_v2_only(self) -> None:

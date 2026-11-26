@@ -882,6 +882,47 @@ login page (never the direct path to the provider) — with "Continue as …" fo
 
 ## Updating: the schema baseline (two steps)
 
+### Upgrading from 0.30.x
+
+<!-- upgrade-list:start -->
+In this order. The start of this version refuses a database with a blocking point (marked **blocks**) and names the
+command that clears it; `tinysesam diagnose --db auth.db` lists every blocking point at once, without starting.
+
+1. **Back up** with 0.30.x: `tinysesam backup --db auth.db auth-before.db` (not `cp`: WAL).
+2. **Be on 0.30.x** (T-111) — **blocks**. A database below schema 26 (or without a stamp, before 0.18) is refused and
+   left untouched: update to 0.30.0 first and start it once with write access.
+3. **No secret in a format before 0.26** (T-111) — **blocks**. With 0.30.x, `tinysesam keys list --db auth.db` shows
+   no line `… value(s) in a format before 0.26`; otherwise run its `tinysesam keys reencrypt --db auth.db`.
+4. **Retire the keys derived from the vault key** (T-111) — **blocks**. For every key `tinysesam keys list` shows with
+   `note: derived-v1`: `tinysesam keys retire --db auth.db --purpose gate --kid <kid>` on 0.30.x (this version names
+   and accepts the same command); for the OAuth pepper `--purpose oauth-pepper --kid <kid> --force` (programs still
+   connected with OAuth tokens of 0.25.x connect again). A key in a keyring file or `*_PREVIOUS` variable: remove it
+   there.
+5. **Re-issue the API keys** (T-72). Every API key of 0.30.x is refused after the update; the audit and security log
+   name the key and its owner with `reason=pre_pepper`. Note before the update which keys are in use (panel,
+   `list_api_keys`), create them anew afterwards — the service accounts of applications with the account API or
+   approvals included — and revoke the old entries (they stay in the list until then).
+6. **Open one-time links end** (T-72): sign-in links (also the account API's), invitations, address confirmations,
+   reset links, open QR sign-in requests, service and consent pairing codes. People ask for a new link; issue new
+   pairing codes.
+7. **Recovery codes end** (@344f94). TOTP keeps working; tell the people with TOTP to generate new codes on their
+   account page after the update. Whoever has lost the authenticator too needs the panel's access reset.
+8. **A gateway code exchange running at the update fails once** (@51b7a1, `gate_link_enabled`): reloading the
+   application starts a new one. Nothing to do.
+9. **Code on removed names** (T-111): the 38 tier-C warning aliases of 0.22.0 are gone — use `login_password`,
+   `login_pin`, `login_totp`, `confirm_*`, `complete_totp`, `require_csrf`, `current_user`/`session_user`,
+   `all_security()`, `demo_mode`, `admin_identifiers`/`ensure_admin` (the full table and the removed internal names
+   are in the changelog, "Removed"). `tinysesam keys reencrypt --to v1` is gone.
+10. **Audit rows in German** that 0.24.x or older wrote after schema 15 (a rollback without restore) keep their old
+    names in the panel and `tinysesam audit` (T-111).
+
+Not affected: sessions, passkeys, TOTP itself, app passwords, OAuth access and refresh tokens issued by 0.26 or later.
+Going back to 0.30.0 needs no SQL (the schema is the same, 26); the API keys and links this version issued are unknown
+there.
+<!-- upgrade-list:end -->
+
+### From a version before 0.30.0: two steps
+
 **0.30.0 is the last release with database migrations.** Since the schema baseline (T-111) a new database is created
 in one step with schema 26, and this version opens schema 26 and newer only. Whoever runs an older version updates in
 **two steps**:
