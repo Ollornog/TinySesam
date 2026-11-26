@@ -3,7 +3,7 @@ type: Task
 title: 'First sign-in by one-time link: recovery codes switchable, TOTP app hint, target after the setup'
 status: erledigt
 id: T-94
-milestone: M-2
+milestone: M-5
 tags: [onboarding, totp, account-api, redirect]
 created: '2026-11-23'
 ---

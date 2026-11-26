@@ -13,7 +13,7 @@ Pinned here:
   (e) a feature that is off loads nothing: with every feature of the registry `tinysesam/_features.py` off, none of
       its building blocks is imported and none of its routes exists after start and a first request; switched on, a
       feature loads its blocks and registers its routes (counter-probe)
-  (f) size: no module in `tinysesam/` has 2,000 lines or more, `manager.py` and `store.py` stay below 1,500 (M-5)
+  (f) size: no module in `tinysesam/` has 2,000 lines or more, `manager.py` and `store.py` stay below 1,500 (M-1)
 
     python tests/run_all.py test_store_parts.py
 """
@@ -192,7 +192,7 @@ r.check("(e) the registry names real switches and real modules",
             for switch, _, _ in F.FEATURES.values())
         and all((PKG / f"{m}.py").exists() for _, mods, _ in F.FEATURES.values() for m in mods))
 
-# ---------------------------------------------------------------- (f) size of every module (the M-5 limits)
+# ---------------------------------------------------------------- (f) size of every module (the M-1 limits)
 all_sizes = {str(p.relative_to(PKG)): len(p.read_text(encoding="utf-8").splitlines()) for p in sorted(PKG.rglob("*.py"))}
 too_big = {k: v for k, v in all_sizes.items() if v >= 2000}
 r.check("(f) no module in tinysesam/ has 2,000 lines or more; manager.py and store.py stay below 1,500",

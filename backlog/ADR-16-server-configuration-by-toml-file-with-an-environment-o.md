@@ -22,7 +22,7 @@ The gateway is a preset configured by environment variables, covering only OIDC 
 - Runtime data (role catalog, permissions assignments, accounts) live in the database and are maintained in the panel.
 - The server is `tinysesam.gateway` with the full configuration, not a second code base. The SAML extras ship as their own image variant.
 - **Parity rule:** every function has a server route (and, where the application reads something, a spec section and a vector) or sits on a "library only" list with a reason. A parity test reads `tests/api_surface.json` (extended) and fails when a tier A/B name has neither. Library only: fully headless forms with own password fields, `set_template` and `page_layout`.
-- Server first: [T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md) precedes every other stage of [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md).
+- Server first: [T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md) precedes every other stage of [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md).
 
 ## Consequences
 Every later feature ships its HTTP or spec path in the same pull request. The environment variable `TINYSESAM_APPS` of [T-90](T-90-account-api-for-applications-stage-a-create-read-u.md) becomes part of the file.

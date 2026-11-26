@@ -3,7 +3,7 @@ type: Task
 title: 'Sign-in alternatives: QR/cross-device login, admin-issued link without mail, self-request switchable'
 status: erledigt
 id: T-33
-milestone: M-2
+milestone: M-5
 tags: [login, magic-link, qr, admin]
 created: '2026-11-20'
 ---

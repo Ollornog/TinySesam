@@ -3,7 +3,7 @@ id: T-62
 type: Task
 title: 'Caddy shipped ready-made: image tinysesam-caddy-gate and a quickstart stack'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [deploy, forward-auth, caddy, release, supply-chain, quickstart]
 created: '2026-11-20'
 ---

@@ -3,7 +3,7 @@ id: T-88
 type: Task
 title: 'Account kind (Remote-Kind, spec v2), account menu links and the logo tooltip'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [forward-auth, gate, gate-client, topbar]
 created: '2026-11-22'
 ---

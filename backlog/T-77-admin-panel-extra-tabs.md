@@ -3,7 +3,7 @@ id: T-77
 type: Task
 title: 'Admin panel: extra tabs that link to the application''s own administration'
 status: verworfen
-milestone: M-2
+milestone: M-5
 tags: [admin, ui]
 created: '2026-11-21'
 ---

@@ -14,7 +14,7 @@ source code.
 
 | Tier | What | Promise |
 |---|---|---|
-| **A — public, stable from 1.0** | documented and/or used by embedders | No break across two minor versions — the condition for 1.0 ([M-1](backlog/M-1-api-stable-1-0.md)). The counter starts with 0.22.0, the release that introduces the grading. |
+| **A — public, stable from 1.0** | documented and/or used by embedders | No break across two minor versions — the condition for 1.0 ([M-4](backlog/M-4-api-stable-1-0.md)). The counter starts with 0.22.0, the release that introduces the grading. |
 | **B — for advanced users** | Building blocks for your own account and admin pages, your own mail and token flows, extension points | Stays. Removal or rework only after a `DeprecationWarning` has pointed to it for two minor versions. Weaker than A: A rework with advance notice is allowed. A route cannot warn: a path in tier B is announced in the CHANGELOG under “Deprecated” at least two minor versions before it is removed or renamed. |
 
 The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test_api_surface.py` demands an explicit one for every public name: A new name comes in without a tier and keeps it red until someone decides — nothing is promised by accident.

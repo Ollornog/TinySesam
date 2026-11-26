@@ -1,5 +1,5 @@
 ---
-id: M-3
+id: M-6
 type: Milestone
 title: Gate in front of third-party apps — fast, sign in once, sign out cleanly
 status: erledigt
@@ -7,7 +7,7 @@ tags: [gateway, forward-auth, sso]
 created: 2026-10-03
 ---
 
-# M-3 — Gate in front of third-party apps
+# M-6 — Gate in front of third-party apps
 
 **Done when:** a third-party app behind the gate loads its assets without a TinySesam hop, a person signs in
 exactly once (at the provider), optionally signs out of only the app or of everything, and share paths work without

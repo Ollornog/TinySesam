@@ -3,7 +3,7 @@ id: T-92
 type: Task
 title: 'Role catalog: roles in the database, so administrators add them in the panel'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [roles, admin, ui, cli]
 created: '2026-11-23'
 ---

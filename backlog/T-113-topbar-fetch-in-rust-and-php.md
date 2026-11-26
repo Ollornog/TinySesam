@@ -3,13 +3,13 @@ id: T-113
 type: Task
 title: "Topbar fetch in the Rust and PHP clients"
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [clients, topbar]
 created: 2026-11-23
 ---
 # T-113 — Topbar fetch in the Rust and PHP clients
 
-**Story points:** 3 · **Estimate:** 4–6 h (not measured) · **Milestone:** [M-2](M-2-after-1-0.md)
+**Story points:** 3 · **Estimate:** 4–6 h (not measured) · **Milestone:** [M-5](M-5-after-1-0.md)
 
 Rest of the client helpers of [T-89](T-89-approvals-confirm-one-sensitive-action-with-a-step.md) and
 [T-93](T-93-follow-ups-to-0-29-0-kid-rule-proxy-duty-key-purposes.md): Go, JS/TS and Python can fetch the topbar data

@@ -3,7 +3,7 @@ id: T-39
 type: Task
 title: 'HSTS in the library (https_mode=force) and in every proxy template'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, headers, deploy, asvs]
 created: '2026-11-20'
 ---

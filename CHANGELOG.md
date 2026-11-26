@@ -36,6 +36,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- **Backlog milestones renumbered so that the number is the order:** M-1 clean baseline and modules (was M-5), M-2
+  shell and headless (was M-4), M-3 trust, hardening and launch (was M-6), M-4 1.0 (was M-1), M-5 after 1.0 (was
+  M-2), M-6 gate in front of third-party apps, done (was M-3). Every reference in the repository, including older
+  entries of this changelog, now uses the new numbers; the milestones themselves are unchanged.
 - **Gate template back on `jwk_url`, caddy-jwt 1.5.0** (T-119). The image `tinysesam-caddy-gate` carries caddy-jwt
   1.5.0, which no longer hangs every request with a gate token after one failed first fetch of the key set
   (ggicci/caddy-jwt#117; measured: key set answering 404 at the first token — 1.4.0 times out, 1.5.0 answers at once and
@@ -123,7 +127,7 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Removed
 
-**Breaking — the one deliberate break before 1.0** (milestone M-5, collected for one release). **0.30.0 is the last release with
+**Breaking — the one deliberate break before 1.0** (milestone M-1, collected for one release). **0.30.0 is the last release with
 database migrations**; this version starts from the schema baseline (T-111). Update path for every installation:
 `docs/OPERATIONS.md`, "Updating". Each point says who has to act: **[end users notice]** — people signing in see
 something; **[operators only]** — the operator or the developer of the embedding app acts, nobody else notices.
@@ -212,7 +216,7 @@ something; **[operators only]** — the operator or the developer of the embeddi
 
 **The last release with database migrations.** The next release starts from a single schema baseline, drops old
 migrations and transition paths, and will break parts of the public API once, on purpose, before 1.0 (see the
-roadmap milestone M-5). Every installation should move to 0.30.0 first, let it migrate, and re-encrypt stored secrets
+roadmap milestone M-1). Every installation should move to 0.30.0 first, let it migrate, and re-encrypt stored secrets
 in the current format (`tinysesam keys reencrypt`) before taking the next release. Who needs this release besides
 that: operators who invite people by one-time link (shorter first sign-in, optional recovery codes, a hint for the
 authenticator app, a welcome target after setup) and anyone connecting MCP clients for laypeople (pairing code as
@@ -1954,7 +1958,7 @@ Patch release cut by the release automation after Dependabot merges:
 - ci: bump caddy in /deploy/forward-auth/caddy-gate (#231)
 - ci: bump caddy in /deploy/forward-auth/caddy-gate (#225)
 
-### Changed — public API narrowed to the documented surface (M-1): no name had to go
+### Changed — public API narrowed to the documented surface (M-4): no name had to go
 
 - **The rule (decided before 1.0):** a Python name stays public only if the hand-written docs describe it — the
   READMEs, `CONFIGURATION.md`, `SECURITY.md`, `docs/`. `API.md` does not count: it is generated from the surface and
@@ -2226,7 +2230,7 @@ variable `TS_SHARE_PREFIX`, the Traefik middleware `tinysesam-strip-cookies`, th
 on the login page (B-4), adds `tinysesam delete`, and is the base of the API freeze: the two-minor-version clock for
 the new tier-A entries (hook, HTTP contract, security log) starts with this release.
 
-### Fixed — CI: the release PR could not turn green (M-1)
+### Fixed — CI: the release PR could not turn green (M-4)
 
 The acceptance of the reference stack (`gate-caddy`, since 2026-10-11) pulls every image of
 `deploy/forward-auth/docker-compose.yml` — including `ghcr.io/ollornog/tinysesam:v<version>`, which only the tag
@@ -2234,7 +2238,7 @@ builds. The release PR sets that version first, so the check was red on every re
 package version is now skipped as long as its tag does not exist (`image-probe` builds and starts that image on every
 PR); once the tag exists it is pulled like every other image.
 
-### Added — the stability promise covers the hook, the HTTP contract and the security log (M-1, no break)
+### Added — the stability promise covers the hook, the HTTP contract and the security log (M-4, no break)
 
 PO decision 2026-10-29: besides the Python names the promise now covers the following. **Nothing changes in the
 code or in any existing tier** — this is new promise, measured by `tests/test_api_surface.py` (191 new entries in
@@ -2257,7 +2261,7 @@ code or in any existing tier** — this is new promise, measured by `tests/test_
 - **The clock** for these new tier-A entries starts with the release that introduces them (the next one after 0.24.13);
   the existing names keep theirs (0.22.0).
 - `API.md` (generated) has the new sections “Attributes of `TinySesam`”, “HTTP contract” and “Security log”; both READMEs
-  have a paragraph “Beyond the Python names”; `backlog/M-1-api-stable-1-0.md` has the addendum with the table and the
+  have a paragraph “Beyond the Python names”; `backlog/M-4-api-stable-1-0.md` has the addendum with the table and the
   open points.
 - **Mutations (real runs on a copy of the tree, 24 of 24 turn the guard red):** a gate route renamed, a gate path
   renamed, an HTML page renamed (tier B), a route parameter dropped, a new route without a tier, a route registered
@@ -2269,7 +2273,7 @@ code or in any existing tier** — this is new promise, measured by `tests/test_
 - Refactor: the static reading of the `seclog` call sites moved from `tests/test_fail2ban_reason.py` to
   `tests/_seclog_ast.py`; both guards use it.
 
-### Changed — the last breaking pass before the API freeze (M-1, PO decision 2026-10-29)
+### Changed — the last breaking pass before the API freeze (M-4, PO decision 2026-10-29)
 
 What the stability promise names is English and correctly tiered **now**. Everything below is a break against the
 earlier state, made **once, without alias or transition** (nothing of it was released with the new promise). No stored
@@ -2931,7 +2935,7 @@ session ever reaching an app.
 ## [0.23.0] — 2026-10-07
 
 **No break** of the public API — extensions only (`tests/api_surface.json`). New is the gate in front of
-third-party applications ([M-3](backlog/M-3-gate-in-front-of-third-party-apps.md)): gate token, login and logout modes,
+third-party applications ([M-6](backlog/M-6-gate-in-front-of-third-party-apps.md)): gate token, login and logout modes,
 share exceptions, measurement and acceptance.
 
 **What stands out on update:**
@@ -3158,7 +3162,7 @@ reported.** What stands out on update:
 
 - **The public API has tiers** (PO decision 2026-09-26): **A** public and stable from
   1.0, **B** for advanced users (building blocks for custom account and admin pages), **C** internal.
-  Only A carries the promise from M-1 — two minor versions without a break, counted from this release. B
+  Only A carries the promise from M-4 — two minor versions without a break, counted from this release. B
   stays, but is reworked or removed after a `DeprecationWarning` has pointed to it for two
   minor versions. C is not part of the promise and is dropped with 1.0.
   **Whoever embeds TinySesam checks `API.md` for the tier of their calls** — there
@@ -5989,7 +5993,7 @@ current one is in the file itself.)
 
 **Open and deliberately not decided in passing:** *which* of these methods should be public
 in the long run. The surface was measured (everything without a leading underscore), not selected —
-that is a product decision and is tracked in [M-1](backlog/M-1-api-stable-1-0.md).
+that is a product decision and is tracked in [M-4](backlog/M-4-api-stable-1-0.md).
 
 ### Fixed — contradictions in the configuration were noticed only at login
 
@@ -6289,7 +6293,7 @@ release brings new methods (`complete_totp`, `rotate_csrf`), new exports (`TinyS
 It does not carry 1.0 anyway: the promise never had to hold under changes, because 0.17.0 did not touch
 the library at all. And the security fixes of this version change **behavior**
 that users could (wrongly) assume until now — a measured surface says nothing about that.
-[M-1](backlog/M-1-api-stable-1-0.md) remains open.
+[M-4](backlog/M-4-api-stable-1-0.md) remains open.
 
 ### Added — `tests/test_packaging.py`: the package as it arrives
 
@@ -6344,7 +6348,7 @@ PEP 639. That requires setuptools ≥ 77, and builds also happen with older ones
 A release **with no change to the library**: anyone who embeds TinySesam gets the same code
 as with 0.16.0 — the wheel differs only in its version number. It is still worthwhile, because
 the image is built with updated tooling and because the **clock for 1.0 starts running** here:
-`tests/test_api_surface.py` pins down the public surface, and M-1 requires two minor versions
+`tests/test_api_surface.py` pins down the public surface, and M-4 requires two minor versions
 without a break. 0.17.0 is the first of them.
 
 If you are on 0.16.0 and need none of this, you can skip it.
@@ -6382,7 +6386,7 @@ a loop of error and correction, not a procedure. `python3 scripts/_release.py 0.
 everything and closes the CHANGELOG section; `--pruefen` only checks.
 
 Deliberately **not** included: tagging and pushing. A human presses the button — the same separation as
-with rollout. Both feed into [M-1](backlog/M-1-api-stable-1-0.md).
+with rollout. Both feed into [M-4](backlog/M-4-api-stable-1-0.md).
 
 ## [0.16.0] — 2026-09-19
 

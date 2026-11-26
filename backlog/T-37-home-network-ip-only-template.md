@@ -3,7 +3,7 @@ id: T-37
 type: Task
 title: 'Home network: template for IP only, with a clear recommendation for a domain'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [deploy, tls, home-network, docs, config-check]
 created: '2026-11-20'
 ---

@@ -3,7 +3,7 @@ type: Task
 title: Pairing code for people's programs (consent given in advance) and a consent page for laypeople
 status: erledigt
 id: T-95
-milestone: M-2
+milestone: M-5
 tags: [oauth, mcp, consent, pairing, laypeople]
 created: '2026-11-23'
 ---

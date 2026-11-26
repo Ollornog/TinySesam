@@ -4,7 +4,7 @@ type: Task
 title: DPoP for service tokens — bind a service's access token to its key (RFC 9449)
 status: offen
 points: 8
-milestone: M-2
+milestone: M-5
 blocked_by: [T-60]
 tags: [oauth, m2m, dpop]
 created: 2026-11-20

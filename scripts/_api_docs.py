@@ -42,7 +42,7 @@ TIERS = {
     "A": ("public, stable from 1.0",
           "documented and/or used by embedders",
           "No break across two minor versions — the condition for 1.0 "
-          "([M-1](backlog/M-1-api-stable-1-0.md)). The counter starts with 0.22.0, the release "
+          "([M-4](backlog/M-4-api-stable-1-0.md)). The counter starts with 0.22.0, the release "
           "that introduces the grading."),
     "B": ("for advanced users",
           "Building blocks for your own account and admin pages, your own mail and token flows, "

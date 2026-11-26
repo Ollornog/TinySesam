@@ -3,7 +3,7 @@ id: T-20
 type: Task
 title: Share exceptions per app — exact path prefixes before the gate, with a control test
 status: erledigt
-milestone: M-3
+milestone: M-6
 tags: [gateway, caddy, share]
 created: 2026-10-03
 ---

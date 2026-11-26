@@ -42,7 +42,7 @@ Git tag. The names are free.
 - Until 1.0, installation goes through `pip install git+…@<tag>`.
 - If it is published, then with **Trusted Publishing** (PyPI trusts the workflow via OIDC),
   no token in the repo.
-- To be checked at [M-1](M-1-api-stable-1-0.md).
+- To be checked at [M-4](M-4-api-stable-1-0.md).
 
 ## Addendum (2026-09-21)
 

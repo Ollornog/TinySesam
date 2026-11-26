@@ -1,6 +1,6 @@
 """Measurement of the HTTP and log contract — what `tests/test_api_surface.py` pins beyond the Python names.
 
-PO decision 2026-10-29 (M-1, "what belongs in the stability promise"): besides the Python surface the promise
+PO decision 2026-10-29 (M-4, "what belongs in the stability promise"): besides the Python surface the promise
 covers the attributes `auth.cfg` and `auth.on_security_event`, the HTTP routes (the forward/gate contract that
 proxies use in tier A, the HTML pages in tier B) and the logger names plus the security-log lines that fail2ban
 filters read (tier A). This module only MEASURES; the tiers are decisions and live in `tests/api_surface.json`.

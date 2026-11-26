@@ -4,14 +4,14 @@ type: Task
 title: "Stage S1 — the server can do everything: TOML configuration, parity test"
 status: offen
 points: 13
-milestone: M-4
+milestone: M-2
 blocked_by: [T-96, T-112]
 tags: [gateway, server, config]
 created: 2026-11-23
 ---
 # T-97 — Stage S1 — the server can do everything: TOML configuration, parity test
 
-**Story points:** 13 · **Estimate:** 20–26 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 13 · **Estimate:** 20–26 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 The gateway is today an OIDC-only preset configured by environment variables (no local accounts, panel, account page, `apps`, SAML or LDAP). Make the server the same core as the library, configured by a file ([ADR-16](ADR-16-server-configuration-by-toml-file-with-an-environment-o.md)).
 

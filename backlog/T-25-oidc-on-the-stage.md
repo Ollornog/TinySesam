@@ -3,7 +3,7 @@ id: T-25
 type: Task
 title: E2E stage — the OIDC ceremony fails at the identity provider
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [e2e, oidc, stage]
 created: 2026-10-03
 ---

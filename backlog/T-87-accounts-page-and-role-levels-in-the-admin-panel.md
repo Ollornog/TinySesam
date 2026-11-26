@@ -3,7 +3,7 @@ id: T-87
 type: Task
 title: 'Accounts page and role levels in the admin panel'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [admin, roles, ui, delegates]
 created: '2026-11-22'
 ---

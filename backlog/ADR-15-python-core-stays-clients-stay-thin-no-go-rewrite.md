@@ -15,7 +15,7 @@ Measured: 27,760 lines of code in the core; about 164 routes; 134 test files wit
 
 ## Options
 1. **Rewrite the core in Go.** Estimate (not measured): 1,160–1,670 h or 670 SP, three to six months with two cores in parallel, and a new hardening phase. Of 293 counted security and defect entries in the history, Go would have prevented 2 and partly caught 10 (about 4 %); about 96 % are logic, protocol and configuration errors that a rewrite repeats. SAML libraries in Go had several signature bypasses between 2022 and 2026.
-2. **Keep Python, one core for library and server, thin clients per language** (chosen). 218–286 h or 133 SP to the goal of [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md) — about a fifth.
+2. **Keep Python, one core for library and server, thin clients per language** (chosen). 218–286 h or 133 SP to the goal of [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md) — about a fifth.
 3. Python core plus a Go sidecar for the proxy check: only on demand; the gate-token check at the proxy already runs in the clients, not in Python.
 
 ## Decision

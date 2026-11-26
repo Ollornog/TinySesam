@@ -4,7 +4,7 @@ title: 'Approvals: confirm one sensitive action with a step-up (stage A: TinySes
   actions)'
 status: erledigt
 id: T-89
-milestone: M-2
+milestone: M-5
 tags: [approvals, step-up, admin, delegates, mcp]
 created: '2026-11-22'
 ---

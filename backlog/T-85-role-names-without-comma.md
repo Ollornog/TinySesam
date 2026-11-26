@@ -3,7 +3,7 @@ id: T-85
 type: Task
 title: 'Role names without comma and control characters'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [roles, forward-auth, gate]
 created: '2026-11-22'
 ---

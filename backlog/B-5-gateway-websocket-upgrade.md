@@ -3,7 +3,7 @@ id: B-5
 type: Bug
 title: 'Gateway: forward auth of a WebSocket app answers 403 when a WebSocket library is installed'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gateway, forward-auth, websocket]
 created: 2026-10-29
 ---

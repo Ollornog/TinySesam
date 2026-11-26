@@ -1386,7 +1386,7 @@ Rezepte:
 TinySesam soll ein Baustein für andere Entwickler sein. Darum sind die Wege, es in eine Anwendung einzubauen, ein Raster
 und keine Liste von Sonderfällen: vier **Oberflächen** (was die Person sieht), drei **Herkünfte** eines Kontos (wo es
 lebt) und zwei **Betriebsarten** (wie TinySesam läuft). Dieser Abschnitt ist die Karte. Die Etappen, die die fehlenden
-Zellen bauen, sind die Aufgaben des Meilensteins M-4 in `backlog/`. Was heute schon da ist, steht in jeder Tabelle.
+Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute schon da ist, steht in jeder Tabelle.
 
 ### Die vier Oberflächen
 

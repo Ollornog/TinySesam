@@ -3,7 +3,7 @@ id: B-4
 type: Bug
 title: 'Login page: next is HTML-escaped but not percent-encoded in its links'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gate, login]
 created: 2026-10-29
 ---

@@ -3,7 +3,7 @@ id: T-21
 type: Task
 title: "Login mode per app: invisible (gateway default) or window"
 status: erledigt
-milestone: M-3
+milestone: M-6
 tags: [gateway, oidc, login]
 created: 2026-10-03
 ---

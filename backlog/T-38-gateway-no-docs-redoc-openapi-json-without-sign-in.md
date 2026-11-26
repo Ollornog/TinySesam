@@ -3,7 +3,7 @@ id: T-38
 type: Task
 title: 'Gateway: no /docs, /redoc, /openapi.json without sign-in'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gateway, security, asvs]
 created: '2026-11-20'
 ---

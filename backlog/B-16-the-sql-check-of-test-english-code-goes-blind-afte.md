@@ -3,7 +3,7 @@ type: Bug
 title: The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment
 status: erledigt
 id: B-16
-milestone: M-5
+milestone: M-1
 created: '2026-11-22'
 ---
 # B-16 — The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment

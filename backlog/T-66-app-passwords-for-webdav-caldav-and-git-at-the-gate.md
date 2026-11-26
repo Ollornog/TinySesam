@@ -3,7 +3,7 @@ id: T-66
 type: Task
 title: 'App passwords for WebDAV, CalDAV/CardDAV and Git at the gate'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, gate, forward-auth, webdav]
 created: '2026-11-20'
 ---

@@ -3,7 +3,7 @@ id: B-12
 type: Bug
 title: 'New sign-in factors, API keys and QR approval without fresh confirmation'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, stepup, asvs, priority-high]
 created: '2026-11-20'
 ---

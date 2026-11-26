@@ -3,7 +3,7 @@ id: T-8
 type: Task
 title: Work through the 35 maturity-review findings that were not reproduced individually
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [security, operations, package, api, docs]
 created: 2026-09-21
 ---
@@ -24,7 +24,7 @@ listed".
 
 ## Status: worked through (2026-09-21)
 
-**35 fixed, 1 handed over to [M-1](M-1-api-stable-1-0.md) as a product decision.** Every item was
+**35 fixed, 1 handed over to [M-4](M-4-api-stable-1-0.md) as a product decision.** Every item was
 first checked against the code. Three findings went further than reported (the file copy of the
 database did not even contain the table `users`; a display name like "Иван" broke forward auth with
 a 500, without any attacker; the app lockout blinded fail2ban). Two refuted themselves on
@@ -37,7 +37,7 @@ measurement:
   which a suite of its own refuted immediately: a locked resource is unlocked with its own secret,
   not with the login PIN.
 
-[M-1](M-1-api-stable-1-0.md) stays open — but now for a named reason and not because of a pile of
+[M-4](M-4-api-stable-1-0.md) stays open — but now for a named reason and not because of a pile of
 unverified reports.
 
 ## Security and hardening
@@ -103,7 +103,7 @@ The CSRF rotation of the admin panel is already recorded as [B-1](B-1-admin-pane
       `complete_totp` is the clear name, `complete_mfa` stays as an alias
 - [~] The public surface was measured, not decided — **made visible**:
       each of the 105 methods has a docstring, `API.md` lists them. The selection itself
-      is a product decision and is in [M-1](M-1-api-stable-1-0.md)
+      is a product decision and is in [M-4](M-4-api-stable-1-0.md)
 - [x] The API guard freezes less than "231 names" suggests — fixed: defaults
       of the config fields and return types are now captured too
 - [x] `set_template` names two page names in its docstring that do not exist — fixed:

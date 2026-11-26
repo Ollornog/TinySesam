@@ -3,7 +3,7 @@ id: T-9
 type: Task
 title: Work through the findings of the second audit (four perspectives)
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [security, operations, tests, audit]
 created: 2026-09-21
 ---
@@ -49,7 +49,7 @@ As in T-8, every item is first reproduced against the code before it is touched.
       afterwards.
 - [x] `POST /auth/magic/request` without CSRF check (the only state-changing route without one).
 - [x] **The admin panel rolls a new CSRF token on every call** (= [B-1](B-1-admin-panel-rotates-csrf.md),
-      was on M-2). Through the new CSRF checks it now hits more paths than at the time of the report.
+      was on M-5). Through the new CSRF checks it now hits more paths than at the time of the report.
 - [x] `login_chain` accepts `ldap`/`apikey` as a step — neither can ever be fulfilled.
 - [x] `pin_login=False` is not seen by the "no sign-in method" check → empty
       login page, no finding.

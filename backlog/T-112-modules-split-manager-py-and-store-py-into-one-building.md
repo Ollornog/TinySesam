@@ -4,14 +4,14 @@ type: Task
 title: "Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing"
 status: erledigt
 points: 21
-milestone: M-5
+milestone: M-1
 blocked_by: [T-111]
 tags: [architecture, modules, refactor]
 created: 2026-11-23
 ---
 # T-112 — Modules: one building block per feature
 
-**Story points:** 21 · **Estimate:** 30–40 h (not measured) · **Milestone:** [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)
+**Story points:** 21 · **Estimate:** 30–40 h (not measured) · **Milestone:** [M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)
 
 **Rule (maintainer, 2026-11-23):** build in modules, avoid monoliths. Every feature is a building block of its own;
 only what is switched on is loaded — no routes, no code in the request path.

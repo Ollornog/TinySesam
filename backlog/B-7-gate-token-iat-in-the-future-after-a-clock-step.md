@@ -3,7 +3,7 @@ id: B-7
 type: Bug
 title: 'Gate token: iat in the future after a backward clock step — caddy-jwt rejects fresh tokens'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gateway, forward-auth, gate, clock]
 created: 2026-11-12
 ---

@@ -3,7 +3,7 @@ id: T-34
 type: Task
 title: 'Admin creates accounts, a link signs them in: setup pass and alternatives in the factor chain'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [login, magic-link, chain, onboarding, admin]
 created: '2026-11-20'
 ---

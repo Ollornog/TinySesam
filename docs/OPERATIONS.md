@@ -64,7 +64,7 @@ went without `email_changed` (added later from OIDC/LDAP), and the name in the d
 
 ## Security log contract (fail2ban and log shipping)
 
-Since the PO decision of 2026-10-29 (M-1) the security log is part of the stability promise, tier A. What a
+Since the PO decision of 2026-10-29 (M-4) the security log is part of the stability promise, tier A. What a
 filter or a log shipper may rely on:
 
 - **The logger** `tinysesam.security` (and its parent `tinysesam`; `tinysesam.mail` for mail; `tinysesam.client`

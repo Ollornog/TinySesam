@@ -4,14 +4,14 @@ type: Task
 title: "Stage S3 — every origin is equal: source, step-up, linking local and IdP"
 status: offen
 points: 8
-milestone: M-4
+milestone: M-2
 blocked_by: [T-97]
 tags: [idp, oidc, saml, ldap, accounts]
 created: 2026-11-23
 ---
 # T-99 — Stage S3 — every origin is equal: source, step-up, linking local and IdP
 
-**Story points:** 8 own + 5 in [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md) (SAML step-up; frontmatter `points: 8`, so nothing is counted twice) · **Estimate:** 24–32 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 8 own + 5 in [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md) (SAML step-up; frontmatter `points: 8`, so nothing is counted twice) · **Estimate:** 24–32 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-sync-and-linking-local-and-idp-accounts.md)).
 

@@ -4,14 +4,14 @@ type: Task
 title: "Stage S10 — headless reading: events, keys, admin data inside the application"s area"
 status: offen
 points: 13
-milestone: M-4
+milestone: M-2
 blocked_by: [T-105]
 tags: [headless, admin, spec]
 created: 2026-11-23
 ---
 # T-106 — Stage S10 — headless reading: events, keys, admin data inside the application's area
 
-**Story points:** 13 · **Estimate:** 26–32 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 13 · **Estimate:** 26–32 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 ## Content
 - `account.json`: `events`, `api_keys`, error format `error`, Fetch Metadata.

@@ -4,14 +4,14 @@ type: Task
 title: Stage S5 — permissions at the server and in the clients
 status: offen
 points: 13
-milestone: M-4
+milestone: M-2
 blocked_by: [T-100]
 tags: [permissions, clients, spec]
 created: 2026-11-23
 ---
 # T-101 — Stage S5 — permissions at the server and in the clients
 
-**Story points:** 13 · **Estimate:** 22–30 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 13 · **Estimate:** 22–30 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 Server and client side of [ADR-17](ADR-17-permission-layer-and-admin-levels.md).
 

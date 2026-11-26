@@ -3,7 +3,7 @@ id: T-41
 type: Task
 title: 'SECURITY.md (en/de) against the code: TOTP secrets are encrypted since 0.21.0'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [docs, security]
 created: '2026-11-20'
 ---

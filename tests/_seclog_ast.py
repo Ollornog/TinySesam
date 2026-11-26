@@ -2,7 +2,7 @@
 
 `tests/test_fail2ban_reason.py` measures that every line a fail2ban filter reads carries its cause under
 `reason=`; `tests/test_api_surface.py` pins the line shapes, event words and logger names that the operator
-promise (M-1, PO decision 2026-10-29) covers. Both need the same thing: which texts can a `seclog` call
+promise (M-4, PO decision 2026-10-29) covers. Both need the same thing: which texts can a `seclog` call
 produce, with the event word substituted? It lives here once, so the two cannot drift apart.
 
 Nothing in this module runs at import beyond reading `tinysesam/security.py` (the event-word constants).

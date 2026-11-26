@@ -3,7 +3,7 @@ id: T-14
 type: Task
 title: Multiple OIDC clients in one instance — per-app approval lives at the identity provider
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [oidc, forward-auth, gateway, authorization, pocketid]
 created: 2026-09-21
 ---
@@ -58,7 +58,7 @@ a configuration with only one client behaves not one byte differently than in 0.
 ## Why before 1.0
 
 `oidc_clients` changes the shape of the OIDC configuration. That is more expensive after freezing
-the API ([M-1](M-1-api-stable-1-0.md)) than before. The single client stays as a special case of the
+the API ([M-4](M-4-api-stable-1-0.md)) than before. The single client stays as a special case of the
 mapping, so that the transition is not a break.
 
 ## Implemented on 2026-09-22

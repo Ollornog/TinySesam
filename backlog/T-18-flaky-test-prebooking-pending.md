@@ -3,7 +3,7 @@ id: T-18
 type: Task
 title: Flaky test test_prebooking_pending — red once in the CI job repeat, cause open
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [tests, flaky-test, ci, parallel]
 created: 2026-09-28
 ---

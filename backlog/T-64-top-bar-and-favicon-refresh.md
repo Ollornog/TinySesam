@@ -3,7 +3,7 @@ id: T-64
 type: Task
 title: 'Top bar and favicon refresh: logo, name, links, account menu, light/dark, phone'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [ui, theme, accessibility]
 created: '2026-11-20'
 ---

@@ -3,7 +3,7 @@ id: T-82
 type: Task
 title: 'Gate client in JavaScript and TypeScript'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gate, clients, js]
 created: '2026-11-22'
 ---

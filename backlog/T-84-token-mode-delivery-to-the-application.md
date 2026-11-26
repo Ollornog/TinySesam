@@ -4,7 +4,7 @@ type: Task
 title: 'Token mode: deliver the gate token to the application'
 status: offen
 points: 5
-milestone: M-2
+milestone: M-5
 tags: [gate, clients, proxy]
 created: '2026-11-22'
 ---

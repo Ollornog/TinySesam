@@ -3,7 +3,7 @@ id: T-7
 type: Task
 title: "Switch the license declaration to the SPDX expression (deadline: 2027-02-18)"
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [packaging, deadline]
 created: 2026-09-21
 ---

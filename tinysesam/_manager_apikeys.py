@@ -139,7 +139,7 @@ def verify_api_key(self, key):
     """(user, key_roles|None) for a valid key, otherwise (None, None).
 
     The key's **kind** is afterwards in `self._last_key_kind` — `current_user()` needs
-    it, and a third return value would have broken every foreign caller (M-1 freezes the
+    it, and a third return value would have broken every foreign caller (M-4 freezes the
     surface for 1.0). Whoever wants to know the kind themselves uses `api_key_kind(key)`.
     `user` is an account dict as with `get_user()` (since 0.22.0; before, the database row).
     """

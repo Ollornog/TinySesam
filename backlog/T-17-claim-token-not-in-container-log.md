@@ -3,7 +3,7 @@ id: T-17
 type: Task
 title: Do not write the first-admin one-time token to the container log
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, first-admin, container, operations, log]
 created: 2026-09-27
 ---

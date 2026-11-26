@@ -3,7 +3,7 @@ id: T-49
 type: Task
 title: 'OIDC: max_age / auth_time for re-authentication'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, oidc, stepup]
 created: '2026-11-20'
 ---

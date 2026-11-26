@@ -3,7 +3,7 @@ id: B-13
 type: Bug
 title: 'CI flakes: a suite died from a segfault without a word, a dialog wait raced, Chrome hung at startup'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [ci, tests, flaky]
 created: '2026-11-20'
 ---

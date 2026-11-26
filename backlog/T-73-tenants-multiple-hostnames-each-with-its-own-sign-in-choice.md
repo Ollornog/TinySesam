@@ -4,7 +4,7 @@ type: Task
 title: Tenants — multiple hostnames, each with its own sign-in choice
 status: offen
 points: 21
-milestone: M-2
+milestone: M-5
 tags: [idea, tenants, gate, forward-auth, proposal]
 created: '2026-11-21'
 ---

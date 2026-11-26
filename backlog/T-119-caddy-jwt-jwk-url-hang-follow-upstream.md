@@ -4,13 +4,13 @@ type: Task
 title: "caddy-jwt 1.5.0: back to jwk_url, disable_authorization_fallback instead of the Authorization detour; check the X-Forwarded-For warning"
 status: erledigt
 points: 2
-milestone: M-2
+milestone: M-5
 tags: [gate, caddy, upstream, cleanup]
 created: 2026-11-23
 ---
 # T-119 — caddy-jwt 1.5.0: remove both workarounds
 
-**Story points:** 2 · **Estimate:** 3–5 h · **Milestone:** [M-2](M-2-after-1-0.md)
+**Story points:** 2 · **Estimate:** 3–5 h · **Milestone:** [M-5](M-5-after-1-0.md)
 
 **Trigger:** caddy-jwt 1.5.0 in `deploy/forward-auth/caddy-gate/go.mod` (released 2026-11-23; Dependabot raises it
 after its cooldown). Both upstream issues that forced workarounds are fixed there.

@@ -3,7 +3,7 @@ id: T-56
 type: Task
 title: 'WebAuthn: user verification at registration, random user handle'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, passkey, webauthn]
 created: '2026-11-20'
 ---

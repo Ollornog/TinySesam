@@ -3,7 +3,7 @@ id: T-76
 type: Task
 title: 'Top bar: visibility per link, and the bar as JSON'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [topbar, ui]
 created: '2026-11-21'
 ---

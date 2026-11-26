@@ -3,7 +3,7 @@ id: T-51
 type: Task
 title: 'Sign-in link lifetimes: magic link 10 min, admin link at most 24–72 h'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, magic-link, admin]
 created: '2026-11-20'
 ---

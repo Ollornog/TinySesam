@@ -3,7 +3,7 @@ id: T-5
 type: Task
 title: Consider image signature and SBOM
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [release, supply-chain, container]
 created: 2026-07-10
 ---
