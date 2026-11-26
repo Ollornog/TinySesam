@@ -65,6 +65,15 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   `forward_auth_enabled`; `router.py` 2,379 → 1,868 lines. No path, parameter or header changed: the HTTP-contract
   measurement (`tests/_contract.py`) reads the routes and the proxy inputs from the new module, and a listed input
   reader that moves is found in whichever module holds it.
+- Internal: `TinySesam` is a thin class over building blocks (T-112, part 4). `manager.py` (9,661 lines) keeps the
+  constructor, the class attributes, the static, class and property members and the raising helpers; the other 374
+  methods moved verbatim into 15 modules `tinysesam/_manager_<part>.py` (users, API keys, mail, LDAP, SAML, factors,
+  cookies, sign-in links, QR, account, sign-in, hardening, forward auth, FastAPI, resource secrets). A building block
+  is imported on the first use of one of its methods; `dir(TinySesam)` lists every method, so introspection, the API
+  surface and `API.md` see the whole class unchanged. The feature registry `tinysesam/_features.py` names each
+  feature's switch, building blocks and routes; `TinySesam` imports the blocks of the features that are on, the
+  others never load. qrcode (and Pillow) is imported only when an enrollment QR is drawn, no longer with `totp`.
+  Names, signatures and behaviour are unchanged.
 - Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
   The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
   `tinysesam/gate-caddy/` in the user cache directory, old builds removed); without Docker the skip names the missing tool instead of

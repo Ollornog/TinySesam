@@ -11,7 +11,7 @@ with their front door: keep the surface small, every feature optional, and prove
 
 | Path | What |
 |---|---|
-| `tinysesam/manager.py` | the `TinySesam` class: every public method, guards, sign-in building blocks, sessions |
+| `tinysesam/manager.py`, `_manager_<part>.py`, `_features.py` | the `TinySesam` class: constructor, class attributes and the index `_PART_METHODS`; its methods by feature in building blocks loaded on first use; the feature registry (switch, building blocks, routes per feature) |
 | `tinysesam/config.py` | `TinySesamConfig` dataclass and presets (`local_accounts`, `oidc_gateway`, `active_directory`, `entra_id`) |
 | `tinysesam/config_check.py` | every contradiction of a configuration at construction (errors abort, warnings log); rules by feature in `_config_check_roles.py`, `_config_check_apps.py`, the German findings in `_config_check_de.py` (re-exported) |
 | `tinysesam/router.py`, `_routes_forward.py` | `/auth/*` routes of the built-in pages and JSON endpoints; the forward-auth and gate routes as a building block registered only with `forward_auth_enabled` |

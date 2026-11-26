@@ -4,11 +4,6 @@ import io, base64
 
 import pyotp
 
-try:
-    import qrcode
-    _QR = True
-except Exception:
-    _QR = False
 
 
 def new_secret() -> str:
@@ -65,8 +60,13 @@ def matching_step(secret: str, code: str, window: int = 1, ahead=None):
 
 
 def qr_data_uri(uri: str):
-    """PNG QR as data: URI (or None if qrcode is not installed → the UI then shows the secret)."""
-    if not _QR:
+    """PNG QR as data: URI (or None if qrcode is not installed → the UI then shows the secret).
+
+    qrcode (and Pillow behind it) is imported here, when an enrollment QR is drawn — not with the module: every
+    start imports `totp`, most never draw a QR (T-112, heavy optional imports only where they are used)."""
+    try:
+        import qrcode
+    except Exception:
         return None
     img = qrcode.make(uri)
     buf = io.BytesIO()

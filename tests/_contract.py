@@ -279,16 +279,15 @@ def _reason_values(sources: dict) -> set:
     """Values of the response header `X-TinySesam-Reason` (dict literals in the router and its building blocks)."""
     tree = ast.Module(body=[*ast.parse(sources["router.py"]).body, *ast.parse(sources[FORWARD_MODULE]).body],
                       type_ignores=[])
-    manager = ast.parse(sources["manager.py"])
     approval = set()
-    for fn in _functions(manager, "_oidc_approval_valid"):
+    for _, fn in _functions_anywhere(sources, "_oidc_approval_valid"):     # a building block since T-112
         for r in ast.walk(fn):
             if isinstance(r, ast.Return) and isinstance(r.value, ast.Tuple) and len(r.value.elts) == 2:
                 z = r.value.elts[1]
                 if isinstance(z, ast.Constant) and isinstance(z.value, str) and z.value:
                     approval.add(z.value)
     if not approval:
-        raise MeasurementError("manager.py: `_oidc_approval_valid` returns no reason string — form changed?")
+        raise MeasurementError("`_oidc_approval_valid` returns no reason string — form changed?")
     values = set()
     for k in ast.walk(tree):
         if not isinstance(k, ast.Dict):

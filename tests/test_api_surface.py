@@ -1120,7 +1120,7 @@ VALUES_REQUIRED = (("gc()", "failure_series"), ("create_api_key()", "dropped_rol
                  ("set_template('magic_confirm') ctx", "purpose"),
                  ("set_template('login') ctx", "prefix"),
                  ("webauthn_.py: on_security_event-Nutzlast", "name"),
-                 ("manager.py: ctx", "prefix"), ("router.py: render_page-Kontext", "purpose"),
+                 ("_manager_hardening.py: ctx", "prefix"), ("router.py: render_page-Kontext", "purpose"),
                  ("admin.py: JSON-Antwort", "disabled_by"), ("TinySesam.SECURITY_EVENTS", "api_keys_revoked"),
                  ("POST /auth/apikeys", "dropped_roles"), ("GET /auth/apikeys[].kind", "automation"),
                  ("GET <admin>/api/users[].disabled_by", "operator"),
@@ -1339,7 +1339,7 @@ def self_check_contract(now: dict) -> None:
     check("http.contract", atoms, bent("manager.py", '_GATE_LINK_COOKIE = "__Host-tinysesam_link"',
                                             '_GATE_LINK_COOKIE = "__Host-tinysesam_conn"'),
            "cookie:__Host-tinysesam_link", "cookie:__Host-tinysesam_conn")
-    check("http.contract", atoms, bent("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")', -1),
+    check("http.contract", atoms, bent("_manager_forward.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")', -1),
            "request-header:X-Forwarded-Uri", "request-header:X-Fwd-Uri")
     check("http.contract", atoms, bent("_routes_forward.py", 'getlist("roles")', 'getlist("role")'),
            "request-param:roles", "request-param:role")
@@ -1362,20 +1362,20 @@ def self_check_contract(now: dict) -> None:
     # such as `failed login | user ip method reason`, survives bending one of them on purpose: merging or
     # moving call sites is no break of what a filter reads.)
     generic = 'security.seclog.warning("%s user=%s ip=%s method=%s", security.log_event(method),'
-    check("log.lines", log, bent("manager.py", generic, generic.replace('ip=%s', 'client=%s')),
+    check("log.lines", log, bent("_manager_hardening.py", generic, generic.replace('ip=%s', 'client=%s')),
            "line:WARNING failed login | user ip method", "line:WARNING failed login | user client method")
-    check("log.lines", log, bent("manager.py", generic, generic.replace(".warning(", ".error(")),
+    check("log.lines", log, bent("_manager_hardening.py", generic, generic.replace(".warning(", ".error(")),
            "line:WARNING failed login | user ip method", "line:ERROR failed login | user ip method")
-    check("log.lines", log, bent("manager.py", "ip=%s method=blocked reason=%s", "ip=%s method=refused reason=%s"),
+    check("log.lines", log, bent("_manager_hardening.py", "ip=%s method=blocked reason=%s", "ip=%s method=refused reason=%s"),
            "value:method=blocked", "value:method=refused")
-    check("log.lines", log, bent("manager.py", '"%s user=%s ip=%s method=%s unban=%s"',
+    check("log.lines", log, bent("_manager_factors.py", '"%s user=%s ip=%s method=%s unban=%s"',
                                       '"%s user=%s ip=%s method=%s lift=%s"'),
            "line:INFO login ok | user ip method unban")
     check("log.lines", log, bent("security.py", 'logging.Formatter("%(asctime)s %(levelname)s %(message)s")',
                                       'logging.Formatter("%(levelname)s %(message)s")'),
            "format:%(asctime)s %(levelname)s %(message)s", "format:%(levelname)s %(message)s")
     # An event word the shipped filters name that no call produces any more is a finding of its own.
-    check("log.lines", log, bent("manager.py", '"deferred %s user=%s ip=%s reason=pending"',
+    check("log.lines", log, bent("_manager_factors.py", '"deferred %s user=%s ip=%s reason=pending"',
                                       '"postponed %s user=%s ip=%s reason=pending"'), "event:deferred login")
     without_word = json.loads(json.dumps(now))
     without_word["log.lines"].remove("event:deferred login")
@@ -1383,7 +1383,7 @@ def self_check_contract(now: dict) -> None:
         "a vanished event word that a shipped filter names went unnoticed"
     # the payload of the hook: a renamed key is gone, a new key is only an extension
     prior = CT.event_payload(sources)
-    after = CT.event_payload(bent("manager.py", '_security_event("username_changed", user_id, old=old, new=name)',
+    after = CT.event_payload(bent("_manager_account.py", '_security_event("username_changed", user_id, old=old, new=name)',
                                      '_security_event("username_changed", user_id, was=old, new=name)'))
     assert prior["username_changed"] == ["new", "old"] and after["username_changed"] == ["new", "was"], after
     b, e = assess({"TinySesam.event_payload": {"username_changed": prior["username_changed"]}},
@@ -1391,7 +1391,7 @@ def self_check_contract(now: dict) -> None:
                      {"TinySesam.event_payload": {"username_changed": "A"}})
     assert b and b[0].startswith("[A]") and "old" in b[0] and e and "was" in e[0], (b, e)
     try:
-        CT.event_payload(bent("manager.py", '_security_event("username_changed", user_id, old=old, new=name)',
+        CT.event_payload(bent("_manager_account.py", '_security_event("username_changed", user_id, old=old, new=name)',
                                   '_security_event(event_name, user_id, old=old, new=name)'))
     except CT.MeasurementError:
         pass

@@ -1320,6 +1320,12 @@ import ast as _ast  # noqa: E402
 import importlib.util as _ilu  # noqa: E402
 
 
+def _part_class(file_name: str):
+    """The class whose methods a module of parts holds as module functions (T-112): `_store_<part>.py` -> `Store`,
+    `_manager_<part>.py` -> `TinySesam`; any other module: none."""
+    return "Store" if file_name.startswith("_store_") else "TinySesam" if file_name.startswith("_manager_") else None
+
+
 def _calls_outside(method: str, recipient, permitted: set, sources=None) -> list:
     """Where in `tinysesam/` is there a call `<recipient>.<method>(…)` outside `permitted`?
 
@@ -1346,7 +1352,7 @@ def _calls_outside(method: str, recipient, permitted: set, sources=None) -> list
                         and (k, f) not in permitted):
                     hits.append(f"{path_name}:{kind.lineno} ({k}.{f})")
                 go(kind, k, f)
-        go(tree, "Store" if path_name.startswith("_store_") else None)   # a store part (T-112)
+        go(tree, _part_class(path_name))   # a store part or building block (T-112)
     return hits
 
 
@@ -2273,7 +2279,7 @@ def _node_with_place(name, text):
             from_.append((name, kind, k, f))
             go(kind, k, f)
     # A store part (`_store_<part>.py`, T-112) holds methods of `Store` as module functions — same place.
-    go(tree, "Store" if name.startswith("_store_") else None)
+    go(tree, _part_class(name))
     return from_
 
 

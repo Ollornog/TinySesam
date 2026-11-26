@@ -5,7 +5,7 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
-from .store import (  # noqa: F401
+from .store import (
     norm_identifier,
 )
 

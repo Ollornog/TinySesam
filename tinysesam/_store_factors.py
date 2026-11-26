@@ -5,8 +5,8 @@ store as `self`, exactly as it did inside the class (T-112).
 """
 
 from . import store as _store
+from .keys import KID_LEN as _KID_LEN
 from .store import (
-    _KID_LEN,
     json,
 )
 import sqlite3

@@ -7,10 +7,9 @@ What happens with a read-only, full or locked database and with a jump of the sy
 is described for operators in `docs/OPERATIONS.md` (failure behaviour).
 """
 from __future__ import annotations
-import base64, contextlib, hashlib, hmac, json, logging, os, re, secrets, sqlite3, stat, threading, time, unicodedata
+import contextlib, hashlib, hmac, json, logging, os, re, secrets, sqlite3, stat, threading, time, unicodedata
 from typing import Any, Optional
 
-from .keys import KID_LEN as _KID_LEN
 
 from ._store_schema import SCHEMA  # noqa: E402  (re-exported: `store.SCHEMA`)
 
