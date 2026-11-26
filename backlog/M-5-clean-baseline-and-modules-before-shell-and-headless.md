@@ -32,6 +32,12 @@ configuration what is loaded; that only works once every feature is a building b
 T-111 → T-72 and T-112 (T-72 is small and touches the store; do it before or right after the split) → T-97 (M-4).
 [T-96](T-96-stage-s0-documentation-of-the-grid-surfaces-origins-dep.md) (documentation only) can run alongside.
 
+**State 2026-11-26:** B-16, T-111, T-72 and T-112 are done, and recovery codes and the gate code exchange are keyed
+with the pepper as well. `nightly-repeat` is green after the last merge. Left: [T-127](T-127-compare-the-schema-baseline-with-the-tag-in-ci.md)
+(the baseline test against the tag), then [T-126](T-126-breaking-release-after-the-baseline-with-an-upgrade-list.md)
+(one breaking release with the upgrade list). Operators retire their `derived-v1` gate keys on 0.30.x before it.
+M-5 is done once that release is out.
+
 ## Tasks
 
 | Task | Title | SP | Hours |
@@ -40,6 +46,8 @@ T-111 → T-72 and T-112 (T-72 is small and touches the store; do it before or r
 | [T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md) | schema baseline and ballast removal | 8 | 12–18 |
 | [T-72](T-72-pepper-for-the-remaining-token-digests.md) | pepper for the remaining token digests | 5 | 6–10 |
 | [T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md) | modules: one building block per feature | 21 | 30–40 |
+| [T-127](T-127-compare-the-schema-baseline-with-the-tag-in-ci.md) | baseline test against the tag in CI | 1 | 1–2 |
+| [T-126](T-126-breaking-release-after-the-baseline-with-an-upgrade-list.md) | breaking release with one upgrade list | 3 | 3–5 |
 | **Sum** | | see `dokutool offen` | |
 
 Estimates, not measured (1 SP is about one pull request of 2–3 h).
