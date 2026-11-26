@@ -4,14 +4,14 @@ type: Task
 title: "A short public threat model"
 status: offen
 points: 3
-milestone: M-6
+milestone: M-3
 blocked_by: [T-112]
 tags: [security, docs]
 created: 2026-11-23
 ---
 # T-122 — A short public threat model
 
-**Story points:** 3 · **Estimate:** 4–6 h · **Milestone:** [M-6](M-6-trust-hardening-and-launch.md)
+**Story points:** 3 · **Estimate:** 4–6 h · **Milestone:** [M-3](M-3-trust-hardening-and-launch.md)
 
 Operators and reviewers need one page that says what TinySesam defends against and what it does not.
 

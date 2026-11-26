@@ -3,13 +3,13 @@ id: T-116
 type: Task
 title: "Pre-push: the gate-Caddy suite without its image counts as red"
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [tests, pre-push]
 created: 2026-11-23
 ---
 # T-116 — Pre-push: the gate-Caddy suite without its image counts as red
 
-**Story points:** 2 · **Estimate:** 2–4 h · **Milestone:** [M-2](M-2-after-1-0.md)
+**Story points:** 2 · **Estimate:** 2–4 h · **Milestone:** [M-5](M-5-after-1-0.md)
 
 `tests/test_gate_caddy.py` skips without `TINYSESAM_GATE_CADDY`, and the fast pre-push counts the skip as red (a
 skip is not a green). Every change near the gate then needs the full gate or a manual image.

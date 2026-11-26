@@ -3,7 +3,7 @@ id: T-6
 type: Task
 title: Build the E2E stage with a playbook instead of by hand
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [e2e, deploy, testlab]
 created: 2026-09-19
 ---

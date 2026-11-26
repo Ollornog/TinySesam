@@ -3,15 +3,15 @@ id: T-126
 type: Task
 title: "Breaking release after the baseline, with one upgrade list"
 status: offen
-milestone: M-5
+milestone: M-1
 tags: [release, upgrade, breaking]
 created: 2026-11-26
 ---
 # T-126 — Breaking release after the baseline
 
-**Story points:** 3 · **Estimate:** 3–5 h · **Milestone:** [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)
+**Story points:** 3 · **Estimate:** 3–5 h · **Milestone:** [M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)
 
-M-5 changed what an operator must do on update in several places at once. The first release after it ships all of it
+M-1 changed what an operator must do on update in several places at once. The first release after it ships all of it
 together, so that users re-issue credentials only once.
 
 ## Content

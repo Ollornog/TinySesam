@@ -3,7 +3,7 @@ id: T-58
 type: Task
 title: 'Caddy templates: a header missing from the auth answer reaches the app as placeholder text'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [deploy, forward-auth]
 created: '2026-11-20'
 ---

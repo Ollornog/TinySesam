@@ -1359,7 +1359,7 @@ Recipes:
 TinySesam is meant as a building block for other developers, so the ways to put it into an application are one grid,
 not a list of special cases: four **surfaces** (what the person sees), three **origins** of an account (where it
 lives) and two **modes of operation** (how TinySesam runs). This section is the map; the stages that build the missing
-cells are the tasks of milestone M-4 in `backlog/`. What exists today is named in each table.
+cells are the tasks of milestone M-2 in `backlog/`. What exists today is named in each table.
 
 ### The four surfaces
 

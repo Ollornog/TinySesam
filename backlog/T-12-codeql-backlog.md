@@ -3,7 +3,7 @@ id: T-12
 type: Task
 title: Assess the CodeQL backlog and track the open alerts in the backlog
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [codeql, ci, hygiene, security]
 created: 2026-09-22
 ---

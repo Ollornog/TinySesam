@@ -3,13 +3,13 @@ id: T-125
 type: Task
 title: "Attestation retry in the tag jobs of release.yml (image, SBOM)"
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [ci, release, supply-chain]
 created: 2026-11-23
 ---
 # T-125 — Attestation retry in the tag jobs
 
-**Story points:** 1 · **Estimate:** 1–2 h · **Milestone:** [M-2](M-2-after-1-0.md)
+**Story points:** 1 · **Estimate:** 1–2 h · **Milestone:** [M-5](M-5-after-1-0.md)
 
 The rehearsal job `rehearsal-attest` retries a failing attestation (three attempts, 20 s and 60 s pause, the last one
 hard) since the Sigstore 404s of 2026-11-22; the CHANGELOG says "the tag jobs are unchanged". A Sigstore 404 at a real

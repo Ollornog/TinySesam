@@ -3,7 +3,7 @@ id: T-69
 type: Task
 title: Attack round A (2026-11-21) — OAuth, services, app passwords, keys
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, audit, oauth, m2m, forward-auth, vault]
 created: 2026-11-21
 ---

@@ -3,7 +3,7 @@ id: T-2
 type: Task
 title: Browser test should not look for a free port itself
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [testing, browser, flaky]
 created: 2026-07-10
 ---

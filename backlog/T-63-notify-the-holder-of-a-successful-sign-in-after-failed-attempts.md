@@ -3,7 +3,7 @@ id: T-63
 type: Task
 title: 'Notify the holder of a successful sign-in after failed attempts'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, notification]
 created: '2026-11-20'
 ---

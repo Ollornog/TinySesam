@@ -3,7 +3,7 @@ id: T-3
 type: Task
 title: Forward auth — make the remote headers that are set configurable
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [forward-auth, configuration]
 created: 2026-07-10
 ---

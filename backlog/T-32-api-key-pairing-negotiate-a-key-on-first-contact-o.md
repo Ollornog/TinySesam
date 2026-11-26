@@ -3,7 +3,7 @@ type: Task
 title: 'API key pairing: negotiate a key on first contact, optional renew and rotate on login'
 status: erledigt
 id: T-32
-milestone: M-2
+milestone: M-5
 tags: [api-keys, crypto, pairing]
 created: '2026-11-20'
 ---

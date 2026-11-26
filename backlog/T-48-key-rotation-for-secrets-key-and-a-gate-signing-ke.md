@@ -3,7 +3,7 @@ id: T-48
 type: Task
 title: 'Key rotation for secrets_key, and a gate signing key of its own'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, crypto, gate]
 created: '2026-11-20'
 ---

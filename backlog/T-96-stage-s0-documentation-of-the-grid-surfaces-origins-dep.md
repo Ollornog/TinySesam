@@ -3,13 +3,13 @@ id: T-96
 type: Task
 title: "Stage S0 — documentation of the grid: surfaces, origins, deployment"
 status: erledigt
-milestone: M-4
+milestone: M-2
 tags: [docs]
 created: 2026-11-23
 ---
 # T-96 — Stage S0 — documentation of the grid: surfaces, origins, deployment
 
-**Story points:** 3 · **Estimate:** 4–6 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 3 · **Estimate:** 4–6 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 Document the grid before building it.
 

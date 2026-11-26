@@ -3,7 +3,7 @@ id: T-24
 type: Task
 title: Acceptance — before/after measurement and acceptance test per app
 status: erledigt
-milestone: M-3
+milestone: M-6
 tags: [gateway, measurement, test]
 created: 2026-10-03
 ---

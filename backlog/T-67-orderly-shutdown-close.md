@@ -3,7 +3,7 @@ id: T-67
 type: Task
 title: 'Orderly shutdown: a public close() that drains the outboxes and refuses new jobs'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [api, lifecycle, tests]
 created: '2026-11-20'
 ---

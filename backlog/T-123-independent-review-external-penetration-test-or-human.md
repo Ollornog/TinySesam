@@ -4,14 +4,14 @@ type: Task
 title: "Independent review: an external penetration test or a human code review"
 status: offen
 points: 3
-milestone: M-6
+milestone: M-3
 blocked_by: [T-122]
 tags: [security, review, launch]
 created: 2026-11-23
 ---
 # T-123 — Independent review: an external penetration test or a human code review
 
-**Story points:** 3 · **Estimate:** 6–10 h own work (preparation, fixes are entries of their own) · **Milestone:** [M-6](M-6-trust-hardening-and-launch.md)
+**Story points:** 3 · **Estimate:** 6–10 h own work (preparation, fixes are entries of their own) · **Milestone:** [M-3](M-3-trust-hardening-and-launch.md)
 
 Every audit so far was done by the project itself. Before TinySesam is promoted widely
 ([T-30](T-30-launch-plan.md)) a human outside the project should look at it.

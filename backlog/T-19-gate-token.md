@@ -3,7 +3,7 @@ id: T-19
 type: Task
 title: Issue the gate token and prove it with a real Caddy running caddy-jwt
 status: erledigt
-milestone: M-3
+milestone: M-6
 tags: [gateway, jwt, caddy, cookies]
 created: 2026-10-03
 ---

@@ -3,7 +3,7 @@ id: T-55
 type: Task
 title: 'SLSA Build L3 and an SBOM for wheel and sdist'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [supply-chain, release]
 created: '2026-11-20'
 ---

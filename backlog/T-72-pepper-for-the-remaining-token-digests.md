@@ -3,7 +3,7 @@ id: T-72
 type: Task
 title: Pepper for the remaining token digests, then drop the session-handle rewrite
 status: erledigt
-milestone: M-5
+milestone: M-1
 blocked_by: [T-111]
 tags: [security, keys, api-keys]
 created: '2026-11-21'
@@ -29,7 +29,7 @@ write access to the database file alone still mints access:
 
 ## Greenfield (maintainer, 2026-11-23)
 
-Moved to [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md). With the schema baseline
+Moved to [M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md). With the schema baseline
 ([T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md)) there is no old data to carry: no
 migration that keeps valid keys and links — existing API keys, sign-in links and QR approvals stop working once and
 the CHANGELOG says so. The removal of the session-handle rewrite belongs to T-111.

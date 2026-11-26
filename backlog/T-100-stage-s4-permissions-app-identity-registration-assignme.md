@@ -4,14 +4,14 @@ type: Task
 title: "Stage S4 — permissions: app identity, registration, assignment, has_permission"
 status: offen
 points: 13
-milestone: M-4
+milestone: M-2
 blocked_by: [T-97]
 tags: [permissions, roles, admin]
 created: 2026-11-23
 ---
 # T-100 — Stage S4 — permissions: app identity, registration, assignment, has_permission
 
-**Story points:** 13 · **Estimate:** 26–32 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 13 · **Estimate:** 26–32 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 The permission layer of [ADR-17](ADR-17-permission-layer-and-admin-levels.md), library side.
 

@@ -1,5 +1,5 @@
 ---
-id: M-5
+id: M-1
 type: Milestone
 title: "Clean baseline and modules — before shell and headless continue"
 status: offen
@@ -7,7 +7,7 @@ rank: 1
 tags: [cleanup, modules, greenfield, roadmap]
 created: 2026-11-23
 ---
-# M-5 — Clean baseline and modules
+# M-1 — Clean baseline and modules
 
 **Done when (measured):**
 
@@ -22,21 +22,21 @@ created: 2026-11-23
 - `nightly-repeat` green after the last merge.
 
 **Why first (maintainer, 2026-11-23):** greenfield with next to no users — the current state is the baseline, ballast
-for older states goes. And modules before [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md): its
+for older states goes. And modules before [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md): its
 first server stage ([T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)) decides from the
 configuration what is loaded; that only works once every feature is a building block of its own.
 
 ## Order
 
 [B-16](B-16-the-sql-check-of-test-english-code-goes-blind-afte.md) (the guard must see the new schema script) →
-T-111 → T-72 and T-112 (T-72 is small and touches the store; do it before or right after the split) → T-97 (M-4).
+T-111 → T-72 and T-112 (T-72 is small and touches the store; do it before or right after the split) → T-97 (M-2).
 [T-96](T-96-stage-s0-documentation-of-the-grid-surfaces-origins-dep.md) (documentation only) can run alongside.
 
 **State 2026-11-26:** B-16, T-111, T-72 and T-112 are done, and recovery codes and the gate code exchange are keyed
 with the pepper as well. `nightly-repeat` is green after the last merge. Left: [T-127](T-127-compare-the-schema-baseline-with-the-tag-in-ci.md)
 (the baseline test against the tag), then [T-126](T-126-breaking-release-after-the-baseline-with-an-upgrade-list.md)
 (one breaking release with the upgrade list). Operators retire their `derived-v1` gate keys on 0.30.x before it.
-M-5 is done once that release is out.
+M-1 is done once that release is out.
 
 ## Tasks
 

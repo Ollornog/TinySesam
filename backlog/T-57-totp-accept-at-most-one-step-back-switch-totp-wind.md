@@ -3,7 +3,7 @@ id: T-57
 type: Task
 title: 'TOTP: accept at most one step back (switch totp_window)'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, totp]
 created: '2026-11-20'
 ---

@@ -1,5 +1,5 @@
 ---
-id: M-1
+id: M-4
 type: Milestone
 title: 1.0 — API stable enough for PyPI
 status: offen
@@ -8,7 +8,7 @@ tags: [release, api]
 created: 2026-07-23
 ---
 
-# M-1 — 1.0: API stable enough for PyPI
+# M-4 — 1.0: API stable enough for PyPI
 
 **Done when:** the public API has not broken across two minor versions,
 the ceremony paths (passkey/OIDC/SAML) have run once against real counterparts, and a release
@@ -25,7 +25,7 @@ everything. The rest becomes internal once, before 1.0 (`_name`, the old name a 
 1.0, CHANGELOG with the removal version). Configuration fields and the HTTP/log contract are out of scope: they are
 the configuration and the protocol. Borderline names (examples, template overrides, extension points, result
 types) stay public and get documented rather than hidden. The PO asked for the step to be recorded in the
-CHANGELOG — it is, under “Changed — public API narrowed to the documented surface (M-1)”.
+CHANGELOG — it is, under “Changed — public API narrowed to the documented surface (M-4)”.
 
 **Measured** (Python names of tiers A and B; tier C — 38 aliases — is internal already):
 
@@ -105,7 +105,7 @@ That was repaired first. Everything else would have been built on sand.
 | Ceremonies against real counterparts | met |
 | Release without manual steps | met |
 | Two minor versions without API breakage | **clock restarts with 0.18.0** |
-| **No open security findings** | **new — see M-2** |
+| **No open security findings** | **new — see M-5** |
 
 The fourth condition was not there before because nobody had looked for it. It belongs here:
 a stable surface on top of a package with role escalation measures the wrong thing.
@@ -381,9 +381,9 @@ translated texts and the promised names; this pass renames the rest **before** t
 
 ## Roadmap 2026-11-23
 
-- The tier-C aliases (`_deprecated.py`) go with the schema baseline ([T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md), [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)) — they had to fall before 1.0 anyway; a tier-C break does not reset the clock.
+- The tier-C aliases (`_deprecated.py`) go with the schema baseline ([T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md), [M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)) — they had to fall before 1.0 anyway; a tier-C break does not reset the clock.
 - The module cut ([T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)) must leave tiers A and B unchanged; it is measured by `tests/test_api_surface.py`, so the clock keeps running.
-- [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md) adds surface (additions are no break); new tier-A names start their own clock with the release that brings them.
+- [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md) adds surface (additions are no break); new tier-A names start their own clock with the release that brings them.
 - Measurable done line: the latest two minor releases show no tier-A change in `tests/api_surface.json` against their predecessor (compared in CI from the tags), and `_deprecated.py` no longer exists.
 
 <!-- What used to be here (closing with 1.0.0) is obsolete together with the milestone itself. -->

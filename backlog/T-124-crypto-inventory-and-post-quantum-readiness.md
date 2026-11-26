@@ -4,14 +4,14 @@ type: Task
 title: "Crypto inventory and post-quantum readiness (harvest now, decrypt later)"
 status: offen
 points: 5
-milestone: M-6
+milestone: M-3
 blocked_by: [T-112]
 tags: [security, crypto, pq]
 created: 2026-11-23
 ---
 # T-124 — Crypto inventory and post-quantum readiness (harvest now, decrypt later)
 
-**Story points:** 5 · **Estimate:** 8–12 h (not measured) · **Milestone:** [M-6](M-6-trust-hardening-and-launch.md)
+**Story points:** 5 · **Estimate:** 8–12 h (not measured) · **Milestone:** [M-3](M-3-trust-hardening-and-launch.md)
 
 Know every place that uses cryptography and keep the algorithms exchangeable, so the move to post-quantum
 algorithms is a configuration change, not a rewrite.

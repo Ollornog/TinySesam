@@ -3,7 +3,7 @@ id: T-22
 type: Task
 title: "Logout mode per app: app, all, ask — chain via the provider back to the gate"
 status: erledigt
-milestone: M-3
+milestone: M-6
 tags: [gateway, oidc, logout]
 created: 2026-10-03
 ---

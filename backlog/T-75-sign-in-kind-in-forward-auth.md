@@ -3,7 +3,7 @@ id: T-75
 type: Task
 title: 'Sign-in kind in forward auth: a Remote-Auth header'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [forward-auth, gate]
 created: '2026-11-21'
 ---

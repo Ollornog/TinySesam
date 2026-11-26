@@ -3,7 +3,7 @@ id: B-9
 type: Bug
 title: No recovery codes after the TOTP setup, and the warning on the account page wraps into the buttons
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [totp, recovery, account, ui]
 created: 2026-11-20
 ---

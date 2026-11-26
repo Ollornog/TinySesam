@@ -3,13 +3,13 @@ id: T-114
 type: Task
 title: "Proxy test image: nginx on the stable line instead of mainline"
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [ci, proxies, dependencies]
 created: 2026-11-23
 ---
 # T-114 — Proxy test image: nginx on the stable line instead of mainline
 
-**Story points:** 1 · **Estimate:** 1–2 h · **Milestone:** [M-2](M-2-after-1-0.md)
+**Story points:** 1 · **Estimate:** 1–2 h · **Milestone:** [M-5](M-5-after-1-0.md)
 
 `tests/proxies/Dockerfile` follows nginx mainline (1.31.x) since a Dependabot bump; the project rule is the newest
 **stable** release. Templates are measured against what operators run.

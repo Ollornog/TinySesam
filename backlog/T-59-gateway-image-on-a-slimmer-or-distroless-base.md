@@ -3,7 +3,7 @@ id: T-59
 type: Task
 title: Gateway image on a slimmer or distroless base, with only the dependencies it needs
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [docker, supply-chain, gateway]
 created: '2026-11-20'
 ---

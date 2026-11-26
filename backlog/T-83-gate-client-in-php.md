@@ -3,7 +3,7 @@ id: T-83
 type: Task
 title: 'Gate client in PHP'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gate, clients, php]
 created: '2026-11-22'
 ---

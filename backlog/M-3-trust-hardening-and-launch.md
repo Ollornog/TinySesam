@@ -1,5 +1,5 @@
 ---
-id: M-6
+id: M-3
 type: Milestone
 title: "Trust, hardening and launch — before TinySesam is promoted widely"
 status: offen
@@ -7,7 +7,7 @@ rank: 3
 tags: [security, hardening, supply-chain, launch, roadmap]
 created: 2026-11-23
 ---
-# M-6 — Trust, hardening and launch
+# M-3 — Trust, hardening and launch
 
 **Done when (measured):**
 
@@ -23,10 +23,10 @@ created: 2026-11-23
   ([T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)).
 - Then the launch plan runs ([T-30](T-30-launch-plan.md)).
 
-**Order in the roadmap:** after [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md) (the fuzz targets,
+**Order in the roadmap:** after [M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md) (the fuzz targets,
 the inventory and the diet need the module cut) and after the core of
-[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md); not on the critical path of M-4. 1.0
-([M-1](M-1-api-stable-1-0.md)) may come before; the launch comes after this milestone.
+[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md); not on the critical path of M-2. 1.0
+([M-4](M-4-api-stable-1-0.md)) may come before; the launch comes after this milestone.
 
 ## Tasks
 

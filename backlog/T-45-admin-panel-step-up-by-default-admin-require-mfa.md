@@ -3,7 +3,7 @@ id: T-45
 type: Task
 title: 'Admin panel: step-up by default (admin_require_mfa)'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, admin, stepup]
 created: '2026-11-20'
 ---

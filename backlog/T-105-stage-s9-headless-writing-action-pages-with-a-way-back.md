@@ -4,14 +4,14 @@ type: Task
 title: "Stage S9 — headless writing: action pages with a way back"
 status: offen
 points: 21
-milestone: M-4
+milestone: M-2
 blocked_by: [T-98, T-104]
 tags: [headless, actions]
 created: 2026-11-23
 ---
 # T-105 — Stage S9 — headless writing: action pages with a way back
 
-**Story points:** 21 · **Estimate:** 27–34 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 21 · **Estimate:** 27–34 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 The application draws everything, TinySesam only the pages for secrets and consents.
 

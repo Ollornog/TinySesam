@@ -3,7 +3,7 @@ id: T-4
 type: Task
 title: Email verification and invitation without the magic-link endpoint
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [mail, registration]
 created: 2026-07-10
 ---

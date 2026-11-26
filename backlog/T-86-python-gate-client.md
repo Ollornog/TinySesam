@@ -3,7 +3,7 @@ id: T-86
 type: Task
 title: 'Python gate client'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gate, clients, python]
 created: '2026-11-22'
 ---

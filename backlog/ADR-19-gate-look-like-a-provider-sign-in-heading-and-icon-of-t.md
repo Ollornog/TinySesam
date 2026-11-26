@@ -15,7 +15,7 @@ The concept had a stage "look per host": validated tokens and a logo per applica
 - **Library:** the look of the application (as today, [T-61](T-61-c22-adapter-same-look-as-a-c22-app.md)).
 - **Gate:** one independent look per instance, like a hosted sign-in of an identity provider: a heading "Sign in to <application>" and the application's icon. Per application only a **name and an icon** (`apps[id].name`, `apps[id].icon`, served from TinySesam's own origin, no external resource).
 - **No look per host**, no tokens or CSS per application. The planned stage shrinks to name and icon.
-- The T-91 decision "one style for the gateway" stays valid; this adds name and icon. The icon wish noted in [M-3](M-3-gate-in-front-of-third-party-apps.md) (icon on the login page) is fulfilled here.
+- The T-91 decision "one style for the gateway" stays valid; this adds name and icon. The icon wish noted in [M-6](M-6-gate-in-front-of-third-party-apps.md) (icon on the login page) is fulfilled here.
 - The side shell also applies to panel and account page ([T-103](T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)).
 
 ## Consequences

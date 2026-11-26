@@ -3,7 +3,7 @@ id: T-60
 type: Task
 title: OAuth for services — client_credentials + private_key_jwt, pairing from T-32
 status: erledigt
-milestone: M-2
+milestone: M-5
 blocked_by: [T-36]
 tags: [oauth, m2m, api-keys, pairing]
 created: 2026-11-20

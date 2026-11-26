@@ -3,7 +3,7 @@ id: T-46
 type: Task
 title: 'Admin-set password must not become the permanent password'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, admin, password]
 created: '2026-11-20'
 ---

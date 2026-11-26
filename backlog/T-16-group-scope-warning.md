@@ -3,7 +3,7 @@ id: T-16
 type: Task
 title: Warn when a group rule runs through the groups claim and the groups scope is missing
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [oidc, groups, configuration, pocketid, operations]
 created: 2026-09-27
 ---

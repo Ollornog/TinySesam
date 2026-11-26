@@ -3,7 +3,7 @@ id: T-53
 type: Task
 title: 'Gate token: explicit type and separate key before the OAuth AS signs JWTs'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, gate, jwt]
 created: '2026-11-20'
 ---

@@ -3,7 +3,7 @@ id: T-50
 type: Task
 title: 'Session lifetime: justify against NIST SP 800-63B-4, document parallel sessions'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, sessions, docs]
 created: '2026-11-20'
 ---

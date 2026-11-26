@@ -3,7 +3,7 @@ id: T-54
 type: Task
 title: 'Vault: bind ciphertexts to their row (AAD with user_id and column)'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, crypto]
 created: '2026-11-20'
 ---

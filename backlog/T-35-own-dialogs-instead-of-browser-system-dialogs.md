@@ -3,7 +3,7 @@ id: T-35
 type: Task
 title: Own dialogs instead of the browser's system dialogs, with a copy button
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [ui, dialog, api-keys, recovery-codes, accessibility, csp]
 created: '2026-11-20'
 ---

@@ -3,7 +3,7 @@ id: T-27
 type: Task
 title: CLI command to delete an account (maintenance without the admin panel)
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [cli, maintenance, accounts, privacy]
 created: 2026-10-11
 ---

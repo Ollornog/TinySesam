@@ -3,7 +3,7 @@ id: T-28
 type: Task
 title: 'Gate client specification with language-neutral test and attack vectors'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gate, spec, clients]
 created: 2026-10-28
 ---

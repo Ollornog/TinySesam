@@ -3,7 +3,7 @@ id: T-52
 type: Task
 title: 'Response hardening for L3: COOP, CSP reporting, Clear-Site-Data, textContent, /healthz version'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, headers, asvs]
 created: '2026-11-20'
 ---

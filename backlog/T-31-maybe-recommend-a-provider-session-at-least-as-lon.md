@@ -4,7 +4,7 @@ type: Task
 title: 'Maybe: recommend a provider session at least as long as the gateway session'
 status: offen
 points: 1
-milestone: M-2
+milestone: M-5
 tags: [gateway, oidc, docs, maybe]
 created: 2026-11-07
 ---

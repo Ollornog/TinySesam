@@ -3,13 +3,13 @@ id: B-17
 type: Bug
 title: "Scorecard red: the image of scorecard-action 2.6.0 cannot be pulled (upstream)"
 status: offen
-milestone: M-2
+milestone: M-5
 tags: [ci, supply-chain, upstream]
 created: 2026-11-26
 ---
 # B-17 — Scorecard red on main
 
-**Story points:** 1 · **Estimate:** 1 h · **Milestone:** [M-2](M-2-after-1-0.md)
+**Story points:** 1 · **Estimate:** 1 h · **Milestone:** [M-5](M-5-after-1-0.md)
 
 The `scorecard` workflow fails since scorecard-action 2.6.0: its image index on ghcr points at deleted manifests
 (ossf/scorecard-action#1752).

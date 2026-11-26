@@ -3,7 +3,7 @@ id: T-74
 type: Task
 title: Delegated admins — a team admin who manages accounts within listed roles
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [admin, roles]
 created: '2026-11-21'
 ---

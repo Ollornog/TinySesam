@@ -3,7 +3,7 @@ id: B-15
 type: Bug
 title: 'Test flake: TOTP codes in the suites flip at a 30-second step boundary'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [ci, tests, flaky, totp]
 created: '2026-11-21'
 ---

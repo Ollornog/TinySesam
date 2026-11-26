@@ -4,14 +4,14 @@ type: Task
 title: "Fuzz the server side: gate token, forward headers, OAuth endpoints, JSON APIs, template escaping"
 status: offen
 points: 5
-milestone: M-6
+milestone: M-3
 blocked_by: [T-112]
 tags: [security, fuzzing, hardening]
 created: 2026-11-23
 ---
 # T-121 — Fuzz the server side: gate token, forward headers, OAuth endpoints, JSON APIs, template escaping
 
-**Story points:** 5 · **Estimate:** 8–12 h (not measured) · **Milestone:** [M-6](M-6-trust-hardening-and-launch.md)
+**Story points:** 5 · **Estimate:** 8–12 h (not measured) · **Milestone:** [M-3](M-3-trust-hardening-and-launch.md)
 
 The Go client has five fuzz targets; the Python server has none. Fuzzing finds the parser and boundary errors the
 example-based tests do not think of.

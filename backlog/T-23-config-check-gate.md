@@ -3,7 +3,7 @@ id: T-23
 type: Task
 title: Configuration check for gate operation
 status: erledigt
-milestone: M-3
+milestone: M-6
 tags: [gateway, configuration]
 created: 2026-10-03
 ---

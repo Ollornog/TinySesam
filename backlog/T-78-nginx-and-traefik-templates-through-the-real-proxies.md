@@ -3,7 +3,7 @@ id: T-78
 type: Task
 title: 'nginx and Traefik templates measured through the real proxies in the CI'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [forward-auth, ci, tests, security]
 created: '2026-11-21'
 ---

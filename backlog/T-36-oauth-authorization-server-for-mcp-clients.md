@@ -3,7 +3,7 @@ id: T-36
 type: Task
 title: OAuth 2.1 authorization server for MCP clients (Claude Code) — human-operated tools
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [oauth, mcp, forward-auth, tokens, claude-code]
 created: 2026-11-20
 ---

@@ -3,7 +3,7 @@ id: T-29
 type: Task
 title: Translate everything to English (code texts, docs, messages)
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [i18n, english, docs]
 created: 2026-10-28
 ---

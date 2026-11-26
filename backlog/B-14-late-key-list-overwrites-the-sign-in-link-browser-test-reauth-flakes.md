@@ -3,7 +3,7 @@ id: B-14
 type: Bug
 title: 'Admin panel: a late key list overwrote the sign-in link; browser test ran out after a dialog that navigates'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [admin, ci, tests, flaky]
 created: '2026-11-21'
 ---

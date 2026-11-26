@@ -3,7 +3,7 @@ id: B-3
 type: Bug
 title: 'Gate: paths containing ; or %3B are redirected to /.tinysesam/start'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gate, forward-auth]
 created: 2026-10-23
 ---

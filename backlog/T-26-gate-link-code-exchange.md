@@ -3,7 +3,7 @@ id: T-26
 type: Task
 title: Central gateway with code exchange — session stays on the gateway, app hosts only get a connection of their own
 status: erledigt
-milestone: M-3
+milestone: M-6
 tags: [gateway, cookies, security]
 created: 2026-10-07
 ---

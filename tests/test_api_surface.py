@@ -1,7 +1,7 @@
 """Pin down the public API — so a break gets NOTICED instead of just happening.
 
 Milestone 1.0 demands that the public API does not break across two minor versions
-(`backlog/M-1-api-stable-1-0.md`). Without measurement that is a claim: both most recent
+(`backlog/M-4-api-stable-1-0.md`). Without measurement that is a claim: both most recent
 releases broke it, and both times it was only noticed while writing the CHANGELOG.
 
 This test pins the surface in `tests/api_surface.json` and compares on every run.
@@ -27,7 +27,7 @@ one itself. A new name comes in without a tier and keeps the guard red until som
 underscore, for good.
 
 **Internal is a leading underscore.** Tier C (an old name kept as a warning alias of its `_name` implementation, 0.22.0)
-is gone with the schema baseline (T-111, the one break of M-5): the aliases were removed, and a name that is not
+is gone with the schema baseline (T-111, the one break of M-1): the aliases were removed, and a name that is not
 public carries an underscore and is not measured.
 
 **Tiers A and B are named in English** (PO decision 2026-09-27, `check_names()`): No name,
@@ -68,9 +68,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_surface.json")
 
 #: The tiers of the public surface (PO decision 2026-09-26). Only A carries the commitment
-#: from M-1 ("two minor versions without a break"); the counter starts at 0.22.0.
+#: from M-4 ("two minor versions without a break"); the counter starts at 0.22.0.
 TIERS = {
-    "A": "public, stable from 1.0 — a break resets the 1.0 clock (M-1)",
+    "A": "public, stable from 1.0 — a break resets the 1.0 clock (M-4)",
     "B": "for advanced users — remove or rebuild only after a DeprecationWarning "
          "over two minor versions",
 }
@@ -108,7 +108,7 @@ def parameter_with_brands(parameter) -> list:
     Until 0.22.0 `signature()` assembled the parameters individually and lost both marks:
     `(request, username, password, *, next='')` was stored as `(…, password, next='')` in the baseline.
     A `*` inserted later — every call `login_password(r, u, p, "/start")` breaks
-    — thus looked like no change (finding from step 3 of the tiering, M-1).
+    — thus looked like no change (finding from step 3 of the tiering, M-4).
     """
     parts, star = [], any(p.kind is p.VAR_POSITIONAL for p in parameter)
     for i, p in enumerate(parameter):
@@ -1639,7 +1639,7 @@ def self_check_contract_names() -> None:
        "placeholder, environment variable, option, log text; minimum count and wiring")
 
 
-# ---------- Public is what is documented (PO decision 2026-11-20, M-1) ----------
+# ---------- Public is what is documented (PO decision 2026-11-20, M-4) ----------
 # Until then the tiers said how firm a promise is, but not WHAT it rests on: a name could sit in tier A
 # without a line in the docs and be frozen only because it had no underscore. The rule before 1.0: a
 # Python name of tier A or B is named in the hand-written documentation; otherwise it is documented or
@@ -1870,7 +1870,7 @@ def main(argv):
         print(f"\n  {len(v_error)} findings on the HTTP/log contract:\n")
         for line in v_error:
             print(f"    CONTRACT     {line}")
-        print("\n  The decision of 2026-10-29 (backlog/M-1): what proxies and filters read is tier A, the")
+        print("\n  The decision of 2026-10-29 (backlog/M-4): what proxies and filters read is tier A, the")
         print("  HTML pages are tier B. A finding here is a tier that sits lower than decided, a measurement")
         print("  that shrank, or a route the static scan does not see (tests/_contract.py).\n")
     else:

@@ -3,7 +3,7 @@ id: B-10
 type: Bug
 title: An account without a password cannot set one — the account page demands the current password
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [password, account, self-service]
 created: 2026-11-20
 ---

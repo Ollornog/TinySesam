@@ -3,7 +3,7 @@ id: B-8
 type: Bug
 title: Voluntary TOTP setup does not lead on — the page stays on "2FA active"
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [totp, account, ui]
 created: 2026-11-20
 ---

@@ -3,7 +3,7 @@ id: T-10
 type: Task
 title: Docs measured against the code — 70 places, 10 real defects
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [docs, security, operations, tests]
 created: 2026-09-21
 ---

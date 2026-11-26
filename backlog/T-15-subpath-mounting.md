@@ -3,7 +3,7 @@ id: T-15
 type: Task
 title: Make built-in pages mountable under a subpath
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [routes, templates, deployment]
 created: 2026-09-22
 ---

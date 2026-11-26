@@ -3,7 +3,7 @@ id: T-71
 type: Task
 title: Session handles keyed with the pepper instead of a plain sha256
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, sessions, keys]
 created: '2026-11-21'
 ---

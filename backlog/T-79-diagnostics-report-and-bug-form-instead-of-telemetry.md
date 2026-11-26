@@ -3,7 +3,7 @@ id: T-79
 type: Task
 title: 'Diagnostics report and bug form instead of telemetry'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [cli, support, privacy]
 created: '2026-11-21'
 ---

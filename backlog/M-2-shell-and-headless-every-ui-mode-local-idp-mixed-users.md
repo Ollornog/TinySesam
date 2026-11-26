@@ -1,5 +1,5 @@
 ---
-id: M-4
+id: M-2
 type: Milestone
 title: "Shell and headless: every UI mode, local/IdP/mixed users, library and server alike"
 status: offen
@@ -7,7 +7,7 @@ rank: 2
 tags: [shell, headless, server, permissions]
 created: 2026-11-23
 ---
-# M-4 — Shell and headless
+# M-2 — Shell and headless
 
 **Done when:** a developer who does not know this project can put TinySesam into an application in any of the four surfaces — shell on top, shell at the side, hybrid (a TinySesam area, the rest belongs to the application), headless — with local, IdP or mixed users, once as a library and once as a server, and gets the same behaviour. Applications register their own permissions; administrators assign them to roles; the application asks `has_permission`.
 
@@ -21,12 +21,12 @@ Four surfaces (shell on top, shell at the side, hybrid, headless) x three origin
 
 ~~T-96 -> T-97 -> T-98 -> T-100 -> T-101 -> T-99 -> T-102 -> T-103 -> T-104 -> T-105 -> T-106 -> T-107 (T-108, T-109 on demand; T-110 any time)~~
 
-**Roadmap 2026-11-23 (maintainer decisions: baseline and modules first):** [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)
-(B-16 -> T-111 -> T-72, T-112) comes before this milestone continues; T-96 may run alongside M-5.
+**Roadmap 2026-11-23 (maintainer decisions: baseline and modules first):** [M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)
+(B-16 -> T-111 -> T-72, T-112) comes before this milestone continues; T-96 may run alongside M-1.
 
 T-112 -> T-97 -> (T-98, T-70) -> T-100 -> T-101 and, in parallel, T-99 -> T-102 -> T-103 -> T-104 -> T-105 -> T-106 -> T-107
 (T-108, T-109 on demand). T-99 runs beside T-100/T-101 because they touch different modules once T-112 is merged;
-schema changes of both go through one pull request at a time. T-110 moved to [M-6](M-6-trust-hardening-and-launch.md).
+schema changes of both go through one pull request at a time. T-110 moved to [M-3](M-3-trust-hardening-and-launch.md).
 
 ## Acceptance
 
@@ -53,9 +53,9 @@ schema changes of both go through one pull request at a time. T-110 moved to [M-
 | S12 (optional) | [T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md) | fully headless library: register, reset password, setup status | 5 | 8–10 |
 | S13 (optional) | [T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md) | SCIM stage 2 for IdP role sync | 21 | 32–45 |
 | S3 (SAML) | [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md) | SAML step-up: ForceAuthn / AuthnInstant (part of S3: T-99 carries 8 of its 13, T-70 the other 5) | 5 | 8–12 |
-| ~~Diet~~ | [T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md) | moved to M-6 (2026-11-23) | – | – |
+| ~~Diet~~ | [T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md) | moved to M-3 (2026-11-23) | – | – |
 
-Sums: see `dokutool offen` (the tool adds the points of the entries; 1 SP is about one pull request of 2–3 h, estimates not measured). S12 and S13 are optional. The dependency diet moved to M-6; the module cut of M-5 comes before.
+Sums: see `dokutool offen` (the tool adds the points of the entries; 1 SP is about one pull request of 2–3 h, estimates not measured). S12 and S13 are optional. The dependency diet moved to M-3; the module cut of M-1 comes before.
 
 ## Existing entries
 

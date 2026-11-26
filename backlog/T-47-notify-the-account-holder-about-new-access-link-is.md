@@ -3,7 +3,7 @@ id: T-47
 type: Task
 title: 'Notify the account holder about new access (link issued, new device, success after failures)'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [security, notification]
 created: '2026-11-20'
 ---

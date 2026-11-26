@@ -4,14 +4,14 @@ type: Task
 title: Stage S13 (optional) — SCIM stage 2 for IdP role sync
 status: offen
 points: 21
-milestone: M-4
+milestone: M-2
 blocked_by: [T-102]
 tags: [idp, scim, optional]
 created: 2026-11-23
 ---
 # T-109 — Stage S13 (optional) — SCIM stage 2 for IdP role sync
 
-**Story points:** 21 · **Estimate:** 32–45 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 21 · **Estimate:** 32–45 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 **Only on demand.** Build it when a real user with Entra or Okta asks. Until then this stays open as a note.
 

@@ -3,7 +3,7 @@ id: T-80
 type: Task
 title: 'Gate client in Go'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [gate, clients, go]
 created: '2026-11-22'
 ---

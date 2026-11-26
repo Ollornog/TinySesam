@@ -3,7 +3,7 @@ id: T-40
 type: Task
 title: 'Password blocklist: the 10,000 most common passwords shipped (ASVS 6.2.4)'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [password, security, asvs]
 created: '2026-11-20'
 ---

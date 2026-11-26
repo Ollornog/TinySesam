@@ -3,7 +3,7 @@ id: T-65
 type: Task
 title: 'AI guide: AGENTS.md for contributors and a skill for app builders'
 status: erledigt
-milestone: M-2
+milestone: M-5
 tags: [docs, ai, onboarding]
 created: '2026-11-20'
 ---

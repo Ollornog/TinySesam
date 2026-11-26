@@ -3,7 +3,7 @@ type: Task
 title: 'Follow-ups to 0.29.0: kid rule, server-side top bar vs. proxy duty, key purposes both ways'
 status: erledigt
 id: T-93
-milestone: M-2
+milestone: M-5
 tags: [gate-client, docs, approvals, proxy]
 created: '2026-11-23'
 ---

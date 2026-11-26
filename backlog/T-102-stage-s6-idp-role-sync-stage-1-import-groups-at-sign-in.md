@@ -4,14 +4,14 @@ type: Task
 title: "Stage S6 — IdP role sync stage 1: import groups at sign-in"
 status: offen
 points: 8
-milestone: M-4
+milestone: M-2
 blocked_by: [T-99, T-100]
 tags: [idp, roles]
 created: 2026-11-23
 ---
 # T-102 — Stage S6 — IdP role sync stage 1: import groups at sign-in
 
-**Story points:** 8 · **Estimate:** 14–20 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 8 · **Estimate:** 14–20 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 [ADR-18](ADR-18-idp-role-sync-and-linking-local-and-idp-accounts.md), stage 1.
 

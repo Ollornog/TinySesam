@@ -4,14 +4,14 @@ type: Task
 title: "Stage S8 — hybrid: TinySesam area with name and icon, library layout slot"
 status: offen
 points: 13
-milestone: M-4
+milestone: M-2
 blocked_by: [T-103]
 tags: [hybrid, ui]
 created: 2026-11-23
 ---
 # T-104 — Stage S8 — hybrid: TinySesam area with name and icon, library layout slot
 
-**Story points:** 13 · **Estimate:** 18–24 h (from the concept, not measured) · **Milestone:** [M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 13 · **Estimate:** 18–24 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 The application draws its own navigation; everything of TinySesam sits in a delimited TinySesam area.
 

@@ -3,7 +3,7 @@ id: T-1
 type: Task
 title: End-to-end test against a real identity provider
 status: erledigt
-milestone: M-1
+milestone: M-4
 tags: [testing, passkey, oidc, saml]
 created: 2026-07-10
 ---

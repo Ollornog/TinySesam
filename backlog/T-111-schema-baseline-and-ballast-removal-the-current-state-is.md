@@ -3,14 +3,14 @@ id: T-111
 type: Task
 title: "Schema baseline and ballast removal: the current state is the starting line"
 status: erledigt
-milestone: M-5
+milestone: M-1
 blocked_by: [B-16]
 tags: [cleanup, store, migrations, greenfield]
 created: 2026-11-23
 ---
 # T-111 — Schema baseline and ballast removal
 
-**Story points:** 8 · **Estimate:** 12–18 h (not measured) · **Milestone:** [M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)
+**Story points:** 8 · **Estimate:** 12–18 h (not measured) · **Milestone:** [M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)
 
 **Decision (maintainer, 2026-11-23):** the project is greenfield with next to no users. The current state is the
 baseline; everything that only exists for older states goes. No upgrade path from old versions: whoever runs an older
@@ -30,7 +30,7 @@ version first updates to the **last release with migrations** (named in the CHAN
   baseline release refuses a database that still holds `v1` values and says which command of the last release with
   migrations re-encrypts them.
 - **Tier-C aliases.** `tinysesam/_deprecated.py` and its 38 aliases, the warning filter in `tests/run_all.py`, the
-  1.0 guard that waits for them (tier C falls with 1.0 anyway; [M-1](M-1-api-stable-1-0.md)).
+  1.0 guard that waits for them (tier C falls with 1.0 anyway; [M-4](M-4-api-stable-1-0.md)).
 - **Session-handle rewrite** of T-71 (`Store.pepper_session_handles`) — with no old rows, the rewrite is only the last
   way in for a writer ([T-72](T-72-pepper-for-the-remaining-token-digests.md)).
 - **Old configuration names and switches** that only exist for older states (inventory first: every field, CLI option
