@@ -4,7 +4,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-**A breaking release: read "Upgrading from 0.30.x" under "Removed" before you update.**
+## [0.31.0] — 2026-11-26
+
+**A breaking release: read "Upgrading from 0.30.x" under "Removed" before you update.** It is the one deliberate
+break before 1.0 (milestone M-1): it starts from a single schema baseline (no migrations, a database below 26 is
+refused), keys API keys, one-time links, QR secrets, recovery codes and the gateway code exchange with the pepper (so
+API keys are issued anew and open links end), removes the 38 tier-C aliases and splits the core into building blocks
+of which only the switched-on ones load. `tinysesam diagnose` lists every update blocker with its command. Who needs
+it: everyone, but update through 0.30.0 first and retire `derived-v1` keys there.
 
 ### Security
 
