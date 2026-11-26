@@ -37,6 +37,8 @@ die üblichen Schreibweisen (Block, Liste, Einzelwort).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 
@@ -49,6 +51,16 @@ SPIEGEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vorlage_acti
 SPIEGEL_WORKFLOW = ".github/workflows/vorlage-actions.yml"
 PIN_PLATZHALTER = re.compile(r"@@PIN:([\w.-]+/[\w./-]+?)@@")
 PIN_ZEILE = re.compile(r"^\s*(?:-\s+)?uses:\s*(([\w.-]+/[\w./-]+?)@[0-9a-f]{40}(?:\s+#.*)?)\s*$")
+# Load note at failure (0.64.0): one source, scripts/_load_note.sh (kit/scripts in repokit, scripts/ in a repo — both two
+# levels above this file). The templates have no checkout, so its body is rendered into their read-only jobs.
+LASTVERMERK = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                           "scripts", "_load_note.sh")
+# The grype image of the weekly rebuild check (0.64.0): a Dockerfile, so that Dependabot (docker) raises it in repokit.
+# `grype.Dockerfile`, not `grype/Dockerfile`: Dependabot (docker) matches any name containing "dockerfile", the kit's Go
+# check (`pruefe_dependabot_go`) and a repo's own coverage tests look for files named `Dockerfile*` — a synced
+# `Dockerfile` would demand a Dependabot entry in every repo, and a bump there would break the manifest.
+GRYPE_DATEI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "grype.Dockerfile")
+GRYPE_ZEILE = re.compile(r"^FROM (anchore/grype:v[0-9.]+@sha256:[0-9a-f]{64})\s*$", re.M)
 ANFANG = "          # --- je Repo: Anfang\n"
 ENDE = "          # --- je Repo: Ende\n"
 STANDARDZWEIGE = ("main", "master")
@@ -325,8 +337,61 @@ def rendere(root: str, je_repo: str) -> tuple[str, list[str]]:
     text = (vorlage.replace("@@WORKFLOWS@@", workflows)
             .replace("@@JE_REPO@@\n", je_repo if je_repo.endswith("\n") else je_repo + "\n")
             .replace("@@NACHLAUF@@\n", nachlauf_zeilen)
-            .replace("@@RUNNER@@", runner(wfs)))
+            .replace("@@RUNNER@@", runner(wfs))
+            .replace("@@NEUBAU_CRON@@\n", neubau_cron(root, je_repo))
+            .replace("@@GRYPE@@", grype_bild(probleme))
+            .replace("@@LASTVERMERK@@\n", lastvermerk_schritt(probleme)))
     return text, probleme
+
+
+def lastvermerk_schritt(probleme: list[str]) -> str:
+    """The step `if: failure()` with the body of scripts/_load_note.sh (between `# >>> body` and `# <<< body`)."""
+    text = _lies(LASTVERMERK)
+    m = re.search(r"^# >>> body\n(.*?)^# <<< body$", text or "", re.S | re.M)
+    if not m:
+        probleme.append(f"load note missing or without body markers: {LASTVERMERK}")
+        return ""
+    rumpf = "".join(f"          {z}\n" if z.strip() else "\n" for z in _zeilen(m.group(1)))
+    return ("      - name: Load at failure (from scripts/_load_note.sh)\n"
+            "        if: failure()\n"
+            "        run: |\n" + rumpf)
+
+
+def grype_bild(probleme: list[str]) -> str:
+    """`anchore/grype:v…@sha256:…` from tests/_kit/grype.Dockerfile."""
+    m = GRYPE_ZEILE.search(_lies(GRYPE_DATEI) or "")
+    if not m:
+        probleme.append(f"grype pin missing: {GRYPE_DATEI} needs `FROM anchore/grype:v<version>@sha256:<digest>`")
+        return "@@GRYPE@@"
+    return m.group(1)
+
+
+WOCHENTAGE = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+
+def neubau_zeit(abbild: str) -> tuple[int, int, int]:
+    """(weekday 1–5, hour 6–13 UTC, minute) of the weekly rebuild check, spread by the image name (stable in every
+    working tree, unlike the folder name): Monday to Friday, 07:00–14:59 Berlin in winter, 08:00–15:59 in summer."""
+    # sha256, not crc32: for the fleet's image names (same prefix) crc32 put four of seven repos on the same Friday.
+    c = int.from_bytes(hashlib.sha256(abbild.encode("utf-8")).digest()[:8], "big")
+    return 1 + c % 5, 6 + (c // 5) % 8, (c // 40) % 60
+
+
+def neubau_cron(root: str, je_repo: str) -> str:
+    """The weekly cron entry (with its time comment) for a repo with release automation and own images, else ""."""
+    if _wert(je_repo, "APP_PR") != "release":
+        return ""
+    try:
+        konfig = json.loads(_lies(os.path.join(root, ".github", "release-automatik.json")) or "{}")
+    except ValueError:
+        return ""
+    abbilder = konfig.get("abbilder") or [] if isinstance(konfig, dict) else []
+    if not abbilder or not isinstance(abbilder[0], str):
+        return ""
+    tag, stunde, minute = neubau_zeit(abbilder[0])
+    return (f"    # Weekly rebuild check: {WOCHENTAGE[tag]} {stunde:02d}:{minute:02d} UTC = {stunde + 1:02d}:{minute:02d} "
+            f"Europe/Berlin in winter, {stunde + 2:02d}:{minute:02d} in summer (spread by the image name).\n"
+            f'    - cron: "{minute} {stunde} * * {tag}"\n')
 
 
 def _wert(je_repo: str, name: str) -> str | None:
@@ -390,15 +455,18 @@ APP_TOKEN_ACTION = "actions/create-github-app-token"
 
 
 def app_token_pins(wfs: dict[str, str]) -> list[str]:
-    """Jeder Workflow mit der App-Token-Action pinnt sie per SHA mit Versionskommentar, gleich dem Pin der Vorlage (0.49.1).
+    """Every workflow with the app token action pins it by SHA with a version comment (0.49.1; findings).
 
-    Dependabot hebt diese Action im Ziel-Repo nicht (den Pin besitzt die Vorlage, `pruefe_dependabot`), also altert
-    ein abweichender Pin still — und ein Tag (`@v3`) oder ein Pin ohne Kommentar fiele sonst gar nicht auf. Geprüft
-    werden alle Workflows (release.yml, image.yml, …), nicht nur der Auto-Merge-Workflow, den `rendere` ohnehin
-    zeilengleich gegen die Vorlage hält.
+    Dependabot does not raise this action in a target repo (the template owns the pin, `pruefe_dependabot`), so a tag
+    (`@v3`) or a pin without comment would never be noticed. All workflows are checked (release.yml, image.yml, …), not
+    only the auto-merge workflow, which `rendere` keeps line-equal to the template anyway.
+
+    Since 0.65.0 a SHA pin that merely differs from the template's pin is no finding here but a warning
+    (`pin_warnungen`): `repokit sync` must not touch a repo's own workflows (the repokit guard may push exactly the two
+    kit-rendered workflows, PO 2026-11-24), so with the strict check every kit release that raised the pin turned the
+    sync PR of every repo with a release.yml red (kit 0.64.0, v3.3.0 → v3.4.0).
     """
     probleme: list[str] = []
-    soll = pins().get(APP_TOKEN_ACTION, "")
     for name, text in sorted(wfs.items()):
         if name == os.path.basename(WORKFLOW):
             continue
@@ -411,9 +479,170 @@ def app_token_pins(wfs: dict[str, str]) -> list[str]:
             ist = f"{APP_TOKEN_ACTION}{m.group(1) or ''}{m.group(2)}".rstrip()
             if not re.fullmatch(re.escape(APP_TOKEN_ACTION) + r"@[0-9a-f]{40}  # v\d\S*", ist):
                 probleme.append(f"{name}: `{ist}` ist kein SHA-Pin mit Versionskommentar (`@<40 Hex>  # vX.Y.Z`)")
-            elif soll and ist != soll:
-                probleme.append(f"{name}: `{ist}` weicht vom Pin der Vorlage ab (`{soll}`)")
     return probleme
+
+
+def _version(pin: str) -> tuple[int, ...] | None:
+    """`(3, 4, 0)` from a pin's version comment `# v3.4.0`; None without a readable version."""
+    m = re.search(r"#\s*v(\d+(?:\.\d+)*)", pin)
+    return tuple(int(t) for t in m.group(1).split(".")) if m else None
+
+
+def _hebt(ist: str, soll: str) -> bool:
+    """Does the kit pin raise this pin? Only to a strictly higher version — a sync never lowers a pin (0.66.0)."""
+    alt, neu = _version(ist), _version(soll)
+    return alt is not None and neu is not None and neu > alt
+
+
+def _fremde_pins(root: str) -> list[tuple[str, int, str, str]]:
+    """(workflow, line index, current pin, template pin) for every SHA pin of a template action that differs.
+
+    Only a repo's own workflows (not the auto-merge workflow, which `rendere` builds) and only lines in the exact pin
+    form `<action>@<40 hex>  # v…` — anything else is a finding of `app_token_pins`, never rewritten by guessing.
+    """
+    soll_pins = pins()
+    aus: list[tuple[str, int, str, str]] = []
+    for name, text in sorted(_workflows(root).items()):
+        for i, z in enumerate(_zeilen(text)):
+            m = PIN_ZEILE.match(z)
+            if not m or m.group(2) not in soll_pins:
+                continue
+            ist, soll = m.group(1).rstrip(), soll_pins[m.group(2)]
+            if ist != soll and re.fullmatch(re.escape(m.group(2)) + r"@[0-9a-f]{40}  # v\d\S*", ist):
+                aus.append((name, i, ist, soll))
+    return aus
+
+
+def pin_warnungen(root: str) -> list[str]:
+    """Warnings (never a failure, since 0.65.0): a repo's own workflow pins a template action differently from the kit.
+
+    Dependabot ignores these actions in the target repo (`pruefe_dependabot`), so without this line the pin would age
+    silently. Since 0.66.0 `repokit sync` raises an older pin; what is left here is a pin the kit does not raise (its
+    own version is the same or newer, or unreadable).
+    """
+    aus = []
+    for name, i, ist, soll in _fremde_pins(root):
+        was = ("`repokit sync` raises it" if _hebt(ist, soll)
+               else "not raised (same or newer version, or no version to compare) — check it by hand")
+        aus.append(f".github/workflows/{name}:{i + 1}: `{ist}` differs from the kit pin `{soll}` — {was}")
+    return aus
+
+
+def pins_heben(root: str) -> list[str]:
+    """Raise every older SHA pin of a template action in the repo's own workflows to the kit pin (since 0.65.0).
+
+    Only the pin itself is replaced (indentation, `- `, the rest of the line, line endings stay); a pin with the same
+    or a newer version is never lowered (0.66.0). Returns the changed workflow paths. Called by `repokit sync` (since
+    0.66.0, PO 2026-11-24 "yes, but strict") and `repokit automerge`. The repokit guard pushes such a diff only when
+    `pin_diff_befunde` confirms that every changed line is exactly such a raised pin line (`repokit pins --pruefe`).
+    """
+    geaendert: list[str] = []
+    je_datei: dict[str, list[tuple[int, str, str]]] = {}
+    for name, i, ist, soll in _fremde_pins(root):
+        if _hebt(ist, soll):
+            je_datei.setdefault(name, []).append((i, ist, soll))
+    for name, treffer in je_datei.items():
+        pfad = os.path.join(root, ".github", "workflows", name)
+        try:            # newline="": CRLF stays CRLF — only the pin may change, not every line ending of the file
+            with open(pfad, encoding="utf-8", newline="") as fh:
+                zeilen = fh.read().split("\n")
+        except OSError:
+            continue
+        for i, ist, soll in treffer:
+            zeilen[i] = zeilen[i].replace(ist, soll, 1)
+        with open(pfad, "w", encoding="utf-8", newline="") as fh:
+            fh.write("\n".join(zeilen))
+        geaendert.append(f".github/workflows/{name}")
+    return geaendert
+
+
+# A path whose diff `pin_diff_befunde` may confirm: a workflow file directly in .github/workflows/.
+PIN_DIFF_PFAD = re.compile(r"\.github/workflows/[A-Za-z0-9._-]+\.ya?ml")
+_DIFF_KOPF = re.compile(r"^(?:index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?|--- a/\S.*|\+\+\+ b/\S.*)$")
+_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@")
+
+
+def pin_diff_befunde(diff: str, pfad: str, soll_pins: dict[str, str] | None = None) -> list[str]:
+    """Findings for a unified diff (`git diff HEAD -- <pfad>`) that is meant to raise kit action pins only (0.66.0).
+
+    Empty list = confirmed: the diff touches exactly `pfad`, and every changed line is a pin line of a kit-known action
+    (`uses: <action>@<40 hex>  # vX.Y.Z`) replaced by the very line `pins_heben` writes — same line, only the pin
+    swapped for the kit pin, to a higher version. Anything else is a finding, and the repokit guard pushes nothing
+    (PO 2026-11-24, "yes, but strict"): an extra line, a removed or added line without partner, an unknown action, a
+    tag, a lowered pin, a mode change, a new, deleted, renamed or binary file, an empty diff. Fail-closed: a line of
+    the diff this parser does not know is a finding, never skipped.
+    """
+    soll_pins = pins() if soll_pins is None else soll_pins
+    befunde: list[str] = []
+    if not PIN_DIFF_PFAD.fullmatch(pfad):
+        return [f"{pfad}: not a workflow file directly in .github/workflows/ — only those are checked"]
+    zeilen = diff.split("\n")
+    if zeilen and zeilen[-1] == "":
+        zeilen.pop()
+    if not zeilen:
+        return [f"{pfad}: no change against HEAD (a new or untracked file is no pin change)"]
+    kopf_erwartet = f"diff --git a/{pfad} b/{pfad}"
+    hunks: list[tuple[int, list[str], list[str], list[str]]] = []      # (diff line, removed, added, markers)
+    im_kopf = False
+    dateien = 0
+    for nr, z in enumerate(zeilen, 1):
+        if z.startswith("diff --git "):
+            dateien += 1
+            if z != kopf_erwartet:
+                befunde.append(f"{pfad}: diff line {nr} names another file: {z!r}")
+            im_kopf = True
+            continue
+        if im_kopf and _DIFF_KOPF.match(z):
+            if z.startswith(("--- ", "+++ ")) and z[6:] != pfad:
+                befunde.append(f"{pfad}: diff line {nr} names another file: {z!r}")
+            continue
+        if _HUNK.match(z) and dateien:
+            im_kopf = False
+            hunks.append((nr, [], [], []))
+            continue
+        if not im_kopf and hunks and z[:1] in ("-", "+"):
+            hunks[-1][1 if z[0] == "-" else 2].append(z[1:])
+            hunks[-1][3].append(z[0])
+            continue
+        if not im_kopf and hunks and z == "\\ No newline at end of file":
+            hunks[-1][3].append("\\" + (hunks[-1][3][-1] if hunks[-1][3] else "?"))
+            continue
+        if not im_kopf and hunks and z.startswith(" "):
+            continue            # context line: unchanged
+        befunde.append(f"{pfad}: diff line {nr} is not a pin change: {z!r}")
+    if dateien != 1:
+        befunde.append(f"{pfad}: the diff must cover exactly this one file (found {dateien})")
+    if not hunks and not befunde:
+        befunde.append(f"{pfad}: the diff changes no line")
+    for nr, weg, dazu, marken in hunks:
+        if "\\-" in marken and "\\+" not in marken or "\\+" in marken and "\\-" not in marken:
+            befunde.append(f"{pfad}: hunk at diff line {nr} changes the newline at the end of the file")
+        if len(weg) != len(dazu) or not weg:
+            befunde.append(f"{pfad}: hunk at diff line {nr} removes {len(weg)} and adds {len(dazu)} lines — "
+                           "a pin change replaces each line by one line")
+            continue
+        for alt, neu in zip(weg, dazu):
+            befunde.extend(_pin_paar_befunde(pfad, nr, alt, neu, soll_pins))
+    return befunde
+
+
+def _pin_paar_befunde(pfad: str, nr: int, alt: str, neu: str, soll_pins: dict[str, str]) -> list[str]:
+    """Findings for one removed/added line pair of a pin diff (empty = exactly the line `pins_heben` writes)."""
+    m = PIN_ZEILE.match(alt.rstrip("\r"))
+    if not m:
+        return [f"{pfad}: hunk at diff line {nr}: {alt.strip()!r} is no pin line (`uses: <action>@<40 hex>  # vX`)"]
+    action, ist = m.group(2), m.group(1).rstrip()
+    if action not in soll_pins:
+        return [f"{pfad}: hunk at diff line {nr}: {action} is no kit action (kit pins: {', '.join(sorted(soll_pins))})"]
+    soll = soll_pins[action]
+    if not re.fullmatch(re.escape(action) + r"@[0-9a-f]{40}  # v\d\S*", ist):
+        return [f"{pfad}: hunk at diff line {nr}: `{ist}` is not in the exact pin form, the kit does not rewrite it"]
+    if not _hebt(ist, soll):
+        return [f"{pfad}: hunk at diff line {nr}: `{ist}` → `{soll}` does not raise the version"]
+    if neu != alt.replace(ist, soll, 1):
+        return [f"{pfad}: hunk at diff line {nr}: {neu.strip()!r} is not the line with only the kit pin swapped in "
+                f"(expected {alt.replace(ist, soll, 1).strip()!r})"]
+    return []
 
 
 def je_repo_block(text: str) -> str | None:

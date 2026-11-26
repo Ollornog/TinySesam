@@ -59,6 +59,11 @@
 #   Programm nennt diese Markdown-Datei (zweite Stufe, gleiche Ordnerregel). Ist die Datei über einen getrackten Symlink außerhalb der Liste erreichbar,
 #   fährt ebenfalls die volle Suite. Submodule zählen immer (`--ignore-submodules=none`).
 #   Grenze (benannt): Ein Programm, das Text per Glob liest (`docs/*.md`), nennt keinen Namen — das Repo verengt dann.
+#   NOT A READ (since kit 0.65.0): a mention on a comment line (the line starts with `#`, `//`, `/*`, `* `, `*/` or `<!--`)
+#   and a mention inside a URL (`https://…/blob/main/README.md`, a link in a page). Measured on 2026-11-24: C22 (a CSS
+#   comment, a link), EightPerDay and UnderDoc (a Go comment), paperlaiss (a link) ran the full suite for a pure README or
+#   CHANGELOG change. Named limit: a docstring is no comment, and a program that builds the URL to fetch the file reads it
+#   (it then names the file outside the URL as well, or the repo narrows).
 #
 # VERENGEN, nie erweitern: scripts/nur-text-verengung.txt im Repo, je Zeile
 #     aus <ERE-Muster>   # Begründung      → eine passende Datei löst die volle Suite aus
@@ -262,6 +267,28 @@ while IFS= read -r -d '' eintrag; do
     symlink_ziele+=("$(readlink -m -- "$l")")
 done < <(git ls-files -s -z 2>/dev/null)
 
+# Does <file> name <name> on a line that reads it? 0 = yes, 1 = no, 2 = search failed. Extra arguments: `-e <part>` words
+# of which one must stand in the same line (folder rule). Not a read: a comment line, a mention only inside a URL.
+echte_nennung() {  # echte_nennung <file> <name> [-e <part>]…
+    local datei="$1" name="$2" zeilen rc z ohne
+    shift 2
+    if [[ $# -gt 0 ]]; then
+        zeilen="$(git -c core.quotePath=false grep -h -F -w -e "$name" --and \( "$@" \) -- ":(literal)$datei" 2>/dev/null)"
+    else
+        zeilen="$(git -c core.quotePath=false grep -h -F -w -e "$name" -- ":(literal)$datei" 2>/dev/null)"
+    fi
+    rc=$?
+    [[ $rc -gt 1 ]] && return 2
+    [[ $rc -eq 0 ]] || return 1
+    while IFS= read -r z; do
+        [[ "$z" =~ ^[[:space:]]*(#|//|/\*|\*/|\*[[:space:]]|\*$|<!--) ]] && continue
+        ohne="$(sed -E 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]"'"'"'<>()]*##g' <<<"$z")"
+        # The word test of `grep -w` again, on the line without its URLs.
+        grep -q -F -w -e "$name" <<<"$ohne" && return 0
+    done <<<"$zeilen"
+    return 1
+}
+
 # Wer nennt den Namen? 0 = ein Programm (stdout: wer), 1 = niemand, 2 = Suche gescheitert. $2 = auch über Texte der
 # Liste weitersuchen (eine Stufe): Ein Text, der selbst ausgeführt wird (Doctest in der README), ist ein Leser, wenn
 # ihn ein Programm beim Namen nennt (Fund 4).
@@ -283,7 +310,11 @@ genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner> der Dat
         for teil in "${teile[@]}"; do [[ -n "$teil" ]] && muster+=(-e "$teil"); done
         while IFS= read -r l; do
             [[ -z "$l" ]] && continue
-            if [[ "$l" != "$ordner"/* ]]; then
+            if [[ "$l" != "$ordner"/* && "$l" != *.md ]]; then
+                echte_nennung "$l" "$name" "${muster[@]}"; rc=$?
+                [[ $rc -gt 1 ]] && return 2
+                [[ $rc -eq 0 ]] || continue
+            elif [[ "$l" != "$ordner"/* ]]; then
                 git -c core.quotePath=false grep -q -F -w -e "$name" --and \( "${muster[@]}" \) -- ":(literal)$l" \
                     2>/dev/null; rc=$?
                 [[ $rc -gt 1 ]] && return 2
@@ -315,6 +346,9 @@ genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner> der Dat
             continue
         fi
         workflow_liest "$l" || continue
+        echte_nennung "$l" "$name"; rc=$?
+        [[ $rc -gt 1 ]] && return 2
+        [[ $rc -eq 0 ]] || continue
         echo "$l"; return 0
     done <<<"$treffer"
     return 1

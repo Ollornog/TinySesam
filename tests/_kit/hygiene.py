@@ -636,8 +636,10 @@ _FREMD_MUSTER: list[tuple[str, re.Pattern[str]]] = [
         r"""<link\b(?:[^>]*?\s)?href\s*=\s*["']\s*(https?:)?//([a-z0-9.-]+)""", re.I | re.S)),
     ("css url()", re.compile(r"""url\(\s*["']?\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
     ("@import", re.compile(r"""@import\s+(?:url\()?\s*["']\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+    # Not a PHP method or static call (`$account->fetch(…)`, `Account::fetch(…)`, since 0.65.0): that runs on the server,
+    # no browser sends it (TinySesam #328, a PHP repo). A script in a .php page still calls a bare `fetch(` and counts.
     ("fetch()/import()", re.compile(
-        r"""(?:\bfetch|\bimport)\s*\(\s*["'`]\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+        r"""(?<!->)(?<!::)(?:\bfetch|\bimport)\s*\(\s*["'`]\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
     ("<iframe src=", re.compile(r"""<iframe\b[^>]*?\bsrc\s*=\s*["']\s*(https?:)?//([a-z0-9.-]+)""",
                                re.I | re.S)),
 ]

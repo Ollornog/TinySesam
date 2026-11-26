@@ -110,6 +110,10 @@ def _automerge(root: str) -> list[str]:
     spec = importlib.util.spec_from_file_location("_kit_automerge_aus_dem_repo", pfad)
     modul = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modul)
+    if hasattr(modul, "pin_warnungen"):    # since 0.65.0: a differing own pin is no failure, but not silent either
+        import sys
+        for w in modul.pin_warnungen(root):
+            print(f"WARNING (auto-merge): {w}", file=sys.stderr)
     return modul.pruefe(root)
 
 
