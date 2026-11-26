@@ -1832,6 +1832,86 @@ for readme in ("README.md", "i18n/README.de.md"):
     assert "tests/test_repo.py" in body, f"{readme} does not explain the hygiene test"
 print("  both READMEs explain browser and hygiene tests; CHANGELOG maintained")
 
+# ---------- The upgrade list names every breaking commit since the last release with migrations (T-126) ----------
+# The breaking release after the schema baseline collects every break since v0.30.0 in ONE list ("Upgrading from
+# 0.30.x"), the same text in CHANGELOG.md and docs/OPERATIONS.md (between the markers). Every commit since the tag whose
+# subject is breaking (`type!:` / `type(scope)!:`) or whose body has a `BREAKING CHANGE:` footer must be named in it:
+# by its backlog id (`T-n`, `B-n`, `ADR-n`, `@<6 hex>` of a wiki todo), or by its short hash when it has none. The range
+# ends at the first release tag after v0.30.0 once there is one — later breaks belong to the next list. The history is
+# needed: CI checks out with `fetch-depth: 0`; a clone without the tag or with a cut history fails here, never skips.
+UPGRADE_BASE = "v0.30.0"
+UPGRADE_MARKS = ("<!-- upgrade-list:start -->", "<!-- upgrade-list:end -->")
+_BREAKING_SUBJECT = re.compile(r"^[a-z]+(?:\([^)]*\))?!:")
+_ITEM_ID = re.compile(r"(?<![\w-])(?:T|B|ADR)-\d+\b|(?<![\w@])@[0-9a-f]{6}\b")
+
+
+def upgrade_block(text: str) -> str:
+    """The text between the two markers, "" if they are missing, out of order or doubled."""
+    start, end = UPGRADE_MARKS
+    if text.count(start) != 1 or text.count(end) != 1 or text.index(start) > text.index(end):
+        return ""
+    return text[text.index(start) + len(start):text.index(end)].strip()
+
+
+def is_breaking(subject: str, body: str) -> bool:
+    return bool(_BREAKING_SUBJECT.match(subject) or re.search(r"(?m)^BREAKING[ -]CHANGE:", body))
+
+
+def upgrade_gaps(block: str, commits: list) -> list:
+    """The breaking commits (sha, subject, body) the list does not name — by id, else by short hash."""
+    gaps = []
+    for sha, subject, body in commits:
+        if not is_breaking(subject, body):
+            continue
+        ids = _ITEM_ID.findall(subject)
+        named = any(re.search(rf"(?<![\w-]){re.escape(i)}\b", block) for i in ids) if ids else sha[:7] in block
+        if not named:
+            gaps.append(f"{sha[:7]} {subject} (name {' or '.join(ids) if ids else sha[:7]} in the list)")
+    return gaps
+
+
+# Self-probe: an id in the subject, a footer, a commit without an id, a non-breaking commit, a scope with a hyphen.
+_probe_block = "- one (T-72) — two (@344f94) — three (abc1234)"
+assert upgrade_gaps(_probe_block, [
+    ("f" * 40, "feat(security)!: pepper (T-72) (#357)", ""),
+    ("e" * 40, "feat(x-y)!: codes (@344f94)", ""),
+    ("abc1234" + "0" * 33, "refactor!: no id", ""),
+    ("d" * 40, "fix: harmless (T-999)", ""),
+]) == []
+assert upgrade_gaps(_probe_block, [("c" * 40, "fix: a footer (T-7)", "text\n\nBREAKING CHANGE: gone"),
+                                   ("b" * 40, "refactor!: no id", ""),
+                                   ("a" * 40, "feat!: (T-720)", "")]) == [
+    "ccccccc fix: a footer (T-7) (name T-7 in the list)", "bbbbbbb refactor!: no id (name bbbbbbb in the list)",
+    "aaaaaaa feat!: (T-720) (name T-720 in the list)"], "the probe of the upgrade list check misses a gap"
+assert upgrade_block(f"x {UPGRADE_MARKS[1]} y {UPGRADE_MARKS[0]}") == "" and upgrade_block("x") == ""
+
+_lists = {name: upgrade_block(read(*name.split("/"))) for name in ("CHANGELOG.md", "docs/OPERATIONS.md")}
+assert all(_lists.values()), f"the upgrade list (markers {UPGRADE_MARKS}) is missing in: " + \
+    ", ".join(n for n, b in _lists.items() if not b)
+assert _lists["CHANGELOG.md"] == _lists["docs/OPERATIONS.md"], \
+    "the upgrade lists of CHANGELOG.md and docs/OPERATIONS.md differ — they are one list, copied"
+
+
+def _git(*args) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True, timeout=60)
+
+
+assert _git("rev-parse", "-q", "--verify", f"{UPGRADE_BASE}^{{commit}}").returncode == 0, \
+    f"the tag {UPGRADE_BASE} is not in this clone: git fetch origin tag {UPGRADE_BASE} (CI: fetch-depth: 0)"
+assert _git("merge-base", "--is-ancestor", UPGRADE_BASE, "HEAD").returncode == 0, \
+    f"the history from {UPGRADE_BASE} to HEAD is cut (a shallow clone?): git fetch --unshallow (CI: fetch-depth: 0)"
+_later = [t for t in _git("tag", "--merged", "HEAD", "--contains", UPGRADE_BASE, "--sort=v:refname", "v*"
+                          ).stdout.split() if t != UPGRADE_BASE]
+_end = _later[0] if _later else "HEAD"
+_log = _git("log", "--format=%H%x1f%s%x1f%b%x1e", f"{UPGRADE_BASE}..{_end}")
+assert _log.returncode == 0, _log.stderr
+_commits = [tuple(c.strip("\n").split("\x1f", 2)) for c in _log.stdout.split("\x1e") if c.strip()]
+_breaking = [c for c in _commits if is_breaking(c[1], c[2])]
+_gaps = upgrade_gaps(_lists["CHANGELOG.md"], _commits)
+assert not _gaps, "breaking commits the upgrade list (\"Upgrading from 0.30.x\") does not name:\n  " + "\n  ".join(_gaps)
+print(f"  upgrade list: the same in CHANGELOG and OPERATIONS, names all {len(_breaking)} breaking commit(s) of "
+      f"{len(_commits)} in {UPGRADE_BASE}..{_end}")
+
 # ---------- Backlog: structure, references, generated index ----------
 # The backlog is part of the repo, so the suite checks it like any other file.
 # A backlog that is only "mostly right" is not believed and then not maintained.

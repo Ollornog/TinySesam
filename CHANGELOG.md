@@ -4,6 +4,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+**A breaking release: read "Upgrading from 0.30.x" under "Removed" before you update.**
+
 ### Security
 
 - API keys, one-time tokens (sign-in, invitation, confirmation and reset links, the service and consent pairing codes,
@@ -106,6 +108,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- One upgrade list for the breaking release, "Upgrading from 0.30.x" (T-126): the same text under "Removed" here and
+  in `docs/OPERATIONS.md` ("Updating"), every point with what to do, the blocking ones marked. `tinysesam diagnose`
+  lists the update blockers of a database without starting (`Update blockers: …`): a schema below the baseline, secrets
+  in a format before 0.26, vault ciphertext missing in `key_material`, and each key with the note `derived-v1` with its
+  exact `tinysesam keys retire --db <db> --purpose … --kid …` command — the same refusals the start makes one at a
+  time. An API key of 0.30.x (its plain sha256, T-72) is still refused, but the audit (`apikey_denied … reason=pre_pepper`)
+  and the security log now name the key and its owner instead of `reason=unknown`. `tests/test_schema_baseline.py`
+  runs the update of a 0.30.0 database with a `derived-v1` gate key and an old API key end to end. The hygiene test
+  compares the breaking commits since v0.30.0 (`type!:` or a `BREAKING CHANGE:` footer) with the list: each must be
+  named by its backlog id (or short hash); CI checks out with the full history for it.
 - Documentation of the grid (T-96): README and `i18n/README.de.md` get the section "Surfaces, origins, deployment" (four surfaces,
   three account origins, library and server, the ownership, equivalence and parity rules, and the owner of every cell);
   `SECURITY.md` and its German version state that the library is one trust boundary and server plus application are two.
@@ -115,6 +127,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- `tinysesam diagnose` said of a database below schema 26 that "the next start migrates it"; since the schema baseline
+  (T-111) the start refuses it. It now says so and lists the way out (T-126).
 - The warning "X-Forwarded-For from … is ignored: the peer is not in trusted_proxies" could name a client's address: a
   server in front of TinySesam that had already applied the header (uvicorn's default `proxy_headers=True`) hands the
   client on as the peer in the notation of the header (`2001:DB8::7`), and the check that recognises this case compared
@@ -131,6 +145,47 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 database migrations**; this version starts from the schema baseline (T-111). Update path for every installation:
 `docs/OPERATIONS.md`, "Updating". Each point says who has to act: **[end users notice]** — people signing in see
 something; **[operators only]** — the operator or the developer of the embedding app acts, nobody else notices.
+
+#### Upgrading from 0.30.x
+
+<!-- upgrade-list:start -->
+In this order. The start of this version refuses a database with a blocking point (marked **blocks**) and names the
+command that clears it; `tinysesam diagnose --db auth.db` lists every blocking point at once, without starting.
+
+1. **Back up** with 0.30.x: `tinysesam backup --db auth.db auth-before.db` (not `cp`: WAL).
+2. **Be on 0.30.x** (T-111) — **blocks**. A database below schema 26 (or without a stamp, before 0.18) is refused and
+   left untouched: update to 0.30.0 first and start it once with write access.
+3. **No secret in a format before 0.26** (T-111) — **blocks**. With 0.30.x, `tinysesam keys list --db auth.db` shows
+   no line `… value(s) in a format before 0.26`; otherwise run its `tinysesam keys reencrypt --db auth.db`.
+4. **Retire the keys derived from the vault key** (T-111) — **blocks**. For every key `tinysesam keys list` shows with
+   `note: derived-v1`: `tinysesam keys retire --db auth.db --purpose gate --kid <kid>` on 0.30.x (this version names
+   and accepts the same command); for the OAuth pepper `--purpose oauth-pepper --kid <kid> --force` (programs still
+   connected with OAuth tokens of 0.25.x connect again). A key in a keyring file or `*_PREVIOUS` variable: remove it
+   there.
+5. **Re-issue the API keys** (T-72). Every API key of 0.30.x is refused after the update; the audit and security log
+   name the key and its owner with `reason=pre_pepper`. Note before the update which keys are in use (panel,
+   `list_api_keys`), create them anew afterwards — the service accounts of applications with the account API or
+   approvals included — and revoke the old entries (they stay in the list until then).
+6. **Open one-time links end** (T-72): sign-in links (also the account API's), invitations, address confirmations,
+   reset links, open QR sign-in requests, service and consent pairing codes. People ask for a new link; issue new
+   pairing codes.
+7. **Recovery codes end** (@344f94). TOTP keeps working; tell the people with TOTP to generate new codes on their
+   account page after the update. Whoever has lost the authenticator too needs the panel's access reset.
+8. **A gateway code exchange running at the update fails once** (@51b7a1, `gate_link_enabled`): reloading the
+   application starts a new one. Nothing to do.
+9. **Code on removed names** (T-111): the 38 tier-C warning aliases of 0.22.0 are gone — use `login_password`,
+   `login_pin`, `login_totp`, `confirm_*`, `complete_totp`, `require_csrf`, `current_user`/`session_user`,
+   `all_security()`, `demo_mode`, `admin_identifiers`/`ensure_admin` (the full table and the removed internal names
+   are in the changelog, "Removed"). `tinysesam keys reencrypt --to v1` is gone.
+10. **Audit rows in German** that 0.24.x or older wrote after schema 15 (a rollback without restore) keep their old
+    names in the panel and `tinysesam audit` (T-111).
+
+Not affected: sessions, passkeys, TOTP itself, app passwords, OAuth access and refresh tokens issued by 0.26 or later.
+Going back to 0.30.0 needs no SQL (the schema is the same, 26); the API keys and links this version issued are unknown
+there.
+<!-- upgrade-list:end -->
+
+#### Every break in detail
 
 - **[operators only] Two-step update.** A database below schema 26 (or without a stamp, before 0.18) is refused at
   start with `ConfigError` naming 0.30.0 — nothing is written, not even the journal mode. Way: back up, update to
@@ -208,13 +263,15 @@ something; **[operators only]** — the operator or the developer of the embeddi
 ### Added
 
 - `tests/test_schema_baseline.py`: a fresh database equals the schema 0.30.0 creates (`tests/fixtures/
-  schema_baseline.json`, generated from the tag), creation is atomic, a database below the baseline is refused untouched, old-format secrets and `derived-v1` keys stop the start
-  and `keys retire` clears the latter. `Store.BASELINE_SCHEMA`, `Store.LAST_MIGRATING_RELEASE`.
-- CI compares the schema baseline with the tag itself, not only with the checked-in file (T-127): every job that runs
-  the suite (`full`, `minimal`, `repeat`, the nightly prerelease leg, the release check) fetches the tag v0.30.0
-  (`git fetch --depth=1 origin tag v0.30.0`), and `tests/test_schema_baseline.py` regenerates the fixture from it and
-  compares. A fixture edited by hand — even together with the schema in the code — turns red; a clone without the tag
-  fails the suite with the fetch command instead of skipping the comparison.
+  schema_baseline.json`, generated from the tag), creation is atomic, a database below the baseline is refused
+  untouched, old-format secrets and `derived-v1` keys stop the start and `keys retire` clears the latter.
+  `Store.BASELINE_SCHEMA`, `Store.LAST_MIGRATING_RELEASE`.
+- CI compares the schema baseline with the tag itself, not only with the checked-in file (T-127): the jobs that run the
+  suites (`full`, `minimal`, `browser`, `repeat`, the nightly prerelease leg, the release check) check out the whole
+  history with its tags (`fetch-depth: 0`; the upgrade list check of T-126 needs it too), and
+  `tests/test_schema_baseline.py` regenerates the fixture from the tag and compares. A fixture edited by hand — even
+  together with the schema in the code — turns red; a clone without the tag fails the suite with the fetch command
+  instead of skipping the comparison.
 
 ## [0.30.0] — 2026-11-24
 

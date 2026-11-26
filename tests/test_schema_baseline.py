@@ -6,7 +6,7 @@ What must hold, each against the real code paths:
       database of this version against `tests/fixtures/schema_baseline.json`, which was generated from the release
       tag (`python tests/test_schema_baseline.py --update`); the fixture itself is regenerated from the tag and
       compared, so a fixture edited by hand turns red (T-127) — without the tag in the clone the suite fails instead
-      of skipping (every CI job that runs it fetches the tag)
+      of skipping (every CI job that runs it checks out the whole history with its tags)
   (b) a database below the baseline (stamp 25, or no stamp at all with TinySesam tables) is refused with a message
       that names the release with the migrations — and the file is left byte for byte as it was; the command line
       says the same with exit code 1 instead of a traceback; the tables of another program in the same file do not
@@ -114,7 +114,7 @@ r.check("(a) the baseline constants agree: schema, baseline and the release name
 # The fixture is only as good as its source: regenerated from the tag, it must be identical — a fixture edited by hand
 # (together with the schema in the code, so that the comparison above stays green) turns this red (T-127). Without
 # the tag there is nothing to compare with, and that is a failure, not a skip: every CI job that runs this suite
-# fetches the tag (`git fetch --depth=1 origin tag v0.30.0`), a local clone has it anyway.
+# checks out the whole history with its tags (`fetch-depth: 0`), a local clone has it anyway.
 from_tag = schema_from_tag(tempfile.mkdtemp(dir=work))
 r.check(f"(a) the tag {TAG} is in this clone, so the fixture can be regenerated from it",
         from_tag is not None,
@@ -286,5 +286,77 @@ gone = ("_migrate", "_vocabulary", "_deprecated", "DERIVED_V1", "pepper_session_
 found = sorted(f"{name}: {w}" for name, text in package.items() for w in gone if re.search(rf"\b{w}\b", text))
 r.check("(e) no migration chain, vocabulary or alias module, derived key material or session handle rewrite in "
         "tinysesam/", not found and "_vocabulary.py" not in package and "_deprecated.py" not in package, str(found))
+
+# ── (f) the update from 0.30.x (T-126) ──────────────────────────────────────────────────────────────
+# A database as 0.30.0 leaves it: made by this version's `Store` (the schema is the same, 26) and stamped back to what
+# 0.30.0 wrote — an API key stored as the plain sha256 of the key (before T-72), and a gate key it took over from 0.25.x
+# as a previous key with the note `derived-v1`. No fixture from older files.
+import logging  # noqa: E402
+
+db_u = os.path.join(tempfile.mkdtemp(dir=work), "u.db")
+auth = instance(db_u)
+svc = auth.create_service("ci-runner")
+old_key = auth.create_api_key(svc, name="ci")["key"]
+auth.close()
+store = Store(db_u)
+store.vault = V.Vault(K.load_vault(db_u, ""))
+store._exec("UPDATE api_key SET key_hash = ?", (hashlib.sha256(old_key.encode()).hexdigest(),))
+store.key_ring_rotate("gate", K.new_material("gate"))
+store._exec("UPDATE key_material SET note = 'derived-v1', since = ? WHERE purpose = 'gate' AND since IS NOT NULL",
+            (int(time.time()) - 7 * 86400,))
+gate_kid = store._one("SELECT kid FROM key_material WHERE purpose = 'gate' AND since IS NOT NULL")["kid"]
+store.close()
+
+error = start_error(db_u)
+retire_cmd = f"tinysesam keys retire --db {db_u} --purpose gate --kid {gate_kid}"
+r.check("(f) a 0.30.0 database with a derived-v1 gate key: the new version refuses to start and names the retire "
+        "command", isinstance(error, ConfigError) and retire_cmd in str(error), f"{type(error).__name__}: {error}")
+report = run_cli("diagnose", "--db", db_u, "--no-link")
+r.check("(f) `tinysesam diagnose` lists the same blocker with its command, without starting",
+        report.returncode == 0 and "Update blockers: 1 —" in report.stdout
+        and f"`tinysesam keys retire --db <db> --purpose gate --kid {gate_kid}`" in report.stdout,
+        report.stdout[-900:] + report.stderr[-300:])
+below = run_cli("diagnose", "--db", old_file(25), "--no-link")
+r.check("(f) diagnose on a database below the baseline: refused at start (not \"migrates\"), the way through 0.30.0",
+        below.returncode == 0 and "below the baseline 26" in below.stdout and "migrates" not in below.stdout
+        and "update to TinySesam 0.30.0 first" in below.stdout, below.stdout[-900:] + below.stderr[-300:])
+old_secret = run_cli("diagnose", "--db", db_v1, "--no-link")
+r.check("(f) diagnose on a database with a secret in a format before 0.26 (from (c)): counted, with the way out",
+        "1 stored secret(s) in a format before 0.26" in old_secret.stdout and "keys reencrypt" in old_secret.stdout,
+        old_secret.stdout[-900:] + old_secret.stderr[-300:])
+done = run_cli("keys", "retire", "--db", db_u, "--purpose", "gate", "--kid", gate_kid)
+report = run_cli("diagnose", "--db", db_u, "--no-link")
+r.check("(f) after the named retire the start succeeds, and diagnose finds no blocker any more",
+        done.returncode == 0 and start_error(db_u) is None and "Update blockers: none" in report.stdout,
+        done.stdout + done.stderr + report.stdout[-600:])
+
+
+class _Lines(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+
+seen = _Lines()
+logging.getLogger("tinysesam.security").addHandler(seen)
+auth = instance(db_u)
+refused_key = auth.verify_api_key(old_key)
+fresh = auth.create_api_key(svc, name="new")["key"]
+unknown = auth.verify_api_key("tsk_" + "x" * 40)
+works = auth.verify_api_key(fresh)[0]
+denied = [row["detail"] for row in auth.store._all("SELECT detail FROM audit WHERE event = 'apikey_denied' "
+                                                   "AND username = 'ci-runner'")]
+auth.close()
+logging.getLogger("tinysesam.security").removeHandler(seen)
+r.check("(f) the old API key is refused with a clear reason: audit and security log name the key, its owner and "
+        "`pre_pepper`", refused_key == (None, None) and any("reason=pre_pepper" in d for d in denied)
+        and any("api key denied user=ci-runner" in line and "reason=pre_pepper" in line for line in seen.lines),
+        f"{refused_key} {denied} {seen.lines}")
+r.check("(f) counter-probe: a key issued after the update works, an unknown one is still `unknown` (no owner)",
+        works is not None and works["username"] == "ci-runner" and unknown == (None, None)
+        and any("user=- " in line and "reason=unknown" in line for line in seen.lines), str(seen.lines))
 
 sys.exit(r.done())

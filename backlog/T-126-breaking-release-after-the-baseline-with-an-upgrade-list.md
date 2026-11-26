@@ -2,7 +2,7 @@
 id: T-126
 type: Task
 title: "Breaking release after the baseline, with one upgrade list"
-status: offen
+status: erledigt
 milestone: M-1
 tags: [release, upgrade, breaking]
 created: 2026-11-26
