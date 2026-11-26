@@ -32,8 +32,8 @@ PACKAGE = S.PACKAGE
 
 #: Modules with routes and the prefix their paths get ("<admin>" = wherever the admin router is mounted,
 #: by default `cfg.admin_path`).
-ROUTE_MODULES = {"router.py": "", "oidc.py": "", "webauthn_.py": "", "admin.py": "<admin>", "gateway.py": "",
-                 "oauth.py": ""}
+ROUTE_MODULES = {"router.py": "", "_routes_forward.py": "", "oidc.py": "", "webauthn_.py": "", "admin.py": "<admin>",
+                 "gateway.py": "", "oauth.py": ""}
 #: Names a router or app has in those modules (`r = APIRouter(...)`, `ar = ...`, `@router.get`, `@app.get`).
 ROUTE_RECEIVERS = {"r", "router", "ar", "app"}
 HTTP_METHODS = {"get", "post", "put", "delete", "patch"}
@@ -44,7 +44,10 @@ ROUTE_ESCAPES = {"add_api_route", "add_route", "add_websocket_route", "api_route
 FRAMEWORK_TYPES = {"Request", "Response", "BackgroundTasks", "HTTPConnection"}
 
 #: Functions whose reads of request headers and query parameters are the INPUT of the forward/gate contract.
-#: (file, function) — and the whole `if cfg.forward_auth_enabled:` block of `router.py`.
+#: (file, function) — looked up in that file first; a function T-112 moved to another module must then exist exactly
+#: once in the package. Plus the whole forward-auth
+#: building block (`add_routes` in `_routes_forward.py`, until T-112 the `if cfg.forward_auth_enabled:` block of
+#: `router.py`).
 INPUT_READERS = (("manager.py", "_forwarded_url"), ("manager.py", "_forwarded_conflict"), ("manager.py", "_gate_host"),
                  ("manager.py", "_is_page_view"), ("manager.py", "_extract_api_key"),
                  ("security.py", "client_ip"), ("router.py", "_required_roles"))
@@ -256,17 +259,26 @@ def _header_reads(root) -> tuple:
     return header, params
 
 
-def _forward_block(tree):
-    """The `if cfg.forward_auth_enabled:` block of the router (the proxy-facing endpoints)."""
-    for k in ast.walk(tree):
-        if isinstance(k, ast.If) and ast.unparse(k.test) == "cfg.forward_auth_enabled":
-            return k
-    raise MeasurementError("router.py: the block `if cfg.forward_auth_enabled:` was not found")
+#: The module of the forward-auth building block (the proxy-facing endpoints, T-112).
+FORWARD_MODULE = "_routes_forward.py"
+
+
+def _forward_block(sources: dict):
+    """`add_routes` of the forward-auth building block — every endpoint the proxy talks to."""
+    for k in _functions(ast.parse(sources.get(FORWARD_MODULE, "")), "add_routes"):
+        return k
+    raise MeasurementError(f"{FORWARD_MODULE}: `add_routes` was not found")
+
+
+def _functions_anywhere(sources: dict, name: str) -> list:
+    """(file, function node) of every definition of `name` in the package."""
+    return [(file, fn) for file, text in sorted(sources.items()) for fn in _functions(ast.parse(text), name)]
 
 
 def _reason_values(sources: dict) -> set:
-    """Values of the response header `X-TinySesam-Reason` (dict literals in the router)."""
-    tree = ast.parse(sources["router.py"])
+    """Values of the response header `X-TinySesam-Reason` (dict literals in the router and its building blocks)."""
+    tree = ast.Module(body=[*ast.parse(sources["router.py"]).body, *ast.parse(sources[FORWARD_MODULE]).body],
+                      type_ignores=[])
     manager = ast.parse(sources["manager.py"])
     approval = set()
     for fn in _functions(manager, "_oidc_approval_valid"):
@@ -307,14 +319,16 @@ def contract_atoms(sources: dict) -> list:
     atoms |= {f"reason:{v}" for v in _reason_values(sources)}
     # 3. What the forward endpoint and the gate paths read from the request.
     header, params = set(), set()
-    router = ast.parse(sources["router.py"])
-    h, p = _header_reads(_forward_block(router))
+    h, p = _header_reads(_forward_block(sources))
     header |= h
     params |= p
     for file, function in INPUT_READERS:
-        hits = _functions(ast.parse(sources[file]), function)
-        if not hits:
-            raise MeasurementError(f"{file}: function {function} not found — the reader list is out of date")
+        hits = _functions(ast.parse(sources[file]), function) if file in sources else []
+        if not hits:     # moved to another module (T-112): then it must exist exactly once in the package
+            hits = [fn for _, fn in _functions_anywhere(sources, function)]
+            if len(hits) != 1:
+                raise MeasurementError(f"function {function} (listed under {file}) found {len(hits)} times in the "
+                                       "package — the reader list is out of date")
         for fn in hits:
             h, p = _header_reads(fn)
             header |= h
