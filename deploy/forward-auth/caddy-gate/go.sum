@@ -159,8 +159,8 @@ github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7z
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=
 github.com/fxamacker/cbor/v2 v2.9.4 h1:xwjVlxEMR3S605oUlgBjKLTTeGFciYPGYCtF/35LKGo=
 github.com/fxamacker/cbor/v2 v2.9.4/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
-github.com/ggicci/caddy-jwt v1.4.0 h1:v5hTKFTMriLUAkhbGDqaMPSmUwOO1HeMMk1htiSz4jg=
-github.com/ggicci/caddy-jwt v1.4.0/go.mod h1:1SADmCAt2t9zsUiDVHAsu6crD3ZSkA6CvoAHuvIchjg=
+github.com/ggicci/caddy-jwt v1.5.0 h1:trOweUyiodTo4IkWTZQKonZzEtSzzg4wHnTMNp0iiRE=
+github.com/ggicci/caddy-jwt v1.5.0/go.mod h1:TKnTjBPyw8tPo/bA3I7VJRq/h8fuGcnEMmC5N3ecqM8=
 github.com/go-chi/chi/v5 v5.4.0 h1:+ufzvFTGKyin26Or5DLrlIDq4ygIDBVcj7oVNeeaYFE=
 github.com/go-chi/chi/v5 v5.4.0/go.mod h1:d1IG7GtKPSjPyBP365PH8sAGVHk3qfB/IhjFNRH1wWM=
 github.com/go-jose/go-jose/v3 v3.0.5 h1:BLLJWbC4nMZOfuPVxoZIxeYsn6Nl2r1fITaJ78UQlVQ=
@@ -247,8 +247,8 @@ github.com/lestrrat-go/dsig-secp256k1 v1.0.0 h1:JpDe4Aybfl0soBvoVwjqDbp+9S1Y2OM7
 github.com/lestrrat-go/dsig-secp256k1 v1.0.0/go.mod h1:CxUgAhssb8FToqbL8NjSPoGQlnO4w3LG1P0qPWQm/NU=
 github.com/lestrrat-go/httpcc v1.0.1 h1:ydWCStUeJLkpYyjLDHihupbn2tYmZ7m22BGkcvZZrIE=
 github.com/lestrrat-go/httpcc v1.0.1/go.mod h1:qiltp3Mt56+55GPVCbTdM9MlqhvzyuL6W/NMDA8vA5E=
-github.com/lestrrat-go/httprc/v3 v3.0.2 h1:7u4HUaD0NQbf2/n5+fyp+T10hNCsAnwKfqn4A4Baif0=
-github.com/lestrrat-go/httprc/v3 v3.0.2/go.mod h1:mSMtkZW92Z98M5YoNNztbRGxbXHql7tSitCvaxvo9l0=
+github.com/lestrrat-go/httprc/v3 v3.0.4 h1:pXyH2ppK8GYYggygxJ3TvxpCZnbEUWc9qSwRTTApaLA=
+github.com/lestrrat-go/httprc/v3 v3.0.4/go.mod h1:mSMtkZW92Z98M5YoNNztbRGxbXHql7tSitCvaxvo9l0=
 github.com/lestrrat-go/jwx/v3 v3.0.13 h1:AdHKiPIYeCSnOJtvdpipPg/0SuFh9rdkN+HF3O0VdSk=
 github.com/lestrrat-go/jwx/v3 v3.0.13/go.mod h1:2m0PV1A9tM4b/jVLMx8rh6rBl7F6WGb3EG2hufN9OQU=
 github.com/lestrrat-go/option/v2 v2.0.0 h1:XxrcaJESE1fokHy3FpaQ/cXW8ZsIdWcdFzzLOcID3Ss=

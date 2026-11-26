@@ -113,6 +113,11 @@ write lock (`Cache.Register(context.Background(), …)`, jwx/httprc `WaitReady`)
 `tests/test_gate_caddy.py` reproduces it. The key set stays published for proxies that fetch keys safely; the template
 takes the fixed key, at the price of a manual step after a gate rotation.
 
+**Amended 2026-11-25 (T-119): the template is on `jwk_url` again, with caddy-jwt 1.5.0.** 1.5.0 registers the set
+without waiting and gives a fetch five seconds (ggicci/caddy-jwt#117 fixed); measured: with the set answering 404 at
+the first token, 1.4.0 hangs every request (20 s timeouts), 1.5.0 answers at once and fetches again with the next
+token. A rotation needs nothing at the proxy again. `sign_key` stays possible.
+
 **Retirement refuses what would lose something.** `tinysesam keys retire`: vault — while any stored value names the
 key (or a `v1:` value exists); gate — within the 3600 s overlap; pepper — while a code or token created before the
 rotation is still valid. `--force` exists for gate and pepper only (what it cuts is re-issued or reconnected); never for

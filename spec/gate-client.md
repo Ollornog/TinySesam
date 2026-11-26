@@ -295,9 +295,9 @@ Every class means the same to the application: **not authenticated**. The classe
 
 ## 5. Fetching the key set (JWKS)
 
-caddy-jwt 1.4.0 waits without a deadline for a key set whose first fetch failed, holding a lock — every later request
-hangs ([ggicci/caddy-jwt#117](https://github.com/ggicci/caddy-jwt/issues/117), the reason `Caddyfile.gate` uses
-`sign_key`). A gate client MUST NOT behave like that. The rules, with the values the vectors assume:
+caddy-jwt 1.4.0 waited without a deadline for a key set whose first fetch failed, holding a lock — every later request
+hung ([ggicci/caddy-jwt#117](https://github.com/ggicci/caddy-jwt/issues/117), the reason `Caddyfile.gate` used
+`sign_key` from 0.26.2 until caddy-jwt 1.5.0 fixed it). A gate client MUST NOT behave like that. The rules, with the values the vectors assume:
 
 1. **The URL** comes from configuration only, `https` (plain `http` only to a loopback address). A client MUST NOT
    follow `jku`, `x5u` or any URL from a token, and SHOULD NOT follow redirects to another host.

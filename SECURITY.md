@@ -190,12 +190,13 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   `ts_kind` is left), then the applications on clients after spec v2. `deploy/forward-auth/acceptance.sh` checks a
   forged `Remote-Kind` from outside (with `ECHO=1` also that it never arrives); `tests/test_gate_caddy.py` and
   `tests/test_proxies.py` measure every template through the real proxy.
-- **Credentials do not reach the proxy log either.** The gate plugin caddy-jwt (v1.4.0) takes `Authorization` as a
-  token candidate whatever its configuration says, and logs a candidate that is no JWT at level error with a third of
-  its beginning and end. Up to 0.26.0 `deploy/forward-auth/Caddyfile.gate` therefore wrote half an API key, OAuth token
-  or app password of every API and MCP call into Caddy's log. Since 0.26.1 a request with `Authorization`, or without
-  the gate cookie, goes straight to `/auth/forward`; jwtauth only sees the gate cookie. Caddy still logs that one,
-  shortened (a JWT of at most `gate_token_ttl_sec`), on every request it lets through.
+- **Credentials do not reach the proxy log either.** Without `disable_authorization_fallback` the gate plugin
+  caddy-jwt takes `Authorization` as a token candidate whatever its configuration says, and up to 1.4.0 it logged a
+  candidate that is no JWT at level error with a third of its beginning and end. Up to 0.26.0
+  `deploy/forward-auth/Caddyfile.gate` therefore wrote half an API key, OAuth token or app password of every API and
+  MCP call into Caddy's log; 0.26.1 to 0.30.0 routed such requests around jwtauth. Since T-119 the template (with
+  caddy-jwt 1.5.0) sets `disable_authorization_fallback`: jwtauth reads only the gate cookie, never `Authorization` —
+  not even a valid gate token sent there — and caddy-jwt no longer logs token text (`token_string`) at all.
 - **Services authenticate with their own key, not with a secret (T-60, ADR-13).** With `oauth_service_clients` a
   service gets short-lived access tokens by `client_credentials` with `private_key_jwt` (RFC 7523): TinySesam stores
   only its public key, so a copied database, a proxy log or a backup yields nothing that gets a token. The assertion

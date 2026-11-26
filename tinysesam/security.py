@@ -766,10 +766,13 @@ def client_ip(request, trusted_nets) -> str:
                 return peer
     if xff and peer not in _REPORTED_PEERS:
         _REPORTED_PEERS.add(peer)
-        if not is_trusted(peer, trusted_nets) and peer in [ip_normalized(p.strip()) for p in xff.split(",")]:
+        if not is_trusted(peer, trusted_nets) and (ip_normalized(peer) or peer) in [ip_normalized(p.strip())
+                                                                                     for p in xff.split(",")]:
             # The direct peer stands in the very header: a proxy never names itself there, so the server in front
             # of TinySesam has already applied X-Forwarded-For and handed on the client it found. uvicorn does that
-            # by default (`proxy_headers=True`, trusting `forwarded_allow_ips`).
+            # by default (`proxy_headers=True`, trusting `forwarded_allow_ips`). Compared in canonical notation on
+            # both sides: the server hands on the entry as written (`2001:DB8::1`), and a raw comparison took such a
+            # client for an untrusted proxy — the warning below then named the client's address (T-119).
             seclog.warning(
                 "X-Forwarded-For from %s was already applied by the server: the client address arrives as the peer. "
                 "uvicorn does that by default — start it with --no-proxy-headers (uvicorn.Config(..., "

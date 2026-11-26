@@ -14,11 +14,72 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   while an open link or an API key not used since the rotation still needs the old pepper (`--force` cuts them). A
   structure check pins that every store call writing or looking up such a digest gets the keyed one. Existing keys and
   links stop working once (see "Removed").
+- Recovery codes are stored as an HMAC with the pepper keyring too (`Store.token_digest`, kind `recovery`) instead of
+  the plain sha256 of the normalised code (@344f94, a follow-up of T-72). Whoever could write the database file put the
+  digest of a code of their own choosing next to an account and held its second factor. A pepper rotation keeps unused
+  codes valid; `tinysesam keys retire --purpose oauth-pepper` refuses while an unused code from before the rotation
+  still needs the old pepper (`--force` cuts them; the people generate new ones). Existing codes stop working once (see
+  "Removed").
+- The code exchange of the central gateway (`gate_link_enabled`, T-26) stores the one-time code (`gatecode:` flow key)
+  and the browser binding as an HMAC with the pepper keyring (kinds `gatecode`, `gatebinding`) instead of their plain
+  sha256 (@51b7a1). The session handles stand in the database file; whoever could write it put a `gatecode:` row for a
+  chosen code and binding next to a handle and redeemed it at the app host — a connection into that session. An
+  exchange begun before a pepper rotation still ends (every pepper of the keyring is tried). An exchange running at the
+  update (at most ten minutes) fails once; the person starts it again by reloading the application.
 - The distroless runtime base is bumped to the digest that carries `libc6` 2.41-12+deb13u5, and the two Grype rules for
   the glibc findings (CVE-2026-19499, CVE-2026-5435) are removed; `.grype.yaml` is empty again (T-118).
+- Gate template: `Authorization` is never a token source for caddy-jwt any more — the option
+  `disable_authorization_fallback` (caddy-jwt 1.5.0, ggicci/caddy-jwt#90) replaces the detour of 0.26.1, which sent
+  every request with `Authorization` or without a gate cookie around jwtauth. caddy-jwt 1.5.0 also logs no token text
+  (`token_string`) at all. `tests/test_gate_caddy.py` proves that not even a valid gate token in `Authorization: Bearer`
+  passes Caddy, and that the log holds no piece of a key, app password or token (T-119).
 
 ### Changed
 
+- **Gate template back on `jwk_url`, caddy-jwt 1.5.0** (T-119). The image `tinysesam-caddy-gate` carries caddy-jwt
+  1.5.0, which no longer hangs every request with a gate token after one failed first fetch of the key set
+  (ggicci/caddy-jwt#117; measured: key set answering 404 at the first token — 1.4.0 times out, 1.5.0 answers at once and
+  fetches again with the next token). `deploy/forward-auth/Caddyfile.gate` fetches `/auth/gate/jwks.json` again
+  instead of the fixed `sign_key {$TS_GATE_PUBKEY}`, so a gate rotation needs nothing at the proxy: the first tokens of
+  the new key take the way back once and make Caddy fetch the set. **[operators only] Who copied the template:** with
+  caddy-jwt 1.5.0 or later (this release's image), replace `sign_key {$TS_GATE_PUBKEY}` by
+  `jwk_url http://{$TS_AUTH_UPSTREAM:127.0.0.1:8000}/auth/gate/jwks.json`, add `disable_authorization_fallback` in
+  the `jwtauth` block and delete the four lines `@no_gate_cookie`, `@has_authorization` and their two `error … 401`;
+  `TS_GATE_PUBKEY` is no longer read. Nothing has to change at once: the old template keeps working with 1.5.0. Never
+  `jwk_url` with caddy-jwt 1.4.0.
+- Internal: the store is split into parts (T-112, part 1). `tinysesam/store.py` (4,835 lines) keeps the core —
+  connection, schema stamp, flow state, settings, backup — and an index of the other 275 methods, which moved verbatim
+  into 13 modules `tinysesam/_store_<part>.py` (users, factors, keys, federation, gate, sessions, throttle, tokens,
+  audit, approvals, API keys, OAuth, roles); the schema text is in `_store_schema.py` (`store.SCHEMA` stays). A part is
+  imported on the first use of one of its methods, on a store or on the class — an installation without OAuth never
+  loads its queries. No behaviour change; `Store`'s methods keep their names and signatures.
+  `tests/test_store_parts.py` pins index, lazy loading and the size limits (`store.py` below 1,500 lines, a part below
+  2,000).
+- Internal: `config_check.py` (3,882 lines) is split by feature (T-112, part 2): the role and delegation rules
+  (`_config_check_roles.py`), the application rules — forward-auth apps, gate, approvals, provisioning
+  (`_config_check_apps.py`) — and the German findings table (`_config_check_de.py`). `config_check` re-exports every
+  name; no rule changed. The checks that read the rules by file (templates in `tests/test_config_gate.py`, number reads
+  in `tests/test_security_findings.py`, the German data table in `tests/test_english_code.py`) read the parts too.
+- Internal: the forward-auth routes (`/auth/forward`, the gate and the app-host code exchange) are a building block of
+  their own, `tinysesam/_routes_forward.py` (T-112, part 3): `build_router` imports and registers it only with
+  `forward_auth_enabled`; `router.py` 2,379 → 1,868 lines. No path, parameter or header changed: the HTTP-contract
+  measurement (`tests/_contract.py`) reads the routes and the proxy inputs from the new module, and a listed input
+  reader that moves is found in whichever module holds it.
+- Internal: `TinySesam` is a thin class over building blocks (T-112, part 4). `manager.py` (9,661 lines) keeps the
+  constructor, the class attributes, the static, class and property members and the raising helpers; the other 374
+  methods moved verbatim into 15 modules `tinysesam/_manager_<part>.py` (users, API keys, mail, LDAP, SAML, factors,
+  cookies, sign-in links, QR, account, sign-in, hardening, forward auth, FastAPI, resource secrets). A building block
+  is imported on the first use of one of its methods; `dir(TinySesam)` lists every method, so introspection, the API
+  surface and `API.md` see the whole class unchanged. The feature registry `tinysesam/_features.py` names each
+  feature's switch, building blocks and routes; `TinySesam` imports the blocks of the features that are on, the
+  others never load. qrcode (and Pillow) is imported only when an enrollment QR is drawn, no longer with `totp`.
+  Names, signatures and behaviour are unchanged.
+- Internal: the guards of the building blocks (T-112, part 5). `tests/test_store_parts.py` now also pins TinySesam's
+  index, that a feature which is off loads nothing (with every feature of the registry off, none of its building
+  blocks is imported and none of its routes exists after start, a page and a sign-in attempt; switched on, forward
+  auth, QR sign-in, resource locks and magic links load theirs — the counter-probe), and the size limits for the whole
+  package: no module in `tinysesam/` reaches 2,000 lines, `manager.py` and `store.py` stay below 1,500.
+  `CONTRIBUTING.md` (and its German version) gets a module map; `AGENTS.md` names the limits.
 - Pre-push: a change in `deploy/forward-auth/` runs the gate-Caddy suite in the fast gate (the repo extra in `.githooks/`).
   The suite builds the Caddy with caddy-jwt itself when Docker is there and keeps it by content (cache under
   `tinysesam/gate-caddy/` in the user cache directory, old builds removed); without Docker the skip names the missing tool instead of
@@ -30,6 +91,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 - CI: one aggregate job per workflow (`suite-ok`, `client-go-ok`, `client-js-ok`, `client-php-ok`, `client-rust-ok`)
   that is red unless every job it needs succeeded; the branch protection can name these instead of matrix legs such as
   `full (3.14)` or `test (php 8.4)`, so a matrix change no longer blocks every merge (T-115).
+- Hygiene test ready for the shared test kit 0.65–0.67: the release automation's refusal of a minor under `[Unreleased]`
+  is green with a notice ("Release automation skipped") from kit 0.65 on, and the probe now also proves that nothing
+  was prepared (no commit, no branch); the Dependabot auto-merge's fast-forward (kit 0.67) may move the base with
+  `PATCH git/refs/heads/<base>` (`force=false`) in `ausfuehren` and delete the head branch in `aufraeumen` — each
+  exactly that one command line in exactly that job, never `gh api` wholesale; its `pull_request` trigger may carry
+  only `ready_for_review`, with the own-repo check in `entscheiden`.
 - The proxy test image runs nginx on the stable line (1.30.x) instead of mainline (1.31.x); Dependabot ignores the
   mainline minors, and `tests/test_proxies.py` fails on an odd minor, also without Docker (T-114).
 
@@ -44,6 +111,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- The warning "X-Forwarded-For from … is ignored: the peer is not in trusted_proxies" could name a client's address: a
+  server in front of TinySesam that had already applied the header (uvicorn's default `proxy_headers=True`) hands the
+  client on as the peer in the notation of the header (`2001:DB8::7`), and the check that recognises this case compared
+  it raw with the canonical entries. Now both sides are canonical, and the warning says what it is — the server
+  evaluated the header first, start it with `--no-proxy-headers` (T-119).
 - The SQL check of `tests/test_english_code.py` no longer goes blind after an apostrophe in a `--` comment of the
   schema (B-16): literals and comments are blanked in one left-to-right scan, so `the requester's channel` does not
   open a literal that hides every table and column up to the next apostrophe, and a `--` inside a literal does not open
@@ -83,8 +155,16 @@ something; **[operators only]** — the operator or the developer of the embeddi
   and open QR sign-in requests. The person asks for a new link; an application issues a new one. **[operators only]**
   Open service pairing codes (OAuth services, ADR-13) and consent pairing codes (ADR-14) end too —
   issue new ones. Not affected: sessions (keyed since T-71), app passwords (T-66), OAuth access and refresh tokens and
-  authorization codes (keyed with the pepper since ADR-11), passkeys, TOTP and recovery codes, and open approval
-  requests (the `approval` row has no token digest; an application needs a working key to pick its confirmation up).
+  authorization codes (keyed with the pepper since ADR-11), passkeys, TOTP, and open approval requests (the `approval`
+  row has no token digest; an application needs a working key to pick its confirmation up).
+- **[end users notice] Existing recovery codes stop working once** (@344f94): they are stored as an HMAC with the pepper
+  now, and the plain sha256 of before is not carried over (no migration, like T-72). TOTP itself keeps working;
+  whoever wants recovery codes generates new ones on the account page (`/auth/account`, `generate_recovery_codes`).
+  [operators only] Tell the people with TOTP before the update; a person whose authenticator is gone AND who relied on
+  an old code needs the admin path instead (the panel's access reset).
+- **[end users notice] A gateway code exchange running at the update fails once** (@51b7a1, `gate_link_enabled`): its
+  code and binding were stored as a plain sha256 (at most ten minutes old). The person reloads the application, which
+  starts a new exchange; existing app-host links are not affected.
 - **[operators only] Tier C is gone.** The 38 warning aliases of 0.22.0 (`tinysesam/_deprecated.py`) are removed:
   `check_ldap`, `check_password`, `check_pin`, `check_resource`, `check_saml`, `complete_mfa`, `consume_admin_claim`,
   `factor_entry`, `forward_login_url`, `forward_response_headers`, `forwarded_url`, `is_locked`,

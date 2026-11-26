@@ -21,13 +21,13 @@
 #   * TinySesamConfig: forward_auth_enabled=True, gate_token_enabled=True, base_url, cookie_domain
 #     and trusted_redirect_hosts as in ./Caddyfile (central sign-in on auth.example.com).
 #     In the gateway image: TINYSESAM_GATE=1.
-#   * TS_GATE_PUBKEY: the public gate key, the output of `tinysesam gate-key --db …` (in the gateway container:
-#     `python -m tinysesam gate-key --db /data/gateway.db`). After `tinysesam keys rotate --purpose gate` give Caddy
-#     the new value; until then the tokens of the new key take the way back (slower, nobody is signed out).
-#     NOT `jwk_url` (/auth/gate/jwks.json), although TinySesam publishes the set: with caddy-jwt 1.4.0 a single
-#     failed first fetch (TinySesam not up yet when the first token arrives, a 404) makes every later request with a
-#     gate token hang — the plugin waits for the key set without a deadline while holding a lock (`Cache.Register`,
-#     jwx/httprc `WaitReady`), retries only after its long interval and never falls back. A fixed key cannot hang.
+#   * Caddy with caddy-jwt 1.5.0 or later (the image above has it). The public keys come from TinySesam itself:
+#     jwk_url below fetches /auth/gate/jwks.json over the upstream (T-48, ADR-12) — the active gate key and, for
+#     one token lifetime after a rotation, the previous one. A rotation (`tinysesam keys rotate --purpose gate`, then
+#     restart TinySesam) needs nothing here: a token with a `kid` Caddy does not know yet takes the way back once and
+#     makes Caddy fetch the set again; the next one passes. A failed fetch (TinySesam not up yet, a 404) costs at most
+#     five seconds and is retried with the next token — never with caddy-jwt 1.4.0, where one failed first fetch
+#     made every later request with a gate token hang (ggicci/caddy-jwt#117; measured in tests/test_gate_caddy.py).
 #   * TS_GATE_ISSUER: base_url of TinySesam, without a trailing slash.
 #
 # What it costs: a revocation (sign-out, lockout, withdrawn approval) takes effect here only when the
@@ -123,23 +123,21 @@ app.example.com {
 	}
 
 	route {
-		# jwtauth only ever sees the gate cookie. caddy-jwt (v1.4.0) also takes `Authorization` as a token candidate,
-		# whatever `from_cookies` says, and logs a candidate that is no JWT with a third of its beginning and end — an
-		# API key, an OAuth token or an app password of every API and MCP call would land in the proxy log. A request
-		# that carries Authorization, or no gate cookie at all, goes straight to the way back below (handle_errors 401,
-		# /auth/forward), where TinySesam checks it. Renamed the gate cookie (gate_cookie_name)? Rename it here too.
-		@no_gate_cookie not header_regexp Cookie (^|;\s*)__Host-tinysesam_gate=
-		@has_authorization header Authorization *
-		error @no_gate_cookie 401
-		error @has_authorization 401
 		jwtauth {
-			# The public gate key (no secret), checked locally — no fetch that could hang (see the header).
-			# `caddy reload` resolves {$…} in the CALLING process: under systemd put TS_GATE_PUBKEY in EnvironmentFile=
+			# The key set of TinySesam (public, no secret); the token's `kid` picks the key (see the header).
+			# `caddy reload` resolves {$…} in the CALLING process: under systemd put TS_AUTH_UPSTREAM in EnvironmentFile=
 			# (unit level, applies to ExecReload= too), else the reload fails and the old configuration stays (README).
-			sign_key {$TS_GATE_PUBKEY}
-			# Fixed to EdDSA: with sign_alg EdDSA caddy-jwt ignores the `alg` in the token's header.
-			# A token with `alg: none` or `HS256` is thus not checked any differently.
+			jwk_url http://{$TS_AUTH_UPSTREAM:127.0.0.1:8000}/auth/gate/jwks.json
+			# The algorithm comes from the key set (`alg: EdDSA` on every key), before the token's header: a token with
+			# `alg: none` or `HS256` is checked as EdDSA all the same and fails. sign_alg is the last fallback only.
 			sign_alg EdDSA
+			# jwtauth only ever reads the gate cookie. Without this option caddy-jwt also takes `Authorization` as a
+			# token candidate, whatever `from_cookies` says, and up to 1.4.0 logged a candidate that is no JWT with a
+			# third of its beginning and end — an API key, an OAuth token or an app password of every API and MCP call
+			# stood half in the proxy log (ggicci/caddy-jwt#90). A request without a valid gate cookie goes to the way
+			# back below (handle_errors 401, /auth/forward), where TinySesam checks its Authorization.
+			disable_authorization_fallback
+			# Renamed the gate cookie (gate_cookie_name)? Rename it here too.
 			from_cookies __Host-tinysesam_gate
 			issuer_whitelist {$TS_GATE_ISSUER:https://auth.example.com}
 			# The audience is the host. If the fallback path requires roles (X-TinySesam-Roles below),

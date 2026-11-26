@@ -77,7 +77,7 @@ def main(n: int) -> None:
                      .replace("\nauth.example.com {", f"\nhttp://auth.example.com:{port} {{", 1)
             + f"\nhttp://127.0.0.1:{app_port} {{\n\trespond \"ok\"\n}}\n")
     (pathlib.Path(tmp) / "Caddyfile").write_text(text, encoding="utf-8")
-    env = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
+    env = {**os.environ, "TS_GATE_ISSUER": ISS,
            "TS_AUTH_UPSTREAM": ts, "TS_APP_UPSTREAM": f"127.0.0.1:{app_port}",
            "XDG_DATA_HOME": tmp, "XDG_CONFIG_HOME": tmp}
     with open(os.path.join(tmp, "caddy.log"), "w") as log:

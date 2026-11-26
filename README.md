@@ -2570,11 +2570,12 @@ existing forward auth, so a request and its body are not lost.
   [`deploy/forward-auth/caddy-gate/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/caddy-gate/)).
 - **Key:** a random Ed25519 key of its own (since T-48, ADR-12 — up to 0.25.x it was derived from the vault key):
   `TINYSESAM_GATE_KEY`, `gate_key_file`, otherwise kept in the database encrypted with the vault key. The proxy
-  takes `tinysesam gate-key --db …` as `sign_key` (`TS_GATE_PUBKEY`; anew after a gate rotation, until then the new
-  tokens take the way back). **Not `jwk_url`** with caddy-jwt 1.4.0, although TinySesam publishes
-  `/auth/gate/jwks.json`: one failed first fetch makes every later request with a gate token hang. Each token carries
-  `typ: tinysesam-gate+jwt` and its `kid`.
-- **`caddy reload` under systemd:** the reload adapts the Caddyfile in the *calling* process, so `{$TS_GATE_PUBKEY}`
+  fetches the public keys from `/auth/gate/jwks.json` (`jwk_url`, caddy-jwt 1.5.0 or later — with 1.4.0 one failed
+  first fetch made every later request with a gate token hang); a gate rotation needs nothing at the proxy, the first
+  tokens of the new key take the way back until Caddy has fetched the set again. Each token carries
+  `typ: tinysesam-gate+jwt` and its `kid`. `Authorization` is never a token source for the proxy
+  (`disable_authorization_fallback`): API keys and access tokens neither pass there nor reach its log.
+- **`caddy reload` under systemd:** the reload adapts the Caddyfile in the *calling* process, so `{$TS_AUTH_UPSTREAM}`
   and every other `{$…}` placeholder (`{$CREDENTIALS_DIRECTORY}` too) are resolved there. An `ExecReload=` without the
   environment leaves them empty; the reload fails (e.g. `open /tls.crt`) and Caddy keeps running with the old
   configuration, without a word. Put the variables in `EnvironmentFile=` at unit level — it applies to `ExecReload=`
@@ -2968,7 +2969,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**135 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**136 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

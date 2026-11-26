@@ -177,7 +177,7 @@ def start_caddy(templates_file="Caddyfile.gate", upstream=None, suffix="", trans
         file = os.path.join(_tmp, name)
         with open(file, "w", encoding="utf-8") as f:
             f.write(text)
-        env = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
+        env = {**os.environ, "TS_GATE_ISSUER": ISS,
                "TS_SHARE_PREFIX": SHARE, "TS_TLS": "acme", "TS_AUTH_HOST": "auth.example.com",
                "TS_AUTH_UPSTREAM": upstream or TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
                "XDG_CONFIG_HOME": _tmp}
@@ -450,37 +450,40 @@ try:
     ok("valid gate cookie → 10 requests at the application, 0 at TinySesam; identity from the "
        "token (UTF-8 as with /auth/forward), Remote-* from the browser overwritten, gate cookie removed")
 
-    # ---------- caddy-jwt never sees a credential from Authorization ----------
-    # caddy-jwt (v1.4.0, jwt.go `Authenticate`) adds the `Authorization` header to its token candidates ALWAYS, even
-    # with only `from_cookies`, and logs a candidate that is no JWT at level error with a third of its beginning and
-    # end (`token_string`, `desensitizedTokenString`): an API key, an OAuth token or an app password of every MCP or
-    # API call stood half in the proxy log (PO, Caddy 2.11.9 from caddy-gate v0.26.0; against A-3: credentials end at
-    # the proxy). The template now sends a request with Authorization, or without the gate cookie, straight to the
-    # way back; jwtauth only ever sees the cookie. (Mutation probe: drop the two `error` lines → red.)
+    # ---------- caddy-jwt never reads a credential from Authorization (T-119) ----------
+    # Without `disable_authorization_fallback` caddy-jwt (jwt.go `Authenticate`) adds the `Authorization` header to its
+    # token candidates ALWAYS, even with only `from_cookies`; up to 1.4.0 it logged a candidate that is no JWT at level
+    # error with a third of its beginning and end (`token_string`): an API key, an OAuth token or an app password of
+    # every MCP or API call stood half in the proxy log (ggicci/caddy-jwt#90; against A-3: credentials end at the
+    # proxy). Up to T-119 the template routed such requests around jwtauth (`error @has_authorization 401`); now the
+    # option does it. Proof that the header is not even parsed: a VALID gate token in `Authorization: Bearer` and no
+    # cookie must still take the way back — with the fallback it would pass the fast path.
+    # (Mutation probe: drop `disable_authorization_fallback` → the Bearer gate token passes at Caddy → red.)
     gate_log = os.path.join(_tmp, "forward-auth-Caddyfile.gate.log")
     bearer = "tsk_" + secrets.token_urlsafe(24)
     basic = base64.b64encode(f"anna:{app_pw}".encode()).decode()
-    for head, cookies, want in (({"Authorization": f"Bearer {bearer}"}, None, 302),
-                                ({"Authorization": f"Basic {basic}"}, None, 302),
-                                ({"Authorization": f"Bearer {bearer}"}, with_gate, 200)):
+    for head, cookies, want, way_back in (({"Authorization": f"Bearer {bearer}"}, None, 302, 1),
+                                          ({"Authorization": f"Basic {basic}"}, None, 302, 1),
+                                          ({"Authorization": f"Bearer {tok}"}, None, 302, 1),
+                                          ({"Authorization": f"Bearer {bearer}"}, with_gate, 200, 0),
+                                          ({"Authorization": f"Basic {basic}"}, with_gate, 200, 0)):
         before = FORWARD["n"]
         st, h, a = request("/no-token-log", cookies, head)
-        assert st == want and FORWARD["n"] == before + 1, (head, st, FORWARD["n"] - before)
+        assert st == want and FORWARD["n"] == before + way_back, (head, cookies, st, FORWARD["n"] - before)
         assert not a or not {"authorization", "x-api-key"} & {k.lower() for k in a["header"]}, a
+        assert not a or a["header"].get("Remote-User") == "anna", a
     before = FORWARD["n"]
     assert request("/gate-only", with_gate)[0] == 200 and FORWARD["n"] == before, "counter-check: cookie alone"
     time.sleep(0.5)                               # Caddy writes its log lines asynchronously
     logged = pathlib.Path(gate_log).read_text(encoding="utf-8", errors="replace")
     pieces = [bearer, bearer[4:10], bearer[-6:], basic, basic[:8], basic[-6:], app_pw, api_key, api_key[4:10],
               api_key[-6:]]
-    # What caddy-jwt still logs is the gate cookie it checked (a JWT, `eyJ…`, shortened — at info on every fast-path
-    # request): never a value from Authorization.
-    foreign = [z for z in re.findall(r'"token_string":"([^"]*)"', logged) if not z.startswith("eyJ")]
-    assert not foreign, foreign[:3]
+    # caddy-jwt 1.5.0 logs no `token_string` at all any more; a value from Authorization never.
+    assert '"token_string"' not in logged, re.findall(r'"token_string":"[^"]*"', logged)[:3]
     assert not [z for z in pieces if z in logged], [z for z in pieces if z in logged]
-    ok("Authorization (Bearer tsk_…, Basic app password, also next to a valid gate cookie) → straight to the way back; "
-       "the Caddy log names only gate cookies and holds no piece of any credential; the gate cookie alone still takes "
-       "the fast path")
+    ok("Authorization is never a token source: Bearer tsk_…, Basic app password and even a valid gate token in "
+       "`Bearer` take the way back without a cookie; next to a valid gate cookie the cookie alone decides (fast path, "
+       "Authorization stripped); the Caddy log holds no piece of any credential")
 
     # ---------- B-3: `;` and `%3B` in the path ----------
     def raw_a(path, cookies=None):
@@ -568,12 +571,18 @@ try:
     assert st == 200 and gate_cookie(h) and gate_cookie(h) != cases["expired"]
     ok("expired token + session → 200 and a new gate cookie")
 
-    # ---------- T-48/T-53: the fixed gate key (sign_key), rotation, typ ----------
-    # The template takes one key, not the key set: caddy-jwt 1.4.0 hangs on `jwk_url` after one failed first fetch
-    # (section "jwk_url hang" below).
+    # ---------- T-48/T-53/T-119: the key set (jwk_url), rotation, typ ----------
+    # The template fetches TinySesam's key set again (T-119): caddy-jwt 1.5.0 no longer hangs after a failed first
+    # fetch (section "failed first fetch" below), and a rotation needs no change at Caddy.
     template = (ROOT / "deploy/forward-auth/Caddyfile.gate").read_text(encoding="utf-8")
-    assert re.search(r"^\s*sign_key \{\$TS_GATE_PUBKEY\}$", template, re.M), "the template should take the fixed key"
-    assert not re.search(r"^\s*jwk_url ", template, re.M), "jwk_url hangs with caddy-jwt 1.4.0"
+    assert re.search(r"^\s*jwk_url http://\{\$TS_AUTH_UPSTREAM:127\.0\.0\.1:8000\}/auth/gate/jwks\.json$", template,
+                     re.M), "the template should fetch the gate key set"
+    assert not re.search(r"^\s*sign_key ", template, re.M), "a fixed sign_key beside jwk_url: caddy-jwt takes sign_key"
+    assert re.search(r"^\s*disable_authorization_fallback$", template, re.M), "Authorization must not be a token source"
+    _mod = (ROOT / "deploy/forward-auth/caddy-gate/go.mod").read_text(encoding="utf-8")
+    _cjwt = re.search(r"github\.com/ggicci/caddy-jwt v(\d+)\.(\d+)\.(\d+)", _mod)
+    assert _cjwt and tuple(map(int, _cjwt.groups())) >= (1, 5, 0), \
+        "caddy-jwt below 1.5.0 hangs on jwk_url and knows no disable_authorization_fallback"
     head_jwt = base64.urlsafe_b64encode(b'{"alg":"EdDSA","typ":"JWT","kid":"' + auth._gate_keyring.active.kid.encode()
                                         + b'"}').rstrip(b"=").decode()
     body = signed().split(".")[1]
@@ -585,41 +594,79 @@ try:
     ok("typ: caddy-jwt lets a gate-key-signed `typ: JWT` through (it has no typ check, ADR-12) — gate.check refuses it; "
        "at the proxy the dedicated key and aud separate")
     # Rotation as a restart after `tinysesam keys rotate --purpose gate` leaves it: a new active key, the old one
-    # previous. Caddy still holds the old key: the old key's token passes, the new key's token takes the way back —
-    # slower, nobody is signed out — until the operator gives Caddy the new `tinysesam gate-key`.
-    old_pub = auth.gate_public_key()
-    old_token = signed()
-    auth.store.key_ring_rotate("gate", os.urandom(32))
-    auth._gate_keyring = keys.Keyring("gate", auth.store.key_ring_rows("gate"), "database")
-    auth._gate_key_name = keys.gate_private(auth._gate_keyring.active.material)
-    new_token = signed()
-    assert auth.gate_public_key() != old_pub
-    before = FORWARD["n"]
-    assert request("/x", {"__Host-tinysesam_gate": old_token})[0] == 200 and FORWARD["n"] == before
-    before = FORWARD["n"]
-    st, h, _ = request("/x", {**session, "__Host-tinysesam_gate": new_token})
-    assert st == 200 and FORWARD["n"] == before + 1, (st, FORWARD["n"] - before)
-    # The operator's step after a rotation: Caddy restarted with the new `tinysesam gate-key`.
-    _caddy.terminate()
-    _caddy.wait(timeout=10)
-    _caddy, PORT = start_caddy()
-    before = FORWARD["n"]
-    assert request("/x", {"__Host-tinysesam_gate": new_token})[0] == 200 and FORWARD["n"] == before
-    ok("rotation with sign_key: the old key's token keeps the fast path, the new key's token takes the way back "
-       "(200 with a session) until Caddy gets the new key — then the new one passes without TinySesam")
+    # previous. Caddy's cached set still holds only the old key: the old key's token passes; the new key's token names
+    # a `kid` Caddy does not know, takes the way back (200 with a session, nobody is signed out) and makes Caddy fetch
+    # the set again — from then on it passes without TinySesam. No reload, no restart of Caddy.
+    # Measured with caddy-jwt 1.5.0: a refetch that a token with an unknown `kid` started shortly BEFORE the rotation
+    # (here: the forged tokens above) can land after the refetch for the new key and put the old set back for a moment —
+    # the new key's token then takes the way back once more and starts the next refetch (safe: never a wrong accept).
+    # A Caddy of its own, started now, measures the operator's case without that race; the main Caddy learns the new
+    # key the same way before the acceptance run below (`until_fast`).
+    # (Mutation probe: `jwk_url` to a path without the set → the new token never reaches the fast path → red.)
+    def until_fast(token, port, path="/x"):
+        """Requests with the gate token alone until one passes Caddy without TinySesam — the count, or an error."""
+        deadline, tries = time.monotonic() + 10, 0
+        while time.monotonic() < deadline:
+            tries += 1
+            before, t0 = FORWARD["n"], time.monotonic()
+            st, _, a = request(path, {"__Host-tinysesam_gate": token}, port=port)
+            assert time.monotonic() - t0 < 7, f"a gate token request took {time.monotonic() - t0:.1f}s"
+            if st == 200 and FORWARD["n"] == before and a and a["path"] == path:
+                return tries
+            time.sleep(0.25)
+        raise AssertionError(f"the gate token never reaches the fast path ({tries} requests) — is the key set fetched?")
 
-    # ---------- jwk_url hang: TinySesam unreachable when Caddy starts, reachable afterwards ----------
-    # caddy-jwt 1.4.0 (`getOrCreateJWKCache`): the first request with a token registers the JWKS URL with jwx's
-    # `Cache.Register(context.Background(), url)` under the plugin's write lock; httprc waits for the first successful
-    # fetch (`WaitReady`, no deadline) and retries only after its interval. One failed first fetch — TinySesam not up
-    # yet — and every request with a gate token hung (measured in a rollout: 4 × 40 s, no second fetch). The template
-    # checks a fixed key instead. Here: Caddy starts while its TinySesam upstream refuses connections; a request with a
-    # valid gate token must pass at once, and once TinySesam listens the way back works too.
-    # (Mutation probe: `jwk_url http://{$TS_AUTH_UPSTREAM…}/auth/gate/jwks.json` back instead of `sign_key` → the first
-    # request with a token hangs → red.)
-    _late_sock = listening_socket()
-    _late_port = _late_sock.getsockname()[1]
-    _late_sock.close()                                          # nothing listens there yet
+    _caddy_rotate, PORT_ROTATE = start_caddy(suffix="-rotate")
+    try:
+        old_pub = auth.gate_public_key()
+        old_token = signed()
+        assert until_fast(old_token, PORT_ROTATE) == 1, "the first fetch of a fresh Caddy should serve the first token"
+        auth.store.key_ring_rotate("gate", os.urandom(32))
+        auth._gate_keyring = keys.Keyring("gate", auth.store.key_ring_rows("gate"), "database")
+        auth._gate_key_name = keys.gate_private(auth._gate_keyring.active.material)
+        new_token = signed()
+        assert auth.gate_public_key() != old_pub
+        before = FORWARD["n"]
+        assert request("/x", {"__Host-tinysesam_gate": old_token}, port=PORT_ROTATE)[0] == 200 and FORWARD["n"] == before
+        before = FORWARD["n"]
+        st, h, _ = request("/x", {**session, "__Host-tinysesam_gate": new_token}, port=PORT_ROTATE)
+        assert st == 200 and FORWARD["n"] == before + 1, (st, FORWARD["n"] - before)
+        rotation_tries = until_fast(new_token, PORT_ROTATE)
+        before = FORWARD["n"]
+        assert request("/x", {"__Host-tinysesam_gate": old_token}, port=PORT_ROTATE)[0] == 200 and FORWARD["n"] == before, \
+            "the previous key left the set within its overlap"
+    finally:
+        _caddy_rotate.terminate()
+        try:
+            _caddy_rotate.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _caddy_rotate.kill()
+    ok(f"rotation with jwk_url: the old key's token keeps the fast path, the new key's token takes the way back once "
+       f"(200 with a session) and then passes without TinySesam (request {rotation_tries}) — Caddy fetched the set by itself")
+
+    # ---------- failed first fetch: TinySesam answers 404 when the first token arrives, then comes up (T-119) ----------
+    # caddy-jwt 1.4.0 (`getOrCreateJWKCache`): the first request with a token registered the JWKS URL with jwx's
+    # `Cache.Register(context.Background(), url)` under the plugin's write lock; httprc waited for the first successful
+    # fetch (`WaitReady`, no deadline) and retried only after its interval. One failed first fetch — TinySesam not up
+    # yet, a 404 — and every request with a gate token hung (measured in a rollout: 4 × 40 s, no second fetch;
+    # ggicci/caddy-jwt#117). 1.5.0 registers without waiting, gives a fetch five seconds and retries with the next token.
+    # Here: the upstream answers 404 to everything when the first gate token arrives; that request must return at once
+    # (the way back gets the 404 too — no application, no hang). Then TinySesam listens on that port: the way back
+    # issues a new token, and the gate token reaches the fast path within a few requests.
+    # (Measured with caddy-jwt 1.4.0: the first request times out → red. Mutation probe: jwk_url to a wrong path → the
+    # gate token never reaches the fast path → red.)
+    class _NotYet(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    _not_yet = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _NotYet)
+    _late_port = _not_yet.server_address[1]
+    threading.Thread(target=_not_yet.serve_forever, daemon=True).start()
     _caddy_late, PORT_LATE = start_caddy(upstream=f"127.0.0.1:{_late_port}", suffix="-late")
     try:
         fresh = signed(now_=int(time.time()))
@@ -627,10 +674,12 @@ try:
         try:
             st, h, a = request("/late-1", {"__Host-tinysesam_gate": fresh}, port=PORT_LATE)
         except OSError as e:          # a timeout of the request: Caddy hangs
-            raise AssertionError(f"a request with a gate token hangs while TinySesam is unreachable: {e!r}")
-        assert st == 200 and a and a["path"] == "/late-1", (st, a)
-        assert time.monotonic() - t0 < 5, f"took {time.monotonic() - t0:.1f}s"
-        # TinySesam comes up on that port: the way back works, and the gate token still passes at once.
+            raise AssertionError(f"a request with a gate token hangs while the key set answers 404: {e!r}")
+        assert time.monotonic() - t0 < 7, f"took {time.monotonic() - t0:.1f}s"
+        assert st == 404 and a is None, (st, a)             # the way back got the 404 as well; never the application
+        _not_yet.shutdown()
+        _not_yet.server_close()
+        # TinySesam comes up on that port: the way back works, and the gate token reaches the fast path.
         _late = socket.socket()
         _late.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         _late.bind(("127.0.0.1", _late_port))
@@ -643,9 +692,7 @@ try:
             time.sleep(0.05)
         st, h, _ = request("/late-2", session, port=PORT_LATE)
         assert st == 200 and gate_cookie(h), (st, dict(h))
-        t0 = time.monotonic()
-        assert request("/late-3", {"__Host-tinysesam_gate": fresh}, port=PORT_LATE)[0] == 200
-        assert time.monotonic() - t0 < 5
+        tries = until_fast(fresh, PORT_LATE, "/late-3")
         _late_server.should_exit = True
     finally:
         _caddy_late.terminate()
@@ -653,8 +700,8 @@ try:
             _caddy_late.wait(timeout=10)
         except subprocess.TimeoutExpired:
             _caddy_late.kill()
-    ok("TinySesam unreachable when Caddy starts: a gate token passes at once (no hang); once TinySesam listens, "
-       "the way back issues a new token and the gate token still passes")
+    ok(f"key set answers 404 when the first gate token arrives: the request returns at once (no hang); once TinySesam "
+       f"listens, the way back issues a new token and the gate token passes the fast path (after {tries} request(s))")
 
     # ---------- Variant "the application uses FetchTopbar/FetchAccount": only the session cookie gets through ----------
     # The template carries the variant as a comment; here it is put in place exactly as the comment says (both
@@ -775,6 +822,8 @@ try:
        "/x/../s/, /S/, //s/ …) — gate template and plain template")
 
     # ---------- Acceptance pattern (T-24): deploy/forward-auth/acceptance.sh against this setup ----------
+    # The main Caddy has only seen the old gate key; tokens are signed with the new one since the rotation above.
+    until_fast(signed(now_=int(time.time())), PORT)
     import shutil  # noqa: E402
     assert shutil.which("bash") and shutil.which("curl"), "acceptance.sh needs bash and curl"
     script = ROOT / "deploy/forward-auth/acceptance.sh"

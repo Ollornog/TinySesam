@@ -13,6 +13,8 @@ which never lives readable in the file. Pinned here:
   (e) T-72: API keys, one-time tokens (sign-in links, invitations, confirmations, pairing and QR codes) and the QR
       device secret are keyed the same way — a planted plain sha256 opens nothing, every store path uses the keyed
       digest, and a pepper rotation keeps them valid until `keys retire` (which refuses while one still needs it)
+  (f) recovery codes (@344f94) likewise: a planted plain sha256 is no second factor, a pepper rotation keeps unused
+      codes valid, and `keys retire` refuses while one from before the rotation is unused
 
     python tests/run_all.py test_session_pepper.py
 """
@@ -191,8 +193,11 @@ r.check("(e) QR: a planted code is no open request; a planted plain device secre
 # back to a plain sha256): the first argument of these store calls is built by `token_digest`/`_token_hash`/`_qr_hash`.
 import ast as _ast  # noqa: E402
 _CALLS = {"add_magic_token", "get_magic_token", "use_magic_token", "expire_magic_token", "approve_qr_token",
-          "oauth_pair_service", "oauth_replace_consent_pairing", "get_api_key_by_hash", "add_api_key"}
-_MARKS = ("token_digest", "_token_hash", "_qr_hash")
+          "oauth_pair_service", "oauth_replace_consent_pairing", "get_api_key_by_hash", "add_api_key",
+          "add_recovery_codes", "consume_recovery_code"}
+#: The position of the digest argument where it is not the first (the others take it first).
+_ARG_AT = {"add_api_key": 3, "add_recovery_codes": 1, "consume_recovery_code": 1}
+_MARKS = ("token_digest", "_token_hash", "_qr_hash", "_rc_hash")
 _plain_paths, _seen = [], 0
 for _f in sorted((ROOT / "tinysesam").glob("*.py")):
     _tree = _ast.parse(_f.read_text(encoding="utf-8"))
@@ -203,17 +208,15 @@ for _f in sorted((ROOT / "tinysesam").glob("*.py")):
                      for t in n.targets if isinstance(t, _ast.Name)}
         for _c in _ast.walk(_fn):
             if isinstance(_c, _ast.Call) and isinstance(_c.func, _ast.Attribute) and _c.func.attr in _CALLS:
-                if _c.func.attr == "add_api_key":
-                    _arg = _c.args[3] if len(_c.args) > 3 else None
-                else:
-                    _arg = _c.args[0] if _c.args else None
+                _at = _ARG_AT.get(_c.func.attr, 0)
+                _arg = _c.args[_at] if len(_c.args) > _at else None
                 _src = _ast.unparse(_arg) if _arg is not None else ""
                 _src = _assigned.get(_src, _src)
                 _seen += 1
                 if not any(m in _src for m in _MARKS):
                     _plain_paths.append(f"{_f.name}:{_c.lineno} {_c.func.attr}({_src})")
-r.check("(e) every store call that writes or looks up an API key or one-time token digest gets the keyed digest",
-        _seen >= 20 and not _plain_paths, f"{_seen} calls, plain: {_plain_paths}")
+r.check("(e) every store call that writes or looks up an API key, one-time token or recovery code digest gets the keyed "
+        "digest", _seen >= 22 and not _plain_paths, f"{_seen} calls, plain: {_plain_paths}")
 t.close()
 
 # Pepper rotation: a key and a link from before stay valid; the key moves to the new pepper on its next use; `keys
@@ -251,5 +254,55 @@ r.check("(e) `--force` retires it: the link and the idle key are dead, the key u
         out.returncode == 0 and t3.peek_magic(old_link) is None and t3.verify_api_key(tok_idle) == (None, None)
         and t3.verify_api_key(tok_old)[0] is not None, (out.stdout + out.stderr)[-300:])
 t3.close()
+
+# ---------------------------------------------------------------- (f) recovery codes (@344f94)
+# Up to 0.30.0 a recovery code was stored as the plain sha256 of the normalised code: whoever could write the file put
+# the digest of a code of their own choosing next to any account and held its second factor (a half session plus that
+# code is a full one). Now an HMAC with the pepper, label `recovery`.
+# (Mutation probes: `_rc_hash` back to a plain sha256 → the first two checks fall; drop the `recovery_codes_before`
+# refusal in `keys retire` → the refusal check falls.)
+f = make(os.path.join(tempfile.mkdtemp(), "rc.db"))
+fuid = f.create_user("fred", password="a long probe password 4711")
+fp = f._pepper_keyring.active.material
+codes = f.generate_recovery_codes(fuid, n=3)
+norm = codes[0].strip().lower().replace(" ", "")
+r.check("(f) a recovery code is stored as the HMAC with the pepper, not as its sha256",
+        f.store._one("SELECT 1 FROM recovery_code WHERE code_hash=?", (token_peppered(fp, "recovery", norm),)) is not None
+        and f.store._one("SELECT 1 FROM recovery_code WHERE code_hash=?", (plain(norm),)) is None)
+chosen_rc = "-".join(secrets.token_hex(7) for _ in range(2))
+f.store._exec("INSERT INTO recovery_code(user_id, code_hash, created_at) VALUES (?, ?, ?)",
+              (fuid, plain(chosen_rc), int(time.time())))
+r.check("(f) a code planted as its plain sha256 is no second factor; a real code works once, typed in capitals too",
+        f._verify_recovery_code(fuid, chosen_rc) is False and f._verify_recovery_code(fuid, codes[0].upper()) is True
+        and f._verify_recovery_code(fuid, codes[0]) is False, "write access to the file mints a second factor")
+f.close()
+
+db_f = os.path.join(tempfile.mkdtemp(), "rcrot.db")
+f1 = make(db_f)
+f1uid = f1.create_user("fiona", password="a long probe password 4711")
+old_codes = f1.generate_recovery_codes(f1uid, n=2)
+f1.close()
+time.sleep(1.1)       # `since` of the rotation lies after `created_at` of the codes
+out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "rotate", "--purpose", "oauth-pepper", "--db", db_f],
+                     capture_output=True, text=True, env=env, timeout=120, cwd=str(ROOT))
+f2 = make(db_f)
+r.check("(f) after a pepper rotation a recovery code from before still works (found with the previous pepper)",
+        out.returncode == 0 and f2._verify_recovery_code(f1uid, old_codes[0]) is True, out.stderr[-300:])
+f2.close()
+out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "retire", "--purpose", "oauth-pepper", "--db", db_f],
+                     capture_output=True, text=True, env=env, timeout=120, cwd=str(ROOT))
+r.check("(f) `keys retire` refuses while an unused recovery code from before the rotation needs the old pepper",
+        out.returncode == 1 and "1 unused recovery code(s)" in out.stderr, (out.stdout + out.stderr)[-400:])
+time.sleep(1.1)       # the new codes lie after `since` (a code made in the same second still counts as before)
+f3 = make(db_f)
+fresh_codes = f3.generate_recovery_codes(f1uid, n=2)
+f3.close()
+out = subprocess.run([sys.executable, "-m", "tinysesam", "keys", "retire", "--purpose", "oauth-pepper", "--db", db_f],
+                     capture_output=True, text=True, env=env, timeout=120, cwd=str(ROOT))
+f4 = make(db_f)
+r.check("(f) once the account generated new codes the retire goes through, and the new codes work",
+        out.returncode == 0 and f4._verify_recovery_code(f1uid, fresh_codes[0]) is True
+        and f4._verify_recovery_code(f1uid, old_codes[1]) is False, (out.stdout + out.stderr)[-400:])
+f4.close()
 
 sys.exit(r.done())

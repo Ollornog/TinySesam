@@ -798,6 +798,21 @@ PERMITTED_WITH_RIGHT = {"echo", "printf", "gh release", "gh attestation", "git l
                      # tag object and its ref —, never `gh api` wholesale.
                      'gh api "repos/$GITHUB_REPOSITORY/git/tags"', 'gh api "repos/$GITHUB_REPOSITORY/git/refs"'}
 
+# The kit version this copy carries (`tests/_kit/KIT_VERSION`): guards on kit-generated workflows follow it.
+_KIT = tuple(int(x) for x in read("tests/_kit/KIT_VERSION").strip().split("."))
+
+# Writes of the git refs API bound to ONE job and ONE whole command line each — never `gh api` wholesale, never for
+# another job. Kit 0.67 (fast-forward auto-merge): `ausfuehren` moves the base to the checked head with `force=false`
+# (GitHub refuses everything but a fast-forward), `aufraeumen` deletes only the head branch `nachsehen` named.
+# (Mutation probes: `-F force=true` in `ausfuehren`; the DELETE line in `ausfuehren`; a third `gh api` in `aufraeumen` →
+# each red.)
+PERMITTED_LINE_IN_JOB = {
+    (".github/workflows/dependabot-auto-merge.yml", "ausfuehren"):
+        'gh api "repos/$REPO/git/refs/heads/$BASIS" -X PATCH -f sha="$HEAD_SHA" -F force=false',
+    (".github/workflows/dependabot-auto-merge.yml", "aufraeumen"):
+        'gh api "repos/$REPO/git/refs/heads/$ZWEIG" -X DELETE',
+}
+
 
 def _commands(line: str) -> list[str]:
     """The individual commands of a shell line — separated at ; && || | ( $( and `.
@@ -845,7 +860,7 @@ REUSABLE_WITH_RIGHT = {
                                                       {"id-token", "attestations"}),
 }
 
-_checked_identity, _exceptions_seen = 0, set()
+_checked_identity, _exceptions_seen, _lines_seen = 0, set(), set()
 for wf in WORKFLOWS:
     text = read(wf)
     above = _permissions_above(text)
@@ -882,11 +897,17 @@ for wf in WORKFLOWS:
         assert not re.search(r"^\s+(?:- )?shell:", block, re.M), \
             f"{wf} job `{job}` holds {sorted(permissions)} and sets its own `shell:`"
         for k in _command_list(lines):
+            if k == PERMITTED_LINE_IN_JOB.get((wf, job)):
+                _lines_seen.add((wf, job))
+                continue
             for command in _commands(k):
                 assert _permitted(command), (f"{wf} job `{job}` holds {sorted(permissions)} and runs "
                                           f"`{command}`: {k}")
 assert _exceptions_seen == set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT), \
     f"exceptions without job: {set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT) - _exceptions_seen} — tidy up the list"
+# Before kit 0.67 the auto-merge has neither job; from it on both lines must be met (else the list holds stale entries).
+assert _KIT < (0, 67) or _lines_seen == set(PERMITTED_LINE_IN_JOB), \
+    f"ref writes without their job: {set(PERMITTED_LINE_IN_JOB) - _lines_seen} — tidy up the list"
 assert _checked_identity >= 6, f"only {_checked_identity} jobs with write permission found — check the parser"
 print(f"  {_checked_identity} jobs with identity/write permission (every spelling): only "
       f"{'/'.join(sorted(PERMITTED_WITH_RIGHT))}, checkout only with a justified exception")
@@ -910,6 +931,15 @@ _am_ent = " ".join(z.strip() for z in _am_jobs.get("entscheiden", []))
 assert "github.event.workflow_run.event == 'pull_request'" in _am_ent and \
     "github.event.workflow_run.head_repository.full_name == github.repository" in _am_ent, \
     "dependabot-auto-merge.yml: `entscheiden` does not strictly check PR run AND own repo"
+# Kit 0.65 (a PR out of the draft): `pull_request` — never `_target` — and only the type `ready_for_review`; a fork gets a
+# read-only token there, and `entscheiden` still only takes a head of the own repo.
+# (Mutation probes: `types: [ready_for_review, synchronize]`; delete the `pull_request.head.repo` condition → each red.)
+_am_pr = re.search(r"^  pull_request:\s*\n((?:    .*\n?)*)", _am_on + "\n", re.M)
+if _am_pr:
+    assert re.fullmatch(r"\s*types:\s*\[ready_for_review\]\s*", _am_pr.group(1)), \
+        f"dependabot-auto-merge.yml: `pull_request` with more than `types: [ready_for_review]`: {_am_pr.group(1)!r}"
+    assert "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository" \
+        in _am_ent, "dependabot-auto-merge.yml: `entscheiden` takes a `pull_request` event without the own-repo check"
 assert not _permissions_job(_am_jobs.get("entscheiden", []), _permissions_above(_am)) & {"*"} and \
     not re.search(r"\bwrite\b", " ".join(_am_jobs.get("entscheiden", []))), \
     "dependabot-auto-merge.yml: `entscheiden` holds a write permission — the logic belongs in the read job"
@@ -1728,11 +1758,15 @@ def _kit_probe(changelog: str) -> subprocess.CompletedProcess:
         genv = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
                 "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid", "GITHUB_REPOSITORY": "x/y",
                 "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary.md")}
-        for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "x"], ["tag", "v1.0.0"]):
+        for cmd in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "x"], ["tag", "v1.0.0"]):
             subprocess.run(["git", "-C", tmp, *cmd], check=True, capture_output=True, env=genv)
         res = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "_release_automatik.py"), "vorbereiten",
                               "--root", tmp], capture_output=True, text=True, check=False, env=genv)
         res.summary = read_at_file(os.path.join(tmp, "summary.md"))
+        res.refs = sorted(subprocess.run(["git", "-C", tmp, "for-each-ref", "--format=%(refname)"], check=True,
+                                         capture_output=True, text=True, env=genv).stdout.split())
+        res.commits = int(subprocess.run(["git", "-C", tmp, "rev-list", "--all", "--count"], check=True,
+                                         capture_output=True, text=True, env=genv).stdout)
         return res
 
 
@@ -1745,11 +1779,20 @@ def read_at_file(path: str) -> str:
 
 
 _r = _kit_probe(_fit.replace("### Fixed", "### Added — new API"))
-assert _r.returncode == 1 and "::error::" in _r.stderr and "Added" in _r.stderr and "[Unreleased]" in _r.stderr, \
-    (_r.returncode, _r.stdout, _r.stderr)
-assert "Release automation stopped" in _r.summary, "no job summary"
+if _KIT >= (0, 65):
+    # Since kit 0.65 a minor under [Unreleased] is a halt by design: green, a notice on stdout, "skipped" in the summary —
+    # still no release PR (nothing past the check: no commit, no branch in the probe tree, see `_kit_probe`).
+    assert _r.returncode == 0 and "::notice::" in _r.stdout and "Added" in _r.stdout and "[Unreleased]" in _r.stdout \
+        and "::error::" not in _r.stderr, (_r.returncode, _r.stdout, _r.stderr)
+    assert "Release automation skipped (a human cuts this release)" in _r.summary, f"no job summary: {_r.summary!r}"
+else:
+    assert _r.returncode == 1 and "::error::" in _r.stderr and "Added" in _r.stderr and "[Unreleased]" in _r.stderr, \
+        (_r.returncode, _r.stdout, _r.stderr)
+    assert "Release automation stopped" in _r.summary, "no job summary"
+assert _r.refs == ["refs/heads/main", "refs/tags/v1.0.0"] and _r.commits == 1, \
+    f"the stopped probe prepared a release anyway: {_r.refs}, {_r.commits} commits"
 _r = _kit_probe(_fit)
-assert "[Unreleased]" not in _r.stderr, (_r.returncode, _r.stderr)   # got past the category check
+assert "[Unreleased]" not in _r.stderr + _r.stdout, (_r.returncode, _r.stdout, _r.stderr)   # got past the category check
 
 # The human path (a minor release) has no guard and still closes cleanly.
 with tempfile.TemporaryDirectory() as _tmp:

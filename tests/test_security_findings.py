@@ -2962,7 +2962,15 @@ def _kp_raw_numbers(tree):
     return findings
 
 
-_kp_tree = _ast_k.parse((ROOT / "tinysesam" / "config_check.py").read_text(encoding="utf-8"))
+def _kp_parse():
+    """config_check.py with its parts by feature (`_config_check_<part>.py`, T-112) as one module tree."""
+    tree = _ast_k.parse((ROOT / "tinysesam" / "config_check.py").read_text(encoding="utf-8"))
+    for part in sorted((ROOT / "tinysesam").glob("_config_check_*.py")):
+        tree.body.extend(_ast_k.parse(part.read_text(encoding="utf-8")).body)
+    return tree
+
+
+_kp_tree = _kp_parse()
 _kp_getattr = [k for k in _ast_k.walk(_kp_tree) if isinstance(k, _ast_k.Call)
                and isinstance(k.func, _ast_k.Name) and k.func.id == "getattr"]
 _kp_integer = [k for k in _ast_k.walk(_kp_tree) if isinstance(k, _ast_k.Call)
@@ -2977,7 +2985,7 @@ r.check("no combination check reads a number field past the read path _integer o
 # Self-probe on the syntax tree (without text anchor): Every spelling is inserted at the front of check_config();
 # only the findings it brings NEW are counted (a finding in the existing stock would otherwise carry the probe).
 def _kp_with(snippet):
-    tree = _ast_k.parse((ROOT / "tinysesam" / "config_check.py").read_text(encoding="utf-8"))
+    tree = _kp_parse()
     fn = next(k for k in tree.body if isinstance(k, _ast_k.FunctionDef) and k.name == "check_config")
     fn.body[0:0] = _ast_k.parse(snippet).body
     return set(_kp_raw_numbers(tree)) - set(_kp_raw)

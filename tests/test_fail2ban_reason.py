@@ -161,7 +161,9 @@ for file in sorted(os.listdir(PACKAGE)):
         all_everywhere += u
 files_with_filter_lines = {d for d, _ in all_filter_lines}
 # Not vacuous: the places that are known to write filter lines must be FOUND by the analysis.
-assert {"manager.py", "oidc.py", "webauthn_.py"} <= files_with_filter_lines, files_with_filter_lines
+# TinySesam's own lines sit in its building blocks since T-112 (`_manager_<part>.py`).
+assert {"oidc.py", "webauthn_.py"} <= files_with_filter_lines \
+    and any(d == "manager.py" or d.startswith("_manager_") for d in files_with_filter_lines), files_with_filter_lines
 assert len(all_filter_lines) >= 7, all_filter_lines
 assert not all_violations, all_violations
 assert not all_everywhere, all_everywhere
@@ -173,8 +175,8 @@ MUTATIONS = [
     ("oidc.py", "method=oidc reason=account_locked", "method=oidc grund=account_locked"),
     ("webauthn_.py", "method=passkey reason=unknown_key", "method=passkey grund=unknown_key"),
     ("webauthn_.py", 'method=passkey reason=%s"', 'method=passkey grund=%s"'),
-    ("manager.py", "method=blocked reason=%s", "method=blocked grund=%s"),
-    ("manager.py", "ip=%s reason=pending", "ip=%s grund=pending"),
+    ("_manager_hardening.py", "method=blocked reason=%s", "method=blocked grund=%s"),
+    ("_manager_factors.py", "ip=%s reason=pending", "ip=%s grund=pending"),
 ]
 for file, old, new in MUTATIONS:
     source = _read(os.path.join(PACKAGE, file))

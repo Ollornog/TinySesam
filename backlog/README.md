@@ -8,10 +8,10 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 86/94 erledigt
+* ☐ **[M-2](M-2-after-1-0.md)** After 1.0 — keeping the published package maintained — 87/94 erledigt
 * ☑ **[M-3](M-3-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 * ☐ **[M-4](M-4-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 1/15 erledigt
-* ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 3/4 erledigt
+* ☐ **[M-5](M-5-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 4/4 erledigt
 * ☐ **[M-6](M-6-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 
 ## Aufgaben
@@ -127,14 +127,14 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md)** Stage S13 (optional) — SCIM stage 2 for IdP role sync · M-4
 * ☐ **[T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)** Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant · M-6
 * ☑ **[T-111](T-111-schema-baseline-and-ballast-removal-the-current-state-is.md)** Schema baseline and ballast removal: the current state is the starting line · M-5
-* ☐ **[T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)** Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing · M-5
+* ☑ **[T-112](T-112-modules-split-manager-py-and-store-py-into-one-building.md)** Modules: split manager.py and store.py into one building block per feature; a feature that is off loads nothing · M-5
 * ☑ **[T-113](T-113-topbar-fetch-in-rust-and-php.md)** Topbar fetch in the Rust and PHP clients · M-2
 * ☑ **[T-114](T-114-test-image-nginx-on-the-stable-line.md)** Proxy test image: nginx on the stable line instead of mainline · M-2
 * ☑ **[T-115](T-115-one-aggregate-ci-job-per-client.md)** One aggregate CI job per client, so required checks do not depend on matrix names · M-2
 * ☑ **[T-116](T-116-pre-push-gate-caddy-suite-without-image.md)** Pre-push: the gate-Caddy suite without its image counts as red · M-2
 * ☐ **[T-117](T-117-client-go-fuzz-on-time-again.md)** client-go: fuzz on time again once Go fixes the deadline report · M-2
 * ☑ **[T-118](T-118-grype-exception-libc6-expires.md)** Grype exception for libc6 expires on 2026-11-28 — rebuild the base images or drop it · M-2
-* ☐ **[T-119](T-119-caddy-jwt-jwk-url-hang-follow-upstream.md)** caddy-jwt 1.5.0: back to jwk_url, disable_authorization_fallback instead of the Authorization detour; check the X-Forwarded-For warning · M-2
+* ☑ **[T-119](T-119-caddy-jwt-jwk-url-hang-follow-upstream.md)** caddy-jwt 1.5.0: back to jwk_url, disable_authorization_fallback instead of the Authorization detour; check the X-Forwarded-For warning · M-2
 * ☐ **[T-120](T-120-leftovers-of-approvals-account-api-and-app-frame.md)** On demand: leftovers of approvals, account API and app frame · M-2
 * ☐ **[T-121](T-121-server-side-fuzzing.md)** Fuzz the server side: gate token, forward headers, OAuth endpoints, JSON APIs, template escaping · M-6
 * ☐ **[T-122](T-122-public-threat-model.md)** A short public threat model · M-6

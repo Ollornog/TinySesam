@@ -1045,7 +1045,7 @@ def values_of_constants(file: dict) -> list:
 
 
 #: Modules with routes: What is returned there is a JSON response.
-ROUTES_MODULE = ("router.py", "admin.py", "webauthn_.py", "oidc.py", "saml_.py", "gateway.py")
+ROUTES_MODULE = ("router.py", "_routes_forward.py", "admin.py", "webauthn_.py", "oidc.py", "saml_.py", "gateway.py")
 
 
 def values_in_code(sources: dict) -> list:
@@ -1120,7 +1120,7 @@ VALUES_REQUIRED = (("gc()", "failure_series"), ("create_api_key()", "dropped_rol
                  ("set_template('magic_confirm') ctx", "purpose"),
                  ("set_template('login') ctx", "prefix"),
                  ("webauthn_.py: on_security_event-Nutzlast", "name"),
-                 ("manager.py: ctx", "prefix"), ("router.py: render_page-Kontext", "purpose"),
+                 ("_manager_hardening.py: ctx", "prefix"), ("router.py: render_page-Kontext", "purpose"),
                  ("admin.py: JSON-Antwort", "disabled_by"), ("TinySesam.SECURITY_EVENTS", "api_keys_revoked"),
                  ("POST /auth/apikeys", "dropped_roles"), ("GET /auth/apikeys[].kind", "automation"),
                  ("GET <admin>/api/users[].disabled_by", "operator"),
@@ -1307,13 +1307,13 @@ def self_check_contract(now: dict) -> None:
         assert any(away in z and z.startswith("[A]") for z in b), (area, away, b)
 
     routes = CT.routes_static
-    check("http.routes", routes, bent("router.py", '@r.get("/auth/forward")', '@r.get("/auth/forwards")'),
+    check("http.routes", routes, bent("_routes_forward.py", '@r.get("/auth/forward")', '@r.get("/auth/forwards")'),
            "GET /auth/forward", "GET /auth/forwards")
-    check("http.routes", routes, bent("router.py", '@r.post("/.tinysesam/logout")', '@r.get("/.tinysesam/logout2")'),
+    check("http.routes", routes, bent("_routes_forward.py", '@r.post("/.tinysesam/logout")', '@r.get("/.tinysesam/logout2")'),
            "POST /.tinysesam/logout", "GET /.tinysesam/logout2")
     # a dropped parameter is a break (list value), a gained one an extension
     before = routes(sources)["GET /.tinysesam/start"]
-    copy = bent("router.py", "def gate_link_start(request: Request, rd: str = \"/\", signed_out: str = \"\"):",
+    copy = bent("_routes_forward.py", "def gate_link_start(request: Request, rd: str = \"/\", signed_out: str = \"\"):",
                      "def gate_link_start(request: Request, rd: str = \"/\"):")
     b, e = assess({"http.routes": {"GET /.tinysesam/start": before}},
                      {"http.routes": {"GET /.tinysesam/start": routes(copy)["GET /.tinysesam/start"]}},
@@ -1331,19 +1331,19 @@ def self_check_contract(now: dict) -> None:
         else:
             raise AssertionError(f"{foreign}: the route scan accepted a registration it cannot see")
     atoms = CT.contract_atoms
-    check("http.contract", atoms, bent("router.py", 'headers={"X-TinySesam-Reason": "role"}',
+    check("http.contract", atoms, bent("_routes_forward.py", 'headers={"X-TinySesam-Reason": "role"}',
                                             'headers={"X-TinySesam-Reason": "denied"}'),
            "reason:role", "reason:denied")
-    check("http.contract", atoms, bent("router.py", '"X-TinySesam-Reason": "app-signed-out"',
+    check("http.contract", atoms, bent("_routes_forward.py", '"X-TinySesam-Reason": "app-signed-out"',
                                             '"X-TinySesam-Reason": "app-out"'), "reason:app-signed-out")
     check("http.contract", atoms, bent("manager.py", '_GATE_LINK_COOKIE = "__Host-tinysesam_link"',
                                             '_GATE_LINK_COOKIE = "__Host-tinysesam_conn"'),
            "cookie:__Host-tinysesam_link", "cookie:__Host-tinysesam_conn")
-    check("http.contract", atoms, bent("manager.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")', -1),
+    check("http.contract", atoms, bent("_manager_forward.py", 'h.get("x-forwarded-uri")', 'h.get("x-fwd-uri")', -1),
            "request-header:X-Forwarded-Uri", "request-header:X-Fwd-Uri")
-    check("http.contract", atoms, bent("router.py", 'getlist("roles")', 'getlist("role")'),
+    check("http.contract", atoms, bent("_routes_forward.py", 'getlist("roles")', 'getlist("role")'),
            "request-param:roles", "request-param:role")
-    check("http.contract", atoms, bent("router.py", 'head["X-TinySesam-Gate-Cookie"]', 'head["X-Gate-Cookie"]'),
+    check("http.contract", atoms, bent("_routes_forward.py", 'head["X-TinySesam-Gate-Cookie"]', 'head["X-Gate-Cookie"]'),
            "header:X-TinySesam-Gate-Cookie")
     check("log.loggers", CT.loggers_static,
            bent("security.py", 'getLogger("tinysesam.security")', 'getLogger("tinysesam.sec")'),
@@ -1362,20 +1362,20 @@ def self_check_contract(now: dict) -> None:
     # such as `failed login | user ip method reason`, survives bending one of them on purpose: merging or
     # moving call sites is no break of what a filter reads.)
     generic = 'security.seclog.warning("%s user=%s ip=%s method=%s", security.log_event(method),'
-    check("log.lines", log, bent("manager.py", generic, generic.replace('ip=%s', 'client=%s')),
+    check("log.lines", log, bent("_manager_hardening.py", generic, generic.replace('ip=%s', 'client=%s')),
            "line:WARNING failed login | user ip method", "line:WARNING failed login | user client method")
-    check("log.lines", log, bent("manager.py", generic, generic.replace(".warning(", ".error(")),
+    check("log.lines", log, bent("_manager_hardening.py", generic, generic.replace(".warning(", ".error(")),
            "line:WARNING failed login | user ip method", "line:ERROR failed login | user ip method")
-    check("log.lines", log, bent("manager.py", "ip=%s method=blocked reason=%s", "ip=%s method=refused reason=%s"),
+    check("log.lines", log, bent("_manager_hardening.py", "ip=%s method=blocked reason=%s", "ip=%s method=refused reason=%s"),
            "value:method=blocked", "value:method=refused")
-    check("log.lines", log, bent("manager.py", '"%s user=%s ip=%s method=%s unban=%s"',
+    check("log.lines", log, bent("_manager_factors.py", '"%s user=%s ip=%s method=%s unban=%s"',
                                       '"%s user=%s ip=%s method=%s lift=%s"'),
            "line:INFO login ok | user ip method unban")
     check("log.lines", log, bent("security.py", 'logging.Formatter("%(asctime)s %(levelname)s %(message)s")',
                                       'logging.Formatter("%(levelname)s %(message)s")'),
            "format:%(asctime)s %(levelname)s %(message)s", "format:%(levelname)s %(message)s")
     # An event word the shipped filters name that no call produces any more is a finding of its own.
-    check("log.lines", log, bent("manager.py", '"deferred %s user=%s ip=%s reason=pending"',
+    check("log.lines", log, bent("_manager_factors.py", '"deferred %s user=%s ip=%s reason=pending"',
                                       '"postponed %s user=%s ip=%s reason=pending"'), "event:deferred login")
     without_word = json.loads(json.dumps(now))
     without_word["log.lines"].remove("event:deferred login")
@@ -1383,7 +1383,7 @@ def self_check_contract(now: dict) -> None:
         "a vanished event word that a shipped filter names went unnoticed"
     # the payload of the hook: a renamed key is gone, a new key is only an extension
     prior = CT.event_payload(sources)
-    after = CT.event_payload(bent("manager.py", '_security_event("username_changed", user_id, old=old, new=name)',
+    after = CT.event_payload(bent("_manager_account.py", '_security_event("username_changed", user_id, old=old, new=name)',
                                      '_security_event("username_changed", user_id, was=old, new=name)'))
     assert prior["username_changed"] == ["new", "old"] and after["username_changed"] == ["new", "was"], after
     b, e = assess({"TinySesam.event_payload": {"username_changed": prior["username_changed"]}},
@@ -1391,7 +1391,7 @@ def self_check_contract(now: dict) -> None:
                      {"TinySesam.event_payload": {"username_changed": "A"}})
     assert b and b[0].startswith("[A]") and "old" in b[0] and e and "was" in e[0], (b, e)
     try:
-        CT.event_payload(bent("manager.py", '_security_event("username_changed", user_id, old=old, new=name)',
+        CT.event_payload(bent("_manager_account.py", '_security_event("username_changed", user_id, old=old, new=name)',
                                   '_security_event(event_name, user_id, old=old, new=name)'))
     except CT.MeasurementError:
         pass
@@ -1584,7 +1584,7 @@ CONTRACT_NAMES_REQUIRED = (("GET /.tinysesam/start parameter", "signed_out"), ("
                          ("log.loggers", "tinysesam.security"), ("log.lines event", "failed login"),
                          ("log.lines keys", "unban"), ("log.lines value", "reason=account_locked"),
                          ("messages id", "login.logged_out"), ("messages placeholder", "reason"),
-                         ("command line option", "db"), ("deploy/forward-auth/Caddyfile.gate", "TS_GATE_PUBKEY"))
+                         ("command line option", "db"), ("deploy/forward-auth/Caddyfile.gate", "TS_GATE_ISSUER"))
 
 
 def check_contract_names(file: dict, sources: "dict | None" = None, required=CONTRACT_NAMES_REQUIRED,

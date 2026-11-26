@@ -818,13 +818,15 @@ for _file, _head, _path in (("README.md", "## Own password change page\n", "/pas
 from test_api_surface import german_in  # noqa: E402
 
 _storage = json.loads((ROOT / "tests" / "api_surface.json").read_text(encoding="utf-8"))
-_deliver = sorted(n for n, f in vars(TinySesam).items()
+# Through `getmembers`, not `vars`: TinySesam's methods sit in building blocks until first use (T-112).
+_members = dict(inspect.getmembers(TinySesam))
+_deliver = sorted(n for n, f in _members.items()
                   if inspect.isfunction(f) and not n.startswith("_")
                   and inspect.signature(f).return_annotation in (PasswordChangeResult, "PasswordChangeResult"))
 _names = {("tinysesam", PasswordChangeResult.__name__), ("Module", PasswordChangeResult.__module__)}
 for _n in _deliver + ["confirm_password", "confirm_pin", "confirm_totp"]:
     _names.add(("TinySesam", _n))
-    _names |= {(f"TinySesam.{_n}()", p) for p in inspect.signature(vars(TinySesam)[_n]).parameters if p != "self"}
+    _names |= {(f"TinySesam.{_n}()", p) for p in inspect.signature(_members[_n]).parameters if p != "self"}
 _names |= {("PasswordChangeResult", f.name) for f in dataclasses.fields(PasswordChangeResult)}
 _names |= {("PasswordChangeResult", n) for n in vars(PasswordChangeResult) if not n.startswith("_")}
 _names |= {("PasswordChangeResult.REASONS", w) for w in PasswordChangeResult.REASONS}
