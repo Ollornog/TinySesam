@@ -1,0 +1,35 @@
+# Example Ex1 (T-97): the TinySesam server with local accounts in front of a Go application (clients/go/examples/ex1).
+# Read by the gateway image through TINYSESAM_CONFIG (deploy/ex1/docker-compose.yml). Every key is a field of
+# TinySesamConfig (CONFIGURATION.md); secrets only as "env:NAME" or <field>_file. Hosts: replace auth.example.com
+# and app.example.com with yours (the compose file passes them to Caddy too).
+db_path = "/data/ex1.db"
+base_url = "https://auth.example.com"
+trusted_redirect_hosts = ["app.example.com"]
+trusted_proxies = ["172.30.0.0/16"]
+https_mode = "warn"                 # TLS ends at Caddy in front
+
+# Local accounts: password, TOTP, the account page, the admin panel. The first administrator claims the panel with
+# the one-time token the server writes next to the database (`/data/ex1.db.claim`, see the README).
+password_enabled = true
+totp_enabled = true
+account_enabled = true
+admin_enabled = true
+magiclink_enabled = true             # the account API's one-time sign-in links
+apikey_enabled = true                # the service account's automation key
+available_roles = ["ex1-member", "ex1-staff"]
+
+# Forward auth for the application's host: the proxy asks TinySesam on every request and passes Remote-* on.
+forward_auth_enabled = true
+
+[forward_apps."app.example.com"]
+name = "Ex1"
+
+# The application's account API (spec/provisioning-api.md): its service account svc-ex1 creates and manages the
+# people of ex1-member, nothing else.
+[apps.ex1]
+account = "svc-ex1"
+name = "Ex1"
+
+[apps.ex1.provisioning]
+roles = ["ex1-member"]
+scopes = ["users:read", "users:invite", "users:update", "users:disable"]

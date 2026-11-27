@@ -246,7 +246,7 @@ updates:
   # days — the cooldown stays, only the chance to miss it goes. Also: as long as a newer minor exists (3.15 while the pin
   # says 3.14), Dependabot offers only the minor, never a digest refresh of the old one — stay on the newest line.
   - package-ecosystem: docker
-    directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies", "/clients/php/ci"]
+    directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies", "/clients/php/ci", "/clients/go/examples/ex1"]
     # nginx of tests/proxies: the stable line only (even minor). Mainline (odd minor) minors are ignored; patch releases
     # of the stable line and the digest still come. The move to the next stable line (1.32) is a deliberate change (T-114).
     ignore:
