@@ -1032,6 +1032,7 @@ def account_vectors(ap: AccountProbe) -> list:
     assert full["sign_in"]["password"] == "set" and full["sign_in"]["totp"]["enabled"] is True, full["sign_in"]
     assert full["approvals"] == {"pending": 1} and full["programs"]["api_keys_active"] == 1, full
     assert len(s) == 2 and s[0]["device"] is not None and s[1]["device"] is None, s
+    assert full["account"]["source"] == ["local"], full["account"]
     assert [p["name"] for p in full["programs"]["app_passwords"]] == ["Phone calendar"], full["programs"]
     # Valid and complete: the normalized form IS the answer (every href safe, every member of its type).
     add("signed-in", "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API "
@@ -1094,12 +1095,24 @@ def account_vectors(ap: AccountProbe) -> list:
     groups = dict(full, account="anna", sign_in=5, sessions=True, programs=["x"], links="/auth/account")
     add("groups-wrong-type", "A group of the wrong type (a string, a number, a boolean, a list) reads as an empty one: "
         "every member `null`, the lists empty.", groups,
-        {"signed_in": True, "account": {"username": None, "display_name": None},
+        {"signed_in": True, "account": {"username": None, "display_name": None, "source": None},
          "sign_in": {"password": None, "totp": None, "passkeys": None, "pin": None},
          "sessions": {"count": None, "items": []},
          "programs": {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None},
          "approvals": copy.deepcopy(full["approvals"]), "links": {k: None for k in ACCOUNT_LINKS}},
         attack="account-types")
+    mixed = copy.deepcopy(full)
+    mixed["account"]["source"] = ["local", 5, None, "oidc", ["saml"], "scim"]
+    want = copy.deepcopy(full)
+    want["account"]["source"] = ["local", "oidc", "scim"]
+    add("source-entries", "`account.source` is a list of texts (`local`, `oidc`, `saml`, `ldap`; two or more = a mixed "
+        "account): an entry that is no string is dropped, an unknown text stays for the application to ignore.", mixed,
+        want, attack="account-types")
+    one = copy.deepcopy(full)
+    one["account"]["source"] = "local"
+    want = copy.deepcopy(full)
+    want["account"]["source"] = None
+    add("source-not-list", "`account.source` as a single string is no list: `null`.", one, want, attack="account-types")
     bool_pending = copy.deepcopy(full)
     bool_pending["approvals"] = {"pending": True}
     want = copy.deepcopy(full)

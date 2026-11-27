@@ -6,6 +6,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The origin of an account is visible (T-99, ADR-18): `source` — a list of `local`, `oidc`, `saml`, `ldap`, two or more
+  for a mixed account — in the admin panel (the account's profile; every row of `<admin>/api/users`), in the account
+  API's view of an account and in `account.json` (`account.source`, spec §8a). `local` means a password, passkey or PIN
+  of its own, or no identity provider; a provider counts when the account is bound to one of its identities, or when it
+  created the name and no binding exists yet. No decision reads it. The gate clients in Go, Rust, JS/TS, PHP and Python
+  keep it (a list of texts, other entries dropped, `null` when it is no list); `spec/vectors/account.json` has two new
+  vectors.
 - The server is configured by a TOML file (T-97, ADR-16): `TINYSESAM_CONFIG` names a file whose keys are the fields of
   `TinySesamConfig` — the gateway becomes the full TinySesam (local accounts, admin panel, account page, `apps`, SAML,
   LDAP) instead of the OIDC-only preset. Secret fields take only `"env:NAME"` or `<field>_file`, a literal ends the

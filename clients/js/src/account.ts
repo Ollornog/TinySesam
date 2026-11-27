@@ -41,7 +41,15 @@ export interface AccountLinks {
 /** A signed-in account overview: every member present, null for "missing, of the wrong type or not offered". */
 export interface SignedInAccount {
   readonly signed_in: true;
-  readonly account: { readonly username: string | null; readonly display_name: string | null };
+  /**
+   * `source`: where the account comes from — `local`, `oidc`, `saml`, `ldap` (two or more = a mixed account; an unknown
+   * text is for the application to ignore); null when missing or no list.
+   */
+  readonly account: {
+    readonly username: string | null;
+    readonly display_name: string | null;
+    readonly source: readonly string[] | null;
+  };
   readonly sign_in: {
     readonly password: string | null;
     readonly totp: {
@@ -106,6 +114,12 @@ function text(m: Obj, name: string): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+/** The string entries of a list, in order; null when it is no list. */
+function texts(m: Obj, name: string): string[] | null {
+  const v = own(m, name);
+  return Array.isArray(v) ? v.filter((e): e is string => typeof e === 'string') : null;
+}
+
 function flag(m: Obj, name: string): boolean | null {
   const v = own(m, name);
   return typeof v === 'boolean' ? v : null;
@@ -160,7 +174,11 @@ export function parseAccount(body: string | Uint8Array): Account {
   const appPasswords = own(programs, 'app_passwords');
   return {
     signed_in: true,
-    account: { username: text(account, 'username'), display_name: text(account, 'display_name') },
+    account: {
+      username: text(account, 'username'),
+      display_name: text(account, 'display_name'),
+      source: texts(account, 'source'),
+    },
     sign_in: {
       password: text(signIn, 'password'),
       totp: isObject(totp)

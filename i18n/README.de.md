@@ -1346,7 +1346,9 @@ TinySesamConfig(forward_apps={"team.example.com": {
 ```
 
 **Der Sicherheitsstand als Daten.** `auth.account_overview(user, *, base=None, app_host=None, request=None)` (Stufe B)
-liefert, was die Kontoseite zeigt: `sign_in` (Passwort, TOTP mit den übrigen Wiederherstellungscodes, Passkeys, PIN),
+liefert, was die Kontoseite zeigt: `account` (Name, Anzeigename und `source` — woher das Konto kommt: eine Liste aus
+`local`, `oidc`, `saml`, `ldap`, zwei oder mehr bei einem gemischten Konto; nur angezeigt, keine Entscheidung liest
+sie), `sign_in` (Passwort, TOTP mit den übrigen Wiederherstellungscodes, Passkeys, PIN),
 `sessions` (wann, zuletzt gesehen, grob „Browser · System“, `current`), `programs` (OAuth-Programme, Dienste,
 App-Passwörter: Name und letzte Nutzung; die Zahl der API-Keys), `approvals` und `links` (die Kontoseite und ihre
 Anker, mit `app=<host>` für einen `app_host` mit Rahmen). `null` heißt „hier nicht angeboten“, `[]` „angeboten, leer“;
@@ -2246,8 +2248,8 @@ TinySesam-On-Behalf-Of: 17
   Betreiber einem Konto der Anwendung eine Rolle außerhalb der Allowlist gegeben, liest die Anwendung es weiter
   (`"other_roles": true`), aber Anzeigename, Sperre und Link antworten `409 account_shared`.
 - **Was die Anwendung von einem Konto liest:** `id`, `username`, `display_name`, `email`, `email_verified`, `roles`
-  (nur aus der Allowlist), `other_roles`, `state`, `created_at`, `first_login_at`, `last_login_at`, `delete_after`;
-  `state` ist `active`, `disabled` (durch die Anwendung), `disabled_operator` (hebt nur der Betreiber auf) oder
+  (nur aus der Allowlist), `other_roles`, `state`, `created_at`, `first_login_at`, `last_login_at`, `delete_after`,
+  `source` (`local`, `oidc`, `saml`, `ldap` — zwei oder mehr bei einem gemischten Konto); `state` ist `active`, `disabled` (durch die Anwendung), `disabled_operator` (hebt nur der Betreiber auf) oder
   `deleting`.
 - **Fehler** sind `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
   `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
@@ -3070,7 +3072,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**139 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**140 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -39,6 +39,9 @@ pub struct Names {
     pub username: Option<String>,
     /// The display name.
     pub display_name: Option<String>,
+    /// Where the account comes from: `local`, `oidc`, `saml`, `ldap` (two or more = a mixed account; an unknown text
+    /// is for the application to ignore); `None` when missing or no list.
+    pub source: Option<Vec<String>>,
 }
 
 /// The sign-in methods.
@@ -179,6 +182,16 @@ fn text(m: &Map<String, Value>, name: &str) -> Option<String> {
     m.get(name).and_then(Value::as_str).map(str::to_owned)
 }
 
+/// The string entries of a list, in order; `None` when it is no list.
+fn texts(m: &Map<String, Value>, name: &str) -> Option<Vec<String>> {
+    m.get(name).and_then(Value::as_array).map(|list| {
+        list.iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
+    })
+}
+
 fn flag(m: &Map<String, Value>, name: &str) -> Option<bool> {
     m.get(name).and_then(Value::as_bool)
 }
@@ -232,6 +245,7 @@ pub fn normalize(data: &Value) -> Account {
         account: Some(Names {
             username: text(account, "username"),
             display_name: text(account, "display_name"),
+            source: texts(account, "source"),
         }),
         sign_in: Some(SignIn {
             password: text(sign_in, "password"),

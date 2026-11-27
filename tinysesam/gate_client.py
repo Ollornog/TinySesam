@@ -1317,6 +1317,11 @@ def _flag(value: Any) -> Optional[bool]:
     return value if isinstance(value, bool) else None
 
 
+def _texts(value: Any) -> Optional[list[str]]:
+    """A list of texts: its string entries in order, every other entry dropped; None when it is no list."""
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else None
+
+
 def _href(value: Any) -> Optional[str]:
     return value if _safe_href(value) else None
 
@@ -1355,7 +1360,8 @@ def parse_account(data: Any) -> dict[str, Any]:
     pending = _count(approvals.get("pending")) if isinstance(approvals, dict) else None
     return {
         "signed_in": True,
-        "account": {"username": _text(account.get("username")), "display_name": _text(account.get("display_name"))},
+        "account": {"username": _text(account.get("username")), "display_name": _text(account.get("display_name")),
+                    "source": _texts(account.get("source"))},
         "sign_in": {
             "password": _text(sign_in.get("password")),
             "totp": {"enabled": _flag(totp.get("enabled")), "recovery_left": _count(totp.get("recovery_left")),

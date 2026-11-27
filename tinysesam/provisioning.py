@@ -383,7 +383,8 @@ class Provisioning:
                 "email": row["email"], "email_verified": bool(row["email_verified"]),
                 "roles": sorted(r for r in roles if r in allow), "other_roles": any(r not in allow for r in roles),
                 "state": self.state(row), "created_at": row["created_at"], "first_login_at": row["first_login_at"],
-                "last_login_at": row["last_login_at"], "delete_after": row["delete_after"]}
+                "last_login_at": row["last_login_at"], "delete_after": row["delete_after"],
+                "source": self.auth.store.account_sources([row["id"]]).get(int(row["id"]), ["local"])}
 
     # ---------- body checks ----------
     def _roles(self, app: dict, value, at_least_one: bool) -> list:

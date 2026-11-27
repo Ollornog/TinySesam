@@ -84,7 +84,8 @@ assert r.headers["cache-control"] == "no-store" and "cookie" in r.headers.get("v
 assert not [k for k in r.headers if k.lower().startswith("access-control-")], dict(r.headers)
 j = r.json()
 assert isinstance(j, dict) and j["signed_in"] is True and j["account"] == {"username": "anna",
-                                                                           "display_name": "Anna Example"}, j
+                                                                           "display_name": "Anna Example",
+                                                                           "source": ["local"]}, j
 ok("A1: a full session → 200, an object, Cache-Control: no-store, Vary: Cookie, no Access-Control-* (also with Origin)")
 
 # ══ A2: API key (Bearer, X-Api-Key), OAuth token, app password, half session → 401 ════════════════════════════

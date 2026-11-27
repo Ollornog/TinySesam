@@ -385,7 +385,7 @@ def build_admin_router(auth) -> APIRouter:
                                                                 pa.owner_protection, pa.log)
     other_active_admins, roles_from = pa.other_active_admins, pa.roles_from
 
-    def uview(u, apps=None, hint=False):
+    def uview(u, apps=None, hint=False, sources=None):
         managed = u["managed_by"] or None
         app = (apps or {}).get(managed) if managed else None
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -399,6 +399,10 @@ def build_admin_router(auth) -> APIRouter:
                 # 3 = the application that manages the account (account API, schema 23).
                 "disabled_by": {1: "confirmation", 2: "operator", 3: "app"}.get(int(u["disabled"] or 0)),
                 "created_at": u["created_at"],
+                # Where the account comes from (T-99, ADR-18): `local`, `oidc`, `saml`, `ldap`, two or more = mixed.
+                # Shown only; no decision reads it.
+                "source": (sources if sources is not None else auth.store.account_sources([u["id"]])).get(
+                    int(u["id"]), ["local"]),
                 # The account API (stage B): which application manages the account, whether that application is still
                 # configured, and the end of a pending deletion by it.
                 "managed_by": managed,
@@ -421,7 +425,9 @@ def build_admin_router(auth) -> APIRouter:
         apps = auth._provisioning().apps()
         # A delegate sees only the accounts in scope — not the names and addresses of everyone else (T-74). An
         # application's account is no exception: in scope only when all its roles are (`may_manage`).
-        return [uview(u, apps, scopes is None) for u in auth.store.list_users() if scopes is None or visible(u, me, scopes)]
+        sources = auth.store.account_sources()   # one query for the list, not one per account
+        return [uview(u, apps, scopes is None, sources) for u in auth.store.list_users()
+                if scopes is None or visible(u, me, scopes)]
 
     @ar.post("/api/users")
     async def user_create(request: Request):
@@ -1091,6 +1097,7 @@ _KEYS = (
     "search filter_roles level_none incomplete incomplete_hint roles_other roles_unknown all_accounts "
     "sec.profile sec.access sec.signin sec.danger f.display_name created password set_password pw_hint "
     "issue_link link_hint disable_hint owner_hint delete_hint no_keys unavailable unavailable_reason "
+    "source source.local source.oidc source.saml source.ldap "
     "app_badge managed_by not_configured all_apps no_app app_section adopt adopt_hint no_app_fits release release_hint "
     "confirm.release deleting deleting_until restore restore_hint "
     "roles_btn role_filter show_all roles_title roles_hint new_role role_add catalog_count src_config src_catalog "
@@ -1478,6 +1485,7 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
       <dt>${esc(L["f.display_name"])}</dt><dd>${esc(u.display_name)||'<span class=muted>—</span>'}</dd>
       <dt>${esc(L["f.email"])}</dt><dd>${esc(u.email)||'<span class=muted>—</span>'}</dd>
       <dt>${esc(L.created)}</dt><dd>${dt(u.created_at)}</dd>
+      <dt>${esc(L.source)}</dt><dd class=source>${(u.source||[]).map(s=>`<span class=badge>${esc(L["source."+s]||s)}</span>`).join(" ")}</dd>
       ${u.managed_by?`<dt>${esc(L.managed_by)}</dt><dd class=managed><span class="badge app">${esc(u.managed_name||u.managed_by)}</span>${u.managed_known?"":` <span class=muted>(${esc(L.not_configured)})</span>`}</dd>`:""}</dl></section>
     <section class=card><h2>${esc(L["sec.access"])}</h2>${CAN("roles")?picker("pk",u.roles)+`
       <div class=row>${admin&&!svc?`<label class=mr12><input type=checkbox id=ra${u.is_admin?" checked":""}> ${esc(L["f.admin"])}</label>`:""}

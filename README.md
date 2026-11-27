@@ -1321,7 +1321,8 @@ TinySesamConfig(forward_apps={"team.example.com": {
 ```
 
 **The security state as data.** `auth.account_overview(user, *, base=None, app_host=None, request=None)` (tier B) gives
-what the account page shows: `sign_in` (password, TOTP with the recovery codes left, passkeys, PIN), `sessions` (when,
+what the account page shows: `account` (name, display name and `source` — where the account comes from: a list of
+`local`, `oidc`, `saml`, `ldap`, two or more for a mixed account; shown only, no decision reads it), `sign_in` (password, TOTP with the recovery codes left, passkeys, PIN), `sessions` (when,
 last seen, a coarse "browser · system", `current`), `programs` (OAuth programs, services, app passwords: name and last
 use; the number of API keys), `approvals` and `links` (the account page and its anchors, with `app=<host>` for an
 `app_host` with a frame). `null` means "not offered here", `[]` "offered, empty"; there is never an address, a hash, a
@@ -2206,8 +2207,8 @@ TinySesam-On-Behalf-Of: 17
   application account a role outside the allowlist, the application still reads it (`"other_roles": true`), but
   display name, lock and link answer `409 account_shared`.
 - **What the application reads of an account:** `id`, `username`, `display_name`, `email`, `email_verified`, `roles`
-  (only from the allowlist), `other_roles`, `state`, `created_at`, `first_login_at`, `last_login_at`, `delete_after`;
-  `state` is `active`, `disabled` (by the application), `disabled_operator` (only the operator lifts it) or `deleting`.
+  (only from the allowlist), `other_roles`, `state`, `created_at`, `first_login_at`, `last_login_at`, `delete_after`,
+  `source` (`local`, `oidc`, `saml`, `ldap` — two or more for a mixed account); `state` is `active`, `disabled` (by the application), `disabled_operator` (only the operator lifts it) or `deleting`.
 - **Errors** are `{"error": <code>, "error_description": …}`: `401 unauthenticated`, `403 not_a_provisioning_app`,
   `403 scope_missing`, `404 not_found`, `400 invalid|actor_required|actor_invalid|role_not_allowed|name_invalid|
   email_invalid|next_invalid`, `409 username_taken|email_taken|quota_reached|account_shared|already_signed_in|account_disabled|
@@ -3004,7 +3005,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**139 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**140 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

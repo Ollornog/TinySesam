@@ -412,7 +412,7 @@ The members (TinySesam's answer; `null` means "not offered by this installation"
 | Member | Type | Meaning |
 |---|---|---|
 | `signed_in` | boolean | always `true` in a `200` answer |
-| `account` | object | `username` (string), `display_name` (string) |
+| `account` | object | `username` (string), `display_name` (string), `source` (list of strings: `local`, `oidc`, `saml`, `ldap`; two or more = a mixed account) |
 | `sign_in.password` | string or null | `"set"`, `"unset"`, `"directory"` (kept in a directory), `null` (passwords off) |
 | `sign_in.totp` | object or null | `enabled` (boolean), `recovery_left` (integer or null), `recovery_low` (boolean) |
 | `sign_in.passkeys` | object or null | `count` (integer), `items` (list of `name`, `created_at`, `last_used`) |
@@ -447,7 +447,9 @@ The normalized result of a helper (`vectors/account.json` shows it):
     follow the same rules;
   - `approvals` is `{"pending": <count>}` when `pending` is a count, otherwise `null`;
   - every member of `links` is an `href` that passes the rule of §8, or `null`;
-  - `sign_in.password` is kept as text — a value besides the three of the table is for the application to ignore.
+  - `sign_in.password` is kept as text — a value besides the three of the table is for the application to ignore;
+  - `account.source` is a list of texts or `null`: an entry that is no string is dropped, a value that is no list reads
+    as `null`, an unknown text is kept for the application to ignore.
 
 ## 9. Test vectors
 
