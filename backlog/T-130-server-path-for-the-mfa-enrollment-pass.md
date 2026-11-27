@@ -2,13 +2,18 @@
 id: T-130
 type: Task
 title: "Server path for the MFA enrollment pass (grant and revoke)"
-status: offen
+status: erledigt
 points: 2
 milestone: M-2
 tags: [server, parity, admin, mfa]
 created: 2026-11-27
 ---
 # T-130 — Server path for the MFA enrollment pass
+
+**Done (2026-11-27):** `POST <admin>/api/users/{uid}/mfa-enrollment` (`minutes` 1–1440, default 60; fresh
+confirmation, owner model) and `…/mfa-enrollment/delete` (no confirmation needed to close); the panel's TOTP line
+offers "Allow setup for 1 hour" and shows until when it is open; `GET …/totp` names `enrollment_until`. Both parity
+entries name the routes. Tests in `tests/test_totp_reset.py`; mutations in the pull request.
 
 **Story points:** 2 · **Estimate:** 3 h · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 

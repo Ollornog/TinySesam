@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import json
 import secrets
+import time
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
@@ -332,6 +333,10 @@ class PanelActions:
         # The audit line is written by `revoke_api_key` — with owner, IP and actor= (B5-04/R6-3).
         self.auth.revoke_api_key(kid)
         return {"ok": True}
+
+
+#: The longest setup window the panel opens (T-130): a day. A window open for longer is the old gap under a new name.
+MFA_WINDOW_MAX_MIN = 24 * 60
 
 
 def build_admin_router(auth) -> APIRouter:
@@ -658,12 +663,42 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         if auth.store.get_user(uid) is None:
             raise HTTPException(404, auth.t("api.not_found"))
+        window = auth.store.get_user(uid)["mfa_enroll_until"]
         return {"enabled": auth.store.has_confirmed_totp(uid),
-                "recovery_left": auth.store.count_recovery_codes(uid)}
+                "recovery_left": auth.store.count_recovery_codes(uid),
+                "enrollment_until": int(window) if window and int(window) > int(time.time()) else None}
 
     @ar.post("/api/users/{uid}/totp/reset")
     def user_totp_reset(request: Request, uid: int):
         return pa.reset_totp(request, guard(request), uid)
+
+    # The setup window (T-130, `grant_mfa_enrollment`): with `mfa_enrollment="strict"`, or after a TOTP reset of an
+    # account that is no longer new, the person may set up a second factor only while the operator holds it open.
+    # Opening it lets whoever signs in next with the password bind their own authenticator — new access, so a fresh
+    # confirmation; closing needs none.
+    @ar.post("/api/users/{uid}/mfa-enrollment")
+    async def user_mfa_enrollment(request: Request, uid: int):
+        me = guard(request)
+        destination = owner_protection(me, uid)
+        if destination is None:
+            raise HTTPException(404, auth.t("api.not_found"))
+        auth._require_fresh(request, me)
+        b = await auth.json_body(request)
+        minutes = b.get("minutes", 60)
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= MFA_WINDOW_MAX_MIN:
+            raise HTTPException(400, auth.t("api.invalid", reason=f"minutes (1–{MFA_WINDOW_MAX_MIN})"))
+        until = auth.grant_mfa_enrollment(uid, minutes)
+        log(request, "mfa_enrollment_granted_by_admin", f"uid={uid} minutes={minutes}")
+        return {"ok": True, "until": until}
+
+    @ar.post("/api/users/{uid}/mfa-enrollment/delete")
+    def user_mfa_enrollment_delete(request: Request, uid: int):
+        me = guard(request)
+        if owner_protection(me, uid) is None:
+            raise HTTPException(404, auth.t("api.not_found"))
+        auth.revoke_mfa_enrollment(uid)
+        log(request, "mfa_enrollment_revoked_by_admin", f"uid={uid}")
+        return {"ok": True}
 
     @ar.post("/api/users/{uid}/owner")
     async def user_owner(request: Request, uid: int):
@@ -1043,7 +1078,7 @@ _KEYS = (
     "th.time th.event th.detail "
     "active disabled disabled_confirmation disabled_app revoked enable disable "
     "btn.pw btn.rename btn.roles btn.keys btn.passkeys btn.delete btn.owner_on btn.owner_off "
-    "totp totp_on totp_off totp_reset totp_hint confirm.totp_reset "
+    "totp totp_on totp_off totp_reset totp_hint confirm.totp_reset totp_window totp_window_open totp_window_close "
     "passkeys no_passkeys confirm.delete confirm.pk_delete confirm.owner_on confirm.owner_off "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
@@ -1533,8 +1568,14 @@ async function pks(id){const put=claim("pkl");const ps=await g(`/api/users/${id}
 // TOTP (T-98): state and, for an account that has one, the reset — an owner account only by an owner (the server
 // checks again and asks for a step-up).
 async function totp(u){const put=claim("tol");const t=await g(`/api/users/${u.id}/totp`);
-  put(t.enabled?`<div class=row><span class="badge grn">${esc(L.totp_on)}</span>${!u.is_owner||ME.owner?`<button class=warn ${on("totpreset",u.id)}>${esc(L.totp_reset)}</button>`:""}</div>`
-    :`<div class="muted small">${esc(L.totp_off)}</div>`)}
+  const mine=!u.is_owner||ME.owner;
+  // Not set up: the setup window (T-130) — open for an hour, or closed again while it runs.
+  const win=t.enrollment_until?`<span class=muted>${esc(L.totp_window_open.replace("{date}",dt(t.enrollment_until)))}</span>${mine?`<button class=sec ${on("totpwin",u.id,false)}>${esc(L.totp_window_close)}</button>`:""}`
+    :(mine?`<button class=sec ${on("totpwin",u.id,true)}>${esc(L.totp_window)}</button>`:"");
+  put(t.enabled?`<div class=row><span class="badge grn">${esc(L.totp_on)}</span>${mine?`<button class=warn ${on("totpreset",u.id)}>${esc(L.totp_reset)}</button>`:""}</div>`
+    :`<div class=row><span class="muted small">${esc(L.totp_off)}</span>${win}</div>`)}
+async function totpwin(id,open){
+  if(!rejected(await p(`/api/users/${id}/mfa-enrollment${open?"":"/delete"}`,open?{minutes:60}:{})))totp(US.find(x=>x.id===id)||{id})}
 async function totpreset(id){if(!await tsConfirm(L["confirm.totp_reset"],{danger:true}))return;
   if(!rejected(await p(`/api/users/${id}/totp/reset`)))totp(US.find(x=>x.id===id)||{id})}
 // Sign-in link without mail (T-33): shown ONCE — the server keeps only the hash.
@@ -1599,7 +1640,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,totpreset,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,copylink};
+const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,totpreset,totpwin,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 // Back/forward to an account or the new-account form also from another tab.

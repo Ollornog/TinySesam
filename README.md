@@ -273,7 +273,8 @@ after *I have written them down*. `/auth/totp/recovery` replaces them later (wit
 over a list of codes. The setup then shows no code page and creates no codes, `/auth/totp/recovery` answers `404`, the
 account page offers no code action, and no code is accepted anywhere. Codes an account already holds stay in the
 database untouched (switch back on, and they work again). The price: a lost authenticator app needs someone who resets
-it — the admin panel (account page, "Authenticator app (TOTP)" → "Reset", with a step-up), `tinysesam reset-totp`
+it — the admin panel (account page, "Authenticator app (TOTP)" → "Reset", with a step-up; "Allow setup for 1 hour"
+opens the setup window `grant_mfa_enrollment` for an account that may not set up by itself), `tinysesam reset-totp`
 on the database, an application's `reset_access` (scope `users:reset`, below) or your own code (`totp_disable`,
 `grant_mfa_enrollment`, then `create_signin_link`). `config_check` warns when the panel is off and no application has
 `users:reset`. **`totp_app_hint`** puts a short hint per language above the QR code — which app to

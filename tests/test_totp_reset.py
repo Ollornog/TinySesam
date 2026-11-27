@@ -90,7 +90,7 @@ assert fails(auth, vic, "totp") == 2 and fails(auth, vic, "password") == 1
 # (a) the state the panel shows
 fresh = session_client(auth, app, helper, age=5)
 r = fresh.get(f"{ADMIN}/users/{vic}/totp", headers=JSON)
-assert r.status_code == 200 and r.json() == {"enabled": True, "recovery_left": codes}, r.text
+assert r.status_code == 200 and r.json() == {"enabled": True, "recovery_left": codes, "enrollment_until": None}, r.text
 assert fresh.get(f"{ADMIN}/users/{plain}/totp", headers=JSON).json()["enabled"] is False
 assert fresh.get(f"{ADMIN}/users/999999/totp", headers=JSON).status_code == 404
 ok("the panel reads whether an account has a TOTP (and how many recovery codes are left)")
@@ -147,6 +147,33 @@ page = owner.get("/auth/admin", headers={"Accept": "text/html"}).text
 assert "/totp/reset" in page and "totpreset" in page.split("const ACT=", 1)[1].split(";", 1)[0], \
     "the panel script calls the reset route and lists it among its actions"
 ok("panel texts in English and German; the panel script wires the button to the route")
+
+# (g2) T-130: the setup window — open it for a while, close it; a fresh confirmation to open, owner model, bounds
+auth.cfg.mfa_enrollment = "strict"
+assert not auth.mfa_enrollment_allowed(vic), "strict: an account that signed in before may not set up by itself"
+assert stale.post(f"{ADMIN}/users/{vic}/mfa-enrollment", json={"minutes": 30}, headers=JSON).status_code == 403
+assert not auth.mfa_enrollment_allowed(vic), "a stale admin session opens no window"
+for bad in (0, 24 * 60 + 1, "60", True, None):
+    assert fresh.post(f"{ADMIN}/users/{vic}/mfa-enrollment", json={"minutes": bad}, headers=JSON).status_code == 400, bad
+before = int(time.time())
+r = fresh.post(f"{ADMIN}/users/{vic}/mfa-enrollment", json={"minutes": 30}, headers=JSON)
+assert r.status_code == 200 and before + 30 * 60 <= r.json()["until"] <= int(time.time()) + 30 * 60, r.text
+assert auth.mfa_enrollment_allowed(vic)
+state = fresh.get(f"{ADMIN}/users/{vic}/totp", headers=JSON).json()
+assert state["enrollment_until"] == r.json()["until"] and state["enabled"] is False, state
+assert fresh.post(f"{ADMIN}/users/{root}/mfa-enrollment", json={}, headers=JSON).status_code == 403, "owner model"
+assert member.post(f"{ADMIN}/users/{vic}/mfa-enrollment/delete", headers=JSON).status_code == 403
+assert stale.post(f"{ADMIN}/users/{vic}/mfa-enrollment/delete", headers=JSON).status_code == 200, "closing needs none"
+assert not auth.mfa_enrollment_allowed(vic)
+assert fresh.get(f"{ADMIN}/users/{vic}/totp", headers=JSON).json()["enrollment_until"] is None
+events = [a["event"] for a in auth.store.recent_audit(80)]
+assert "mfa_enrollment_granted_by_admin" in events and "mfa_enrollment_revoked_by_admin" in events, events
+assert "totpwin" in page.split("const ACT=", 1)[1].split(";", 1)[0] and "/mfa-enrollment" in page
+for lang in ("en", "de"):
+    for key in ("admin.totp_window", "admin.totp_window_open", "admin.totp_window_close"):
+        assert MESSAGES[lang].get(key), (lang, key)
+auth.cfg.mfa_enrollment = "first_login"
+ok("T-130: the panel opens the setup window (fresh confirmation, 1–1440 minutes, owner model) and closes it")
 
 # (h) the CLI: the same reset without a running service
 auth.close()
