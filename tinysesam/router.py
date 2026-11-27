@@ -20,7 +20,6 @@ from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from . import _chain
-from . import app_passwords as _ap
 from .errors import ConfigError
 from . import security
 from .store import replacement_name, key_kind_of, name_invalid, norm_email, valid_email

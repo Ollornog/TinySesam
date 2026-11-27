@@ -10,7 +10,6 @@
 
 Each rule has its mutation in the pull request.
 """
-import hashlib
 import os
 import sys
 import tempfile

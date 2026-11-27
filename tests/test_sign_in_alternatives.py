@@ -8,7 +8,6 @@ Done criteria from the backlog entry, each pinned here:
 * self-request off ⇒ `/auth/magic/request` is 404, while issued links still redeem;
 * `config_check`: the mailer is only needed for the self-request.
 """
-import hashlib
 import os
 import re
 import tempfile
