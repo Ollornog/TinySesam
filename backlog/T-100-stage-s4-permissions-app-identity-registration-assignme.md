@@ -31,6 +31,10 @@ The permission layer of [ADR-17](ADR-17-permission-layer-and-admin-levels.md), l
   `require_permission`, `grant_permission` / `revoke_permission` / `delete_permission` / `app_permissions`,
   `admin_implies_permissions` (default false), orphaned permissions with suspended assignments (never re-granted
   silently), a role holding permissions counts as in use. Suite `tests/test_permissions.py`.
+- 2026-11-27: panel matrix per application (`_admin_permissions.py`): `danger` → fresh confirmation for everyone
+  (symbol and word), orphaned shown with suspended roles and deletable by administrators, area administrators by
+  `admin_delegates[…]["apps"]` plus the action `permissions` (only their applications and managed roles), audit with
+  the actor. Suite `tests/test_admin_permissions.py`.
 - Not taken over from the content above: `layout` and `icon` on `apps[id]` — they have no reader before T-103 (layout)
   and T-104 (icon); a configuration field nobody reads is a false promise, so each comes with its reader.
 

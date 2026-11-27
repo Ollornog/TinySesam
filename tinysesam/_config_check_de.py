@@ -30,6 +30,10 @@ _DE: dict[str, str] = {
          "(apps[…].provisioning mit dem Scope users:reset): Wer die Authenticator-App verliert, bleibt ausgesperrt, bis "
          "der Betreiber `tinysesam reset-totp` auf der Datenbank ausführt oder der Code der Anwendung das TOTP entfernt "
          "(totp_disable, grant_mfa_enrollment, create_signin_link)."),
+    ("admin_delegates: {owner!r} names the application {app!r} in \"apps\", which is not in apps — the area of a "
+     "delegate is a list of application ids"):
+        ("admin_delegates: {owner!r} nennt die Anwendung {app!r} in \"apps\", die nicht in apps steht — der Bereich "
+         "eines Delegierten ist eine Liste von Anwendungs-IDs"),
     ("apps[{app!r}].permissions: {problem}"):
         ("apps[{app!r}].permissions: {problem}"),
     ("apps[{app!r}].permissions: {perm} suggests the role {role!r}, which the configuration does not name — the panel "

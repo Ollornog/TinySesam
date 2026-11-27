@@ -25,6 +25,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The admin panel's permission matrix (T-100): *Accounts → Permissions* — per application, permissions down and roles
+  across, a tick assigns (`GET <admin>/api/permissions`, `POST <admin>/api/permissions/assign`,
+  `POST <admin>/api/permissions/delete`). A `danger` permission shows ⚠ and the word and needs a fresh confirmation for
+  everyone (also with `admin_require_mfa=False`); an orphaned one shows ⊘ and the word with its suspended roles, offers
+  no tick, and an administrator deletes it. Area administrators: `admin_delegates[role]["apps"]` (application ids) with
+  the new action `permissions` — they see and assign only in their applications and to the roles they manage, never
+  delete. Every change is audited with the actor. Suite `tests/test_admin_permissions.py`.
 - Permissions, library side (T-100, ADR-17; schema 27, additive): an application declares what it can do —
   `apps[id].permissions` in the configuration or `register_permissions(app, [...])` (name rule, at most 200, labels in
   en/de, `danger`, `suggested_roles`) — and declaring grants nothing. The operator assigns: `grant_permission`,

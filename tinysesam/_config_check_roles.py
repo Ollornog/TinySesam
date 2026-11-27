@@ -104,8 +104,8 @@ def _roles_without_list(config, warnings: list) -> None:
 
 
 #: What a delegate role may do (T-74); `can` narrows it to a part.
-DELEGATE_ACTIONS = ("create", "invite", "disable", "roles", "signin_link")
-_DELEGATE_KEYS = {"roles", "manages", "can"}
+DELEGATE_ACTIONS = ("create", "invite", "disable", "roles", "signin_link", "permissions")
+_DELEGATE_KEYS = {"roles", "manages", "can", "apps"}
 
 
 def _strings(entry: dict, name: str) -> list:
@@ -122,7 +122,9 @@ def delegation_graph(raw) -> dict:
     * `eff` — the roles it manages: its own `roles`, the delegate roles in `desc` (it appoints and removes them)
       and their `roles`: `eff(D) = roles(D) ∪ desc(D) ∪ ⋃ roles(K), K ∈ desc(D)`;
     * `anc` — every delegate role above it;
-    * `can` — its actions (`DELEGATE_ACTIONS`, all without `can`), never inherited up or down.
+    * `can` — its actions (`DELEGATE_ACTIONS`, all without `can`), never inherited up or down;
+    * `apps` — the applications whose permissions it assigns to the roles it manages (T-100, its area; with the action
+      `permissions`), never inherited either.
 
     Fail-closed for what `config_check` reports at construction (a configuration changed at runtime is not
     re-checked): a malformed entry and a role on a cycle get no entry and so no rights, a `manages` target that is
@@ -131,12 +133,13 @@ def delegation_graph(raw) -> dict:
     if not isinstance(raw, dict):
         return {}
     delegates = {d for d in raw if isinstance(d, str) and d.strip()}
-    own, manages, can = {}, {}, {}
+    own, manages, can, area = {}, {}, {}, {}
     for d in delegates:
         entry = raw[d]
         if not isinstance(entry, dict):
             continue
         own[d] = frozenset(r for r in _strings(entry, "roles") if r not in delegates)
+        area[d] = frozenset(_strings(entry, "apps"))
         manages[d] = [k for k in _strings(entry, "manages") if k in delegates]
         can[d] = (frozenset(DELEGATE_ACTIONS) if "can" not in entry
                   else frozenset(a for a in _strings(entry, "can") if a in DELEGATE_ACTIONS))
@@ -154,7 +157,7 @@ def delegation_graph(raw) -> dict:
     graph = {}
     for d in usable:
         desc = frozenset(k for k in below[d] if k in usable)
-        graph[d] = {"desc": desc, "can": can[d],
+        graph[d] = {"desc": desc, "can": can[d], "apps": area[d],
                     "eff": frozenset(own[d] | desc | {r for k in desc for r in own[k]}),
                     "anc": frozenset(e for e in usable if d in below[e])}
     return graph
@@ -268,6 +271,13 @@ def _admin_delegates(config, error: list, warnings: list) -> None:
                 error.append(_t(config, "admin_delegates: {owner!r} manages {role!r}, which is not a delegate role — "
                                         "\"manages\" names delegate roles (keys of admin_delegates)",
                                 role=name, owner=role))
+        _raw_apps = getattr(config, "apps", None)
+        apps: dict = _raw_apps if isinstance(_raw_apps, dict) else {}
+        for name in entry.get("apps") or []:
+            if name not in apps:
+                error.append(_t(config, "admin_delegates: {owner!r} names the application {app!r} in \"apps\", which "
+                                        "is not in apps — the area of a delegate is a list of application ids",
+                                owner=role, app=name))
         for name in entry.get("can") or []:
             if name not in DELEGATE_ACTIONS:
                 error.append(_t(config, "admin_delegates: {owner!r} can {action!r}, which is no action — allowed are "

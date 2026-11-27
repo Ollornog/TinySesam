@@ -228,6 +228,11 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Eine Route schützen** mit `Depends(auth.require_permission("docs.delete", app="docs"))` (401 ohne Sitzung, 403 ohne
   die Berechtigung; `mfa=True` verlangt zusätzlich eine frische Bestätigung). Eine vertippte Anwendungs-ID scheitert
   beim Bauen der Route, nicht als 403 für immer.
+- **Im Panel** (*Konten → Berechtigungen*): eine Matrix je Anwendung — Berechtigungen nach unten, Rollen nach rechts,
+  ein Haken vergibt. Eine gefährliche Berechtigung trägt ⚠ und das Wort, und der Server verlangt vor der Änderung eine
+  frische Bestätigung (auch mit `admin_require_mfa=False`); eine verwaiste trägt ⊘ und das Wort, zeigt ihre
+  ausgesetzten Rollen und einen Knopf „Löschen". Ein Bereichsadministrator (`admin_delegates[…]["apps"]`) sieht nur
+  seine Anwendungen und Rollen.
 - **Vergeben** mit `auth.grant_permission(role, permission, app=…)` und entziehen mit `auth.revoke_permission(…)` — an
   eine Rolle der Konfiguration (auch das Ziel einer Gruppenzuordnung) oder des Rollenkatalogs. Eine Rolle mit
   Berechtigungen gilt als benutzt: der Katalog löscht sie nicht, eine neue Rolle gleichen Namens erbt also nie etwas.
@@ -2098,8 +2103,13 @@ cfg = TinySesamConfig(
 - **Nie seitwärts oder nach oben:** Ein `team-a-admin` sieht weder Team B noch andere `team-a-admin`-Konten noch den
   `area-admin`. Ein Delegierter vergibt nie die eigene Delegiertenrolle oder eine darüber. Ein Konto mit mehreren
   Delegiertenrollen darf, was eine davon erlaubt, an den Konten dieser Rolle.
-- **`can`** schränkt die Aktionen einer Delegiertenrolle ein (`create`, `invite`, `disable`, `roles`, `signin_link`;
-  ohne Angabe alle). Es vererbt sich weder nach oben noch nach unten.
+- **`can`** schränkt die Aktionen einer Delegiertenrolle ein (`create`, `invite`, `disable`, `roles`, `signin_link`,
+  `permissions`; ohne Angabe alle). Es vererbt sich weder nach oben noch nach unten.
+- **`apps`** (T-100) ist der Bereich eines *Bereichsadministrators*: Anwendungs-IDs aus `apps`, deren Berechtigungen er
+  in der Berechtigungsmatrix des Panels den Rollen zuweist, die er verwaltet — `{"roles": ["docs-reader",
+  "docs-editor"], "apps": ["docs"]}`. Vererbt sich ebenfalls nicht; ohne `apps` (oder ohne die Aktion `permissions`)
+  weist er keine zu. Eine `danger`-Berechtigung verlangt eine frische Bestätigung; eine verwaiste löschen bleibt bei
+  Administratoren.
 - **Der Rest des Panels bleibt bei Administratoren** — Passwort-Reset, Umbenennen, Löschen, Keys, Passkeys, Sitzungen,
   verbundene Programme, App-Passwörter, Härtung, Audit. Jede Grenze erzwingt der Server Route für Route; das Panel
   zeigt einem Delegierten nur seinen Reiter, seine Konten, seine Rollen und seine Schaltflächen. Kopfleiste und
@@ -3121,7 +3131,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**149 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**150 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
