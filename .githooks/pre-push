@@ -16,7 +16,11 @@
 #                                        --check, clippy, cargo test of the changed workspaces), JS/TS (biome check)
 #   .githooks/pre-push.zusatz         -> the repo's own extra (kit 0.29.0), e.g. its own fast tests
 #
-# A missing tool is a visible note, not a red push: the gate is the PR CI, which has every tool.
+# A missing tool is a visible note, not a red push: the gate is the PR CI, which has every tool. That holds for the tools
+# the hook calls itself AND for a test file of the changed code: a test that lacks a prerequisite here (Docker, ansible,
+# a service) ends with exit 77 (the automake "skipped" code, kit 0.65.0). The hook shows it as NOT checked — never as
+# green, never as red; the PR CI runs it. Any other non-zero exit is red. Skip is no green in the full suite either:
+# what scripts/check.sh makes of exit 77 is the repo's choice.
 #
 # FULL RUN ON REQUEST: `PREPUSH_VOLL=1 git push …` runs what the hook did up to kit 0.58: `ci-local` (container,
 # with CI_LOCAL_AUSWEICHEN=knoten) if it is installed, else scripts/check.sh natively plus the residue check. For
@@ -27,6 +31,12 @@
 # commit is checked as it is: in place if it is HEAD and the working tree is clean, otherwise in a temporary
 # worktree (`git worktree add --detach`, removed afterwards). Limit: a Python package installed editable from the
 # main working tree (.venv) still points there; tests that import it by name see the working tree's code.
+#
+# SPRINT LANE IN THE PR CI (kit 0.68.0, PO 2026-11-26): `PREPUSH_SPRINT_BASIS=<commit> .githooks/pre-push` (no stdin)
+# runs the same fast checks on HEAD in the working tree AS IT IS (the CI checkout, with its installed tools) against that
+# base, without the text decision and without the hygiene stage — its caller is the hygiene: `hygiene.pruefe_nur_text`
+# (tests/test_repo.py) runs it when scripts/_nur_text.sh answered "SPRINT LANE" for a PR into `sprint/<name>`. The
+# repo extra (.githooks/pre-push.zusatz) runs as in a push. Notes about checks left out point at the closing PR.
 #
 # Unchanged: a pure delete push and a pure tag push on commits that GitHub saw green skip everything (T-4, T-11).
 # The green mark of ci-local (kit 0.39.0) is no longer read: the fast path does not need it, and a full run on
@@ -39,6 +49,19 @@ cd "$ROOT"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 # Target time of the fast path in seconds; above it the hook says so (it never aborts a green check for being slow).
 FRIST="${PREPUSH_FRIST:-180}"
+# Where the checks this hook leaves out run: the PR CI; in the sprint lane (PREPUSH_SPRINT_BASIS) the closing PR.
+NACHHER="the PR CI"
+SPRINT=0
+if [[ -n "${PREPUSH_SPRINT_BASIS:-}" ]]; then
+    SPRINT=1
+    NACHHER="the closing PR into the default branch (full suite)"
+fi
+# The user's tool folders (kit 0.65.0): git runs hooks from GUIs and non-login shells whose PATH lacks ~/.cargo/bin or
+# ~/go/bin. The Rust and Go stages then said "no cargo here" although cargo was installed (PO todo, PWM-Control).
+for _werkzeug in "$HOME/.cargo/bin" "$HOME/go/bin" /usr/local/go/bin; do
+    if [[ -d "$_werkzeug" && ":$PATH:" != *":$_werkzeug:"* ]]; then PATH="$PATH:$_werkzeug"; fi
+done
+unset _werkzeug
 
 # ---------------------------------------------------------------------------
 # Nativer Lauf + Rückstands-Check (nur noch im vollen Lauf, PREPUSH_VOLL=1).
@@ -223,7 +246,7 @@ if [[ "$refs_tag_geprueft" -gt 0 && "$refs_gesehen" -eq $((refs_tag_geprueft + r
 fi
 
 # No stdin (manual call): check HEAD — fail-closed, as before.
-if [[ "$refs_gesehen" -eq 0 ]]; then
+if [[ "$refs_gesehen" -eq 0 && $SPRINT -eq 0 ]]; then
     echo "pre-push: no refs on stdin (manual call) — checking HEAD."
     pruefen=(HEAD)
 fi
@@ -439,7 +462,7 @@ go_pruefen() {
         [[ $gefunden -eq 0 ]] || continue
         gefunden=0; for q in "${vet_gedeckt[@]}"; do [[ "$q" == "$p" ]] && gefunden=1; done
         if [[ $gefunden -eq 1 ]]; then
-            hinweis "$p: tagged only — vetted with its tags, tests in the PR CI"
+            hinweis "$p: tagged only — vetted with its tags, tests in $NACHHER"
         else
             hinweis "$p: no Go files, not even with the tags (${tagliste[*]:-none set}) — NOT checked (GO_PRUEF_TAGS?)"
         fi
@@ -450,8 +473,11 @@ schnell() {
     local basis="$1" grund="" py f d
     local -a geaendert=() alle=() sh=() pyf=() tests=() go=() gopakete=() rs=() js=()
 
-    # 1. Text only: hygiene with the text check, nothing else (kit 0.40.0).
-    if [[ -x scripts/_nur_text.sh && -f tests/test_repo.py ]]; then
+    # 1. Text only: hygiene with the text check, nothing else (kit 0.40.0). Not in the sprint lane: there the text
+    # decision has been taken (it said "SPRINT LANE"), and the hygiene is the caller (steps 1 and 2 left out).
+    if [[ $SPRINT -eq 1 ]]; then
+        :
+    elif [[ -x scripts/_nur_text.sh && -f tests/test_repo.py ]]; then
         if grund="$(scripts/_nur_text.sh)"; then
             echo "pre-push: $grund"
             hygiene
@@ -461,15 +487,18 @@ schnell() {
     fi
 
     # 2. Hygiene: no private infrastructure, no secret patterns, kit manifest.
-    stufe "Hygiene (tests/test_repo.py)"
-    if [[ -f tests/test_repo.py ]]; then
+    if [[ $SPRINT -eq 1 ]]; then
+        :
+    elif [[ -f tests/test_repo.py ]]; then
+        stufe "Hygiene (tests/test_repo.py)"
         hygiene
     else
+        stufe "Hygiene (tests/test_repo.py)"
         hinweis "no tests/test_repo.py — the hygiene runs only in the PR CI"
     fi
 
     if [[ -z "$basis" ]]; then
-        hinweis "no default branch known (no base) — the changed files are unknown; tests of the changes: PR CI"
+        hinweis "no default branch known (no base) — the changed files are unknown; tests of the changes: $NACHHER"
         return 0
     fi
     # Changed files since the merge-base: `geaendert` the ones that still exist, `alle` with deletions (Go packages).
@@ -502,10 +531,11 @@ schnell() {
         for f in "${sh[@]}"; do bash -n "$f" || rot "$f: bash -n (syntax)"; done
         if nutzt shellcheck; then
             if command -v shellcheck >/dev/null 2>&1; then
-                shellcheck "${sh[@]}" || rot "shellcheck"
+                # -x like scripts/check.sh (kit 0.65.0): without it every script with `source` is red (SC1091, info).
+                shellcheck -x "${sh[@]}" || rot "shellcheck"
                 echo "  shellcheck clean"
             else
-                hinweis "shellcheck is not installed here — PR CI"
+                hinweis "shellcheck is not installed here — $NACHHER"
             fi
         fi
     fi
@@ -521,7 +551,7 @@ for f in sys.argv[1:]:
                 ruff check "${pyf[@]}" || rot "ruff check"
                 ruff format --check "${pyf[@]}" || rot "ruff format --check"
             else
-                hinweis "ruff is not installed here — PR CI"
+                hinweis "ruff is not installed here — $NACHHER"
             fi
         fi
     fi
@@ -549,20 +579,26 @@ for f in sys.argv[1:]:
     if [[ ${#pyf[@]} -gt 0 || ${#sh[@]} -gt 0 ]]; then
         stufe "Tests of the changed files (${#tests[@]})"
         if [[ "${PREPUSH_TESTS:-}" == aus ]]; then
-            hinweis "PREPUSH_TESTS=aus — skipped for this push; the PR CI runs them"
+            hinweis "PREPUSH_TESTS=aus — skipped for this push; $NACHHER runs them"
         elif [[ ${#tests[@]} -eq 0 ]]; then
-            hinweis "no test file belongs to the changed files by name — PR CI"
+            hinweis "no test file belongs to the changed files by name — $NACHHER"
         else
             python_waehlen; py="$PY_WAHL"
+            local trc
             for d in "${tests[@]}"; do
                 if skript_test "$d"; then
                     echo "  $d"
-                    "$py" "$d" || rot "$d is red"
+                    trc=0; "$py" "$d" || trc=$?
+                    if [[ $trc -eq 77 ]]; then
+                        hinweis "$d skipped itself (exit 77: a prerequisite is missing here) — NOT checked here, $NACHHER"
+                    elif [[ $trc -ne 0 ]]; then
+                        rot "$d is red"
+                    fi
                 elif "$py" -c 'import pytest' >/dev/null 2>&1; then
                     echo "  pytest $d"
                     "$py" -m pytest -q "$d" || rot "$d is red (pytest)"
                 else
-                    hinweis "$d: not a script and no pytest for $py — PR CI"
+                    hinweis "$d: not a script and no pytest for $py — $NACHHER"
                 fi
             done
         fi
@@ -599,7 +635,7 @@ for f in sys.argv[1:]:
                 go_pruefen "${gopakete[@]}"
             fi
         else
-            hinweis "no go toolchain here — PR CI"
+            hinweis "no go toolchain here — $NACHHER"
         fi
     fi
 
@@ -615,9 +651,9 @@ for f in sys.argv[1:]:
                 echo "  cargo fmt --check ($d)"
                 (cd "$d" && cargo fmt --all -- --check) || rot "cargo fmt --check in $d"
             done
-            hinweis "clippy and cargo test: PR CI"
+            hinweis "clippy and cargo test: $NACHHER"
         else
-            hinweis "no cargo here — PR CI"
+            hinweis "no cargo here — $NACHHER"
         fi
     fi
 
@@ -635,7 +671,7 @@ for f in sys.argv[1:]:
                 [[ -x "$b" ]] && { biome="$(cd "$(dirname "$b")" && pwd)/biome"; break; }
             done
             if [[ -z "$biome" ]]; then
-                hinweis "$d: no node_modules/.bin/biome (npm ci not run) — PR CI"
+                hinweis "$d: no node_modules/.bin/biome (npm ci not run) — $NACHHER"
                 continue
             fi
             local -a dateien=()
@@ -643,7 +679,7 @@ for f in sys.argv[1:]:
             echo "  biome check ($d): ${#dateien[@]} file(s)"
             (cd "$d" && "$biome" check --no-errors-on-unmatched "${dateien[@]}") || rot "biome check in $d"
         done
-        hinweis "tsc and npm test: PR CI"
+        hinweis "tsc and npm test: $NACHHER"
     fi
     return 0
 }
@@ -651,7 +687,34 @@ for f in sys.argv[1:]:
 # ---------------------------------------------------------------------------
 # Check every pushed commit.
 # ---------------------------------------------------------------------------
+# ---- Repo-eigener Zusatz (Kit 0.29.0): `.githooks/pre-push.zusatz` des gepushten Stands, VOR den Prüfungen.
+# Liegt er da, ist aber nicht ausführbar, bricht der Push ab: ein still übersprungener Zusatz wäre ein grüner
+# Push ohne genau die Prüfung, für die es ihn gibt.
+zusatz() {
+    local ZUSATZ=".githooks/pre-push.zusatz"
+    if [[ -e "$ZUSATZ" ]]; then
+        [[ -x "$ZUSATZ" ]] || rot "$ZUSATZ liegt da, ist aber nicht ausführbar (chmod +x)."
+        echo "pre-push: repo-eigener Zusatz (.githooks/pre-push.zusatz)"
+        "./$ZUSATZ" </dev/null || rot "der Zusatz ist rot."
+    fi
+}
+
 start=$SECONDS
+
+# ---- Sprint lane in the PR CI (kit 0.68.0, see the head): HEAD in place against the given base, then done.
+# Only without refs on stdin: set during a real push, the variable would drop the hygiene stage of that push.
+if [[ $SPRINT -eq 1 ]]; then
+    [[ "$refs_gesehen" -eq 0 ]] \
+        || rot "PREPUSH_SPRINT_BASIS is set in a real push — it is for the sprint lane of the PR CI only (unset it)."
+    sprint_basis="$(git rev-parse -q --verify "${PREPUSH_SPRINT_BASIS}^{commit}" 2>/dev/null)" \
+        || rot "PREPUSH_SPRINT_BASIS=${PREPUSH_SPRINT_BASIS} is not a commit in this clone."
+    echo "pre-push (sprint lane): fast checks of HEAD $(git rev-parse --short=9 HEAD) against ${sprint_basis:0:9}, in the working tree as it is"
+    ( zusatz; schnell "$sprint_basis" ) || exit 1
+    echo
+    echo "pre-push (sprint lane): fast checks green in $((SECONDS - start)) s — the full suite runs once, in $NACHHER."
+    exit 0
+fi
+
 for c in "${commits[@]}"; do
     bereitstellen "$c" || exit 1
     echo "pre-push: checking ${c:0:9} in the $WO"
@@ -661,15 +724,7 @@ for c in "${commits[@]}"; do
     fi
     (
         cd "$DIR"
-        # ---- Repo-eigener Zusatz (Kit 0.29.0): `.githooks/pre-push.zusatz` des gepushten Stands, VOR den Prüfungen.
-        # Liegt er da, ist aber nicht ausführbar, bricht der Push ab: ein still übersprungener Zusatz wäre ein grüner
-        # Push ohne genau die Prüfung, für die es ihn gibt.
-        ZUSATZ=".githooks/pre-push.zusatz"
-        if [[ -e "$ZUSATZ" ]]; then
-            [[ -x "$ZUSATZ" ]] || rot "$ZUSATZ liegt da, ist aber nicht ausführbar (chmod +x)."
-            echo "pre-push: repo-eigener Zusatz (.githooks/pre-push.zusatz)"
-            "./$ZUSATZ" </dev/null || rot "der Zusatz ist rot."
-        fi
+        zusatz
         if [[ "${PREPUSH_VOLL:-}" == 1 ]]; then
             voll || exit 1
         else

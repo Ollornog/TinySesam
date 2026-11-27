@@ -4,6 +4,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed
+
+- Shared test kit 0.69.0 (from 0.63.0): fast-forward auto-merge, the sprint lane (a pull request into `sprint/<name>`
+  runs only the fast checks, the full suite runs once in the closing pull request), and the Dependabot auto-merge holds
+  a pin pull request of a breaking release as a draft. The hygiene test allows the hold — exactly the whole line
+  `gh pr ready "$PR" --repo "$REPO" --undo` in `ausfuehren` (without `--undo` it would release a held pull request) —
+  and in `entscheiden` the read-only app token for the source repo, no other action.
+
 ## [0.31.0] — 2026-11-26
 
 **A breaking release: read "Upgrading from 0.30.x" under "Removed" before you update.** It is the one deliberate

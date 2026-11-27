@@ -91,27 +91,86 @@
 # laufen nie auf eigenen Runnern) — dann laufen auch diese vier Jobs dort, auf Einmal-Runnern mit `gh` im Abbild. Sonst
 # `ubuntu-latest` (öffentlich: kostenlos). Kein Checkout, kein PR-Code: Auf dem eigenen Runner läuft nur dieser Text vom
 # Standardzweig.
+#
+# WEEKLY REBUILD (since 0.64.0, PO 2026-11-23): repos with `APP_PR: "release"` and own images (`abbilder` in
+# .github/release-automatik.json) get a second, weekly cron — weekday, hour and minute spread by the image name, so that
+# the pin PRs in the fleet repo do not arrive together. `rebuild-check` (read only) clones the default branch and runs
+# `scripts/_release_automatik.py neubau`: a patch release only if the base image of the Dockerfile is no longer the base of
+# the last released image, or grype finds a fixable High/Critical in it. Then `rebuild-dispatch` (only `gh workflow
+# run`) dispatches `release.yml` with `automatik=vorbereiten` — the same release path as after a Dependabot merge.
+# Without a reason nothing happens. Switch per repo: repository variable `WEEKLY_REBUILD=off`. By hand:
+# `gh workflow run dependabot-auto-merge.yml -f rebuild=true`.
+# DRAFTS (since 0.65.0): a draft is a hold by a human (PO 2026-11-23: risky majors are held back as drafts) — for EVERY
+# kind of PR, not only docs. Up to 0.64 only the docs PR checked it; a pin PR set to draft before `entscheiden` ran was
+# merged anyway, and `gh pr merge` ended red ("Pull Request is still a draft", FleetCommander #1080). And a PR that
+# leaves the draft state started no CI run, so no `workflow_run` came, and it waited up to six hours for the scheduled
+# run. Now `pull_request` with `ready_for_review` (only that type) checks its head at once — no checkout; `entscheiden`
+# verifies everything per API as always. Not `pull_request_target`: repos forbid it for this workflow (TinySesam,
+# tests/test_repo.py). With `pull_request` a fork gets no secrets and a read-only token, and `entscheiden` skips it (its
+# `if:`); a branch of the own repo is written by someone with write access anyway. The workflow text is the PR's — a
+# branch from before this kit version has no such trigger, and the six-hour run picks it up as before.
+# LOAD AT FAILURE (since 0.64.0): the read-only jobs end with a step `if: failure()` that writes one load line (runner,
+# cores, loadavg, PSI, free memory, job time) to the job summary and as an annotation — rendered from scripts/_load_note.sh.
+# FAST-FORWARD (since 0.67.0, todo "FF merge end to end", the same rule as pr-mergen): with the app, a PR whose head is
+# exactly ONE commit on top of the base (compare `behind_by == 0`, `ahead_by == 1`) is merged by moving the base to that
+# head — `PATCH git/refs/heads/<base>` with `force=false`, so GitHub only moves it forward (422 "not a fast forward"
+# otherwise). The base then carries the very commit the PR CI checked; a main CI that takes over a green PR run for the
+# same SHA (kit script `scripts/_pr_run.sh`) stays short, a pin costs no second full run. `entscheiden` decides
+# (`merge_weg`); every other case is squash as before, and the job log and summary say why: no app, behind or more than
+# one commit ahead, compare unreadable, the commit is not the checked head, its author is not the PR author, author or
+# committer mail no GitHub noreply address (squash sets the noreply identity), a [skip ci] keyword (main would get no
+# run), a `Claude-Session:` line in a public repo. If GitHub refuses the fast-forward (base moved, branch protection,
+# ruleset), `ausfuehren` squashes as before. The head branch is deleted only after GitHub shows the PR as merged
+# (`nachsehen` reads, `aufraeumen` deletes) — deleting it earlier would close the PR unmerged.
+# BREAKING RELEASES IN PIN PRS (since 0.69.0, FleetCommander #1144): the pin of TinySesam v0.30.0 → v0.31.0, a release
+# that broke the fleet's API keys, was merged at once — a watcher looked for the PR by its title and missed it. Rule (PO
+# 2026-11-23): risky majors are held back as drafts and rolled out with a human. Only for pin PRs of the app; Dependabot
+# still merges majors (PO 2026-10-11). `entscheiden` reads the old and new tag of every pin line of the diff (base →
+# head, so a rolling PR is judged against what the base runs) and holds the PR when
+#   (a) semver: the major differs, or at 0.x the minor (semver item 4: anything may change before 1.0), or
+#   (b) the changelog of the source repo (file from its `.github/release-automatik.json` at the new tag; `"changelog":
+#       null` = none) gains, between the old and the new ref, a line with "breaking", "Upgrading from" or
+#       "Upgrade-Hinweis" — the marks the app repos write above a break (TinySesam: "Upgrading from 0.30.x"), or
+#   (c) anything of it cannot be read: tag forms that differ or are unknown (`v1.2.3`, `vJJJJ.MM.TT[.n]` and
+#       `main-<sha>` are known), more than one new tag, config or changelog unreadable (API error, private repo without
+#       the app). Fail safe: only a complete pass lets the PR on.
+# Date tags and `main-<sha>` carry no semver statement; for them only (b) holds. The source repo is `<owner>/<name>` of
+# the branch `pin/<name>[-<tag>]` (fc-pin names it so); private source repos are read with a short-lived app token
+# (`quelle`, contents: read, only that repo). Holding is `zurueckhalten`: a comment with the reason (old → new tag), then
+# the PR becomes a draft. The comment is the hold, the draft its sign: a run that finds the same reason already said does
+# nothing, so a human who takes the PR out of the draft merges it by hand (`pr-mergen`) and is not overruled. A new
+# release in the rolling PR is a new reason and holds again.
 name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
   workflow_run:
     workflows: ["tests", "release", "audit", "CodeQL", "client-go", "client-rust", "client-js", "client-php"]
     types: [completed]
+  # Out of the draft (since 0.65.0, see the head): only this type, and only the head is read from the event.
+  pull_request:
+    types: [ready_for_review]
   # Geplanter Nachlauf: ein Intervall, keine Uhrzeit — die Zeitzone spielt keine Rolle.
   schedule:
     - cron: "41 */6 * * *"
+    # Weekly rebuild check: Fri 10:02 UTC = 11:02 Europe/Berlin in winter, 12:02 in summer (spread by the image name).
+    - cron: "2 10 * * 5"
   # Ein Kopf zum erneuten Prüfen (von `sammeln` oder von Hand). Herkunft prüft `entscheiden` per API.
   workflow_dispatch:
     inputs:
       head_sha:
         description: "Kopf (SHA) eines offenen Dependabot-PR"
-        required: true
+        required: false
         type: string
+      rebuild:
+        description: "Weekly rebuild check now (instead of a head)"
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
 concurrency:
-  group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha || inputs.head_sha || github.run_id }}
+  group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || inputs.head_sha || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -120,7 +179,7 @@ jobs:
     # die Logik (API, Filter, Formatprüfung) steht hier, der Job mit Schreibrecht ruft nur `gh workflow run`
     # (seit 0.44.0; bis 0.43 beides in einem Job mit `actions: write`, das verletzte die Befehls-Erlaubnisliste
     # für Jobs mit Recht in TinySesam).
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' && github.event.schedule == '41 */6 * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -142,11 +201,45 @@ jobs:
           KOEPFE="$(gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
             -q '.[] | select(.head.repo.full_name == .base.repo.full_name and (.user.login == "dependabot[bot]"
               or (.user.login == "ollornog-auto-merge[bot]" and (.head.ref | test("^(release|pin)/")))
-              or ((.head.ref | test("^(doku/.+|backlog)$")) and (.draft | not)))) | .head.sha')"
+              or (.head.ref | test("^(doku/.+|backlog)$"))) and (.draft | not)) | .head.sha')"
           # Nur 40-stellige SHAs kommen in die Matrix — eine leere Liste lässt `anstossen` ausfallen.
           JSON="$(printf '%s\n' "$KOEPFE" | jq -Rnc '[inputs | select(test("^[0-9a-f]{40}$"))]')"
           echo "Köpfe: $JSON"
           { echo "koepfe=$JSON"; echo "datei=$DATEI"; } >>"$GITHUB_OUTPUT"
+      - name: Load at failure (from scripts/_load_note.sh)
+        if: failure()
+        run: |
+          fields=()
+          fields+=("runner=${RUNNER_NAME:-?}" "host=$(uname -n 2>/dev/null || echo '?')")
+          cpus=""
+          if read -r cpuset 2>/dev/null < /sys/fs/cgroup/cpuset.cpus.effective && [ -n "$cpuset" ]; then
+            cpus="$(awk -v s="$cpuset" 'BEGIN { n = split(s, t, ","); for (i = 1; i <= n; i++) c += (split(t[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print c }')"
+          fi
+          [ -n "$cpus" ] || cpus="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)" || cpus='?'
+          cores_field="cores=$cpus"
+          [ -n "${CI_KERNE:-}" ] && cores_field+=" ci_cores=$CI_KERNE"
+          if read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max && [ "$q" != max ] && [ "${p:-0}" -gt 0 ] 2>/dev/null; then
+            cores_field+=" cpu_quota=$(awk -v q="$q" -v p="$p" 'BEGIN { printf "%.1f", q / p }')"
+          fi
+          fields+=("$cores_field")
+          if read -r l1 l5 l15 _ 2>/dev/null < /proc/loadavg; then fields+=("loadavg=$l1/$l5/$l15"); fi
+          for art in cpu memory io; do
+            z="$(grep -m1 '^some' "/proc/pressure/$art" 2>/dev/null)" || continue
+            a10="${z#*avg10=}"; a10="${a10%% *}"; a60="${z#*avg60=}"; a60="${a60%% *}"
+            fields+=("psi_${art/memory/mem}=$a10/$a60")
+          done
+          mem="$(awk '/^MemAvailable:/ { a = $2 } /^MemTotal:/ { t = $2 } END { if (a && t) printf "%d/%d", a / 1024, t / 1024 }' /proc/meminfo 2>/dev/null)"
+          [ -n "$mem" ] && fields+=("mem_free=${mem}MiB")
+          if [ -n "${GITHUB_EVENT_PATH:-}" ] && start="$(stat -c %Y "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+            d=$(( $(date +%s) - start )); fields+=("job=$((d / 60))m$((d % 60))s")
+          fi
+          line="load-at-failure: $(printf '%s · ' "${fields[@]}")"; line="${line% · }"
+          echo "$line"
+          echo "::notice title=load-at-failure::$line"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && ! { printf -- '- %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+            echo "job summary not writable — the line is in the log and the annotation"
+          fi
+          exit 0
 
   anstossen:
     # Je Kopf ein Lauf per `workflow_dispatch` (startet auch mit dem Workflow-Token). Hält `actions: write`
@@ -177,7 +270,9 @@ jobs:
     # (workflow_dispatch). Branchname, Commit-Nachricht und Eingabe sind fälschbar — deshalb unten alles
     # noch einmal per API.
     if: >
-      github.event_name == 'workflow_dispatch' || (
+      (github.event_name == 'workflow_dispatch' && !inputs.rebuild) || (
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository) || (
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (startsWith(github.event.workflow_run.head_branch, 'dependabot/') ||
@@ -201,13 +296,52 @@ jobs:
       sha: ${{ steps.pruefung.outputs.sha }}
       folge: ${{ steps.pruefung.outputs.folge }}
       version: ${{ steps.pruefung.outputs.version }}
+      weg: ${{ steps.pruefung.outputs.weg }}
+      basis: ${{ steps.pruefung.outputs.basis }}
+      zweig: ${{ steps.pruefung.outputs.zweig }}
     steps:
+      # Source repo of a pin PR (since 0.69.0, see the head): only its name, for the read token below. The check itself
+      # derives it again from the PR; a wrong name here only means an unreadable changelog, and that holds the PR.
+      - name: Quell-Repo eines Pin-PR
+        id: quelle
+        if: >
+          env.MIT_APP == 'true' && (github.event_name != 'workflow_run' ||
+          startsWith(github.event.workflow_run.head_branch, 'pin/'))
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || inputs.head_sha }}
+        run: |
+          set -euo pipefail
+          NAME=""
+          if [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] \
+             && REF="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].head.ref // ""')" \
+             && [[ "$REF" =~ ^pin/([a-z0-9._-]+)$ ]]; then
+            NAME="${BASH_REMATCH[1]}"
+            if [[ "$NAME" =~ ^(.+)-(v[0-9][A-Za-z0-9._-]*|main-[0-9a-f]+)$ ]]; then NAME="${BASH_REMATCH[1]}"; fi
+          fi
+          echo "Quell-Repo: ${NAME:-keins}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+      # Read token for the source repo (since 0.69.0): contents read, only that repo. Fails it (app not installed there),
+      # the check reads with the workflow token — a private repo then stays unreadable, and the PR is held.
+      - name: App-Token zum Lesen des Quell-Repos
+        id: quelltoken
+        if: steps.quelle.outputs.name != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc  # v3.4.0
+        with:
+          client-id: ${{ vars.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.quelle.outputs.name }}
+          permission-contents: read
       - name: Herkunft, Abnahme und Pflicht-Workflows prüfen
         id: pruefung
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUELLE_TOKEN: ${{ steps.quelltoken.outputs.token }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || inputs.head_sha }}
           APP_LOGIN: "ollornog-auto-merge[bot]"
           # --- je Repo: Anfang
           # Ökosysteme, die die Pflicht-Checks dieses Repos abnehmen (Branch `dependabot/<ökosystem>/…`).
@@ -250,7 +384,8 @@ jobs:
           set -euo pipefail
           ausgabe() {
             { echo "aktion=$1"; echo "grund=$2"; echo "pr=${PR:-}"; echo "sha=$HEAD_SHA"
-              echo "folge=${FOLGE:-}"; echo "version=${VERSION:-}"; } >> "$GITHUB_OUTPUT"
+              echo "folge=${FOLGE:-}"; echo "version=${VERSION:-}"; echo "weg=${WEG:-squash}"
+              echo "basis=${BASIS_OK:-}"; echo "zweig=${ZWEIG_OK:-}"; } >> "$GITHUB_OUTPUT"
             echo "$1${2:+: $2}"
           }
           # >>> Entscheidungshilfen — reines bash ohne API, getestet in repokit tests/test_automerge.py
@@ -364,6 +499,60 @@ jobs:
               if [ "${z:0:1}" = "-" ]; then minus+="${BASH_REMATCH[1]}"$'\n'; else plus+="${BASH_REMATCH[1]}"$'\n'; fi
             done
             [ "$n" -gt 0 ] && [ "$(sort <<<"$minus")" = "$(sort <<<"$plus")" ]
+          }
+          # Breaking release (since 0.69.0, see the head). Old and new tag per image of a pin PR: stdin = the diffs of the
+          # compose files (pin lines checked by nur_pin_zeilen). Output "<old> <new>" per pair, sorted, no duplicates.
+          pin_tags() {
+            local z a x y re='^([-+])[[:space:]]+image:[[:space:]]+([^[:space:]]+):([A-Za-z0-9._-]+)@sha256:[0-9a-f]{64}[[:space:]]*$'
+            local -A alt=() neu=()
+            while IFS= read -r z; do
+              [[ "$z" =~ $re ]] || continue
+              if [ "${BASH_REMATCH[1]}" = "-" ]; then alt["${BASH_REMATCH[2]}"]+="${BASH_REMATCH[3]} "
+              else neu["${BASH_REMATCH[2]}"]+="${BASH_REMATCH[3]} "; fi
+            done
+            for a in "${!neu[@]}"; do
+              for x in ${alt[$a]:-}; do for y in ${neu[$a]}; do echo "$x $y"; done; done
+            done | sort -u
+          }
+          # Form of a tag: semver (v1.2.3), datum (vJJJJ.MM.TT[.n], schema "datum"), main (main-<sha>, one image per
+          # commit), else unbekannt. The date first: v2026.11.21 would also read as semver.
+          tag_art() {
+            if [[ "$1" =~ ^v20[0-9]{2}\.[01][0-9]\.[0-3][0-9](\.[0-9]+)?$ ]]; then echo datum
+            elif [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo semver
+            elif [[ "$1" =~ ^main-[0-9a-f]{7,40}$ ]]; then echo main
+            else echo unbekannt; fi
+          }
+          # Does the step from $1 to $2 (both semver) break? The major differs, or at 0.x the minor. Output: the reason.
+          semver_bruch() {
+            local a1 a2 b1 b2
+            IFS=. read -r a1 a2 _ <<<"${1#v}"
+            IFS=. read -r b1 b2 _ <<<"${2#v}"
+            if [ "$((10#$a1))" -ne "$((10#$b1))" ]; then echo "major step"; return 0; fi
+            if [ "$((10#$a1))" -eq 0 ] && [ "$((10#$a2))" -ne "$((10#$b2))" ]; then
+              echo "minor step at 0.x (before 1.0 the minor breaks)"; return 0
+            fi
+            return 1
+          }
+          # Name of the source repo of a pin branch: pin/<name> or pin/<name>-<tag> (fc-pin). $1 = branch, $2 = new tag.
+          pin_quelle() {
+            local rest="${1#pin/}"
+            if [[ "$rest" == *"-$2" ]]; then rest="${rest%"-$2"}"; fi
+            echo "$rest"
+          }
+          # Lines of file $2 that file $1 does not have (what the new changelog adds, wherever).
+          neue_zeilen() {
+            awk 'NR == FNR { da[$0] = 1; next } !($0 in da)' "$1" "$2"
+          }
+          # A break mark in changelog lines? stdin = the added lines. Output: the first such line (printable, at most
+          # 160 characters, no @ — it goes into a comment).
+          changelog_bruch() {
+            local z re='breaking|upgrading from|upgrade-hinweis'
+            while IFS= read -r z; do
+              if [[ "${z,,}" =~ $re ]]; then
+                z="${z//[^[:print:]]/}"; z="${z//@/ }"; echo "${z:0:160}"; return 0
+              fi
+            done
+            return 1
           }
           # Release-Anhänge (seit 0.48.0): Quelle und Tag eines Pin-Zweigs. $1 = Zweig, weitere = PIN_ANHAENGE.
           # Ausgabe „<owner/repo> <tag>“ des Eintrags, dessen Repo-Name (klein) den Zweig pin/<name>-<tag> erzeugt;
@@ -487,6 +676,36 @@ jobs:
               }
               END { exit !(d >= 5 && d > 2 * e) }'
           }
+          # Merge way (since 0.67.0, see the head): fast-forward or squash, the rule of pr-mergen. $1 = MIT_APP, $2 = the
+          # checked head, $3 = author of the PR (login), $4 = repo private (true/false), $5 = one line
+          # "<status> <ahead_by> <behind_by> <sha> <author login> <author mail> <committer mail>" of the last commit of
+          # compare base...head (empty: not readable); stdin = its message. Output "ff" or "squash: <reason>"; exit 0.
+          # Any doubt is squash: it was the only way up to 0.66.
+          merge_weg() {
+            local app="$1" kopf="$2" autor="$3" privat="$4" st vor hinter sha alogin amail cmail text
+            text="$(cat)"
+            [ "$app" = true ] || { echo "squash: no app token (a push with the workflow token starts no workflow)"; return 0; }
+            read -r st vor hinter sha alogin amail cmail _ <<<"$5"
+            if ! [[ "${vor:-}" =~ ^[0-9]+$ && "${hinter:-}" =~ ^[0-9]+$ ]]; then
+              echo "squash: compare of base and head not readable"; return 0
+            fi
+            [ "$hinter" -eq 0 ] || { echo "squash: $hinter commits behind the base"; return 0; }
+            [ "$vor" -eq 1 ] || { echo "squash: $vor commits ahead of the base (only one has a PR run of its own)"; return 0; }
+            [ "$st" = ahead ] || { echo "squash: compare status $st"; return 0; }
+            [ "$sha" = "$kopf" ] || { echo "squash: the commit on top of the base is not the checked head"; return 0; }
+            [ "$alogin" = "$autor" ] || { echo "squash: commit author $alogin is not the PR author $autor"; return 0; }
+            [[ "$amail" == *@users.noreply.github.com ]] || { echo "squash: author mail is no GitHub noreply address"; return 0; }
+            if [[ "$cmail" != *@users.noreply.github.com && "$cmail" != noreply@github.com ]]; then
+              echo "squash: committer mail is no GitHub noreply address"; return 0
+            fi
+            if grep -qiE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|skip-checks: *true' <<<"$text"; then
+              echo "squash: the commit message switches CI off ([skip ci] & co.)"; return 0
+            fi
+            if [ "$privat" != true ] && grep -qiE '^[[:space:]]*Claude-Session:' <<<"$text"; then
+              echo "squash: Claude-Session line in a public repo"; return 0
+            fi
+            echo ff
+          }
           # <<< Entscheidungshilfen
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { ausgabe nichts "kein gültiger Kopf"; exit 0; }
           PR="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].number // ""')"
@@ -500,6 +719,8 @@ jobs:
           [ "$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$J")" = "true" ] || { echo "Fork — Abbruch"; exit 1; }
           [ "$(jq -r '.state' <<<"$J")" = "open" ] || { ausgabe nichts "PR nicht offen"; exit 0; }
           [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf seit dem Lauf bewegt"; exit 0; }
+          # A draft is a hold by a human, for every kind of PR (since 0.65.0; up to 0.64 only docs, FleetCommander #1080).
+          [ "$(jq -r '.draft' <<<"$J")" = "false" ] || { ausgabe nichts "Entwurf — kein Auto-Merge"; exit 0; }
           # Ein Kommentar je Grund genügt — der Workflow läuft je PR mehrmals.
           schon_gesagt() {
             [ "$(gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s --arg g "$1" \
@@ -546,6 +767,58 @@ jobs:
             done < "$soll"
             ergebnis="$(anhaenge_ok "$soll" "$ist" <<<"$ANDERE")" || { echo "$ergebnis"; return 1; }
             echo "$qrepo $qtag: $ergebnis"
+          }
+          # Breaking release in a pin PR (since 0.69.0, see the head). Output "frei" or the reason to hold. Whatever cannot
+          # be read is a reason (fail safe); only a complete pass ends with "frei". The log goes to stderr.
+          bruch_pruefen() {
+            local paare tags tag name quelle tok alt neu art g cfg datei ref_a ref_n zeilen
+            local fa="$RUNNER_TEMP/changelog-alt" fn="$RUNNER_TEMP/changelog-neu"
+            paare="$(pin_tags <<<"$PATCHES")"
+            [ -n "$paare" ] || { echo "tags of the pin lines not readable"; return; }
+            tags="$(cut -d' ' -f2 <<<"$paare" | sort -u)"
+            [[ "$tags" != *$'\n'* ]] || { echo "more than one new tag ($(tr '\n' ' ' <<<"$tags"))"; return; }
+            tag="$tags"
+            name="$(pin_quelle "$ZWEIG" "$tag")"
+            quelle="${REPO%%/*}/$name"
+            [[ "$name" =~ ^[a-z0-9._-]+$ ]] || { echo "source repo of branch $ZWEIG not readable"; return; }
+            tok="${QUELLE_TOKEN:-$GH_TOKEN}"
+            while read -r alt neu; do
+              [ "$alt" != "$neu" ] || continue
+              art="$(tag_art "$neu")"
+              [ "$(tag_art "$alt")" = "$art" ] || { echo "$quelle $alt → $neu: tag forms differ"; return; }
+              case "$art" in
+                semver)
+                  if g="$(semver_bruch "$alt" "$neu")"; then echo "$quelle $alt → $neu: $g"; return; fi
+                  ref_a="$alt"; ref_n="$neu" ;;
+                datum) ref_a="$alt"; ref_n="$neu" ;;
+                main) ref_a="${alt#main-}"; ref_n="${neu#main-}" ;;
+                *) echo "$quelle $alt → $neu: unknown tag form"; return ;;
+              esac
+              cfg="$(GH_TOKEN="$tok" gh api "repos/$quelle/contents/.github/release-automatik.json?ref=$ref_n" \
+                -H "Accept: application/vnd.github.raw" < /dev/null)" \
+                || { echo "$quelle $alt → $neu: .github/release-automatik.json not readable"; return; }
+              datei="$(jq -r 'if (.changelog | type) == "null" then "-" else (.changelog.datei // "") end' <<<"$cfg")" \
+                || datei=""
+              if [ "$datei" = "-" ]; then echo "$quelle $alt → $neu: no changelog (release-automatik.json)" >&2; continue; fi
+              if ! [[ "$datei" =~ ^[A-Za-z0-9_][A-Za-z0-9._/-]*$ ]] || [[ "$datei" == *..* ]]; then
+                echo "$quelle $alt → $neu: changelog file not readable from release-automatik.json"; return
+              fi
+              if ! GH_TOKEN="$tok" gh api "repos/$quelle/contents/$datei?ref=$ref_a" -H "Accept: application/vnd.github.raw" \
+                   > "$fa" < /dev/null \
+                 || ! GH_TOKEN="$tok" gh api "repos/$quelle/contents/$datei?ref=$ref_n" -H "Accept: application/vnd.github.raw" \
+                   > "$fn" < /dev/null; then
+                echo "$quelle $alt → $neu: $datei not readable"; return
+              fi
+              zeilen="$(neue_zeilen "$fa" "$fn")" || { echo "$quelle $alt → $neu: $datei not comparable"; return; }
+              if g="$(changelog_bruch <<<"$zeilen")"; then echo "$quelle $alt → $neu: $datei marks a break (\"$g\")"; return; fi
+              echo "$quelle $alt → $neu: no break (semver and $datei)" >&2
+            done <<<"$paare"
+            echo frei
+          }
+          # Hold once per reason (the reason names old → new tag): a human who takes the PR out of the draft is not
+          # overruled, a new release in the rolling PR holds again.
+          halten() {
+            if schon_gesagt "$1"; then ausgabe nichts "$1 (already held — release by hand)"; else ausgabe zurueckhalten "$1"; fi
           }
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
           GRUND=""
@@ -616,8 +889,7 @@ jobs:
               if beruehrt_abbild $ABBILD_PFADE <<<"$DATEIEN"; then FOLGE=vorbereiten; fi
             fi
           elif [ "$ART" = doku ]; then
-            # Doku-PR (seit 0.52.0, siehe Kopf): kein Entwurf, Autor mit Schreibrecht, nur Doku, Sprachregel.
-            [ "$(jq -r '.draft' <<<"$J")" = "false" ] || { ausgabe nichts "Entwurf — kein Auto-Merge"; exit 0; }
+            # Doku-PR (seit 0.52.0, siehe Kopf): Autor mit Schreibrecht, nur Doku, Sprachregel (Entwurf: oben, für alle).
             case "$(jq -r '.author_association' <<<"$J")" in
               OWNER|MEMBER|COLLABORATOR) ;;
               *) GRUND="Autor ohne Schreibrecht im Repo ($(jq -r '.author_association' <<<"$J"))" ;;
@@ -672,6 +944,11 @@ jobs:
             fi
           fi
           if [ -n "$GRUND" ]; then kommentar "$GRUND"; exit 0; fi
+          # Breaking release (since 0.69.0, see the head): only pin PRs of the app, before any wait for the checks.
+          if [ "$ART" = pin ]; then
+            BRUCH="$(bruch_pruefen)"
+            if [ "$BRUCH" != frei ]; then halten "breaking release: ${BRUCH:-check without result}"; exit 0; fi
+          fi
           # Jeder Pflicht-Workflow muss für genau diesen Kopf gelaufen und grün sein. Läuft einer
           # noch, endet dieser Lauf; dessen Ende löst den nächsten Anlauf aus.
           LAEUFE="$(gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" -q '.workflow_runs')"
@@ -682,6 +959,32 @@ jobs:
             ERG="$(jq -r '.conclusion' <<<"$L")"
             [ "$ERG" = "success" ] || { rot "Pflicht-Workflow $wf ist rot ($ERG)"; exit 0; }
           done
+          # Merge way (since 0.67.0, see the head): one read of compare base...head, the decision in merge_weg. An API
+          # error leaves the line empty, and that is squash. Base and branch go into API paths of `ausfuehren` and
+          # `aufraeumen` — only in plain ref form. The reason is logged here and in the job summary.
+          weg_bestimmen() {
+            local roh="" zeile="" text="" urteil ref_re
+            if roh="$(gh api "repos/$REPO/compare/$BASIS...$HEAD_SHA" -q '"\(.status) \(.ahead_by) \(.behind_by) \(.commits[-1].sha // "-") \(.commits[-1].author.login // "-") \(.commits[-1].commit.author.email // "-") \(.commits[-1].commit.committer.email // "-")", (.commits[-1].commit.message // "")')"; then
+              zeile="${roh%%$'\n'*}"
+              if [[ "$roh" == *$'\n'* ]]; then text="${roh#*$'\n'}"; fi
+            fi
+            urteil="$(merge_weg "$MIT_APP" "$HEAD_SHA" "$AUTOR" "$(jq -r '.base.repo.private' <<<"$J")" "$zeile" <<<"$text")"
+            ref_re='^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$'
+            if [ "$urteil" = ff ] && { ! [[ "$BASIS" =~ $ref_re && "$ZWEIG" =~ $ref_re ]] || [[ "$BASIS$ZWEIG" == *..* ]] \
+                 || [ "$BASIS" = "$ZWEIG" ]; }; then
+              urteil="squash: base or head branch name not in plain ref form"
+            fi
+            if [ "$urteil" = ff ]; then
+              WEG=ff; BASIS_OK="$BASIS"; ZWEIG_OK="$ZWEIG"
+              echo "Merge way: fast-forward of $BASIS to ${HEAD_SHA:0:7}"
+            else
+              WEG=squash
+              echo "Merge way: $urteil"
+            fi
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              echo "Merge way: ${urteil}" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
           # Alle grün. Jetzt noch die Checks, die NACH ihrem Workflow kommen (CodeQL-Ergebnis):
           # warten, bis GitHub den PR als mergebar meldet und kein Check mehr läuft — mit Frist.
           for _ in $(seq 1 30); do
@@ -692,7 +995,7 @@ jobs:
             [ -z "$ROT" ] || { rot "Check rot ($ROT)"; exit 0; }
             OFFEN="$(jq -r '[.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length' <<<"$P")"
             case "$(jq -r '.mergeStateStatus' <<<"$P")" in
-              CLEAN) [ "$OFFEN" = "0" ] && { ausgabe mergen ""; exit 0; } ;;
+              CLEAN) if [ "$OFFEN" = "0" ]; then weg_bestimmen; ausgabe mergen ""; exit 0; fi ;;
               BEHIND)
                 if [ "$MIT_APP" = "true" ]; then ausgabe nachziehen "Zweig veraltet"; else ausgabe nichts "Zweig veraltet — ohne App zieht ihn niemand nach (@dependabot rebase)"; fi
                 exit 0 ;;
@@ -703,11 +1006,45 @@ jobs:
             sleep 20
           done
           ausgabe nichts "nach 10 min noch nicht mergebar — der geplante Nachlauf (alle 6 h) prüft erneut"
+      - name: Load at failure (from scripts/_load_note.sh)
+        if: failure()
+        run: |
+          fields=()
+          fields+=("runner=${RUNNER_NAME:-?}" "host=$(uname -n 2>/dev/null || echo '?')")
+          cpus=""
+          if read -r cpuset 2>/dev/null < /sys/fs/cgroup/cpuset.cpus.effective && [ -n "$cpuset" ]; then
+            cpus="$(awk -v s="$cpuset" 'BEGIN { n = split(s, t, ","); for (i = 1; i <= n; i++) c += (split(t[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print c }')"
+          fi
+          [ -n "$cpus" ] || cpus="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)" || cpus='?'
+          cores_field="cores=$cpus"
+          [ -n "${CI_KERNE:-}" ] && cores_field+=" ci_cores=$CI_KERNE"
+          if read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max && [ "$q" != max ] && [ "${p:-0}" -gt 0 ] 2>/dev/null; then
+            cores_field+=" cpu_quota=$(awk -v q="$q" -v p="$p" 'BEGIN { printf "%.1f", q / p }')"
+          fi
+          fields+=("$cores_field")
+          if read -r l1 l5 l15 _ 2>/dev/null < /proc/loadavg; then fields+=("loadavg=$l1/$l5/$l15"); fi
+          for art in cpu memory io; do
+            z="$(grep -m1 '^some' "/proc/pressure/$art" 2>/dev/null)" || continue
+            a10="${z#*avg10=}"; a10="${a10%% *}"; a60="${z#*avg60=}"; a60="${a60%% *}"
+            fields+=("psi_${art/memory/mem}=$a10/$a60")
+          done
+          mem="$(awk '/^MemAvailable:/ { a = $2 } /^MemTotal:/ { t = $2 } END { if (a && t) printf "%d/%d", a / 1024, t / 1024 }' /proc/meminfo 2>/dev/null)"
+          [ -n "$mem" ] && fields+=("mem_free=${mem}MiB")
+          if [ -n "${GITHUB_EVENT_PATH:-}" ] && start="$(stat -c %Y "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+            d=$(( $(date +%s) - start )); fields+=("job=$((d / 60))m$((d % 60))s")
+          fi
+          line="load-at-failure: $(printf '%s · ' "${fields[@]}")"; line="${line% · }"
+          echo "$line"
+          echo "::notice title=load-at-failure::$line"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && ! { printf -- '- %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+            echo "job summary not writable — the line is in the log and the annotation"
+          fi
+          exit 0
 
   ausfuehren:
     timeout-minutes: 10
     needs: entscheiden
-    if: contains(fromJSON('["mergen", "kommentieren", "nachziehen"]'), needs.entscheiden.outputs.aktion)
+    if: contains(fromJSON('["mergen", "kommentieren", "nachziehen", "zurueckhalten"]'), needs.entscheiden.outputs.aktion)
     runs-on: ubuntu-latest
     env:
       MIT_APP: ${{ secrets.AUTOMERGE_APP_KEY != '' && vars.AUTOMERGE_APP_CLIENT_ID != '' }}
@@ -715,11 +1052,13 @@ jobs:
       contents: write
       pull-requests: write
       actions: write       # `gh workflow run` für den Nachlauf (ohne App)
+    outputs:
+      ff: ${{ steps.ff.outcome }}
     steps:
       - name: App-Token holen (nur dieses Repo, nur die drei Rechte)
         id: app
         if: env.MIT_APP == 'true' && needs.entscheiden.outputs.aktion != 'kommentieren'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc  # v3.4.0
         with:
           client-id: ${{ vars.AUTOMERGE_APP_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMERGE_APP_KEY }}
@@ -727,15 +1066,35 @@ jobs:
           permission-pull-requests: write
           permission-workflows: write
 
-      # Mit App: Der Merge-Push startet die Workflows des Standardzweigs selbst.
+      # Fast-forward (since 0.67.0, see the head): move the base to exactly the checked head, never forced. GitHub refuses
+      # when the base moved or a protection rule says no — then the next step squashes as before (`continue-on-error`).
+      # With the app token the push starts the workflows of the default branch.
+      - name: Fast-forward (app)
+        id: ff
+        if: needs.entscheiden.outputs.aktion == 'mergen' && env.MIT_APP == 'true' && needs.entscheiden.outputs.weg == 'ff'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          BASIS: ${{ needs.entscheiden.outputs.basis }}
+          HEAD_SHA: ${{ needs.entscheiden.outputs.sha }}
+        run: |
+          gh api "repos/$REPO/git/refs/heads/$BASIS" -X PATCH -f sha="$HEAD_SHA" -F force=false
+
+      # Mit App: Der Merge-Push startet die Workflows des Standardzweigs selbst. Squash whenever `entscheiden` chose it,
+      # and as the fallback of a refused fast-forward (its error stands in the step above).
       - name: Mergen (App)
-        if: needs.entscheiden.outputs.aktion == 'mergen' && env.MIT_APP == 'true'
+        if: >
+          needs.entscheiden.outputs.aktion == 'mergen' && env.MIT_APP == 'true' &&
+          (needs.entscheiden.outputs.weg != 'ff' || steps.ff.outcome == 'failure')
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
           PR: ${{ needs.entscheiden.outputs.pr }}
           HEAD_SHA: ${{ needs.entscheiden.outputs.sha }}
+          FF: ${{ steps.ff.outcome }}
         run: |
+          echo "Merge way: squash${FF:+, fast-forward: $FF}"
           gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
 
       # Rebase, nicht Merge-Commit: Der Autor der Commits bleibt Dependabot (sonst wären es „fremde
@@ -792,3 +1151,194 @@ jobs:
           GRUND: ${{ needs.entscheiden.outputs.grund }}
         run: |
           gh pr comment "$PR" --repo "$REPO" --body "⚠️ Nicht automatisch gemergt: $GRUND. Bitte von Hand prüfen und mergen."
+
+      # Breaking release (since 0.69.0, see the head): the reason first, with the workflow token (`schon_gesagt` finds it
+      # and holds every later run), then the draft as the sign — with the app token if there is one. Fails the draft,
+      # this step is red and the comment still holds the PR.
+      - name: Bruch-Release halten (Entwurf)
+        if: needs.entscheiden.outputs.aktion == 'zurueckhalten'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.entscheiden.outputs.pr }}
+          GRUND: ${{ needs.entscheiden.outputs.grund }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" --body "⏸️ No auto-merge, held as a draft: $GRUND. Risky releases are rolled out with a human, PO rule of 2026-11-23. To release: take the PR out of the draft and merge it by hand with pr-mergen. The auto-merge does not hold it again for this reason."
+          GH_TOKEN="${APP_TOKEN:-$GH_TOKEN}" gh pr ready "$PR" --repo "$REPO" --undo
+
+  nachsehen:
+    # After a fast-forward (since 0.67.0): GitHub marks the PR as merged by itself once the base contains its head
+    # (pr-mergen measured < 10 s). Only then may the head branch go — deleted earlier, GitHub closes the PR unmerged.
+    # Read only; the deletion is `aufraeumen`. A branch that is still the base of an open PR stays (GitHub would close
+    # that PR). Not merged in time: a warning, the branch stays.
+    needs: [entscheiden, ausfuehren]
+    if: needs.ausfuehren.outputs.ff == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      zweig: ${{ steps.merged.outputs.zweig }}
+    steps:
+      - name: PR shown as merged?
+        id: merged
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.entscheiden.outputs.pr }}
+          HEAD_SHA: ${{ needs.entscheiden.outputs.sha }}
+          ZWEIG: ${{ needs.entscheiden.outputs.zweig }}
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]+$ && -n "$ZWEIG" ]] || { echo "::warning::no PR or branch from entscheiden — branch stays"; exit 0; }
+          for _ in $(seq 1 12); do
+            P="$(gh api "repos/$REPO/pulls/$PR" -q '"\(.merged) \(.head.ref) \(.head.sha)"')" || P=""
+            if [ "$P" = "true $ZWEIG $HEAD_SHA" ]; then
+              OFFEN="$(gh api "repos/$REPO/pulls?state=open&base=$ZWEIG&per_page=100" -q 'length')" || OFFEN=""
+              if [ "$OFFEN" != 0 ]; then echo "::warning::open PRs on $ZWEIG as base: ${OFFEN:-unreadable} — branch stays"; exit 0; fi
+              echo "#$PR merged by fast-forward — branch $ZWEIG goes"
+              echo "zweig=$ZWEIG" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::#$PR not shown as merged after 2 min (${P:-unreadable}) — branch $ZWEIG stays"
+      - name: Load at failure (from scripts/_load_note.sh)
+        if: failure()
+        run: |
+          fields=()
+          fields+=("runner=${RUNNER_NAME:-?}" "host=$(uname -n 2>/dev/null || echo '?')")
+          cpus=""
+          if read -r cpuset 2>/dev/null < /sys/fs/cgroup/cpuset.cpus.effective && [ -n "$cpuset" ]; then
+            cpus="$(awk -v s="$cpuset" 'BEGIN { n = split(s, t, ","); for (i = 1; i <= n; i++) c += (split(t[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print c }')"
+          fi
+          [ -n "$cpus" ] || cpus="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)" || cpus='?'
+          cores_field="cores=$cpus"
+          [ -n "${CI_KERNE:-}" ] && cores_field+=" ci_cores=$CI_KERNE"
+          if read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max && [ "$q" != max ] && [ "${p:-0}" -gt 0 ] 2>/dev/null; then
+            cores_field+=" cpu_quota=$(awk -v q="$q" -v p="$p" 'BEGIN { printf "%.1f", q / p }')"
+          fi
+          fields+=("$cores_field")
+          if read -r l1 l5 l15 _ 2>/dev/null < /proc/loadavg; then fields+=("loadavg=$l1/$l5/$l15"); fi
+          for art in cpu memory io; do
+            z="$(grep -m1 '^some' "/proc/pressure/$art" 2>/dev/null)" || continue
+            a10="${z#*avg10=}"; a10="${a10%% *}"; a60="${z#*avg60=}"; a60="${a60%% *}"
+            fields+=("psi_${art/memory/mem}=$a10/$a60")
+          done
+          mem="$(awk '/^MemAvailable:/ { a = $2 } /^MemTotal:/ { t = $2 } END { if (a && t) printf "%d/%d", a / 1024, t / 1024 }' /proc/meminfo 2>/dev/null)"
+          [ -n "$mem" ] && fields+=("mem_free=${mem}MiB")
+          if [ -n "${GITHUB_EVENT_PATH:-}" ] && start="$(stat -c %Y "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+            d=$(( $(date +%s) - start )); fields+=("job=$((d / 60))m$((d % 60))s")
+          fi
+          line="load-at-failure: $(printf '%s · ' "${fields[@]}")"; line="${line% · }"
+          echo "$line"
+          echo "::notice title=load-at-failure::$line"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && ! { printf -- '- %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+            echo "job summary not writable — the line is in the log and the annotation"
+          fi
+          exit 0
+
+  aufraeumen:
+    # Holds `contents: write` and therefore ONLY deletes the one branch `nachsehen` named (plain ref form, checked in
+    # `entscheiden`).
+    needs: nachsehen
+    if: needs.nachsehen.outputs.zweig != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the head branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ZWEIG: ${{ needs.nachsehen.outputs.zweig }}
+        run: |
+          gh api "repos/$REPO/git/refs/heads/$ZWEIG" -X DELETE
+
+  rebuild-check:
+    # Weekly rebuild (since 0.64.0, see the head): read only. The decision is scripts/_release_automatik.py `neubau` from
+    # the default branch (tested in repokit tests/test_release_automatik.py); this job has no checkout action, it clones.
+    if: >
+      vars.WEEKLY_REBUILD != 'off' && (
+      (github.event_name == 'schedule' && github.event.schedule != '41 */6 * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.rebuild))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      reason: ${{ steps.check.outputs.reason }}
+    steps:
+      - name: Base image moved or fixable High/Critical in the released image?
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # The grype version (Dependabot raises this pin in repokit); the program comes from anchore's GitHub release of
+          # it, checked against its checksums — no Docker daemon needed on the runner.
+          GRYPE_IMAGE: "anchore/grype:v0.122.1@sha256:661583704a253c0448ed63998b5ea2cd9d5a76ee71eedc4aed439b8ce3e93a1c"
+          # Pull token for the registry of the repo's own images (private packages, `packages: read`), given to grype in
+          # its environment; other registries are read anonymously.
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          gh repo clone "$REPO" "$src" -- --depth 1 --branch "$GITHUB_REF_NAME" --quiet
+          GITHUB_REPOSITORY="$REPO" python3 "$src/scripts/_release_automatik.py" neubau --root "$src"
+      - name: Load at failure (from scripts/_load_note.sh)
+        if: failure()
+        run: |
+          fields=()
+          fields+=("runner=${RUNNER_NAME:-?}" "host=$(uname -n 2>/dev/null || echo '?')")
+          cpus=""
+          if read -r cpuset 2>/dev/null < /sys/fs/cgroup/cpuset.cpus.effective && [ -n "$cpuset" ]; then
+            cpus="$(awk -v s="$cpuset" 'BEGIN { n = split(s, t, ","); for (i = 1; i <= n; i++) c += (split(t[i], r, "-") == 2) ? r[2] - r[1] + 1 : 1; print c }')"
+          fi
+          [ -n "$cpus" ] || cpus="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)" || cpus='?'
+          cores_field="cores=$cpus"
+          [ -n "${CI_KERNE:-}" ] && cores_field+=" ci_cores=$CI_KERNE"
+          if read -r q p 2>/dev/null < /sys/fs/cgroup/cpu.max && [ "$q" != max ] && [ "${p:-0}" -gt 0 ] 2>/dev/null; then
+            cores_field+=" cpu_quota=$(awk -v q="$q" -v p="$p" 'BEGIN { printf "%.1f", q / p }')"
+          fi
+          fields+=("$cores_field")
+          if read -r l1 l5 l15 _ 2>/dev/null < /proc/loadavg; then fields+=("loadavg=$l1/$l5/$l15"); fi
+          for art in cpu memory io; do
+            z="$(grep -m1 '^some' "/proc/pressure/$art" 2>/dev/null)" || continue
+            a10="${z#*avg10=}"; a10="${a10%% *}"; a60="${z#*avg60=}"; a60="${a60%% *}"
+            fields+=("psi_${art/memory/mem}=$a10/$a60")
+          done
+          mem="$(awk '/^MemAvailable:/ { a = $2 } /^MemTotal:/ { t = $2 } END { if (a && t) printf "%d/%d", a / 1024, t / 1024 }' /proc/meminfo 2>/dev/null)"
+          [ -n "$mem" ] && fields+=("mem_free=${mem}MiB")
+          if [ -n "${GITHUB_EVENT_PATH:-}" ] && start="$(stat -c %Y "$GITHUB_EVENT_PATH" 2>/dev/null)"; then
+            d=$(( $(date +%s) - start )); fields+=("job=$((d / 60))m$((d % 60))s")
+          fi
+          line="load-at-failure: $(printf '%s · ' "${fields[@]}")"; line="${line% · }"
+          echo "$line"
+          echo "::notice title=load-at-failure::$line"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ] && ! { printf -- '- %s\n' "$line" >> "$GITHUB_STEP_SUMMARY"; } 2>/dev/null; then
+            echo "job summary not writable — the line is in the log and the annotation"
+          fi
+          exit 0
+
+  rebuild-dispatch:
+    # Holds `actions: write` and therefore ONLY calls `gh workflow run` — the same release path as after a Dependabot
+    # merge that changes the image (`vorbereiten`: patch release as a PR of the app).
+    needs: rebuild-check
+    if: needs.rebuild-check.outputs.reason != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the release automation (vorbereiten)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REASON: ${{ needs.rebuild-check.outputs.reason }}
+        run: |
+          echo "Reason: $REASON"
+          gh workflow run release.yml --repo "$REPO" --ref "$GITHUB_REF_NAME" -f automatik=vorbereiten -f version=""
