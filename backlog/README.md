@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 10/20 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 11/20 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 90/97 erledigt
@@ -117,7 +117,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md)** Stage S3 — every origin is equal: source, step-up, linking local and IdP · M-2
 * ☑ **[T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md)** Stage S4 — permissions: app identity, registration, assignment, has_permission · M-2
 * ☐ **[T-101](T-101-stage-s5-permissions-at-the-server-and-in-the-clients.md)** Stage S5 — permissions at the server and in the clients · M-2
-* ◐ **[T-102](T-102-stage-s6-idp-role-sync-stage-1-import-groups-at-sign-in.md)** Stage S6 — IdP role sync stage 1: import groups at sign-in · M-2
+* ☑ **[T-102](T-102-stage-s6-idp-role-sync-stage-1-import-groups-at-sign-in.md)** Stage S6 — IdP role sync stage 1: import groups at sign-in · M-2
 * ☐ **[T-103](T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)** Stage S7 — shell on top and at the side: one component, layout top or side · M-2
 * ☐ **[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md)** Stage S8 — hybrid: TinySesam area with name and icon, library layout slot · M-2
 * ☐ **[T-105](T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md)** Stage S9 — headless writing: action pages with a way back · M-2

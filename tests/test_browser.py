@@ -774,6 +774,7 @@ async def run():
         await delegate_panel(p)
         await accounts_panel(p)
         await role_catalog_page(p)
+        await idp_import_panel(p)
         await provisioning_panel(p)
         await approvals_page(p)
         await app_frame(p)
@@ -2264,6 +2265,99 @@ async def _role_catalog_page(p):
     t33.delete_role("rc-used")
     print("  role catalog: add (picker offers it), refused name in the own dialog, in use says why, count → list "
           "filtered by exactly that role, role level entry added and deleted whole, delete after the dialog, 390px "
+          "light/dark (strict CSP)")
+
+
+async def idp_import_panel(_first):
+    """The group import (T-102) in a real browser on the T-33 app (strict CSP, real CSRF), as administrator, in a tab of
+    its own: an imported role on the role page says "⇄ from IdP" (symbol AND word) with its source, the last delivery and
+    its display name; the import card lists a skipped group with its reason and a sign-in without the claim; the
+    permission matrix marks the imported role's column, and a tick there gives the person the permission — 390 px light
+    and dark without sideways scrolling. `TINYSESAM_SCREENSHOTS=<dir>` keeps screenshots."""
+    port = _cdp_port()
+    tab = json.load(urllib.request.urlopen(urllib.request.Request(
+        f"http://127.0.0.1:{port}/json/new?about:blank", method="PUT")))
+    carol = t33.store.get_user_by_name("carol")["id"]
+    before = (t33.cfg.available_roles, t33.cfg.apps, t33.cfg.oidc_group_import, t33.cfg.idp_group_labels)
+    t33.cfg.available_roles = ["editor"]
+    t33.cfg.apps = {"docs": {"name": "Docs", "permissions": [{"name": "docs.read", "label": {"en": "Read documents"}}]}}
+    t33.cfg.oidc_group_import = True
+    t33.cfg.idp_group_labels = {"team-docs": "Docs team"}
+    t33._register_config_permissions()
+    t33._import_idp_groups(carol, "oidc", ["team-docs", "editor"])
+    t33.store.note_idp_groups("saml", missing=True)
+    async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
+        p = Page(ws)
+        for domain in ("Page", "Runtime", "Network"):
+            await p.cmd(f"{domain}.enable")
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blocked '+(e.blockedURI||'inline'))})"))
+        try:
+            await _idp_import_panel(p, carol)
+        finally:
+            t33._import_idp_groups(carol, "oidc", [])
+            t33.cfg.available_roles, t33.cfg.apps, t33.cfg.oidc_group_import, t33.cfg.idp_group_labels = before
+            t33._register_config_permissions()
+            t33.store.delete_orphaned_permission("docs", "docs.read")
+            t33.store.delete_catalog_roles_if_unused(["team-docs"])
+            t33.store._exec("DELETE FROM setting WHERE key='idp_group_notes'")
+            await p.cmd("Emulation.clearDeviceMetricsOverride")
+
+
+async def _idp_import_panel(p, carol):
+    import base64
+    shots = os.environ.get("TINYSESAM_SCREENSHOTS", "")
+
+    async def shot(name):
+        if shots:
+            os.makedirs(shots, exist_ok=True)
+            data = (await p.cmd("Page.captureScreenshot", format="png", captureBeyondViewport=True))["data"]
+            with open(os.path.join(shots, name), "wb") as fh:
+                fh.write(base64.b64decode(data))
+
+    boss = t33.store.get_user_by_name("boss")["id"]
+    token, _ = t33.start_session(boss, "password")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.cmd("Network.setCookie", name=t33.session_cookie_name, value=token, url=T33)
+    await p.cmd("Page.navigate", url=T33 + "/auth/admin#roles")
+    await p.until("!!document.getElementById('nr') && !!document.querySelector('.importcard')", "roles page not built")
+    line = await p.js("[...document.querySelectorAll('.rolecard .line')].map(l=>l.innerText)"
+                      ".find(t=>t.startsWith('team-docs'))||''")
+    assert "⇄ from IdP (OIDC) — last delivered" in line and "Docs team" in line and "In use" in line, line
+    card = await p.js("document.querySelector('.importcard').innerText")
+    assert "group import" in card.lower(), card          # the h2 is upper-cased by the stylesheet
+    assert "⚠ Not imported: editor (OIDC) — a role of the configuration has this name" in card, card
+    assert "⚠ SAML: the last sign-in carried no group claim" in card, card
+    await shot("idp-roles-1280.png")
+    # The permission matrix marks the imported role's column; a tick assigns, and the person holds the permission.
+    await p.js("location.hash='#perms';true")
+    await p.until("!!document.querySelector('table.permgrid')", "permission matrix not built")
+    heads = await p.js("[...document.querySelectorAll('table.permgrid thead th')].map(t=>t.innerText)")
+    marked = [h for h in heads if h.startswith("team-docs")]
+    assert marked and "⇄ from IdP" in marked[0], heads
+    assert not [h for h in heads if h.startswith("editor") and "from IdP" in h], heads
+    col = heads.index(marked[0])
+    await p.js(f"document.querySelector('table.permgrid tbody tr').children[{col}]"
+               ".querySelector('input[type=checkbox]').click();true")
+    await until_py(lambda: t33.has_permission(t33.get_user(carol), "docs.read", app="docs"), "tick did not assign")
+    await shot("idp-perms-1280.png")
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
+    for theme in ("light", "dark"):
+        await p.js(f"localStorage.setItem('themeMode','{theme}');true")
+        await p.cmd("Page.navigate", url="about:blank")
+        await asyncio.sleep(0.2)
+        await p.cmd("Page.navigate", url=T33 + "/auth/admin#roles")
+        await p.until("!!document.querySelector('.importcard')", "roles page not built")
+        await asyncio.sleep(0.3)
+        width = await p.js("document.documentElement.scrollWidth")
+        assert width <= 390, f"{theme} roles with the import card: {width}px wide at 390px"
+        await shot(f"idp-roles-390-{theme}.png")
+    viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
+    assert viol == "[]", f"CSP violation on the import panel: {viol}"
+    assert not p.console, f"console errors: {p.console[:2]}"
+    print("  group import: role page marks the imported role (⇄ symbol and word, source, last delivery, label), the "
+          "import card lists a skipped group and a missing claim, the matrix marks the column and a tick assigns, 390px "
           "light/dark (strict CSP)")
 
 

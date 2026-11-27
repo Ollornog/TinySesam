@@ -1108,7 +1108,9 @@ _KEYS = (
     "src_both src_accounts accounts_n take_over delete_role why_in_use why_in_ladder role_invalid_mark entry_hint "
     "entry_key entry_add entry_delete confirm.role_delete confirm.entry_delete usage_users usage_keys usage_services "
     "usage_links usage_approvals usage_permissions perms_btn perms_title perms_hint perms_none perm_col perm_danger "
-    "perm_orphaned perm_suspended perm_delete perm_suggested confirm.perm_delete"
+    "perm_orphaned perm_suspended perm_delete perm_suggested confirm.perm_delete "
+    "src_idp idp_mark import_title import_hint import_skipped skip_config skip_catalog skip_case skip_accounts "
+    "skip_ladder skip_invalid skip_full import_missing import_over"
 ).split()
 
 
@@ -1525,7 +1527,7 @@ async function permsview(){const R=await g("/api/permissions");let n=0;
     const del=p.orphaned&&!R.area?` <button class=warn ${on("permdel",a.id,p.name)}>${esc(L.perm_delete)}</button>`:"";
     const hint=p.suggested_roles.length?`<div class="muted small">${esc(L.perm_suggested.replace("{roles}",p.suggested_roles.join(", ")))}</div>`:"";
     return `<tr id="perm-${esc(a.id)}-${esc(p.name)}"><th scope=row>${esc(tx(p.label)||p.name)}<div class="muted small">${esc(p.name)}</div>${tag}${del}${hint}</th>${R.roles.map(r=>cell(a,p,r)).join("")}</tr>`};
-  const card=a=>`<section class=card><h2>${esc(tx(a.name)||a.id)}</h2><div class=tablewrap><table class=permgrid><thead><tr><th scope=col>${esc(L.perm_col)}</th>${R.roles.map(r=>`<th scope=col>${esc(r)}</th>`).join("")}</tr></thead><tbody>${a.permissions.map(p=>row(a,p)).join("")}</tbody></table></div></section>`;
+  const card=a=>`<section class=card><h2>${esc(tx(a.name)||a.id)}</h2><div class=tablewrap><table class=permgrid><thead><tr><th scope=col>${esc(L.perm_col)}</th>${R.roles.map(r=>`<th scope=col>${esc(r)}${(R.idp_roles||[]).includes(r)?`<div class="muted small idp">${esc(L.idp_mark)}</div>`:""}</th>`).join("")}</tr></thead><tbody>${a.permissions.map(p=>row(a,p)).join("")}</tbody></table></div></section>`;
   V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
     <section class=card><h2>${esc(L.perms_title)}</h2><div class="muted small">${esc(L.perms_hint)}</div></section>
     ${R.apps.map(card).join("")||`<span class=muted>${esc(L.perms_none)}</span>`}`)}
@@ -1545,8 +1547,15 @@ async function rolesview(){const R=await g("/api/roles"),by={};R.roles.forEach(r
     if(r.source==="config")return "";
     return r.deletable?`<button class=warn ${on("delrole",r.name)}>${esc(L.delete_role)}</button>`:`<span class="muted small">${esc(why(r))}</span>`};
   const n=r=>r.usage.users?`<a href="#role/${encodeURIComponent(r.name)}">${esc(L.accounts_n.replace("{n}",r.usage.users))}</a>`:esc(L.accounts_n.replace("{n}",0));
-  const rows=R.roles.map(r=>line(r.name,L["src_"+r.source],`<span class="small">${n(r)}</span> ${act(r)}`)).join("");
-  const cat=R.roles.filter(r=>r.source==="catalog"||r.source==="both").length;
+  // An imported role (T-102) says so with the symbol AND the word, its source and when a sign-in last delivered it.
+  const src=r=>r.source==="idp"?(r.label?r.label+" · ":"")+L.src_idp.replace("{source}",L["source."+r.idp_source]||r.idp_source).replace("{date}",dt(r.last_seen_at)):L["src_"+r.source];
+  const rows=R.roles.map(r=>line(r.name,src(r),`<span class="small">${n(r)}</span> ${act(r)}`)).join("");
+  const cat=R.roles.filter(r=>r.source==="catalog"||r.source==="both"||r.source==="idp").length;
+  const I=R.import||{},sn=s=>L["source."+s]||s;
+  const hints=[...Object.entries(I.skipped||{}).map(([k,v])=>L.import_skipped.replace("{name}",k).replace("{source}",sn(v.source)).replace("{why}",L["skip_"+v.reason]||v.reason).replace("{date}",dt(v.at))),
+    ...Object.entries(I.missing||{}).map(([s,at])=>L.import_missing.replace("{source}",sn(s)).replace("{date}",dt(at))),
+    ...Object.entries(I.over_limit||{}).map(([s,v])=>L.import_over.replace("{source}",sn(s)).replace("{count}",v.count).replace("{date}",dt(v.at)))];
+  const imp=hints.length?`<section class="card importcard"><h2>${esc(L.import_title)}</h2><div class="muted small">${esc(L.import_hint)}</div>${hints.map(h=>`<div class=line><div class=what>${esc(h)}</div></div>`).join("")}</section>`:"";
   // Role levels: a new entry adds every level role at once; an entry whose roles are all unused catalog roles goes as
   // a whole (a single level would leave half an entry).
   const lad=R.ladders.map(l=>{const sh=LADDERS.find(x=>x.name===l.name),ents=sh?sh.entries:[];
@@ -1560,7 +1569,7 @@ async function rolesview(){const R=await g("/api/roles"),by={};R.roles.forEach(r
     <div class="row"><input id=nr class=grow maxlength=64 aria-label="${esc(L.new_role)}" placeholder="${esc(L.new_role)}">
     <button ${on("mkrole")}>${esc(L.role_add)}</button></div>
     <div class="muted small">${esc(L.catalog_count.replace("{n}",cat).replace("{limit}",R.limit))}</div>
-    ${rows||`<span class=muted>${esc(L.no_roles)}</span>`}</section>${lad}`)}
+    ${rows||`<span class=muted>${esc(L.no_roles)}</span>`}</section>${imp}${lad}`)}
 const reloadRoles=()=>{location.hash="#roles";location.reload()};
 async function mkrole(name){const v=name||((document.getElementById("nr")||{}).value||"");
   if(!v.trim())return;if(!rejected(await p("/api/roles",{name:v})))reloadRoles()}
