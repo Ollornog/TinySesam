@@ -3,7 +3,7 @@ id: T-101
 type: Task
 title: Stage S5 — permissions at the server and in the clients
 status: offen
-points: 13
+points: 14
 milestone: M-2
 blocked_by: [T-100]
 tags: [permissions, clients, spec]
@@ -11,11 +11,15 @@ created: 2026-11-23
 ---
 # T-101 — Stage S5 — permissions at the server and in the clients
 
-**Story points:** 13 · **Estimate:** 22–30 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 14 (13 + 1 for `apps[id].hosts`, taken over from T-100 on 2026-11-27) · **Estimate:** 22–30 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 Server and client side of [ADR-17](ADR-17-permission-layer-and-admin-levels.md).
 
 ## Content
+- App identity, taken over from [T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md): `apps[id].hosts`
+  (each host in at most one application) as the host → application id the proxy path needs for `ts_perms` and
+  `Remote-Permissions`; `forward_apps` stays as the per-host alias, translated by `config_check` (name falls back to
+  `apps[id].name`). The reason it moved: before this task nothing reads `hosts`.
 - `PUT /auth/api/apps/{id}/permissions` (register only; automation key, scope `permissions:register`), `GET /auth/api/users/{id}/permissions?app=`.
 - Gate token claim `ts_perms` and header `Remote-Permissions` (new slot in `forward_headers`; an oversized set is rejected, not cut); `account.json.permissions`.
 - `spec/gate-client.md` section 3 and 8a, vectors `permissions.json`; `has_permission` and `register_permissions` in the Go, Rust, JavaScript, PHP and Python clients against the same vectors.

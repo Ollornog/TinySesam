@@ -246,6 +246,11 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Who holds what:** an API key's scope narrows the roles first, so a service holds the intersection; the admin flag
   grants nothing unless `admin_implies_permissions=True` (never through an automation key, which does not carry the
   flag). Object-level rights ("folder X") stay in the application.
+- **A complete application:** example Ex2,
+  [`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) — `docs.read` and
+  `docs.delete`, the roles assigned locally in the panel, the delete button only with the permission (and the route
+  asks again). `python examples/ex2/app.py --demo` starts it with three people; `tests/test_example_ex2.py` is its
+  acceptance through the real panel routes.
 
 ## Accounts in code
 
@@ -3060,7 +3065,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**150 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**151 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

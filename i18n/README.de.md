@@ -243,6 +243,11 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Wer was hat:** der Geltungsbereich eines API-Keys engt zuerst die Rollen ein, ein Dienst hat also die Schnittmenge;
   das Admin-Flag vergibt nichts, außer mit `admin_implies_permissions=True` (nie über einen Automations-Key, der das
   Flag nicht trägt). Rechte an Objekten („Ordner X") bleiben in der Anwendung.
+- **Eine vollständige Anwendung:** Beispiel Ex2,
+  [`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) — `docs.read` und
+  `docs.delete`, die Rollen lokal im Panel vergeben, der Löschknopf nur mit der Berechtigung (und die Route fragt noch
+  einmal). `python examples/ex2/app.py --demo` startet sie mit drei Personen; `tests/test_example_ex2.py` ist ihre
+  Abnahme über die echten Panel-Routen.
 
 ## Konten im Code
 
@@ -3131,7 +3136,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**150 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**151 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -25,6 +25,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Example Ex2 (T-100 acceptance): `examples/ex2/app.py`, a Python application with TinySesam as a library —
+  `docs.read` / `docs.delete`, the roles assigned locally in the panel, the delete button only with the permission, the
+  route checks again. `tests/test_example_ex2.py` runs it through the real panel routes (assign, withdraw, roles).
 - The admin panel's permission matrix (T-100): *Accounts → Permissions* — per application, permissions down and roles
   across, a tick assigns (`GET <admin>/api/permissions`, `POST <admin>/api/permissions/assign`,
   `POST <admin>/api/permissions/delete`). A `danger` permission shows ⚠ and the word and needs a fresh confirmation for

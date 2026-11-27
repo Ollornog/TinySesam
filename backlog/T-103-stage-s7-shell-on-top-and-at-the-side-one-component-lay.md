@@ -16,6 +16,9 @@ created: 2026-11-23
 One component for both shells: `<ts-shell layout="top|side" current="/docs">`, script and CSS under `/.tinysesam/` (server) or `/auth/` (library), shadow DOM and `--ts-*` tokens. Data from `topbar.json` plus a new `frame` part. The layout comes from `apps[id].layout` or an instance field. TinySesam's own pages (panel and account page included) get the side layout, too — the same markup source as `topbar.py`.
 
 ## Content
+- `apps[id].layout` (`top` | `side`), taken over from [T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md)
+  on 2026-11-27: it enters the configuration together with its reader, the shell component (no own SP: the layout
+  switch is this task's content already).
 - `auth.topbar(layout=…)` in the library; proxy templates pass `/.tinysesam/*` through; spec section 8d.
 - Replaces the planned "E8" shell component of the app frame ([T-91](T-91-app-frame-and-account-overview.md)).
 
