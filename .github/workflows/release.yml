@@ -368,7 +368,7 @@ jobs:
         run: python3 scripts/_grype_exceptions.py
       - name: Scan the image for known vulnerabilities (Grype)
         id: scan-gateway
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6  # v7.4.3
         with:
           image: tinysesam-probe:local
           fail-build: true
@@ -404,7 +404,7 @@ jobs:
       - name: "Caddy image: scan for known vulnerabilities (Grype)"
         id: scan-caddy
         if: ${{ !cancelled() && steps.build-caddy.outcome == 'success' }}
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439  # v7.4.2
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6  # v7.4.3
         with:
           image: tinysesam-caddy-gate-probe:local
           fail-build: true
