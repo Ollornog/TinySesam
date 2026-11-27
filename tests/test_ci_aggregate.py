@@ -180,7 +180,7 @@ for wf, exempt in LANE.items():
 # caller is SKIPPED, GitHub reports only `<caller>` and never the inner checks — a required `provenance / rebuild` then
 # hangs for good, the pull request stays blocked although everything is green (#395, a backlog-only pull request into
 # main after T-131). A skipped ordinary job does report "skipped" (green). So in every required workflow (the list the
-# auto-merge waits for, PFLICHT_WORKFLOWS) a caller must run whenever the lane skips the jobs it needs, and hand the
+# auto-merge waits for, in dependabot-auto-merge.yml) a caller must run whenever the lane skips the jobs it needs, and hand the
 # lane on as `skip`; the called workflow's jobs without `needs` skip by their OWN `if: !inputs.skip`. The caller sees
 # the lane in the `skipped` of a job it needs that carries exactly the lane's gate (that job skips only in the lane;
 # the kit allows `outputs.nur_text` in an `if:` only in the gate's form). For a tag `skip` is false whatever the
