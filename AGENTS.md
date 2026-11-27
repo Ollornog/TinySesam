@@ -72,7 +72,10 @@ python tests/run_all.py test_core.py     # one suite while you work
 | `spec/vectors/*.json` | TinySesam's issuing path + attacks in the generator | `python scripts/_gate_vectors.py` |
 
 A new public name has **no tier** until someone decides (A stable, B advanced); an internal name carries a leading
-underscore and is not measured. The surface test stays red until then. Tier A and B names must be described in the
+underscore and is not measured. The surface test stays red until then. A tier A/B method, export, property, attribute
+or constant also needs `server` on its entry (library–server parity, ADR-16): the route the server serves for it
+(`"POST /auth/login"`, `<admin>` for the panel's mount) or `"library: <reason>"`; the surface test builds the server
+from a configuration file and checks that every named route is served. Tier A and B names must be described in the
 hand-written docs (README, `CONFIGURATION.md`, `SECURITY.md`, `docs/`).
 
 ## Backlog

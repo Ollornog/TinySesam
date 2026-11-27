@@ -77,594 +77,741 @@
   },
   "TinySesam": {
     "account_overview": {
+      "server": "GET /auth/account.json",
       "sig": "(user, *, base: 'Optional[str]' = None, app_host: 'Optional[str]' = None, request: 'Optional[Request]' = None) -> 'Optional[dict]'",
       "tier": "B"
     },
     "add_messages": {
+      "server": "library: texts for an application's own pages; the server's texts are the built-in ones",
       "sig": "(lang, mapping: 'dict')",
       "tier": "A"
     },
     "admin_claim_token": {
+      "server": "GET /auth/claim-admin",
       "sig": "() -> 'Optional[str]'",
       "tier": "B"
     },
     "admin_exists": {
+      "server": "library: a question of the embedding code; the server opens /auth/claim-admin by itself while no admin exists",
       "sig": "() -> 'bool'",
       "tier": "B"
     },
     "admin_router": {
+      "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "()",
       "tier": "A"
     },
     "after_response": {
+      "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "(resp, task, on_overflow=None)",
       "tier": "B"
     },
     "all_security": {
+      "server": "GET <admin>/api/security",
       "sig": "() -> 'dict'",
       "tier": "B"
     },
     "api_key_kind": {
+      "server": "GET <admin>/api/users/{uid}/keys",
       "sig": "(key) -> 'str'",
       "tier": "B"
     },
     "app_password_hosts": {
+      "server": "GET /auth/app-passwords",
       "sig": "() -> 'list'",
       "tier": "B"
     },
     "apply_factor": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
       "tier": "B"
     },
     "apply_idp_groups": {
+      "server": "GET <oidc_callback_path>",
       "sig": "(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)",
       "tier": "B"
     },
     "approval_jwks": {
+      "server": "GET /auth/approvals/jwks.json",
       "sig": "() -> 'dict'",
       "tier": "B"
     },
     "audit": {
+      "server": "GET <admin>/api/audit",
       "sig": "(event, username=None, ip=None, detail=None)",
       "tier": "B"
     },
     "browser_path": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Optional[Request]', path: 'str') -> 'str'",
       "tier": "B"
     },
     "change_password": {
+      "server": "POST /auth/password",
       "sig": "(request: 'Request', current: 'str', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'",
       "tier": "A"
     },
     "change_username": {
+      "server": "POST /auth/account/username",
       "sig": "(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'",
       "tier": "A"
     },
     "client_ip": {
+      "server": "library: a helper for the embedding code; the server applies trusted_proxies itself",
       "sig": "(request: 'Request') -> 'str'",
       "tier": "B"
     },
     "close": {
+      "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "(timeout: 'float' = 10.0) -> 'bool'",
       "tier": "A"
     },
     "complete_totp": {
+      "server": "POST /auth/totp",
       "sig": "(token) -> 'Optional[str]'",
       "tier": "A"
     },
     "confirm_email_change": {
+      "server": "POST /auth/email/{token}",
       "sig": "(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'",
       "tier": "B"
     },
     "confirm_password": {
+      "server": "POST /auth/reauth",
       "sig": "(request: 'Request', password: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
     },
     "confirm_pin": {
+      "server": "POST /auth/reauth",
       "sig": "(request: 'Request', pin: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
     },
     "confirm_totp": {
+      "server": "POST /auth/reauth",
       "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
     },
     "count_other_sessions": {
+      "server": "GET /auth/sessions",
       "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
       "tier": "B"
     },
     "create_api_key": {
+      "server": "POST /auth/apikeys",
       "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'",
       "tier": "A"
     },
     "create_app_password": {
+      "server": "POST /auth/app-passwords",
       "sig": "(user_id, name, hosts=None, expires_days=None) -> 'dict'",
       "tier": "B"
     },
     "create_invite": {
+      "server": "POST <admin>/api/invite",
       "sig": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
       "tier": "A"
     },
     "create_magic_token": {
+      "server": "POST /auth/magic/request",
       "sig": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
       "tier": "B"
     },
     "create_role": {
+      "server": "POST <admin>/api/roles",
       "sig": "(name: 'str', actor=None) -> 'dict'",
       "tier": "B"
     },
     "create_service": {
+      "server": "POST <admin>/api/users",
       "sig": "(username, roles=None, display_name=None) -> 'int'",
       "tier": "A"
     },
     "create_service_pairing": {
+      "server": "POST <admin>/api/users/{uid}/service-pairing",
       "sig": "(user_id, name=None, resources=None, roles=None) -> 'dict'",
       "tier": "B"
     },
     "create_signin_link": {
+      "server": "POST <admin>/api/users/{uid}/signin-link",
       "sig": "(user_id, ttl_min=None, next='/') -> 'dict'",
       "tier": "B"
     },
     "create_user": {
+      "server": "POST <admin>/api/users",
       "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, self_chosen_name: 'bool' = False) -> 'int'",
       "tier": "A"
     },
     "csrf_token": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Optional[Request]' = None) -> 'str'",
       "tier": "A"
     },
     "current_user": {
+      "server": "GET /auth/me",
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "A"
     },
     "delete_role": {
+      "server": "POST <admin>/api/roles/delete",
       "sig": "(name: 'str', actor=None) -> 'dict'",
       "tier": "B"
     },
     "delete_user": {
+      "server": "POST <admin>/api/users/{uid}/delete",
       "sig": "(user_id: 'int') -> 'bool'",
       "tier": "B"
     },
     "disable_pin": {
+      "server": "POST /auth/pin/disable",
       "sig": "(user_id)",
       "tier": "B"
     },
     "ensure_admin": {
+      "server": "GET /auth/claim-admin",
       "sig": "(username, password) -> 'bool'",
       "tier": "A"
     },
     "ensure_csrf": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Request', response: 'Response') -> 'str'",
       "tier": "A"
     },
     "federated_only": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(user_id) -> 'bool'",
       "tier": "B"
     },
     "federation_bind_existing": {
+      "server": "library: server path follows with T-99 (linking local and IdP accounts)",
       "sig": "(source: 'str', *, mapping: 'Optional[dict]' = None, apply: 'bool' = False) -> 'dict'",
       "tier": "A"
     },
     "federation_unbind": {
+      "server": "library: server path follows with T-99 (linking local and IdP accounts)",
       "sig": "(source: 'str', user_id: 'int') -> 'int'",
       "tier": "A"
     },
     "find_user": {
+      "server": "GET <admin>/api/users",
       "sig": "(identifier) -> 'Optional[dict]'",
       "tier": "B"
     },
     "flow_cookie_name": {
+      "server": "library: the cookie's name from the configuration; the server sets the cookie itself",
       "sig": "(base: 'str') -> 'str'",
       "tier": "B"
     },
     "gate_issuer": {
+      "server": "GET /auth/gate/jwks.json",
       "sig": "() -> 'str'",
       "tier": "B"
     },
     "gate_jwks": {
+      "server": "GET /auth/gate/jwks.json",
       "sig": "() -> 'dict'",
       "tier": "B"
     },
     "gate_public_key": {
+      "server": "GET /auth/gate/jwks.json",
       "sig": "() -> 'str'",
       "tier": "B"
     },
     "gc": {
+      "server": "library: the server runs it itself, at start and every hour (gateway housekeeping)",
       "sig": "(attempts_older_than_sec: 'int' = 86400) -> 'dict'",
       "tier": "A"
     },
     "generate_recovery_codes": {
+      "server": "POST /auth/totp/recovery",
       "sig": "(user_id, n=None) -> 'list'",
       "tier": "B"
     },
     "get_user": {
+      "server": "GET <admin>/api/users",
       "sig": "(user_id) -> 'Optional[dict]'",
       "tier": "B"
     },
     "grant_mfa_enrollment": {
+      "server": "library: server path missing — T-130",
       "sig": "(user_id: 'int', minutes: 'int' = 60) -> 'int'",
       "tier": "A"
     },
     "has_pin": {
+      "server": "GET /auth/account.json",
       "sig": "(user_id) -> 'bool'",
       "tier": "B"
     },
     "has_role": {
+      "server": "GET /auth/forward",
       "sig": "(user, role, admin_implies=None) -> 'bool'",
       "tier": "A"
     },
     "identifier_taken": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(identifier, exclude_id=None) -> 'Optional[dict]'",
       "tier": "B"
     },
     "install_error_pages": {
+      "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "(app)",
       "tier": "A"
     },
     "install_https": {
+      "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "(app)",
       "tier": "A"
     },
     "is_admin": {
+      "server": "GET /auth/me",
       "sig": "(user) -> 'bool'",
       "tier": "A"
     },
     "issue_csrf": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(response: 'Response') -> 'str'",
       "tier": "A"
     },
     "json_body": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Request') -> 'dict'",
       "tier": "B"
     },
     "known_roles": {
+      "server": "GET <admin>/api/roles",
       "sig": "() -> 'list'",
       "tier": "B"
     },
     "lifespan": {
+      "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "(app=None)",
       "tier": "A"
     },
     "lift_lockout": {
+      "server": "library: the operator's `tinysesam unlock` on the server; the panel's password and TOTP resets lift their share",
       "sig": "(user_id, methods=None) -> 'int'",
       "tier": "B"
     },
     "list_api_keys": {
+      "server": "GET /auth/apikeys",
       "sig": "(user_id) -> 'list'",
       "tier": "B"
     },
     "list_app_passwords": {
+      "server": "GET /auth/app-passwords",
       "sig": "(user_id=None) -> 'list'",
       "tier": "B"
     },
     "list_resource_secrets": {
+      "server": "GET <admin>/api/resources",
       "sig": "()",
       "tier": "B"
     },
     "list_service_clients": {
+      "server": "GET /auth/oauth/services",
       "sig": "(user_id=None) -> 'list'",
       "tier": "B"
     },
     "login_fresh": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
       "tier": "A"
     },
     "login_password": {
+      "server": "POST /auth/login",
       "sig": "(request: 'Request', username: 'str', password: 'str', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
     },
     "login_pin": {
+      "server": "POST /auth/pin",
       "sig": "(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
     },
     "login_totp": {
+      "server": "POST /auth/totp",
       "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
       "tier": "A"
     },
     "logout": {
+      "server": "POST /auth/logout",
       "sig": "(request, response)",
       "tier": "A"
     },
     "magic_url": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(raw, base_url, purpose='login') -> 'str'",
       "tier": "B"
     },
     "mail_configured": {
+      "server": "library: a question of the embedding code; the server's mail comes from smtp_* in the file",
       "sig": "() -> 'bool'",
       "tier": "B"
     },
     "mfa_enrollment_allowed": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(user_id: 'int', now: 'Optional[int]' = None) -> 'bool'",
       "tier": "B"
     },
     "own_events": {
+      "server": "GET /auth/account",
       "sig": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
       "tier": "B"
     },
     "password_policy_error": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'",
       "tier": "B"
     },
     "peek_magic": {
+      "server": "GET /auth/magic/{token}",
       "sig": "(raw, purpose=None) -> 'Optional[dict]'",
       "tier": "B"
     },
     "pending_user": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "B"
     },
     "public_base": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
       "tier": "A"
     },
     "recovery_codes_remaining": {
+      "server": "GET /auth/account.json",
       "sig": "(user_id) -> 'int'",
       "tier": "B"
     },
     "redeem_magic": {
+      "server": "POST /auth/magic/{token}",
       "sig": "(raw, purpose=None) -> 'Optional[dict]'",
       "tier": "B"
     },
     "remove_passkey": {
+      "server": "POST /auth/passkey/delete",
       "sig": "(user_id: 'int', passkey_id: 'int', ip: 'Optional[str]' = None) -> 'bool'",
       "tier": "B"
     },
     "remove_resource_secret": {
+      "server": "POST <admin>/api/resources/{name}/delete",
       "sig": "(name)",
       "tier": "B"
     },
     "render_page": {
+      "server": "library: page layout of the library (ADR-16: library only)",
       "sig": "(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'",
       "tier": "A"
     },
     "request_email_change": {
+      "server": "POST /auth/account/email",
       "sig": "(user_id, new_email, base_url)",
       "tier": "B"
     },
     "require": {
+      "server": "GET /auth/forward",
       "sig": "(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)",
       "tier": "A"
     },
     "require_admin": {
+      "server": "GET /auth/forward",
       "sig": "(request: 'Request') -> 'dict'",
       "tier": "A"
     },
     "require_csrf": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Request', submitted)",
       "tier": "A"
     },
     "require_mfa": {
+      "server": "GET /auth/reauth",
       "sig": "(request: 'Request') -> 'dict'",
       "tier": "A"
     },
     "require_public_base": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
       "tier": "B"
     },
     "require_resource": {
+      "server": "GET /auth/resource/{name}",
       "sig": "(name: 'str')",
       "tier": "A"
     },
     "require_role": {
+      "server": "GET /auth/forward",
       "sig": "(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)",
       "tier": "A"
     },
     "require_session": {
+      "server": "GET /auth/forward",
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'",
       "tier": "A"
     },
     "require_user": {
+      "server": "GET /auth/forward",
       "sig": "(request: 'Request') -> 'dict'",
       "tier": "A"
     },
     "resource_unlocked": {
+      "server": "GET /auth/resource/{name}",
       "sig": "(request: 'Request', name) -> 'bool'",
       "tier": "B"
     },
     "revoke_api_key": {
+      "server": "POST /auth/apikeys/{key_id}/revoke",
       "sig": "(key_id, user_id=None)",
       "tier": "A"
     },
     "revoke_app_password": {
+      "server": "POST /auth/app-passwords/{pw_id}/revoke",
       "sig": "(pw_id, user_id=None, by_operator: 'bool' = False) -> 'bool'",
       "tier": "B"
     },
     "revoke_mfa_enrollment": {
+      "server": "library: server path missing — T-130",
       "sig": "(user_id: 'int') -> 'None'",
       "tier": "B"
     },
     "revoke_service_client": {
+      "server": "POST /auth/oauth/services/{client_id}/revoke",
       "sig": "(client_id, user_id=None) -> 'bool'",
       "tier": "B"
     },
     "role_catalog": {
+      "server": "GET <admin>/api/roles",
       "sig": "() -> 'list'",
       "tier": "B"
     },
     "role_usage": {
+      "server": "GET <admin>/api/roles",
       "sig": "(name: 'str') -> 'dict'",
       "tier": "B"
     },
     "rotate_session": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request, response) -> 'Optional[str]'",
       "tier": "A"
     },
     "router": {
+      "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "()",
       "tier": "A"
     },
     "safe_next": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(next_: 'str', request: 'Optional[Request]' = None) -> 'str'",
       "tier": "A"
     },
     "send_login_link": {
+      "server": "POST /auth/magic/request",
       "sig": "(email, base_url, next='/') -> 'bool'",
       "tier": "A"
     },
     "send_mail": {
+      "server": "library: mail of the embedding application; the server sends only its own",
       "sig": "(to, subject, text, html=None)",
       "tier": "B"
     },
     "send_password_reset": {
+      "server": "POST /auth/forgot",
       "sig": "(email, base_url) -> 'bool'",
       "tier": "A"
     },
     "send_verify_email": {
+      "server": "POST /auth/register",
       "sig": "(user_id, email, base_url) -> 'bool'",
       "tier": "A"
     },
     "session_user": {
+      "server": "GET /auth/me",
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "B"
     },
     "set_cookie": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(response, token, remember: 'Optional[bool]' = None)",
       "tier": "A"
     },
     "set_disabled": {
+      "server": "POST <admin>/api/users/{uid}/disable",
       "sig": "(user_id: 'int', disabled: 'bool') -> 'bool'",
       "tier": "A"
     },
     "set_initial_password": {
+      "server": "POST /auth/password/set",
       "sig": "(request: 'Request', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'",
       "tier": "A"
     },
     "set_mailer": {
+      "server": "library: a Python callable; the server sends through smtp_* of the file",
       "sig": "(fn)",
       "tier": "A"
     },
     "set_owner": {
+      "server": "POST <admin>/api/users/{uid}/owner",
       "sig": "(user_id: 'int', owner: 'bool') -> 'bool'",
       "tier": "A"
     },
     "set_password": {
+      "server": "POST <admin>/api/users/{uid}/password",
       "sig": "(user_id, password, *, by_operator: 'bool' = False)",
       "tier": "A"
     },
     "set_pin": {
+      "server": "POST /auth/pin/set",
       "sig": "(user_id, pin)",
       "tier": "A"
     },
     "set_rate_limiter": {
+      "server": "library: a Python object; the server uses the built-in limiter",
       "sig": "(limiter)",
       "tier": "B"
     },
     "set_resource_secret": {
+      "server": "POST <admin>/api/resources",
       "sig": "(name, secret, kind='pin', label=None)",
       "tier": "A"
     },
     "set_roles": {
+      "server": "POST <admin>/api/users/{uid}/roles",
       "sig": "(user_id, roles)",
       "tier": "B"
     },
     "set_security": {
+      "server": "POST <admin>/api/security",
       "sig": "(key, value)",
       "tier": "A"
     },
     "set_template": {
+      "server": "library: page layout of the library (ADR-16: library only)",
       "sig": "(name, fn)",
       "tier": "A"
     },
     "start_session": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'",
       "tier": "A"
     },
     "stepup_fresh": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
       "tier": "B"
     },
     "stepup_options": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(user) -> 'list[str]'",
       "tier": "A"
     },
     "t": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(key, **fmt) -> 'str'",
       "tier": "B"
     },
     "topbar": {
+      "server": "GET /auth/topbar.json",
       "sig": "(request: 'Request', *, nonce: 'str' = '', current: 'str' = '') -> 'str'",
       "tier": "B"
     },
     "topbar_data": {
+      "server": "GET /auth/topbar.json",
       "sig": "(user=None, *, base: 'Optional[str]' = None) -> 'dict'",
       "tier": "B"
     },
     "topbar_head": {
+      "server": "GET /auth/topbar.json",
       "sig": "(*, nonce: 'str' = '') -> 'str'",
       "tier": "B"
     },
     "totp_begin": {
+      "server": "POST /auth/totp/setup/start",
       "sig": "(user_id)",
       "tier": "B"
     },
     "totp_confirm": {
+      "server": "POST /auth/totp/setup",
       "sig": "(user_id, code) -> 'bool'",
       "tier": "B"
     },
     "totp_disable": {
+      "server": "POST /auth/totp/disable",
       "sig": "(user_id)",
       "tier": "A"
     },
     "totp_enrollment_user": {
+      "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "B"
     },
     "user_roles": {
+      "server": "GET /auth/forward",
       "sig": "(user) -> 'list'",
       "tier": "B"
     },
     "verify_api_key": {
+      "server": "GET /auth/forward",
       "sig": "(key)",
       "tier": "B"
     },
     "version": {
+      "server": "GET <admin>/api/version",
       "sig": "() -> 'str'",
       "tier": "B"
     }
   },
   "TinySesam.attributes": {
     "cfg": {
+      "server": "library: the configuration object; the server reads its file",
       "tier": "A",
       "value": "TinySesamConfig; the instance passed to the constructor: True; frozen: False"
     },
     "on_security_event": {
+      "server": "library: a Python hook; the server tells the holder by mail (notify_new_access)",
       "tier": "A",
       "value": "Optional[Callable[[str, dict, dict], Any]] = None; hook(str, dict, dict); account keys: display_name, email, id, username; called synchronously (1 call per change); after the change is written; a failing hook does not abort the operation (change written)"
     }
   },
   "TinySesam.constants": {
     "FEDERATED_SOURCES": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
       "value": "('ldap', 'saml')"
     },
     "FORWARD_HEADERS_DEFAULT": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "A",
       "value": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth', 'kind': 'Remote-Kind'}"
     },
     "FORWARD_HEADERS_MANDATORY": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "A",
       "value": "('kind',)"
     },
     "MFA_ENROLLMENT_MODES": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
       "value": "('first_login', 'grace', 'strict')"
     },
     "NAME_BINDING_REFUSALS": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
       "value": "{'address_as_name': 'the name says nothing about the person (control characters, or the unverified mail value of a source that is not trusted)', 'invalid_identifier': 'the identifier is unusable (leading/trailing or control characters, or placeholder form)', 'conflict': 'the identifier already belongs to another account', 'bound_elsewhere': 'the account already carries a different identifier', 'self_chosen_name': 'the name was chosen by the person (sign-up or rename) and says nothing about who has that name in the directory', 'name_from_other_source': 'the name comes from another source that created the account (OIDC, SAML or LDAP) and says nothing about who has that name in this one', 'binding_window_expired': 'the window for binding by name has passed (federation_name_binding_days)'}"
     },
     "NAME_MAX": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
       "value": "150"
     },
     "PAGES": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
       "value": "('account', 'account_setup', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'qr_approve', 'qr_login', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
     },
     "SECURITY_EVENTS": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "A",
       "value": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed', 'oauth_device_connected', 'oauth_device_revoked', 'oauth_token_reuse', 'signin_link_issued', 'device_signed_in', 'app_password_created', 'app_password_revoked', 'app_passwords_revoked', 'oauth_service_paired', 'oauth_service_revoked', 'signed_in_after_failures', 'approval_approved', 'access_reset')"
     },
     "TOKEN_PATHS": {
+      "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
       "value": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}"
     }
@@ -861,14 +1008,17 @@
   },
   "TinySesam.properties": {
     "csrf_cookie_name": {
+      "server": "library: the cookie's name from the configuration; the server sets the cookie itself",
       "sig": "() -> 'str'",
       "tier": "A"
     },
     "resource_cookie_name": {
+      "server": "library: the cookie's name from the configuration; the server sets the cookie itself",
       "sig": "() -> 'str'",
       "tier": "A"
     },
     "session_cookie_name": {
+      "server": "library: the cookie's name from the configuration; the server sets the cookie itself",
       "sig": "() -> 'str'",
       "tier": "A"
     }
@@ -1769,66 +1919,84 @@
   },
   "TinySesamConfig.methods": {
     "active_directory": {
+      "server": "library: a preset in Python; the file sets the same fields",
       "sig": "(*, ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)",
       "tier": "A"
     },
     "enabled_methods": {
+      "server": "library: a question of the embedding code about its configuration",
       "sig": "() -> 'list[str]'",
       "tier": "B"
     },
     "entra_id": {
+      "server": "library: a preset in Python; the file sets the same fields",
       "sig": "(*, tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
       "tier": "A"
     },
     "local_accounts": {
+      "server": "library: a preset in Python; the file sets the same fields",
       "sig": "(**overrides)",
       "tier": "A"
     },
     "oidc_gateway": {
+      "server": "library: a preset in Python; the file sets the same fields",
       "sig": "(*, issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
       "tier": "A"
     },
     "pin_as_first_factor": {
+      "server": "library: a question of the embedding code about its configuration",
       "sig": "() -> 'bool'",
       "tier": "B"
     },
     "validate": {
+      "server": "library: re-checks a configuration changed in Python; the server's file is checked at start",
       "sig": "() -> 'list[str]'",
       "tier": "B"
     }
   },
   "exports": {
     "ConfigError": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "LoginResult": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "MailNotConfigured": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "MissingExtra": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "PasswordChangeResult": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "RoleError": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "B"
     },
     "StateError": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "TinySesam": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "TinySesamConfig": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "TinySesamError": {
+      "server": "library: a Python type; the server answers in JSON and HTTP status",
       "tier": "A"
     },
     "current_version": {
+      "server": "GET <admin>/api/version",
       "tier": "B"
     }
   },

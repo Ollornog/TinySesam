@@ -31,6 +31,10 @@ The gateway is today an OIDC-only preset configured by environment variables (no
   unknown keys refused, the gateway variables as overlay (`gateway.ENVIRONMENT_FIELDS`, held to the preset path per
   variable), panel, account page and approvals mount through `auth.router()` when the file switches them on.
   Suite `tests/test_server_config.py`.
+- 2026-11-27, part 2: parity test in `tests/test_api_surface.py` (no new guard): `server` on 168 tier A/B entries of
+  `tests/api_surface.json` (route or `library: <reason>`), areas decided as a whole (`PARITY_AREA_REASONS`), the
+  server built from a configuration file with every feature on (`server_routes`), routes behind a missing extra
+  checked against the static scan. Gaps: `grant_mfa_enrollment`, `revoke_mfa_enrollment` → [T-130](T-130-server-path-for-the-mfa-enrollment-pass.md).
 
 ## Acceptance
 - Example **Ex1** (a Go application behind the server, local accounts): sign-in, panel and account API without a line of Python in the application.
