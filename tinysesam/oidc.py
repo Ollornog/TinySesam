@@ -837,9 +837,19 @@ def register_oidc_routes(router, auth):
         # OIDC groups → local roles (if mapped). The mapping may differ per application:
         # the same directory group can be called "editor" in app A and
         # nothing at all in app B. Without an entry the global mapping applies, i.e. the behavior of 0.18.0.
-        _grp = info.get(cfg.oidc_group_claim) or []
-        _groups = _grp if isinstance(_grp, list) else [_grp]
-        auth.apply_idp_groups(uid, _groups, entry["group_role_map"])
+        # A MISSING claim is not an empty list (T-99): a provider that leaves it out (scope `groups` not asked, a
+        # userinfo endpoint without it) says nothing about the groups, and reading it as "no groups" withdrew every
+        # mapped role and the provider's admin flag at each sign-in. Only a claim that is there — also an empty one —
+        # synchronises; the periodic re-check (`_oidc_swap`) follows the same rule.
+        _groups = []          # also the groups noted on this session's approval below: none named, none noted
+        if cfg.oidc_group_claim in info:
+            _grp = info.get(cfg.oidc_group_claim) or []
+            _groups = _grp if isinstance(_grp, list) else [_grp]
+            auth.apply_idp_groups(uid, _groups, entry["group_role_map"])
+        elif entry["group_role_map"]:
+            security.seclog.warning("OIDC sign-in without the group claim %s (user_id=%s): the mapped roles stay as "
+                                    "they were — ask the provider for it (oidc_scopes, e.g. \"groups\")",
+                                    security.for_log(cfg.oidc_group_claim), uid)
 
         # client_ip instead of the raw peer IP — behind a proxy the peer is the proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")

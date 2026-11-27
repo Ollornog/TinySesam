@@ -12,10 +12,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   start; a key that is no field ends the start with the nearest field named; the gateway's environment variables
   overlay the file when they are set (an empty one changes nothing). Without `TINYSESAM_CONFIG` a gateway runs exactly
   as before.
+- The panel opens and closes the setup window of an account (T-130, `grant_mfa_enrollment` / `revoke_mfa_enrollment`):
+  `POST <admin>/api/users/{uid}/mfa-enrollment` (1–1440 minutes, default 60; a fresh confirmation, owner model) and
+  `…/delete`; the account page shows "Allow setup for 1 hour" for an account without TOTP, and until when it is open.
+  Both functions now have a server route (parity).
 - Library–server parity (T-97, ADR-16): every tier A/B function of the Python surface names in `tests/api_surface.json`
   the route the server serves for it, or `library: <reason>`. `tests/test_api_surface.py` builds the server from a
   configuration file with every feature on and is red when a named route is not served, a name has neither, or a new
-  area of the surface is undecided. Two gaps found: the MFA enrollment pass has no server route yet (T-130).
+  area of the surface is undecided. The two gaps it found, the MFA enrollment window, are closed (T-130).
 - An operator resets a lost authenticator app (T-98): the admin panel's account page shows "Authenticator app (TOTP)"
   with a "Reset" button (`GET`/`POST <admin>/api/users/{uid}/totp[/reset]`, administrators only, owner model, a fresh
   confirmation), and `tinysesam reset-totp --db <file> <user>` does the same without a running service. The TOTP goes
@@ -31,11 +35,22 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   a pin pull request of a breaking release as a draft. The hygiene test allows the hold — exactly the whole line
   `gh pr ready "$PR" --repo "$REPO" --undo` in `ausfuehren` (without `--undo` it would release a held pull request) —
   and in `entscheiden` the read-only app token for the source repo, no other action.
+- A breaking commit since the latest release tag needs a line in `[Unreleased]` with one of the marks the fleet's
+  auto-merge reads (`breaking`, `Upgrading from`, `Upgrade-Hinweis`; read from the generated workflow), otherwise the
+  hygiene test is red: the pin pull request of such a release is then held as a draft by the shared test kit 0.69
+  instead of being merged unseen (T-129).
 - The hygiene test no longer carries branches for test kits before 0.65: the release automation's halt must be the
   0.65+ shape (green with a notice), and every whole-line permission of the auto-merge must be met (T-128).
 - CodeQL notes fixed in code (unused imports, a module imported both ways); four `py/overly-permissive-file` findings
   that resurfaced at moved lines — the 0640 security log and three negative tests — are dismissed with their reason
   and recorded in `.github/codeql/accepted.md`.
+
+### Fixed
+
+- An OIDC sign-in without the group claim (the scope `groups` not asked, a provider that leaves it out) no longer
+  withdraws the mapped roles and the provider's admin flag: a missing claim is not an empty list (T-99). Only a claim
+  that is there synchronises, an empty one included; a missing one leaves the roles and writes a warning to the
+  security log. The periodic re-check already followed this rule; `allowed_groups` still refuses such a sign-in.
 
 ## [0.31.0] — 2026-11-26
 

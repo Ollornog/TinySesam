@@ -270,7 +270,8 @@ Code-Liste nur stolpern würden. Die Einrichtung zeigt dann keine Code-Seite und
 `/auth/totp/recovery` antwortet `404`, die Kontoseite bietet keine Code-Aktion an, und nirgends wird ein Code
 angenommen. Codes, die ein Konto schon hat, bleiben unangetastet in der Datenbank (wieder einschalten, und sie gelten
 wieder). Der Preis: Eine verlorene Authenticator-App braucht jemanden, der sie zurücksetzt — das Admin-Panel (Kontoseite,
-„Authenticator-App (TOTP)" → „Zurücksetzen", mit Step-up), `tinysesam reset-totp` auf der Datenbank, `reset_access`
+„Authenticator-App (TOTP)" → „Zurücksetzen", mit Step-up; „Einrichtung 1 Stunde erlauben" öffnet das Einrichtungsfenster
+`grant_mfa_enrollment` für ein Konto, das nicht selbst einrichten darf), `tinysesam reset-totp` auf der Datenbank, `reset_access`
 einer Anwendung (Scope `users:reset`, unten) oder euer eigener Code (`totp_disable`, `grant_mfa_enrollment`, dann
 `create_signin_link`). `config_check` warnt, wenn das Panel aus ist und keine Anwendung `users:reset` hat.
 **`totp_app_hint`** setzt einen kurzen Hinweis je Sprache über den QR-Code — welche App man installiert:
@@ -3069,7 +3070,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**138 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**139 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

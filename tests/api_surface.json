@@ -332,7 +332,7 @@
       "tier": "B"
     },
     "grant_mfa_enrollment": {
-      "server": "library: server path missing — T-130",
+      "server": "POST <admin>/api/users/{uid}/mfa-enrollment",
       "sig": "(user_id: 'int', minutes: 'int' = 60) -> 'int'",
       "tier": "A"
     },
@@ -567,7 +567,7 @@
       "tier": "B"
     },
     "revoke_mfa_enrollment": {
-      "server": "library: server path missing — T-130",
+      "server": "POST <admin>/api/users/{uid}/mfa-enrollment/delete",
       "sig": "(user_id: 'int') -> 'None'",
       "tier": "B"
     },
@@ -3107,6 +3107,14 @@
       "tier": "B"
     },
     "POST <admin>/api/users/{uid}/keys": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/mfa-enrollment": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/mfa-enrollment/delete": {
       "keys": [],
       "tier": "B"
     },
