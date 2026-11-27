@@ -1381,7 +1381,8 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 
 **Local** (password, passkey, TOTP, PIN, sign-in link), **IdP** (OIDC, SAML or LDAP: TinySesam stores a mirror and the
 role mapping) and **mixed** (both in one installation, an IdP account may be linked to a local one by a person with a
-step-up on both sides, never silently by the same address).
+step-up on both sides, never silently by the same address). The account page links OIDC, SAML and LDAP identities and
+unlinks them again — never the last way in.
 
 ### The two modes of operation
 
@@ -3006,7 +3007,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**145 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**147 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

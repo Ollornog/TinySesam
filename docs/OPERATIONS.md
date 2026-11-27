@@ -574,6 +574,23 @@ side and does not change:
     provider. Refusals: audit `oidc_link_refused` with `reason=session|stale|identity_taken|already_linked`; success:
     `oidc_linked by=holder`. *By an administrator:* hand the person a sign-in link (panel or `issue_login_link`);
     signed in by it, the session is fresh and the person links as above.
+  - *SAML and LDAP, by the person* (T-99): the same rules. SAML: "Link with <provider>" (`POST /auth/saml/link`) sends
+    an AuthnRequest with `ForceAuthn`; the ACS binds the assertion's stable identifier (`NameID`, or `saml_attr_id`)
+    only in the starting session, after an `AuthnInstant` from after the request, through `saml_allowed_groups` — a
+    link flow never signs anyone in and never creates an account. LDAP: "Link directory account"
+    (`POST /auth/ldap/link`, name and password of the directory entry) binds the entry's stable identifier
+    (`ldap_attr_id`; without one nothing is bound) after a bind with that password — booked like a sign-in under the
+    typed name (throttle, lock, `failed login` for fail2ban; an outage is a 503 and no attempt), refused when the
+    typed name is another local account's. Audit `saml_linked`/`ldap_linked by=holder`, refusals
+    `saml_link_refused`/`ldap_link_refused` with `reason=session|stale|group|identity_taken|already_linked|
+    identifier|credentials|identifier_of_other_account`.
+  - *Unlinking, by the person* (T-99): the account page lists the linked providers with "Unlink"
+    (`POST /auth/identities/unlink`, `source=oidc|saml|ldap`, CSRF, a fresh confirmation) — never the last way in: a
+    password, a passkey, a PIN as first factor, or an identity at another switched-on provider must remain (409, audit
+    `<source>_unlink_refused reason=last_way_in`; the page shows the reason instead of the button). Success:
+    `<source>_unlinked by=holder`. A released SAML or LDAP identity is never bound back by the name at a later sign-in
+    (`unlinked_by_holder` in `NAME_BINDING_REFUSALS`) until the person links again or the operator opens it with
+    `auth.federation_unbind(source, user_id)`.
   - *By the operator, by `sub`:* `tinysesam oidc-link --db <file> <user> --issuer <issuer> --sub <sub>` pre-registers
     the identity; its first sign-in lands in that account (audit `oidc_linked by=cli`).
   - *By the verified address, opt-in:* `oidc_bind_precreated = true` binds a first sign-in whose provider sends
@@ -950,6 +967,10 @@ there.
    factors or the new "Confirm with <provider>" button, which sends `ForceAuthn`. Nothing to do for most installations;
    an identity provider that ignores `ForceAuthn` makes the button fail with a message — then the account confirms
    with its own factors or by signing in again. `saml_reauth_check = false` restores the behaviour up to 0.31.x.
+2. **A new reason in `NAME_BINDING_REFUSALS`: `unlinked_by_holder`** (T-99, tier B). A person who unlinks a SAML or
+   LDAP identity on the account page is never bound back by the name at a later sign-in; the refusal carries the new
+   code in the audit line `<source>_name_binding_closed reason=…` and in the report of `federation_bind_existing`.
+   Code that matches the reasons exhaustively handles it; nothing changes for existing data.
 <!-- upgrade-list 0.31.x:end -->
 
 ### From a version before 0.30.0: two steps

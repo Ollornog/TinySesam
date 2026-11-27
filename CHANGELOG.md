@@ -17,10 +17,23 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    factors or the new "Confirm with <provider>" button, which sends `ForceAuthn`. Nothing to do for most installations;
    an identity provider that ignores `ForceAuthn` makes the button fail with a message — then the account confirms
    with its own factors or by signing in again. `saml_reauth_check = false` restores the behaviour up to 0.31.x.
+2. **A new reason in `NAME_BINDING_REFUSALS`: `unlinked_by_holder`** (T-99, tier B). A person who unlinks a SAML or
+   LDAP identity on the account page is never bound back by the name at a later sign-in; the refusal carries the new
+   code in the audit line `<source>_name_binding_closed reason=…` and in the report of `federation_bind_existing`.
+   Code that matches the reasons exhaustively handles it; nothing changes for existing data.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- Linking SAML and LDAP identities, and unlinking, by the person (T-99, ADR-18) — the rules of the OIDC link. The
+  account page offers "Link with <provider>" for SAML (`POST /auth/saml/link`: `ForceAuthn`, an `AuthnInstant` from
+  after the request, only the starting session, `saml_allowed_groups`; a link flow never signs in or creates an
+  account) and "Link directory account" for LDAP (`POST /auth/ldap/link`: a bind with the directory password, booked
+  like a sign-in under the typed name, never the name of another local account, only an entry with a stable
+  identifier). Linked providers are listed with "Unlink" (`POST /auth/identities/unlink`, OIDC, SAML and LDAP; CSRF, a
+  fresh confirmation, never the last way in — the page shows the reason instead of the button). A released SAML or
+  LDAP identity is never bound back by the name (`unlinked_by_holder`). Audit `<source>_linked`, `<source>_link_refused`,
+  `<source>_unlinked`, `<source>_unlink_refused`. Suites `tests/test_identity_link.py`, `tests/test_saml_link.py`.
 - Approvals confirmed through the SAML provider (T-99): an account bound to a SAML identity gets "Confirm with
   <provider>" on the approval page (`/auth/saml/login?approval=<id>`, always `ForceAuthn`); an `AuthnInstant` from
   after the request leaves a one-time grant for THAT approval and that account (`stepup_amr` `["saml"]`), a stale one

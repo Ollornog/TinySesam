@@ -395,12 +395,12 @@ _PART_METHODS = {
         "recovery_codes_before", "set_password_hash", "set_pin_hash", "set_totp", "update_webauthn_signcount",
     ),
     "federation": (
-        "account_sources", "clear_sign_in_factors", "confirm_idp", "discard_oidc_session", "federation_since",
+        "account_sources", "clear_sign_in_factors", "close_name_binding", "confirm_idp", "discard_oidc_session", "federation_since",
         "get_federated_identifier", "get_federated_user", "get_oidc_user", "has_foreign_identity",
         "idp_refused", "is_oidc_account", "link_federated", "link_oidc", "mark_first_login", "mark_login",
-        "name_binding_close", "name_binding_unclosed", "oidc_session_handle", "open_name_binding",
+        "name_binding_close", "name_binding_closed", "name_binding_unclosed", "oidc_session_handle", "open_name_binding",
         "password_must_change", "rebind", "set_mfa_enroll_until", "set_password_must_change",
-        "unlink_federated", "without_binding",
+        "unlink_federated", "unlink_oidc", "without_binding",
     ),
     "gate": (
         "claim_oidc_session", "confirm_oidc_grant", "create_gate_link", "drop_oidc_grant",

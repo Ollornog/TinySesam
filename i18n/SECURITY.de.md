@@ -253,7 +253,11 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   es begonnen hat (ein POST mit dem CSRF-Token — eine Verknüpfung, die eine fremde Seite starten könnte, bände die
   Identität, als die der Browser beim Anbieter angemeldet ist); der Betreiber trägt ein `sub` vorab ein (`tinysesam
   oidc-link`). Nur das Opt-in `oidc_bind_precreated` nutzt eine ausdrücklich bestätigte Adresse, und nur für ein Konto,
-  das nie jemand benutzt hat.
+  das nie jemand benutzt hat. Dasselbe gilt für SAML (`ForceAuthn`, ein frischer `AuthnInstant`; eine Verknüpfung meldet
+  nie an und legt nie ein Konto an) und LDAP (eine Bindung mit dem Verzeichnispasswort, gebucht wie eine Anmeldung unter
+  dem eingetippten Namen, nie der Name eines anderen lokalen Kontos). Die Person löst eine Verknüpfung auch selbst, mit
+  frischer Bestätigung — nie die letzte Anmeldung —, und eine gelöste SAML- oder LDAP-Identität wird bei der nächsten
+  Anmeldung nicht über den Namen zurückgebunden.
 - **Eigene Login-, Step-up- oder Passwortwechsel-Seite: auf den Bausteinen bauen.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   und `change_password` (Stufe A, seit 0.22.0) drosseln, zählen, sperren und protokollieren genau

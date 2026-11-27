@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 188 of 225
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 413 · B 317 names.
+**Status:** A 413 · B 320 names.
 
 ## A · Methods of `TinySesam`
 
@@ -736,7 +736,7 @@ Value: `('first_login', 'grace', 'strict')`
 
 Why an account is not bound via the name (`_rebinding_reason`) — short code and explanation, for the report of `federation_bind_existing` (`reason`).
 
-Keys: `address_as_name`, `invalid_identifier`, `conflict`, `bound_elsewhere`, `self_chosen_name`, `name_from_other_source`, `binding_window_expired`
+Keys: `address_as_name`, `invalid_identifier`, `conflict`, `bound_elsewhere`, `self_chosen_name`, `name_from_other_source`, `binding_window_expired`, `unlinked_by_holder`
 
 ### `NAME_MAX` — Constant
 
@@ -1158,7 +1158,9 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/email/{token}` | `form:_csrf` |
 | GET | `/auth/forgot` | — |
 | POST | `/auth/forgot` | `form:_csrf`, `form:email` |
+| POST | `/auth/identities/unlink` | `form:_csrf`, `form:source` |
 | GET | `/auth/invite/{token}` | — |
+| POST | `/auth/ldap/link` | `form:_csrf`, `form:password`, `form:username` |
 | GET | `/auth/login` | `query:app`, `query:error`, `query:gate_host`, `query:next`, `query:signed_out` |
 | POST | `/auth/login` | `form:_csrf`, `form:next`, `form:password`, `form:remember`, `form:username` |
 | GET | `/auth/logout` | — |
@@ -1210,6 +1212,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/reset` | `form:_csrf`, `form:password`, `form:token` |
 | GET | `/auth/resource/{name}` | `query:error`, `query:next` |
 | POST | `/auth/resource/{name}` | `form:_csrf`, `form:next`, `form:secret` |
+| POST | `/auth/saml/link` | `form:_csrf` |
 | GET | `/auth/saml/login` | `query:approval`, `query:next`, `query:reauth` |
 | GET | `/auth/sessions` | — |
 | POST | `/auth/sessions/revoke` | — |

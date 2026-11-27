@@ -355,10 +355,15 @@ _PART_METHODS = {
         "version",
     ),
     "ldap": (
-        "_check_ldap", "_federation_since", "_identifier_two_accounts", "_ldap_name_proven", "_ldap_trusted",
+        "_check_ldap", "_federation_since", "_identifier_two_accounts", "_ldap_bind", "_ldap_name_proven",
+        "_ldap_trusted",
         "_name_binding_permitted", "_name_deadline_unclosed", "_rebinding_reason",
         "_report_name_binding_inventory", "_resolve_foreign_identity", "federation_bind_existing",
         "federation_unbind",
+    ),
+    "federated_link": (
+        "_bind_identity", "_finish_saml_link", "_identities_view", "_link_directory", "_linked_sources",
+        "_other_way_in", "_unlink_identity",
     ),
     "links": (
         "_app_link_refused", "_duration", "_signin_link", "_verify_mail", "create_invite", "create_magic_token",
@@ -377,7 +382,7 @@ _PART_METHODS = {
         "require_resource", "resource_unlocked", "set_resource_secret",
     ),
     "saml": (
-        "_address_proven_by_source", "_check_saml",
+        "_address_proven_by_source", "_check_saml", "_saml_identifier",
     ),
     "signin": (
         "_extract_api_key", "app_password_hosts",
@@ -990,6 +995,7 @@ class TinySesam(metaclass=_BuildingBlocks):
                                   "in this one",
         "binding_window_expired": "the window for binding by name has passed "
                                   "(federation_name_binding_days)",
+        "unlinked_by_holder": "the person unlinked this source's identity from the account themselves",
     }
     #: The same reasons in the security log (the audit line `<source>_name_binding_closed … reason=` carries
     #: the code itself).
@@ -1008,6 +1014,7 @@ class TinySesam(metaclass=_BuildingBlocks):
                                   "that name in this one",
         "binding_window_expired": "the window for binding by name has "
                                   "passed (federation_name_binding_days)",
+        "unlinked_by_holder": "the person unlinked this source's identity from the account themselves",
     }
 
     @staticmethod

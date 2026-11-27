@@ -190,6 +190,25 @@ def account_sources(self, user_ids=None) -> dict:
     return out
 
 
+def unlink_oidc(self, user_id: int) -> int:
+    """Release every OIDC identity of an account (T-99: the person unlinks it). Returns how many were released."""
+    return self._exec("DELETE FROM oidc_identity WHERE user_id=?", (int(user_id),)).rowcount
+
+
+def close_name_binding(self, source: str, user_id: int) -> None:
+    """The person released this source's identity themselves (T-99): a row in `name_binding` with `until` = 0 — the
+    next sign-in never binds the account by its name again (`_rebinding_reason` -> `unlinked_by_holder`). Lifted when
+    the person links again (`rebind` deletes the row) or the operator opens the binding (`federation_unbind` replaces
+    it); deleted with the account."""
+    self._exec("INSERT OR REPLACE INTO name_binding(source, user_id, until) VALUES (?,?,0)", (source, int(user_id)))
+
+
+def name_binding_closed(self, source: str, user_id: int) -> bool:
+    """Has the person released this source's identity themselves (`close_name_binding`)?"""
+    return self._one("SELECT 1 AS x FROM name_binding WHERE source=? AND user_id=? AND until = 0",
+                     (source, int(user_id))) is not None
+
+
 def unlink_federated(self, source: str, user_id: int) -> int:
     """Release the binding of an account for a source (operator path after a move)."""
     return self._exec("DELETE FROM federated_identity WHERE source=? AND user_id=?",

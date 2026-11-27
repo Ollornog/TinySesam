@@ -793,7 +793,7 @@
     "NAME_BINDING_REFUSALS": {
       "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
-      "value": "{'address_as_name': 'the name says nothing about the person (control characters, or the unverified mail value of a source that is not trusted)', 'invalid_identifier': 'the identifier is unusable (leading/trailing or control characters, or placeholder form)', 'conflict': 'the identifier already belongs to another account', 'bound_elsewhere': 'the account already carries a different identifier', 'self_chosen_name': 'the name was chosen by the person (sign-up or rename) and says nothing about who has that name in the directory', 'name_from_other_source': 'the name comes from another source that created the account (OIDC, SAML or LDAP) and says nothing about who has that name in this one', 'binding_window_expired': 'the window for binding by name has passed (federation_name_binding_days)'}"
+      "value": "{'address_as_name': 'the name says nothing about the person (control characters, or the unverified mail value of a source that is not trusted)', 'invalid_identifier': 'the identifier is unusable (leading/trailing or control characters, or placeholder form)', 'conflict': 'the identifier already belongs to another account', 'bound_elsewhere': 'the account already carries a different identifier', 'self_chosen_name': 'the name was chosen by the person (sign-up or rename) and says nothing about who has that name in the directory', 'name_from_other_source': 'the name comes from another source that created the account (OIDC, SAML or LDAP) and says nothing about who has that name in this one', 'binding_window_expired': 'the window for binding by name has passed (federation_name_binding_days)', 'unlinked_by_holder': \"the person unlinked this source's identity from the account themselves\"}"
     },
     "NAME_MAX": {
       "server": "library: a Python constant; its value is the server's behaviour",
@@ -2801,6 +2801,21 @@
       ],
       "tier": "A"
     },
+    "POST /auth/identities/unlink": {
+      "keys": [
+        "form:_csrf",
+        "form:source"
+      ],
+      "tier": "B"
+    },
+    "POST /auth/ldap/link": {
+      "keys": [
+        "form:_csrf",
+        "form:password",
+        "form:username"
+      ],
+      "tier": "B"
+    },
     "POST /auth/login": {
       "keys": [
         "form:_csrf",
@@ -3009,6 +3024,12 @@
     "POST /auth/saml/acs": {
       "keys": [],
       "tier": "A"
+    },
+    "POST /auth/saml/link": {
+      "keys": [
+        "form:_csrf"
+      ],
+      "tier": "B"
     },
     "POST /auth/sessions/revoke": {
       "keys": [],

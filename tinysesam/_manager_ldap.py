@@ -213,7 +213,10 @@ def _rebinding_reason(self, source: str, identifier: str, account, *, name_prove
       the creation of the account, whichever is later (`_name_deadline_unclosed`). The existing-data binding does not check
       it — it IS the operator's explicit path.
 
-    The last three are lifted by a binding opened by the operator (`federation_unbind`,
+    * **Released by the person** (T-99, `unlinked_by_holder`): the holder unlinked this source's identity on the
+      account page — a later sign-in under the same name must not bind it back silently.
+
+    The last four are lifted by a binding opened by the operator (`federation_unbind`,
     table `name_binding`)."""
     if not name_proven or name_invalid(str(account["username"] or "")):
         return "address_as_name"
@@ -229,6 +232,8 @@ def _rebinding_reason(self, source: str, identifier: str, account, *, name_prove
     now = _manager._now()
     if self.store.name_binding_unclosed(source, account["id"], now):
         return None
+    if self.store.name_binding_closed(source, account["id"]):
+        return "unlinked_by_holder"      # T-99: the person released the identity — never again by the name alone
     try:
         itself = bool(account["name_self_chosen"])
     except (IndexError, KeyError):
@@ -546,54 +551,9 @@ def _check_ldap(self, username, password) -> Optional[dict]:
     then secured only for the counters, G5-N1)."""
     if not self.ldap:
         return None
-    from .ldap_ import RequestAborted, DirectoryNotReachable, input_too_long
-    # Longer than any real sign-in: not to the directory, but treated like a wrong
-    # password (failed attempt, `failed login`). Here and not only in the client, so that it also applies to
-    # a client set by hand — and before the marker hands out a probe slot.
-    # Before, the login route sent every length through: a password with 270,000 characters
-    # made slapd close the connection (see `ldap_.RequestAborted`).
-    if input_too_long(username, password):
-        return None
-    # After an outage the directory is not even asked for a while: the route
-    # has already pre-booked the attempt (R7-2) and takes it back only once the outage
-    # is reported — without the marker it would hang on every attempt until the timeout and
-    # meanwhile lock out bystanders (rationale at `ldap_.FailureMarker`).
-    marker = self._ldap_failure
-    probe = marker.access()
-    try:
-        info = self.ldap.authenticate(username, password)
-    except RequestAborted:
-        # Only THIS request failed, quickly and after sending its inputs —
-        # no evidence of an outage. Arming the marker would give the sender of
-        # any crafted sign-in a switch that turns LDAP off for everyone. If it was the
-        # probe, the next sign-in asks again.
-        if probe:
-            marker.release()
-        raise
-    except DirectoryNotReachable as e:
-        marker.failed(e, was_probe=probe)
-        raise
-    except BaseException:
-        if probe:
-            marker.release()
-        raise
-    marker.reached()
+    info = self._ldap_bind(username, password)
     if not info:
         return None
-    # Group gate against memberOf — by DN components, not as a substring (F-19):
-    # `staff` would otherwise also let `cn=staffextern,…` through. `group_match="substring"` brings
-    # back the old comparison explicitly.
-    allowed = self.cfg.ldap_allowed_groups
-    substring = self.cfg.group_match == "substring"
-    if allowed:
-        groups = info.get("groups") or []
-        if not substring:
-            for a in allowed:
-                _substring_notice(a, groups, "ldap_allowed_groups")
-        if not any(group_fits(a, g, substring, dn=True) for a in allowed for g in groups):
-            self.audit("ldap_group_denied", username,
-                       detail=f"required={sorted(str(a) for a in allowed)}")
-            return None
     # Not trusted and the input is an address (a search filter over `mail`, "sign-in with
     # name or email"): then the name is the same unverified address — as account name and
     # `Remote-User` it would occupy the owner's identifier, and bound via the name
@@ -660,3 +620,61 @@ def _check_ldap(self, username, password) -> Optional[dict]:
     # `substring=True` was hard-wired here, and `group_match` had no effect for LDAP.
     self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map, dn=True)
     return self._as_dict(self.store.get_user(u["id"]))   # fresh (mapped roles)
+
+
+def _ldap_bind(self, username, password) -> Optional[dict]:
+    """The directory's answer to name and password — the entry (`id`, `name`, `email`, `groups`, …) or None (wrong,
+    too long, or refused by `ldap_allowed_groups`). The one place that binds: the sign-in (`_check_ldap`) and the link
+    by the person (`_link_directory`, T-99) share the outage marker and the group gate. Raises
+    `ldap_.DirectoryNotReachable` on an outage (the caller takes the attempt back, F-23)."""
+    if not self.ldap:
+        return None
+    from .ldap_ import RequestAborted, DirectoryNotReachable, input_too_long
+    # Longer than any real sign-in: not to the directory, but treated like a wrong
+    # password (failed attempt, `failed login`). Here and not only in the client, so that it also applies to
+    # a client set by hand — and before the marker hands out a probe slot.
+    # Before, the login route sent every length through: a password with 270,000 characters
+    # made slapd close the connection (see `ldap_.RequestAborted`).
+    if input_too_long(username, password):
+        return None
+    # After an outage the directory is not even asked for a while: the route
+    # has already pre-booked the attempt (R7-2) and takes it back only once the outage
+    # is reported — without the marker it would hang on every attempt until the timeout and
+    # meanwhile lock out bystanders (rationale at `ldap_.FailureMarker`).
+    marker = self._ldap_failure
+    probe = marker.access()
+    try:
+        info = self.ldap.authenticate(username, password)
+    except RequestAborted:
+        # Only THIS request failed, quickly and after sending its inputs —
+        # no evidence of an outage. Arming the marker would give the sender of
+        # any crafted sign-in a switch that turns LDAP off for everyone. If it was the
+        # probe, the next sign-in asks again.
+        if probe:
+            marker.release()
+        raise
+    except DirectoryNotReachable as e:
+        marker.failed(e, was_probe=probe)
+        raise
+    except BaseException:
+        if probe:
+            marker.release()
+        raise
+    marker.reached()
+    if not info:
+        return None
+    # Group gate against memberOf — by DN components, not as a substring (F-19):
+    # `staff` would otherwise also let `cn=staffextern,…` through. `group_match="substring"` brings
+    # back the old comparison explicitly.
+    allowed = self.cfg.ldap_allowed_groups
+    substring = self.cfg.group_match == "substring"
+    if allowed:
+        groups = info.get("groups") or []
+        if not substring:
+            for a in allowed:
+                _substring_notice(a, groups, "ldap_allowed_groups")
+        if not any(group_fits(a, g, substring, dn=True) for a in allowed for g in groups):
+            self.audit("ldap_group_denied", username,
+                       detail=f"required={sorted(str(a) for a in allowed)}")
+            return None
+    return info
