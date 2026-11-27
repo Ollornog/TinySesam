@@ -38,7 +38,7 @@
     "check": "npm run lint && npm run typecheck && npm test"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.8",
+    "@biomejs/biome": "2.6.9",
     "@types/node": "26.6.6",
     "fast-check": "4.11.0",
     "typescript": "7.0.2"
