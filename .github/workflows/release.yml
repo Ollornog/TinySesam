@@ -269,8 +269,17 @@ jobs:
   # and — only for a tag — attests both under its own name. On a PR it is part of the dry run (`attest: false`).
   # The permissions are the ceiling the reusable workflow may use; its `rebuild` job narrows them to `contents: read`,
   # only its `attest` job (no checkout, no pip) takes the identity, and only when `attest` is true.
+  # Sprint and text lane (T-131): `build` and `checksums` skip there, and a SKIPPED call reports only the caller
+  # `provenance`, never the required check `provenance / rebuild` — a text pull request into main stayed blocked
+  # (#395). So the call runs in the lane and hands `skip: true` on; `rebuild` skips by its own `if:` and reports
+  # "skipped". `verify` carries the lane's gate and skips exactly in the lane (a failed classifier runs it), so its
+  # `skipped` is the lane here — the kit allows `outputs.nur_text` in an `if:` only in the gate's form. Outside the
+  # lane the call runs only when `build` and `checksums` succeeded, and for a tag `skip` is false whatever the
+  # classifier says (tests/test_ci_aggregate.py pins both).
   provenance:
-    needs: [build, checksums]
+    needs: [classify, verify, build, checksums]
+    if: ${{ !cancelled() && (needs.verify.result == 'skipped' ||
+      (needs.build.result == 'success' && needs.checksums.result == 'success')) }}
     permissions:
       contents: read
       id-token: write      # used only by build-provenance.yml's `attest`, only for a tag
@@ -278,6 +287,7 @@ jobs:
     uses: ./.github/workflows/build-provenance.yml  # zizmor: ignore[self-repository] — the shared kit's pin check (tests/_kit) does not know `$/` yet; for a reusable workflow `./` resolves at the running commit too
     with:
       attest: ${{ github.ref_type == 'tag' }}
+      skip: ${{ github.ref_type != 'tag' && needs.classify.outputs.nur_text == 'ja' }}
 
   release:
     timeout-minutes: 10

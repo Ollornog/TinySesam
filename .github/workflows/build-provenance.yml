@@ -37,12 +37,20 @@ on:
         type: boolean
         required: false
         default: false
+      skip:
+        description: "Sprint or text lane of the caller: report the jobs as skipped — never true for a tag"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   rebuild:
+    # Skipped by its OWN condition, so the required check `provenance / rebuild` reports "skipped" (green) in the
+    # caller's sprint or text lane; a skipped caller would report nothing at all (T-131, #395).
+    if: ${{ !inputs.skip }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
