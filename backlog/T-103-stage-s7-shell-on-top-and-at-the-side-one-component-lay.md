@@ -3,7 +3,7 @@ id: T-103
 type: Task
 title: "Stage S7 — shell on top and at the side: one component, layout top or side"
 status: offen
-points: 13
+points: 14
 milestone: M-2
 blocked_by: [T-97]
 tags: [shell, ui, topbar]
@@ -11,7 +11,7 @@ created: 2026-11-23
 ---
 # T-103 — Stage S7 — shell on top and at the side: one component, layout top or side
 
-**Story points:** 13 · **Estimate:** 24–32 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 14 · **Estimate:** 24–32 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 One component for both shells: `<ts-shell layout="top|side" current="/docs">`, script and CSS under `/.tinysesam/` (server) or `/auth/` (library), shadow DOM and `--ts-*` tokens. Data from `topbar.json` plus a new `frame` part. The layout comes from `apps[id].layout` or an instance field. TinySesam's own pages (panel and account page included) get the side layout, too — the same markup source as `topbar.py`.
 
@@ -20,6 +20,9 @@ One component for both shells: `<ts-shell layout="top|side" current="/docs">`, s
   on 2026-11-27: it enters the configuration together with its reader, the shell component (no own SP: the layout
   switch is this task's content already).
 - `auth.topbar(layout=…)` in the library; proxy templates pass `/.tinysesam/*` through; spec section 8d.
+- Browser test of the permission matrix of [T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md)
+  (danger step-up, area administrator sees only the own area): T-100 checked it by screenshot only; added 2026-11-27,
+  +1 SP.
 - Replaces the planned "E8" shell component of the app frame ([T-91](T-91-app-frame-and-account-overview.md)).
 
 ## Acceptance
