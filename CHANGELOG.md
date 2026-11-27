@@ -11,6 +11,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   a pin pull request of a breaking release as a draft. The hygiene test allows the hold — exactly the whole line
   `gh pr ready "$PR" --repo "$REPO" --undo` in `ausfuehren` (without `--undo` it would release a held pull request) —
   and in `entscheiden` the read-only app token for the source repo, no other action.
+- The hygiene test no longer carries branches for test kits before 0.65: the release automation's halt must be the
+  0.65+ shape (green with a notice), and every whole-line permission of the auto-merge must be met (T-128).
 
 ## [0.31.0] — 2026-11-26
 
