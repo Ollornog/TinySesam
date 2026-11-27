@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 233
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 418 · B 335 names.
+**Status:** A 418 · B 340 names.
 
 ## A · Methods of `TinySesam`
 
@@ -888,9 +888,13 @@ A malformed `Remote-*` header (a missing or malformed `Remote-Kind` included), o
 
 `'header'`
 
-### `Identity(user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str', account_kind: 'str') -> None` — class
+### `Identity(user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str', account_kind: 'str', permissions: 'tuple[str, ...]' = ()) -> None` — class
 
 Who the request is. Key your own records by `id`, the only value that survives a rename.
+
+### `Identity.has_permission(permission: 'str') -> 'bool'`
+
+Exactly `permission in permissions` (spec §3.4): no case folding, no wildcard, neither `admin` nor a role implies one.
 
 ### `Identity.has_role(role: 'str') -> 'bool'`
 
@@ -960,9 +964,17 @@ Before `nbf - leeway`.
 
 `'not_yet_valid'`
 
+### `PermissionRequest(method: 'str', url: 'str', body: 'dict[str, Any]') -> None` — class
+
+The request `register_permissions` sends: `PUT <base>/auth/api/apps/<app>/permissions` with `body` as JSON.
+
+### `RegistrationFailed(message: 'str', status: 'int' = 0)` — class
+
+TinySesam did not take the manifest: not reachable, or any answer but 200 (`status`, 0 without an answer). A manifest the client refuses before sending is a `ConfigError` (spec §3.4).
+
 ### `SIGNED_OUT_ACCOUNT` — Constant
 
-`{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'links': None}`
+`{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None}`
 
 ### `SignatureError(detail: 'str' = '', *, kid: 'str' = '')` — class
 
@@ -1035,6 +1047,14 @@ Normalize the answer of `/.tinysesam/account.json` (or `/auth/account.json`), sp
 ### `parse_topbar(data: 'Any') -> 'Topbar'`
 
 Normalize the answer of `/.tinysesam/topbar.json` (or `/auth/topbar.json`): signed out on any doubt, unsafe links (`javascript:`, `data:`, `//host`) dropped.
+
+### `register_permissions(base_url: 'str', app: 'str', permissions: 'Any', api_key: 'str') -> 'dict[str, Any]'`
+
+Register the application's whole manifest with TinySesam (`PUT /auth/api/apps/{id}/permissions`, an automation key of the application's service account with the scope `permissions:register`). Registering grants nothing. Returns TinySesam's answer (`added`, `updated`, `returned`, `orphaned`); `ConfigError` for a manifest the client refuses, `RegistrationFailed` for any answer but 200 (`status`). 5-second deadline; the key goes in `X-Api-Key`, never in a log.
+
+### `register_request(base_url: 'str', app: 'str', permissions: 'Any') -> 'PermissionRequest'`
+
+Check a manifest the way spec §3.4 asks and build the request — no network. `ConfigError` for an application id outside the rule, a manifest that is no list of objects, a name outside the rule, a name twice or more than 200 entries; the server checks the rest (labels, descriptions) again.
 
 ### `require_account_kind(kind: 'str') -> 'Callable[[Callable[..., Any]], Callable[..., Any]]'`
 

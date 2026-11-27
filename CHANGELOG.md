@@ -30,10 +30,21 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    add `ts_perms` to `meta_claims` and the `header_up Remote-Permissions` line. An own `forward_headers` mapping is
    the complete list and sends no permissions until it names the slot `perms`. A set above `PERMISSIONS_VALUE_MAX`
    (2048 bytes) is refused with 403, never cut.
+4. **The Python gate client's `Identity` and `SIGNED_OUT_ACCOUNT` gain `permissions`** (T-101, spec §3.4/§8a, tier
+   B). `Identity` has a new last field `permissions` (default `()`), `parse_account` and `SIGNED_OUT_ACCOUNT` a member
+   `permissions`. Code that builds an `Identity` by position or compares a whole normalized account dict takes the
+   new member; everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- Permissions in the gate client specification and the Python client (T-101 part 2): spec §3.4 (the identity's
+  `permissions` from `Remote-Permissions` / `ts_perms`, `has_permission`, `register_permissions`), §8a (`permissions`
+  in `account.json`), §2.1/§2.2 (the proxy strips the header; the same reading rules), new vectors
+  `spec/vectors/permissions.json` (`headers`, `tokens`, `register`) and attack classes `permissions-parsing`,
+  `permissions-header`, `register-manifest`. `tinysesam.gate_client`: `Identity.permissions`,
+  `Identity.has_permission`, `register_permissions`, `register_request` / `PermissionRequest`, `RegistrationFailed`;
+  `parse_account` normalizes `permissions`.
 - Permissions at the server (T-101 server core, ADR-17 stage S5): `apps[id].hosts` names the hosts an application is
   served on (each host in at most one application); forward auth sends the account's permissions for that
   application as `Remote-Permissions` and the gate token carries them as `ts_perms` (a change counts at the next

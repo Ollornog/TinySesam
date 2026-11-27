@@ -2824,7 +2824,15 @@ except gate_client.UntrustedPeer:
 - **Account overview** (optional, spec §8a): `fetch_account(url, cookie_header)` fetches `/auth/account.json` (or
   `/.tinysesam/account.json` on the application's host) server-side with only TinySesam's cookies;
   `parse_account(data)` normalizes an answer into a plain dict — `SIGNED_OUT_ACCOUNT` for anything but
-  `signed_in: true`, unsafe links and members of the wrong type `None`.
+  `signed_in: true`, unsafe links and members of the wrong type `None`; `permissions` names the application and the
+  account's permissions on an application's host.
+- **Permissions** (spec §3.4, T-101): `identity.permissions` comes from `Remote-Permissions` or `ts_perms` — the
+  account's permissions for this application; `identity.has_permission("docs.delete")` compares exactly (neither
+  `admin` nor a role implies one; a missing header is "none"). At start, register the manifest with
+  `register_permissions(base_url, "docs", [{"name": "docs.delete", "danger": True}], api_key)` — straight to TinySesam
+  with the automation key of the application's service account (`permissions:register`); it grants nothing.
+  `register_request(…)` checks the manifest and builds the `PermissionRequest` without sending it; a manifest it
+  refuses is a `ConfigError`, a refusal by TinySesam `RegistrationFailed` (`status`).
 - **Approval confirmations**: the check lives in `tinysesam.approval_token.verify` (also without FastAPI);
   `approval_token.JWKSKeys("https://auth.example.com/auth/approvals/jwks.json")` fetches the approval key set for it
   and refuses the gate key set. A complete application: `examples/approvals/app.py`.

@@ -740,3 +740,56 @@ for name, framework in (("flask_app.py", "flask"), ("django_app.py", "django")):
     driven.append(framework)
 ok(f"examples: both compile; driven with {', '.join(driven) or 'none (Flask and Django not installed)'} — escaped "
    "name, 200/401/403, untrusted peer")
+
+# ---------- register_permissions (spec §3.4, T-101): the request it sends, the answers it takes ----------
+seen_puts = []
+put_answer = {"status": 200, "body": {"added": ["docs.read"], "updated": [], "returned": [], "orphaned": []}}
+
+
+class _PutHandler(http.server.BaseHTTPRequestHandler):
+    def do_PUT(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        seen_puts.append((self.path, dict(self.headers), json.loads(raw)))
+        send_json(self, put_answer["body"], status=put_answer["status"])
+
+    def log_message(self, *a):
+        pass
+
+
+_puts = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _PutHandler)
+_puts.daemon_threads = True
+threading.Thread(target=_puts.serve_forever, daemon=True).start()
+_base = f"http://127.0.0.1:{_puts.server_address[1]}"
+try:
+    manifest = [{"name": "docs.read", "label": {"en": "Read"}}]
+    answer = gc.register_permissions(_base + "/", "docs", manifest, "tsk_probe_key")
+    assert answer["added"] == ["docs.read"], answer
+    path, headers, body = seen_puts[-1]
+    assert path == "/auth/api/apps/docs/permissions" and body == {"permissions": manifest}, (path, body)
+    assert headers.get("X-Api-Key") == "tsk_probe_key" and headers.get("Content-Type") == "application/json"
+    put_answer.update(status=403, body={"error": "scope_missing"})
+    try:
+        gc.register_permissions(_base, "docs", manifest, "tsk_probe_key")
+    except gc.RegistrationFailed as e:
+        assert e.status == 403, e.status
+    else:
+        raise AssertionError("a 403 answer was taken")
+    calls = len(seen_puts)
+    for bad in (("docs", [{"name": "Docs"}], "k"), ("Docs", manifest, "k"), ("docs", manifest, "")):
+        try:
+            gc.register_permissions(_base, *bad)
+        except ConfigError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
+    assert len(seen_puts) == calls, "a refused manifest was sent"
+finally:
+    _puts.shutdown()
+    _puts.server_close()
+try:
+    gc.register_permissions(_base, "docs", [{"name": "docs.read"}], "k")
+except gc.RegistrationFailed as e:
+    assert e.status == 0
+else:
+    raise AssertionError("an unreachable TinySesam was taken")
+ok("register_permissions: PUT of the whole manifest with X-Api-Key; a 403 and an unreachable server are "
+   "RegistrationFailed; a refused manifest or key is a ConfigError and sends nothing")

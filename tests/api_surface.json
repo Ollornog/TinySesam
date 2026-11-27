@@ -2147,7 +2147,11 @@
       "tier": "B"
     },
     "Identity": {
-      "sig": "class (user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str', account_kind: 'str') -> None",
+      "sig": "class (user: 'str', name: 'str', email: 'str', groups: 'tuple[str, ...]', id: 'str', auth: 'str', kind: 'str', account_kind: 'str', permissions: 'tuple[str, ...]' = ()) -> None",
+      "tier": "B"
+    },
+    "Identity.has_permission": {
+      "sig": "(permission: 'str') -> 'bool'",
       "tier": "B"
     },
     "Identity.has_role": {
@@ -2218,8 +2222,16 @@
       "sig": "'not_yet_valid'",
       "tier": "B"
     },
+    "PermissionRequest": {
+      "sig": "class (method: 'str', url: 'str', body: 'dict[str, Any]') -> None",
+      "tier": "B"
+    },
+    "RegistrationFailed": {
+      "sig": "class (message: 'str', status: 'int' = 0)",
+      "tier": "B"
+    },
     "SIGNED_OUT_ACCOUNT": {
-      "sig": "{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'links': None}",
+      "sig": "{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None}",
       "tier": "B"
     },
     "SignatureError": {
@@ -2292,6 +2304,14 @@
     },
     "parse_topbar": {
       "sig": "(data: 'Any') -> 'Topbar'",
+      "tier": "B"
+    },
+    "register_permissions": {
+      "sig": "(base_url: 'str', app: 'str', permissions: 'Any', api_key: 'str') -> 'dict[str, Any]'",
+      "tier": "B"
+    },
+    "register_request": {
+      "sig": "(base_url: 'str', app: 'str', permissions: 'Any') -> 'PermissionRequest'",
       "tier": "B"
     },
     "require_account_kind": {

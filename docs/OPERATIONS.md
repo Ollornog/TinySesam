@@ -1028,6 +1028,10 @@ there.
    add `ts_perms` to `meta_claims` and the `header_up Remote-Permissions` line. An own `forward_headers` mapping is
    the complete list and sends no permissions until it names the slot `perms`. A set above `PERMISSIONS_VALUE_MAX`
    (2048 bytes) is refused with 403, never cut.
+4. **The Python gate client's `Identity` and `SIGNED_OUT_ACCOUNT` gain `permissions`** (T-101, spec §3.4/§8a, tier
+   B). `Identity` has a new last field `permissions` (default `()`), `parse_account` and `SIGNED_OUT_ACCOUNT` a member
+   `permissions`. Code that builds an `Identity` by position or compares a whole normalized account dict takes the
+   new member; everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 **Schema 27** (T-100, permissions) is additive: this version adds the tables `app_permission` and `role_permission` at

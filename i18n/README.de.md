@@ -2890,7 +2890,15 @@ except gate_client.UntrustedPeer:
 - **Kontoübersicht** (optional, Spec §8a): `fetch_account(url, cookie_header)` holt `/auth/account.json` (oder
   `/.tinysesam/account.json` auf dem Host der Anwendung) serverseitig nur mit TinySesams Cookies;
   `parse_account(data)` normalisiert eine Antwort zu einem einfachen dict — `SIGNED_OUT_ACCOUNT` für alles außer
-  `signed_in: true`, unsichere Links und Mitglieder falschen Typs `None`.
+  `signed_in: true`, unsichere Links und Mitglieder falschen Typs `None`; `permissions` nennt auf dem Host einer
+  Anwendung die Anwendung und die Berechtigungen des Kontos dort.
+- **Berechtigungen** (Spec §3.4, T-101): `identity.permissions` kommt aus `Remote-Permissions` oder `ts_perms` — die
+  Berechtigungen des Kontos für diese Anwendung; `identity.has_permission("docs.delete")` vergleicht exakt (weder
+  `admin` noch eine Rolle schließt eine ein; ein fehlender Header heißt „keine"). Beim Start meldet
+  `register_permissions(base_url, "docs", [{"name": "docs.delete", "danger": True}], api_key)` das Manifest an — direkt
+  bei TinySesam mit dem Automations-Key des Dienstkontos der Anwendung (`permissions:register`); es vergibt nichts.
+  `register_request(…)` prüft das Manifest und baut die `PermissionRequest`, ohne sie zu senden; ein abgelehntes
+  Manifest ist ein `ConfigError`, eine Ablehnung durch TinySesam `RegistrationFailed` (`status`).
 - **Freigabe-Bestätigungen**: die Prüfung liegt in `tinysesam.approval_token.verify` (auch ohne FastAPI);
   `approval_token.JWKSKeys("https://auth.example.com/auth/approvals/jwks.json")` holt dafür den Freigabe-Schlüsselsatz
   und weist den Gate-Schlüsselsatz ab. Eine vollständige Anwendung: `examples/approvals/app.py`.

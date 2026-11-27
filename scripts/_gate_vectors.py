@@ -190,8 +190,8 @@ class Probe:
         assert cookie, "no gate token issued"
         return cookie.split(";", 1)[0].split("=", 1)[1]
 
-    def headers(self, name: str, via: str = "session") -> dict:
-        return dict(self.auth._forward_response_headers(self.user(name, via)))
+    def headers(self, name: str, via: str = "session", host: str = "") -> dict:
+        return dict(self.auth._forward_response_headers(self.user(name, via), host))
 
     def topbar(self, name=None) -> dict:
         viewer = self.auth.get_user(self.users[name]) if name else None
@@ -1006,16 +1006,14 @@ class AccountProbe:
         finally:
             for k, v in saved.items():
                 setattr(cfg, k, v)
-        assert view is not None and view["permissions"] is None, "the probe has no application host"
-        # `permissions` (T-101) is the server's since the server core; §8a and the clients take it up in the spec step.
-        del view["permissions"]
+        assert view is not None
         return {"signed_in": True, **view}
 
 
 #: The members of the normalized account overview (spec §8a) — every one present in every signed-in result.
 ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
 SIGNED_OUT_ACCOUNT = {"signed_in": False, "account": None, "sign_in": None, "sessions": None, "programs": None,
-                      "approvals": None, "links": None}
+                      "approvals": None, "permissions": None, "links": None}
 
 
 def account_vectors(ap: AccountProbe) -> list:
@@ -1101,7 +1099,7 @@ def account_vectors(ap: AccountProbe) -> list:
          "sign_in": {"password": None, "totp": None, "passkeys": None, "pin": None},
          "sessions": {"count": None, "items": []},
          "programs": {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None},
-         "approvals": copy.deepcopy(full["approvals"]), "links": {k: None for k in ACCOUNT_LINKS}},
+         "approvals": copy.deepcopy(full["approvals"]), "permissions": None, "links": {k: None for k in ACCOUNT_LINKS}},
         attack="account-types")
     mixed = copy.deepcopy(full)
     mixed["account"]["source"] = ["local", 5, None, "oidc", ["saml"], "scim"]
@@ -1120,6 +1118,28 @@ def account_vectors(ap: AccountProbe) -> list:
     want = copy.deepcopy(full)
     want["approvals"] = None
     add("approvals-not-integer", "`approvals.pending` must be an integer, a boolean is none.", bool_pending, want,
+        attack="account-types")
+    # §8a `permissions` (T-101): `null` off an application's host (the probe's own answer above), the object on one.
+    assert full["permissions"] is None, "the probe's answer names permissions without an application host"
+    on_app = copy.deepcopy(full)
+    on_app["permissions"] = {"app": "docs", "names": ["docs.delete", "docs.read"]}
+    add("permissions-on-app-host", "On an application's host the answer names the application and the account's "
+        "permissions for it.", on_app, copy.deepcopy(on_app))
+    wrong = copy.deepcopy(full)
+    wrong["permissions"] = {"app": 7, "names": ["docs.read", 1, None, {"x": 1}], "extra": True}
+    want = copy.deepcopy(full)
+    want["permissions"] = {"app": None, "names": ["docs.read"]}
+    add("permissions-wrong-types", "An `app` that is no text reads as null, an entry of `names` that is no string is "
+        "dropped, an unknown member too.", wrong, want, attack="account-types")
+    no_list = copy.deepcopy(full)
+    no_list["permissions"] = {"app": "docs", "names": "docs.read"}
+    want = copy.deepcopy(full)
+    want["permissions"] = {"app": "docs", "names": []}
+    add("permissions-names-not-list", "`names` that is no list reads as an empty list.", no_list, want,
+        attack="account-types")
+    not_object = copy.deepcopy(full)
+    not_object["permissions"] = ["docs.read"]
+    add("permissions-not-object", "`permissions` that is no object reads as null.", not_object, copy.deepcopy(full),
         attack="account-types")
     return out
 
@@ -1155,10 +1175,143 @@ def build() -> dict:
             "jwks.json": _file("jwks", {"sets": jwks_sets(), "scenarios": jwks_scenarios()}),
             "topbar.json": _file("topbar", {"vectors": topbar_vectors(p) + topbar_approval_vectors(ap)}),
             "account.json": _file("account", {"vectors": account_vectors(ap)}),
+            # Last: it names the probe's host as an application for a moment (and assigns two permissions).
+            "permissions.json": _file("permissions", permission_vectors(p)),
         }
     finally:
         p.close()
         ap.close()
+
+
+# ---------- permissions, spec §3.4 (T-101) ----------
+
+PERM_APP = "docs"
+PERM_MANIFEST = [{"name": "docs.read", "label": {"en": "Read documents", "de": "Dokumente lesen"}},
+                 {"name": "docs.delete", "label": {"en": "Delete documents"}, "danger": True}]
+
+
+def permission_vectors(p: Probe) -> dict:
+    """`headers`, `tokens` and `register`. The valid inputs come from TinySesam's own paths with the probe's host
+    named as the application `docs` for this file only (the other files stay without permissions)."""
+    a = p.auth
+    saved = (a.cfg.apps, a.cfg.available_roles)
+    a.cfg.apps = {PERM_APP: {"name": "Documents", "hosts": [AUDIENCE], "permissions": PERM_MANIFEST}}
+    a.cfg.available_roles = ["editors", "reviewers", "readers"]
+    try:
+        a._register_config_permissions()
+        a.grant_permission("editors", "docs.read", app=PERM_APP)
+        a.grant_permission("reviewers", "docs.delete", app=PERM_APP)
+        juergen_headers = p.headers("juergen", host=AUDIENCE)
+        anna_headers = p.headers("anna", host=AUDIENCE)
+        admin_headers = p.headers("admin", host=AUDIENCE)
+        juergen_token = p.token("juergen", jti="perm")
+        admin_token = p.token("admin", jti="perm-admin")
+    finally:
+        a.cfg.apps, a.cfg.available_roles = saved
+    assert juergen_headers["Remote-Permissions"] == "docs.delete,docs.read", juergen_headers
+    assert anna_headers["Remote-Permissions"] == "docs.read" and admin_headers["Remote-Permissions"] == ""
+    assert claims_of(juergen_token)["ts_perms"] == "docs.delete,docs.read"
+    guards_full = {"docs.read": True, "docs.delete": True, "docs.share": False, "Docs.read": False, "docs": False,
+                   "docs.read ": False}
+
+    headers_out: list = []
+
+    def h(vid, reason, headers, *, perms=None, guards=None, error=None, attack=None):
+        if not any(k.lower() == "remote-kind" for k in headers):
+            headers = dict(headers, **{"Remote-Kind": "user"})
+        exp = {"ok": False, "error": error} if error else {"ok": True, "permissions": perms}
+        if guards:
+            exp["has_permission"] = guards
+        headers_out.append({"id": vid, "attack": attack, "reason": reason, "input": {"headers": headers},
+                            "expected": exp})
+
+    base = {"Remote-User": "anna", "Remote-Id": str(p.users["anna"]), "Remote-Auth": "session"}
+    h("valid", "The headers /auth/forward sends on the application's host: the union over two roles, sorted.",
+      juergen_headers, perms=["docs.delete", "docs.read"], guards=guards_full)
+    h("valid-one", "One role, one permission.", anna_headers, perms=["docs.read"],
+      guards={"docs.read": True, "docs.delete": False})
+    h("admin-holds-none", "The admin flag implies no permission: TinySesam sends none, the client implies none.",
+      admin_headers, perms=[], guards={"docs.read": False, "admin": False}, attack="permissions-parsing")
+    h("missing", "No Remote-Permissions at all (a host of no application, an older TinySesam): no permissions, no "
+      "error.", base, perms=[], guards={"docs.read": False})
+    h("parsing", "Spaces, empty and repeated entries are read like the groups (§3.3).",
+      dict(base, **{"Remote-Permissions": " docs.read, docs.read,,docs.delete , "}),
+      perms=["docs.read", "docs.delete"], guards={"docs.read": True, "docs.delete": True},
+      attack="permissions-parsing")
+    h("case-and-prefix", "Exact comparison: another case is another name, a prefix is no wildcard.",
+      dict(base, **{"Remote-Permissions": "DOCS.READ,docs"}), perms=["DOCS.READ", "docs"],
+      guards={"docs.read": False, "docs.delete": False, "docs": True}, attack="permissions-parsing")
+    h("twice", "Remote-Permissions twice: an error, never joined or picked.",
+      dict(base, **{"Remote-Permissions": ["docs.read", "docs.delete"]}), error="header",
+      attack="permissions-header")
+    h("twice-spelling", "Remote-Permissions twice in two spellings.",
+      dict(base, **{"Remote-Permissions": "docs.read", "remote-permissions": "docs.delete"}), error="header",
+      attack="permissions-header")
+    h("control", "A control character in Remote-Permissions is refused, not stripped.",
+      dict(base, **{"Remote-Permissions": "docs.read\x01"}), error="header", attack="permissions-header")
+    h("invalid-utf8", "Invalid UTF-8 in Remote-Permissions.",
+      dict(base, **{"Remote-Permissions": "docs.read\xc3"}), error="header", attack="permissions-header")
+
+    tokens_out: list = []
+
+    def t(vid, reason, jws, *, perms=None, guards=None, error=None, attack=None):
+        exp = {"ok": False, "error": error} if error else {"ok": True, "permissions": perms}
+        if guards:
+            exp["has_permission"] = guards
+        tokens_out.append({"id": vid, "attack": attack, "reason": reason,
+                           "input": {"jws": jws, "now": NOW + 10, "leeway": 0, "issuer": ISSUER,
+                                     "audience": AUDIENCE, "jwks": jwks("A")}, "expected": exp})
+
+    ident = {"user": "anna", "groups": "editors", "id": str(p.users["anna"]), "auth": "session", "kind": "user"}
+    t("token-valid", "The gate token /auth/forward issues on the application's host: ts_perms.", juergen_token,
+      perms=["docs.delete", "docs.read"], guards=guards_full)
+    t("token-admin-holds-none", "The admin flag implies no permission.", admin_token, perms=[],
+      guards={"docs.read": False}, attack="permissions-parsing")
+    t("token-missing", "A token without ts_perms (issued before the update, a reduced forward_headers): none.",
+      issue("A", sub=str(p.users["anna"]), claims=ident, jti="perm-missing"), perms=[], guards={"docs.read": False})
+    t("token-type", "ts_perms as a list is the wrong type.",
+      issue("A", sub=str(p.users["anna"]), claims=dict(ident, perms=["docs.read"]), jti="perm-type"),
+      error="claims", attack="permissions-header")
+    t("token-control", "A line break in ts_perms is refused, not stripped.",
+      issue("A", sub=str(p.users["anna"]), claims=dict(ident, perms="docs.read\ndocs.delete"), jti="perm-ctl"),
+      error="claims", attack="permissions-header")
+
+    register_out: list = []
+    one = [PERM_MANIFEST[0]]
+
+    def r(vid, reason, base_url, app, perms, *, url=None, attack=None):
+        exp = {"ok": True, "request": {"method": "PUT", "url": url, "body": {"permissions": perms}}} if url else \
+            {"ok": False, "error": "invalid"}
+        register_out.append({"id": vid, "attack": attack, "reason": reason,
+                             "input": {"base_url": base_url, "app": app, "permissions": perms}, "expected": exp})
+
+    r("register", "The whole manifest as the body of a PUT, straight to TinySesam.", ISSUER, PERM_APP, PERM_MANIFEST,
+      url=f"{ISSUER}/auth/api/apps/{PERM_APP}/permissions")
+    r("register-trailing-slash", "A trailing slash of the base URL is not doubled.", ISSUER + "/", PERM_APP, one,
+      url=f"{ISSUER}/auth/api/apps/{PERM_APP}/permissions")
+    r("register-loopback-http", "Plain http only to a loopback address.", "http://127.0.0.1:8000", PERM_APP, one,
+      url=f"http://127.0.0.1:8000/auth/api/apps/{PERM_APP}/permissions")
+    r("register-empty", "An empty manifest orphans every name the application registered before.", ISSUER, PERM_APP,
+      [], url=f"{ISSUER}/auth/api/apps/{PERM_APP}/permissions")
+    r("register-http", "Plain http to another host is refused.", "http://auth.example.com", PERM_APP, one,
+      attack="register-manifest")
+    r("register-app-id", "An application id outside the rule (upper case).", ISSUER, "Docs", one,
+      attack="register-manifest")
+    r("register-app-path", "An application id with a path in it.", ISSUER, "docs/../admin", one,
+      attack="register-manifest")
+    for vid, name in (("register-name-case", "Docs.read"), ("register-name-no-dot", "docs"),
+                      ("register-name-space", "docs.read "), ("register-name-five", "a.b.c.d.e")):
+        r(vid, f"A name outside the rule: {name!r}.", ISSUER, PERM_APP, [{"name": name}], attack="register-manifest")
+    r("register-name-missing", "An entry without a name.", ISSUER, PERM_APP, [{"label": "x"}],
+      attack="register-manifest")
+    r("register-entry-type", "An entry that is no object.", ISSUER, PERM_APP, ["docs.read"],
+      attack="register-manifest")
+    r("register-twice", "A name twice.", ISSUER, PERM_APP, one + one, attack="register-manifest")
+    r("register-too-many", "More than 200 entries.", ISSUER, PERM_APP,
+      [{"name": f"docs.p{i}"} for i in range(201)], attack="register-manifest")
+    r("register-not-list", "A manifest that is no list.", ISSUER, PERM_APP, {"permissions": one},
+      attack="register-manifest")
+    return {"headers": headers_out, "tokens": tokens_out, "register": register_out}
 
 
 def _read(path: str) -> str:
