@@ -6,6 +6,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The server is configured by a TOML file (T-97, ADR-16): `TINYSESAM_CONFIG` names a file whose keys are the fields of
+  `TinySesamConfig` — the gateway becomes the full TinySesam (local accounts, admin panel, account page, `apps`, SAML,
+  LDAP) instead of the OIDC-only preset. Secret fields take only `"env:NAME"` or `<field>_file`, a literal ends the
+  start; a key that is no field ends the start with the nearest field named; the gateway's environment variables
+  overlay the file when they are set (an empty one changes nothing). Without `TINYSESAM_CONFIG` a gateway runs exactly
+  as before.
+- Library–server parity (T-97, ADR-16): every tier A/B function of the Python surface names in `tests/api_surface.json`
+  the route the server serves for it, or `library: <reason>`. `tests/test_api_surface.py` builds the server from a
+  configuration file with every feature on and is red when a named route is not served, a name has neither, or a new
+  area of the surface is undecided. Two gaps found: the MFA enrollment pass has no server route yet (T-130).
 - An operator resets a lost authenticator app (T-98): the admin panel's account page shows "Authenticator app (TOTP)"
   with a "Reset" button (`GET`/`POST <admin>/api/users/{uid}/totp[/reset]`, administrators only, owner model, a fresh
   confirmation), and `tinysesam reset-totp --db <file> <user>` does the same without a running service. The TOTP goes

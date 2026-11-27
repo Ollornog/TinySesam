@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 2/15 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 2/16 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 89/97 erledigt
@@ -112,7 +112,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-94](T-94-first-sign-in-by-link-recovery-codes-off-totp-hint-target.md)** First sign-in by one-time link: recovery codes switchable, TOTP app hint, target after the setup · M-5
 * ☑ **[T-95](T-95-pairing-code-for-people-s-programs-and-a-simpler-consent-page.md)** Pairing code for people's programs (consent given in advance) and a consent page for laypeople · M-5
 * ☑ **[T-96](T-96-stage-s0-documentation-of-the-grid-surfaces-origins-dep.md)** Stage S0 — documentation of the grid: surfaces, origins, deployment · M-2
-* ☐ **[T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)** Stage S1 — the server can do everything: TOML configuration, parity test · M-2
+* ◐ **[T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)** Stage S1 — the server can do everything: TOML configuration, parity test · M-2
 * ☑ **[T-98](T-98-stage-s2-reset-a-totp-factor-in-the-panel-and-cli.md)** Stage S2 — reset a TOTP factor in the panel and CLI · M-2
 * ☐ **[T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md)** Stage S3 — every origin is equal: source, step-up, linking local and IdP · M-2
 * ☐ **[T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md)** Stage S4 — permissions: app identity, registration, assignment, has_permission · M-2
@@ -145,6 +145,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-127](T-127-compare-the-schema-baseline-with-the-tag-in-ci.md)** CI compares the schema baseline with the tag v0.30.0, not only with the checked-in file · M-1
 * ☑ **[T-128](T-128-drop-the-pre-0-65-branch-of-the-kit-check.md)** Drop the branch for test kits before 0.65 in the release-automation check · M-5
 * ☐ **[T-129](T-129-fleet-pin-of-a-breaking-release-opens-as-a-draft.md)** The fleet pin of a breaking release opens as a draft · M-5
+* ☐ **[T-130](T-130-server-path-for-the-mfa-enrollment-pass.md)** Server path for the MFA enrollment pass (grant and revoke) · M-2
 
 ## Fehler
 

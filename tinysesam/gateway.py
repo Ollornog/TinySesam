@@ -4,6 +4,14 @@ Ways to start:
     python -m tinysesam.gateway                 # uses uvicorn (configured from env)
     uvicorn tinysesam.gateway:app --ws none --no-proxy-headers   # app is built from env on access
 
+Configuration by a file (T-97, ADR-16):
+    TINYSESAM_CONFIG                           path of a TOML file, e.g. /etc/tinysesam.toml: its keys are the
+                                               fields of TinySesamConfig (CONFIGURATION.md) — local accounts, panel,
+                                               account page, apps, SAML, LDAP, everything the library has. Secrets
+                                               only as "env:NAME" or <field>_file. The variables below overlay the
+                                               file when they are set (none of them is required then); without the
+                                               file they configure the OIDC-only preset, as before.
+
 Configuration via environment variables:
     TINYSESAM_OIDC_ISSUER          (required)  e.g. https://id.example.com
     TINYSESAM_OIDC_CLIENT_ID       (required)
@@ -170,7 +178,88 @@ def clients_from_env() -> dict:
     return clients
 
 
+def _text(name: str) -> str:
+    return os.environ.get(name, "").strip()
+
+
+def _number(name: str) -> int:
+    value = os.environ.get(name, "").strip()
+    try:
+        return int(value)
+    except ValueError:
+        raise SystemExit(f"{name}={value!r}: expected a whole number")
+
+
+#: The gateway's environment variables and the field each one sets — the overlay over a configuration file (T-97).
+#: The same names and readers as `config_from_env` without a file; `tests/test_server_config.py` holds both paths to
+#: the same value per variable. `TINYSESAM_OIDC_CLIENTS` / `TINYSESAM_OIDC_CLIENT_<HOST>_*` (whole `oidc_clients`) and
+#: `TINYSESAM_OAUTH_RESOURCES` (also `oauth_enabled`) are handled in `environment_overlay`.
+ENVIRONMENT_FIELDS = (
+    ("TINYSESAM_OIDC_ISSUER", "oidc_issuer", _text),
+    ("TINYSESAM_OIDC_CLIENT_ID", "oidc_client_id", _text),
+    ("TINYSESAM_OIDC_CLIENT_SECRET", "oidc_client_secret", _text),
+    ("TINYSESAM_BASE_URL", "base_url", _text),
+    ("TINYSESAM_COOKIE_DOMAIN", "cookie_domain", _text),
+    ("TINYSESAM_PROTECTED_HOSTS", "trusted_redirect_hosts", lambda n: _split(n)),
+    ("TINYSESAM_ALLOWED_GROUPS", "oidc_allowed_groups", lambda n: _split(n)),
+    ("TINYSESAM_OIDC_SCOPES", "oidc_scopes", _text),
+    ("TINYSESAM_OIDC_NAME", "oidc_name", _text),
+    ("TINYSESAM_GATE_BRAND", "gate_brand", _text),
+    ("TINYSESAM_BRAND_ICON", "brand_icon", lambda n: _favicon()),
+    ("TINYSESAM_BRAND_ICON_TITLE", "brand_icon_title", _text),
+    ("TINYSESAM_BRAND_BACKGROUNDS", "brand_backgrounds", lambda n: _background()),
+    ("TINYSESAM_BRAND_BACKGROUND_SECONDS", "brand_background_seconds", _number),
+    ("TINYSESAM_BRAND_BACKGROUND_CREDIT_TEXT", "brand_background_credit_text", _text),
+    ("TINYSESAM_BRAND_BACKGROUND_CREDIT_URL", "brand_background_credit_url", _text),
+    ("TINYSESAM_DB", "db_path", _text),
+    ("TINYSESAM_HTTPS_MODE", "https_mode", _text),
+    ("TINYSESAM_SECURITY_LOG", "security_log", _text),
+    ("TINYSESAM_TRUSTED_PROXIES", "trusted_proxies", lambda n: _split(n)),
+    ("TINYSESAM_OIDC_REVALIDATE_MINUTES", "oidc_revalidate_minutes", _number),
+    ("TINYSESAM_GATE", "gate_token_enabled", lambda n: _switch(n)),
+    ("TINYSESAM_GATE_LINK", "gate_link_enabled", lambda n: _switch(n)),
+    ("TINYSESAM_LANG", "lang", lambda n: _language()),
+    ("TINYSESAM_FORWARD_LOGIN", "forward_login", _text),
+    ("TINYSESAM_FORWARD_APPS", "forward_apps", lambda n: _json_object(n)),
+    ("TINYSESAM_FORWARD_LOGOUT", "forward_logout", _text),
+    ("TINYSESAM_FORWARD_LOGGED_OUT_SEC", "forward_logged_out_sec", _number),
+    ("TINYSESAM_GATE_TTL_SEC", "gate_token_ttl_sec", _number),
+    ("TINYSESAM_OAUTH_SERVICE_CLIENTS", "oauth_service_clients", lambda n: _switch(n)),
+    ("TINYSESAM_TOPBAR_LINKS", "topbar_links", lambda n: _topbar_links(n)),
+    ("TINYSESAM_TOPBAR_MENU_LINKS", "topbar_menu_links", lambda n: _topbar_links(n)),
+)
+
+
+def environment_overlay() -> dict:
+    """The fields the SET gateway variables give, for the overlay over a configuration file (T-97). A variable that is
+    unset or empty changes nothing: compose files pass `VAR: ${VAR:-}`, and an empty value must not wipe what the file
+    says (an empty `TINYSESAM_ALLOWED_GROUPS` would otherwise open the gate to every account of the provider)."""
+    overlay = {}
+    for name, field_name, read in ENVIRONMENT_FIELDS:
+        if os.environ.get(name, "").strip():
+            overlay[field_name] = read(name)
+    if _split("TINYSESAM_OAUTH_RESOURCES"):
+        overlay["oauth_enabled"] = True
+        overlay["oauth_resources"] = _split("TINYSESAM_OAUTH_RESOURCES")
+    if os.environ.get("TINYSESAM_OIDC_CLIENTS", "").strip() or any(
+            name.startswith("TINYSESAM_OIDC_CLIENT_") and name[len("TINYSESAM_OIDC_CLIENT_"):] not in ("ID", "SECRET")
+            and value.strip() for name, value in os.environ.items()):
+        overlay["oidc_clients"] = clients_from_env()
+    return overlay
+
+
 def config_from_env() -> TinySesamConfig:
+    """The gateway's configuration. With `TINYSESAM_CONFIG` (T-97): the full `TinySesamConfig` from that TOML file,
+    the set gateway variables over it (`environment_overlay`). Without it: the OIDC-only preset from the environment
+    variables, as before."""
+    from ._server_config import CONFIG_VARIABLE, FileError, config_from_file
+    path = os.environ.get(CONFIG_VARIABLE, "").strip()
+    if path:
+        try:
+            return config_from_file(path, environment_overlay())
+        except FileError as e:
+            raise SystemExit(str(e))
+
     def req(key):
         v = os.environ.get(key)
         if not v:
@@ -490,7 +579,11 @@ HELP = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
 Installation:  pip install 'tinysesam[gateway]'   (not [oidc] — that is the library
                                                    without a server)
 
-Configured via environment variables:
+Configured by a file (T-97):
+  TINYSESAM_CONFIG               a TOML file with the fields of TinySesamConfig (local accounts, panel,
+                                 account page, apps, …); the variables below overlay it when set
+
+Configured via environment variables (without TINYSESAM_CONFIG):
   TINYSESAM_OIDC_ISSUER          address of the provider          (required)
   TINYSESAM_OIDC_CLIENT_ID       client ID                        (required)
   TINYSESAM_OIDC_CLIENT_SECRET   client secret                    (required)

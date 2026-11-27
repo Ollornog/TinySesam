@@ -50,6 +50,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1767,6 +1768,129 @@ def _report_without_tier(missing: list) -> None:
     print("  leading underscore and disappears from the baseline.\n")
 
 
+# ---------------------------------------------------------------------------
+# Library–server parity (T-97, ADR-16)
+# ---------------------------------------------------------------------------
+#: Areas whose tier-A/B names each carry `server`: a route of the server ("METHOD /path", `<admin>` for the panel's
+#: mount) or "library: <reason>" — the function has no server route on purpose, and the reason says why (ADR-16:
+#: page layout and own pages stay library only) or names the task that brings it.
+PARITY_AREAS = ("TinySesam", "TinySesamConfig.methods", "exports", "TinySesam.properties", "TinySesam.attributes",
+                "TinySesam.constants")
+#: Areas decided as a whole. A new area of the surface must land in one of the two lists.
+PARITY_AREA_REASONS = {
+    "LoginResult": "result type of the building blocks for own pages in Python; the server's pages answer the same "
+                   "reasons as HTTP status and JSON",
+    "PasswordChangeResult": "result type of a building block for own pages in Python; the server answers in JSON",
+    "TinySesam.event_payload": "payload of the Python hook on_security_event; the server tells the holder by mail",
+    "TinySesamConfig.fields": "the server's configuration file sets every field (tests/test_server_config.py)",
+    "gate_client": "the gate client runs in the application behind the server, it is the server's counterpart",
+    "http.contract": "headers, reasons and cookies of the server itself",
+    "http.forward": "responses of the server's forward-auth and gate routes",
+    "http.routes": "the server's routes themselves",
+    "log.lines": "lines of the security log the server writes",
+    "log.loggers": "loggers the server writes to",
+}
+PARITY_LIBRARY = "library: "
+#: Route prefixes of features behind an extra; without the extra the server cannot serve them here, and such a route
+#: is checked against the static scan of the source instead.
+PARITY_EXTRA_ROUTES = {"oidc": ("/auth/oidc/", "<oidc_callback_path>"), "passkey": ("/auth/passkey/",),
+                       "saml": ("/auth/saml/",)}
+
+
+def server_routes() -> tuple:
+    """({"METHOD /path"} the SERVER serves, {extra names missing here}): `gateway.build_app` from a configuration file
+    (`TINYSESAM_CONFIG`) with every feature on that the installed extras allow — the server, not the library."""
+    import importlib.util
+    from tinysesam import gateway
+    missing = {name for name, module in (("oidc", "authlib"), ("passkey", "webauthn"), ("saml", "onelogin"))
+               if importlib.util.find_spec(module) is None}
+    folder = tempfile.mkdtemp(prefix="tinysesam-parity-")
+    lines = [f'db_path = "{os.path.join(folder, "server.db")}"', 'base_url = "https://auth.example.com"',
+             'trusted_redirect_hosts = ["app.example.com"]', "forward_auth_enabled = true", "gate_token_enabled = true",
+             "gate_link_enabled = true", "allow_signup = true", "signup_verify_email = true", "pin_enabled = true",
+             "resource_locks_enabled = true", "magiclink_enabled = true", "password_reset_enabled = true",
+             "apikey_enabled = true", "account_enabled = true", "admin_enabled = true", "approvals_enabled = true",
+             "self_service_username_change = true", "self_service_email_change = true", "oauth_enabled = true",
+             'oauth_resources = ["https://app.example.com/mcp"]', "oauth_service_clients = true",
+             f"passkey_enabled = {'false' if 'passkey' in missing else 'true'}"]
+    if "oidc" not in missing:
+        lines += ["oidc_enabled = true", 'oidc_issuer = "https://id.example.com"', 'oidc_client_id = "server"',
+                  'oidc_client_secret = "env:TS_PARITY_SECRET"']
+    lines += ['[forward_apps."app.example.com"]', 'name = "App"', "app_passwords = true"]   # tables come last
+    path = os.path.join(folder, "server.toml")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
+    os.environ.update(TINYSESAM_CONFIG=path, TS_PARITY_SECRET="parity-probe")
+    try:
+        app = gateway.build_app()
+    finally:
+        for k in ("TINYSESAM_CONFIG", "TS_PARITY_SECRET"):
+            os.environ.pop(k, None)
+        os.environ.update(saved)
+    cfg = app.state.auth.cfg
+
+    def walk(routes, prefix=""):
+        # FastAPI from 0.14x keeps an included router as one entry (`original_router`, prefix in `include_context`);
+        # older ones copy its routes into the app. Both shapes, every route, also those outside the schema.
+        for route in routes:
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                context = getattr(route, "include_context", None)
+                yield from walk(inner.routes, prefix + (getattr(context, "prefix", "") or ""))
+                continue
+            for method in getattr(route, "methods", None) or ():
+                yield method, prefix + getattr(route, "path", "")
+
+    found = set()
+    for method, route_path in walk(app.routes):
+        if route_path == cfg.admin_path or route_path.startswith(cfg.admin_path + "/"):
+            route_path = "<admin>" + route_path[len(cfg.admin_path):]
+        elif route_path == cfg.oidc_callback_path:
+            route_path = "<oidc_callback_path>"
+        found.add(f"{method} {route_path}")
+    app.state.auth.close()
+    return found, missing
+
+
+def parity_findings(file: dict, routes: set, missing_extras=frozenset(), static=None) -> list:
+    """Every tier-A/B name of `PARITY_AREAS` has a server route or a library reason; every area is decided."""
+    findings = [f"{area}: no parity decision (add it to PARITY_AREAS or PARITY_AREA_REASONS)"
+                for area in sorted(set(file) - set(PARITY_AREAS) - set(PARITY_AREA_REASONS))]
+    behind_extra = tuple(p for name in missing_extras for p in PARITY_EXTRA_ROUTES.get(name, ()))
+    for area in PARITY_AREAS:
+        for name, e in sorted((file.get(area) or {}).items()):
+            if not isinstance(e, dict) or e.get("tier") not in ("A", "B"):
+                continue
+            server = e.get("server")
+            if not isinstance(server, str) or not server.strip():
+                findings.append(f"{area}.{name}: neither a server route nor a library reason (`server`)")
+            elif server.startswith(PARITY_LIBRARY):
+                if len(server) - len(PARITY_LIBRARY) < 20:
+                    findings.append(f"{area}.{name}: library only without a reason worth the name: {server!r}")
+            elif server in routes:
+                continue
+            elif behind_extra and server.split(" ", 1)[-1].startswith(behind_extra) and server in (static or {}):
+                continue
+            else:
+                findings.append(f"{area}.{name}: the server does not serve {server!r}")
+    return findings
+
+
+def self_check_parity(file: dict, routes: set) -> None:
+    """The parity check can fail: a route the server stops serving, a name without `server`, a reason too short,
+    an undecided area — each is reported (T-97)."""
+    gone = next(e["server"] for e in file["TinySesam"].values() if e.get("server", "") in routes)
+    assert any(gone in z for z in parity_findings(file, routes - {gone})), gone
+    bent = json.loads(json.dumps(file))
+    del bent["TinySesam"]["login_password"]["server"]
+    assert any("TinySesam.login_password: neither" in z for z in parity_findings(bent, routes))
+    bent["TinySesam"]["login_password"]["server"] = "library: why"
+    assert any("without a reason" in z for z in parity_findings(bent, routes))
+    bent["brand.new"] = {}
+    assert any("brand.new: no parity decision" in z for z in parity_findings(bent, routes))
+
+
 def main(argv):
     now = surface()
     self_check(now)
@@ -1876,6 +2000,24 @@ def main(argv):
            f"{len(now['http.forward'])} observed forward/gate responses, {len(now['http.contract'])} header/"
            f"reason/input/cookie atoms, {len(now['log.loggers'])} loggers, {len(now['log.lines'])} log atoms, "
            f"{len(now['TinySesam.event_payload'])} event payloads, auth.cfg and on_security_event")
+
+    # Library–server parity (T-97, ADR-16): every tier-A/B function has a server route or a library reason.
+    routes, missing_extras = server_routes()
+    self_check_parity(earlier_file, routes)
+    p_error = parity_findings(earlier_file, routes, missing_extras, earlier_file.get("http.routes"))
+    if p_error:
+        red = True
+        print(f"\n  {len(p_error)} findings on the library–server parity:\n")
+        for line in p_error:
+            print(f"    PARITY       {line}")
+        print("\n  ADR-16: every function has a server route or sits on the library-only list with a reason. Set")
+        print("  `server` on the entry in tests/api_surface.json: \"METHOD /path\" or \"library: <reason>\".\n")
+    else:
+        n_parity = sum(1 for a in PARITY_AREAS for e in earlier_file.get(a, {}).values()
+                       if isinstance(e, dict) and e.get("tier") in ("A", "B"))
+        ok(f"Library–server parity: {n_parity} names of tiers A/B, each with a route the server serves "
+           f"({len(routes)} routes from a configuration file) or a library reason"
+           + (f"; extras missing here: {', '.join(sorted(missing_extras))}" if missing_extras else ""))
 
     if not breaks and not extensions:
         n = sum(len(v) for v in now.values())
