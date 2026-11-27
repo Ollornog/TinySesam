@@ -189,6 +189,8 @@ Admin-Regel, derselbe Schalter `admin_implies=False`.
   (Gateway: `TINYSESAM_OIDC_SCOPES`). Ohne ihn weist `oidc_allowed_groups` jeden ab, und das
   Rollen-Mapping vergibt nichts; der Start warnt. TinySesam fordert den Scope nicht selbst an
   (Entra ID etwa lehnt ihn ab und schickt Gruppen als „optional claim").
+  Oder die Gruppen ohne Map so übernehmen, wie sie kommen: `*_group_import` — siehe
+  [IdP-Gruppen importieren](#idp-gruppen-importieren).
 - **Rollennamen** enthalten kein Komma, kein Steuerzeichen und keine Leerzeichen am Rand: `Remote-Groups` und das
   Gate-Token verbinden Rollen mit `,` ohne Escape, `staff,admin` käme also als zwei Rollen an. Die Config-Prüfung
   weist so einen Namen in jedem Feld ab, `create_user`/`set_roles` werfen `ConfigError` (`field="roles"`), und ein
@@ -2045,6 +2047,40 @@ dann an wie `available_roles` — als Checkboxen und als Einträge der Rollenstu
   `auth.known_roles()`, `auth.role_catalog()`, `auth.role_usage("editor")`. Auf der Kommandozeile:
   `tinysesam roles list|create|delete --db auth.db --config mod:attr [<rolle>]` (ändern nur mit Konfiguration).
 
+### IdP-Gruppen importieren
+
+Eine Gruppen-Map (`*_group_role_map`) nennt jede Gruppe von Hand. Der Import übernimmt die Gruppen, wie sie kommen
+(T-102, ADR-18 Stufe 1): je Quelle einschalten — `oidc_group_import`, `saml_group_import`, `ldap_group_import` — und
+jede Gruppe, die die Quelle bei der Anmeldung liefert, wird eine Rolle mit **demselben Rohnamen** (LDAP: der Wert des
+ersten DN-Teils, `cn=team-docs,ou=groups,…` → `team-docs`). Die Rolle landet im Rollenkatalog, im Panel markiert mit
+**⇄ vom IdP** (Symbol und Wort), mit ihrer Quelle und der letzten Anmeldung, die sie geliefert hat. Sie gewährt von
+sich aus nichts: Ein Administrator weist ihr in der Matrix Berechtigungen zu, und die Anwendung fragt `has_permission`
+wie bei jeder Rolle.
+
+- **Jede Anmeldung ersetzt die Menge der Quelle.** Eine Gruppe, die die Quelle nicht mehr liefert, nimmt ihre Rolle
+  mit; von Hand vergebene Rollen bleiben, ebenso eine Rolle, die das Konto schon von Hand hatte, bevor die Quelle sie
+  lieferte, oder die eine andere Quelle noch liefert. OIDC entzieht bei der Anmeldung **und bei jeder Nachprüfung**
+  (`oidc_session_refresh_minutes`), SAML und LDAP bei der nächsten Anmeldung. Eine gelieferte Rolle, die von Hand
+  entfernt wurde, kommt bei der nächsten Anmeldung zurück — die Gruppe beim Provider entfernen.
+- **Ein fehlender OIDC-Claim entzieht nichts** (Scope `groups` nicht angefragt, Gruppen-Überlauf bei Entra): Die
+  Rollen bleiben, Sicherheitslog und Panel sagen es. Ein leerer Claim entzieht. Eine SAML-Assertion und ein
+  Verzeichniseintrag kennen kein leeres Attribut; dort heißt ein fehlendes Gruppenattribut „keine Gruppen" und entzieht
+  (eine fehlende Attributfreigabe kostet Zugang, sie erhält nie einen).
+- **Kollisionen werden übersprungen, nie zusammengelegt.** Eine Gruppe mit dem Namen einer Rolle der Konfiguration
+  (`available_roles`, ein Map-Ziel, `admin` …), einer lokalen Katalogrolle, einer von Hand eingetippten Rolle an
+  irgendeinem Konto, derselbe Name in anderer Schreibweise, ein Rollenstufen-Eintrag oder ein Name, der keine Rolle sein
+  kann (Komma, Steuer- oder unsichtbares Zeichen, über 64 Zeichen): nicht importiert, protokolliert und auf der
+  Rollenseite des Panels gelistet. Eine IdP-Gruppe `admin` erbt nie die lokale Rolle `admin`.
+- **Filter:** `*_group_import_filter = ["team-*", "staff"]` — exakte Namen oder ein Präfix mit `*` am Ende
+  (Groß-/Kleinschreibung zählt; `*` allein wird abgewiesen). Ohne Filter zählen höchstens **100** Gruppen je Anmeldung;
+  darüber importiert die Anmeldung nichts und entzieht nichts, mit einer Warnung im Sicherheitslog
+  (`Set <source>_group_import_filter`).
+- **Entra ID:** App-Rollen statt Gruppen mit `oidc_group_claim="roles"`; Objekt-IDs bekommen Anzeigenamen mit
+  `idp_group_labels={"5f1c…": "Docs-Team"}` (nur Anzeige — die Rolle behält die ID).
+- **Aufräumen:** Der Start nennt importierte Rollen, die 90 Tage keine Anmeldung geliefert hat, und die einer Quelle,
+  deren Import aus ist; eine unbenutzte lässt sich auf der Rollenseite löschen (die nächste Anmeldung, die sie liefert,
+  bringt sie zurück). Audit `idp_roles_synced source=… granted=… withdrawn=…`.
+
 **Montieren / einbetten / HTTPS:**
 - **Standard:** automatisch unter `config.admin_path` (Default `/auth/admin`) — frei änderbar.
 - **Woanders montieren:** `app.include_router(auth.admin_router(), prefix="/admin")` — beliebiger Pfad,
@@ -3136,7 +3172,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**151 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**153 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

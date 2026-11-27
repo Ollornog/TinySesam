@@ -1011,6 +1011,12 @@ there.
 the first start and stamps the file 27. Going back to 0.31.x needs no SQL: it opens a 27 file with the warning "comes
 from a newer version" and never reads the two tables — assigned permissions are then simply not asked for.
 
+**Schema 28** (T-102, IdP group import) is additive too: the tables `idp_role` and `idp_role_membership` at the first
+start, stamp 28 (a 26 or 27 file reaches it in the same start). Going back to 0.31.x or to a schema-27 version needs no
+SQL: it opens the file with the "newer version" warning and never reads the two tables. Imported roles stay on the
+accounts as plain roles and in the role catalog as plain catalog rows — nothing withdraws them any more until the
+version with the import runs again.
+
 ### From a version before 0.30.0: two steps
 
 **0.30.0 is the last release with database migrations.** Since the schema baseline (T-111) a new database is created

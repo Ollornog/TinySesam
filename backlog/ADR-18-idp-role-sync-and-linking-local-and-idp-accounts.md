@@ -18,6 +18,7 @@ Group-to-role maps (`*_group_role_map`) are applied at every sign-in, but raw gr
 - A table `idp_role_membership` holds what a source delivered last; at sign-in exactly that set is replaced. Hand-assigned roles and other sources stay untouched.
 - A missing claim is not an empty list: nothing is withdrawn, nothing granted, a log entry and a hint ([T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md) pins the rule).
 - Withdrawal takes effect at sign-in or revalidation (OIDC has it, SAML and LDAP at the next sign-in): documented honestly.
+- Clarification (T-102, 2026-11-27): "missing" applies where a source can leave a claim out — OIDC (scope not asked, Entra group overage). A SAML assertion and a directory entry carry no empty attribute, so an absent group attribute is their "no groups" and withdraws, for the import as for the maps (T-99): a missing attribute release costs access, it never keeps a withdrawn group's role.
 
 **Stage 2 — SCIM:** only on demand ([T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md), "only when asked for").
 

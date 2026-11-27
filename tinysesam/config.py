@@ -92,6 +92,25 @@ class TinySesamConfig:
     oidc_group_role_map: dict = field(default_factory=dict)
     saml_group_role_map: dict = field(default_factory=dict) # SAML group → local role, e.g. `{"staff": "editors"}`
     ldap_group_role_map: dict = field(default_factory=dict) # LDAP group (DN or name) → local role
+    # Import IdP groups as roles at sign-in (T-102, ADR-18 stage 1): every group the source delivers becomes a role of
+    # the same raw name (LDAP: the value of the group DN's first part, `cn=team-docs,…` → `team-docs`), listed in the
+    # role catalog as "from IdP". An administrator then assigns permissions to it; it grants nothing by itself. At each
+    # sign-in (and each OIDC re-check) the set of that source is replaced: a group the source no longer delivers takes its
+    # role away, roles assigned by hand and roles of other sources stay. A group whose name the configuration, the local
+    # catalog or an account's hand-typed role already uses is skipped (logged, hinted in the panel) — an IdP group
+    # `admin` never inherits a local role. A missing OIDC claim withdraws nothing; SAML and LDAP carry no empty
+    # attribute, so an absent one means "no groups". README "Importing IdP groups".
+    oidc_group_import: bool = False
+    saml_group_import: bool = False     # the same for SAML (the assertion's saml_attr_groups)
+    ldap_group_import: bool = False     # the same for LDAP (ldap_group_attr, by default memberOf)
+    # Which groups to import: exact names or a prefix ending in `*` (`["team-*", "staff"]`). Empty = every group, but
+    # at most 100 per sign-in — above that a security-log warning and no import (nothing granted, nothing withdrawn).
+    oidc_group_import_filter: list[str] = field(default_factory=list)
+    saml_group_import_filter: list[str] = field(default_factory=list)  # the filter for SAML
+    ldap_group_import_filter: list[str] = field(default_factory=list)  # the filter for LDAP (the DN's first value)
+    # Display names for imported groups, e.g. Entra object ids: `{"5f1c…": "Docs team"}`. Display only — the role keeps
+    # the raw name the source delivers.
+    idp_group_labels: dict = field(default_factory=dict)
 
     # --- Active login methods (all can run in parallel) ---
     password_enabled: bool = True     # offer password login at all (off = SSO/passkey/PIN only)

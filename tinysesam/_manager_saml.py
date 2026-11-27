@@ -116,6 +116,10 @@ def _check_saml(self, nameid, attrs, ip: Optional[str] = None) -> Optional[dict]
         return None     # the reason is already in the audit log (creation/identifier)
     self._address_proven_by_source(u, mail, trusted, "saml")
     self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
+    if cfg.saml_group_import:
+        # An assertion carries no empty attribute: an absent one is the IdP's "no groups" and withdraws the imported
+        # roles at this sign-in, as it withdraws the mapped ones (T-99, T-102).
+        self._import_idp_groups(u["id"], "saml", as_list(attrs, cfg.saml_attr_groups))
     return self._as_dict(self.store.get_user(u["id"]))   # fresh (mapped roles)
 
 

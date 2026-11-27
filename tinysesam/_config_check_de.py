@@ -1105,4 +1105,23 @@ _DE: dict[str, str] = {
      "panel's JSON would lie under /auth/api/users, the path of the account API"):
         ("admin_path='/auth' mit apps: /auth/api/ ist für die Maschinen-APIs reserviert — das "
          "JSON des Panels läge unter /auth/api/users, dem Pfad der Konten-API"),
+    # Group import (T-102)
+    "{field}={v!r} — True or False":
+        "{field}={v!r} — True oder False",
+    "{field}: a list of group names or prefixes ending in \"*\"":
+        "{field}: eine Liste von Gruppennamen oder Präfixen mit \"*\" am Ende",
+    "{field}: {p!r} — {why}":
+        "{field}: {p!r} — {why}",
+    ("{field} names {p!r}, a role of the configuration: that group is always skipped — an IdP group never takes over a "
+     "configured role"):
+        ("{field} nennt {p!r}, eine Rolle der Konfiguration: diese Gruppe wird immer übersprungen — eine IdP-Gruppe "
+         "übernimmt nie eine konfigurierte Rolle"),
+    "{field}=True, but {source}_enabled is off: nothing is imported":
+        "{field}=True, aber {source}_enabled ist aus: es wird nichts importiert",
+    "{field} is set, but {source}_group_import is off: the filter has no effect":
+        "{field} ist gesetzt, aber {source}_group_import ist aus: der Filter wirkt nicht",
+    "idp_group_labels: a mapping group → display name":
+        "idp_group_labels: eine Zuordnung Gruppe → Anzeigename",
+    ("idp_group_labels: {g!r} — a group name and a display name of 1 to 80 characters without control characters"):
+        ("idp_group_labels: {g!r} — ein Gruppenname und ein Anzeigename mit 1 bis 80 Zeichen ohne Steuerzeichen"),
 }

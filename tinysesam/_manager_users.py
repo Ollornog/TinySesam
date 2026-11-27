@@ -1192,6 +1192,10 @@ def _oidc_swap(self, s, z, deadline) -> None:
             self._idp_no(s["user_id"], name, s["ip"], client, "group")
             return
         self.apply_idp_groups(s["user_id"], groups, entry["group_role_map"])
+    if self.cfg.oidc_group_import:
+        # The re-check is the withdrawal of an imported role for OIDC (T-102): the claim replaces the set, a missing
+        # claim (None) changes nothing.
+        self._import_idp_groups(s["user_id"], "oidc", groups)
     if lives:
         # Only if the session is still there: a parallel no via another client
         # may have ended it in the meantime — then this yes confirms nothing any more.

@@ -508,6 +508,8 @@ def _check_role_catalog(self) -> None:
                     "rows are redundant and may be deleted.", security.for_log(", ".join(twice)))
     for line in config_check.ladder_coverage(self.cfg, self.known_roles()):
         log.warning("%s", line)
+    if any(r.get("source") for r in self.store.catalog_roles()):
+        self._check_idp_catalog()     # imported roles (T-102): stale ones, and those of a source switched off
 
 
 def _check_app_accounts(self) -> list:

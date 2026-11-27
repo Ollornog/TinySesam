@@ -401,6 +401,7 @@ _PART_METHODS = {
         "login_password", "login_pin", "login_totp", "require", "require_admin", "require_mfa", "require_role",
         "require_session", "require_user", "set_initial_password", "start_session", "stepup_fresh",
     ),
+    "group_import": ("_check_idp_catalog", "_import_idp_groups"),
     "users": (
         "_account_of_session", "_admin_claim_announce", "_admin_claim_failure", "_admin_panel_visible",
         "_catalog_actor", "_claim_file_auto", "_claim_file_away", "_consume_admin_claim", "_create_account",

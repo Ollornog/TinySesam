@@ -12,7 +12,7 @@ reference answers the other question: *"There is a field — what does it do?"*
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) set bundles of these fields;
 individual ones can be overridden via `**overrides`.
 
-**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `approval_app_requests_per_hour` (B), `approval_key_file` (B), `approval_open_per_account` (B), `approval_open_per_token` (B), `approval_pending_sec` (B), `approval_pickup_sec` (B), `approval_reject_limit` (B), `approval_requests_per_hour` (B), `approval_token_ttl_sec` (B), `approvals_enabled` (B), `apps` (B), `brand_icon_title` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_consent_enabled` (B), `oauth_pairing_consent_minutes` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `role_levels` (B), `topbar_enabled` (B), `topbar_links` (B), `topbar_menu_links` (B), `totp_app_hint` (B), `totp_required` (B).
+**Tier:** Every field belongs to tier A — public, stable from 1.0 (see [API.md](API.md), “Three tiers”), except `admin_delegates` (B), `app_password_allow_unlimited` (B), `app_password_default_days` (B), `approval_app_requests_per_hour` (B), `approval_key_file` (B), `approval_open_per_account` (B), `approval_open_per_token` (B), `approval_pending_sec` (B), `approval_pickup_sec` (B), `approval_reject_limit` (B), `approval_requests_per_hour` (B), `approval_token_ttl_sec` (B), `approvals_enabled` (B), `apps` (B), `brand_icon_title` (B), `c22_stylesheet` (B), `gate_key_file` (B), `hsts` (B), `idp_group_labels` (B), `ldap_group_import` (B), `ldap_group_import_filter` (B), `oauth_access_token_ttl_sec` (B), `oauth_enabled` (B), `oauth_pairing_consent_enabled` (B), `oauth_pairing_consent_minutes` (B), `oauth_pairing_minutes` (B), `oauth_pepper_file` (B), `oauth_refresh_grace_sec` (B), `oauth_refresh_idle_days` (B), `oauth_refresh_max_days` (B), `oauth_resources` (B), `oauth_service_clients` (B), `oauth_service_key_days` (B), `oauth_service_token_ttl_sec` (B), `oidc_group_import` (B), `oidc_group_import_filter` (B), `role_levels` (B), `saml_group_import` (B), `saml_group_import_filter` (B), `topbar_enabled` (B), `topbar_links` (B), `topbar_menu_links` (B), `totp_app_hint` (B), `totp_required` (B).
 
 ## Store
 
@@ -57,6 +57,13 @@ individual ones can be overridden via `**overrides`.
 | `oidc_group_role_map` | `dict` | `dict` | IdP group → local role (set on OIDC/SAML/LDAP login). Target "__admin__" = admin flag (grant only). Compared according to `group_match` (default exact). Managed roles are synchronised on each login. |
 | `saml_group_role_map` | `dict` | `dict` | SAML group → local role, e.g. `{"staff": "editors"}` |
 | `ldap_group_role_map` | `dict` | `dict` | LDAP group (DN or name) → local role |
+| `oidc_group_import` | `bool` | `False` | **Tier B.** Import IdP groups as roles at sign-in (T-102, ADR-18 stage 1): every group the source delivers becomes a role of the same raw name (LDAP: the value of the group DN's first part, `cn=team-docs,…` → `team-docs`), listed in the role catalog as "from IdP". An administrator then assigns permissions to it; it grants nothing by itself. At each sign-in (and each OIDC re-check) the set of that source is replaced: a group the source no longer delivers takes its role away, roles assigned by hand and roles of other sources stay. A group whose name the configuration, the local catalog or an account's hand-typed role already uses is skipped (logged, hinted in the panel) — an IdP group `admin` never inherits a local role. A missing OIDC claim withdraws nothing; SAML and LDAP carry no empty attribute, so an absent one means "no groups". README "Importing IdP groups". |
+| `saml_group_import` | `bool` | `False` | **Tier B.** the same for SAML (the assertion's saml_attr_groups) |
+| `ldap_group_import` | `bool` | `False` | **Tier B.** the same for LDAP (ldap_group_attr, by default memberOf) |
+| `oidc_group_import_filter` | `list[str]` | `list` | **Tier B.** Which groups to import: exact names or a prefix ending in `*` (`["team-*", "staff"]`). Empty = every group, but at most 100 per sign-in — above that a security-log warning and no import (nothing granted, nothing withdrawn). |
+| `saml_group_import_filter` | `list[str]` | `list` | **Tier B.** the filter for SAML |
+| `ldap_group_import_filter` | `list[str]` | `list` | **Tier B.** the filter for LDAP (the DN's first value) |
+| `idp_group_labels` | `dict` | `dict` | **Tier B.** Display names for imported groups, e.g. Entra object ids: `{"5f1c…": "Docs team"}`. Display only — the role keeps the raw name the source delivers. |
 
 ## Active login methods (all can run in parallel)
 
@@ -392,4 +399,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-226 fields, generated from `tinysesam/config.py`.
+233 fields, generated from `tinysesam/config.py`.

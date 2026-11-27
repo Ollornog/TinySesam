@@ -194,6 +194,7 @@ rule, same `admin_implies=False` switch.
   `TINYSESAM_OIDC_SCOPES`). Without it `oidc_allowed_groups` turns everyone away and the role map
   assigns nothing; the start warns. TinySesam doesn't add the scope itself (Entra ID, for one,
   rejects it and sends groups as an optional claim).
+  Or take the groups as they come, without a map: `*_group_import` — see [Importing IdP groups](#importing-idp-groups).
 - **Role names** carry no comma, no control character and no surrounding spaces: `Remote-Groups` and the gate token
   join roles with `,` without an escape, so `staff,admin` would arrive as two roles. The configuration check refuses
   such a name in every field, `create_user`/`set_roles` raise `ConfigError` (`field="roles"`), and an account that
@@ -2014,6 +2015,36 @@ auth.set_roles(uid, [])
 assert auth.delete_role("editor") == {"name": "editor", "in_config": False}
 ```
 
+### Importing IdP groups
+
+A group map (`*_group_role_map`) names every group by hand. The import takes the groups as they come (T-102, ADR-18
+stage 1): switch it on per source — `oidc_group_import`, `saml_group_import`, `ldap_group_import` — and every group the
+source delivers at sign-in becomes a role of the **same raw name** (LDAP: the value of the DN's first part,
+`cn=team-docs,ou=groups,…` → `team-docs`). The role lands in the role catalog marked **⇄ from IdP** in the panel (symbol
+and word) with its source and the last sign-in that delivered it. It grants nothing by itself: an administrator assigns
+permissions to it in the matrix, and the application asks `has_permission` as for any role.
+
+- **Each sign-in replaces the source's set.** A group the source no longer delivers takes its role away; roles assigned
+  by hand stay, and so does a role the account held by hand before the source delivered it, or one another source
+  still delivers. OIDC withdraws at sign-in **and at each re-check** (`oidc_session_refresh_minutes`); SAML and LDAP at
+  the next sign-in. A delivered role removed by hand comes back at the next sign-in — remove the group at the provider.
+- **A missing OIDC claim withdraws nothing** (scope `groups` not asked, Entra's group overage): the roles stay, the
+  security log and the panel say so. An empty claim withdraws. A SAML assertion and a directory entry carry no empty
+  attribute, so there an absent group attribute is "no groups" and withdraws (a missing attribute release costs access,
+  it never keeps one).
+- **Collisions are skipped, never merged.** A group named like a role of the configuration (`available_roles`, a map
+  target, `admin` …), a local catalog role, a role typed in by hand on any account, the same name in another case, or
+  a role level entry, or a name that cannot be a role (comma, control or invisible character, over 64 characters): not
+  imported, logged, and listed in the panel's role page. An IdP group `admin` never inherits the local role `admin`.
+- **Filter:** `*_group_import_filter = ["team-*", "staff"]` — exact names or a prefix ending in `*` (case counts; `*`
+  alone is refused). Without a filter at most **100** groups per sign-in count; above that the sign-in imports nothing
+  and withdraws nothing, with a security-log warning (`Set <source>_group_import_filter`).
+- **Entra ID:** app roles instead of groups with `oidc_group_claim="roles"`; object ids get display names with
+  `idp_group_labels={"5f1c…": "Docs team"}` (display only — the role keeps the id).
+- **Housekeeping:** the start names imported roles no sign-in delivered for 90 days and those of a source whose import
+  is off; an unused one can be deleted on the role page (the next sign-in that delivers it brings it back). Audit
+  `idp_roles_synced source=… granted=… withdrawn=…`.
+
 **Mount / embed / HTTPS:**
 - **Default:** automatically under `config.admin_path` (default `/auth/admin`) — freely changeable.
 - **Mount elsewhere:** `app.include_router(auth.admin_router(), prefix="/admin")` — any path,
@@ -3065,7 +3096,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**151 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**153 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

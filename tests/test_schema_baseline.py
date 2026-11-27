@@ -100,7 +100,9 @@ work = tempfile.mkdtemp(prefix="ts-baseline-")
 # the baseline plus exactly the objects of the steps after it — and a baseline database opened by this version reaches
 # the same schema (the step itself), with nothing of the baseline changed.
 #: The objects each schema step after the baseline adds (additive steps only).
-STEPS = {27: {"table app_permission", "table role_permission", "index idx_role_permission_app"}}
+STEPS = {27: {"table app_permission", "table role_permission", "index idx_role_permission_app"},
+         # 28, T-102: the IdP group import (catalog notes and what each source delivered per account).
+         28: {"table idp_role", "table idp_role_membership", "index idx_idp_role_membership_role"}}
 expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
 mine = schema_of(fresh_db(ROOT, tempfile.mkdtemp(dir=work)))
 added = set().union(*STEPS.values())
@@ -119,33 +121,35 @@ r.check("(a) the baseline constants agree: baseline and the release named in eve
         Store.BASELINE_SCHEMA == expected["user_version"] and Store.SCHEMA_VERSION == Store.BASELINE_SCHEMA + len(STEPS)
         and f"v{Store.LAST_MIGRATING_RELEASE}" == expected["generated_from"] == TAG,
         f"{Store.SCHEMA_VERSION} {Store.BASELINE_SCHEMA} {Store.LAST_MIGRATING_RELEASE}")
-# The step 26 → 27 on a database of the state before: made by this version's `Store`, the step's objects dropped and
-# stamped back to 26 (AGENTS.md: never a fixture from older files), with an account in it. Opened again it reaches
-# the fresh schema and keeps the account.
-step_db = os.path.join(tempfile.mkdtemp(dir=work), "step.db")
-_s = Store(step_db)
-_s.create_user("kept", display_name="Kept")
-_s.close()
-_raw = sqlite3.connect(step_db)
-for _obj in sorted(STEPS[27], reverse=True):
-    _kind, _name = _obj.split(" ", 1)
-    _raw.execute(f"DROP {_kind.upper()} IF EXISTS {_name}")
-_raw.execute("PRAGMA user_version = 26")
-_raw.commit()
-_raw.close()
-before = schema_of(step_db)
-Store(step_db).close()
-after = schema_of(step_db)
-_raw = sqlite3.connect(step_db)
-_kept = _raw.execute("SELECT username FROM users").fetchall()
-_raw.close()
-r.check("(a) the step 26 → 27: a database of the state before (made by Store, stamped back) reaches the fresh schema, "
-        "the baseline's objects untouched, its account kept",
-        before["user_version"] == 26 and not (STEPS[27] & set(before["objects"])) and after == mine
-        and {k: v for k, v in after["objects"].items() if k not in added} == before["objects"]
-        and _kept == [("kept",)],
-        f"before {before['user_version']} after {after['user_version']} "
-        f"diff {sorted(set(after['objects']) ^ set(mine['objects']))} kept {_kept}")
+# Every step on a database of the state before: made by this version's `Store`, the objects of that step and of every
+# later one dropped and stamped back (AGENTS.md: never a fixture from older files), with an account in it. Opened again
+# it reaches the fresh schema and keeps the account — 26 → 28 in one start as well as 27 → 28.
+for _step in sorted(STEPS):
+    _later = set().union(*(o for v, o in STEPS.items() if v >= _step))
+    step_db = os.path.join(tempfile.mkdtemp(dir=work), f"step{_step}.db")
+    _s = Store(step_db)
+    _s.create_user("kept", display_name="Kept")
+    _s.close()
+    _raw = sqlite3.connect(step_db)
+    for _obj in sorted(_later, reverse=True):
+        _kind, _name = _obj.split(" ", 1)
+        _raw.execute(f"DROP {_kind.upper()} IF EXISTS {_name}")
+    _raw.execute(f"PRAGMA user_version = {_step - 1}")
+    _raw.commit()
+    _raw.close()
+    before = schema_of(step_db)
+    Store(step_db).close()
+    after = schema_of(step_db)
+    _raw = sqlite3.connect(step_db)
+    _kept = _raw.execute("SELECT username FROM users").fetchall()
+    _raw.close()
+    r.check(f"(a) the step {_step - 1} → {Store.SCHEMA_VERSION}: a database of the state before (made by Store, stamped "
+            "back) reaches the fresh schema, the earlier objects untouched, its account kept",
+            before["user_version"] == _step - 1 and not (_later & set(before["objects"])) and after == mine
+            and {k: v for k, v in after["objects"].items() if k not in _later} == before["objects"]
+            and _kept == [("kept",)],
+            f"before {before['user_version']} after {after['user_version']} "
+            f"diff {sorted(set(after['objects']) ^ set(mine['objects']))} kept {_kept}")
 # The fixture is only as good as its source: regenerated from the tag, it must be identical — a fixture edited by hand
 # (together with the schema in the code, so that the comparison above stays green) turns this red (T-127). Without
 # the tag there is nothing to compare with, and that is a failure, not a skip: every CI job that runs this suite
