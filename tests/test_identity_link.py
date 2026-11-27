@@ -226,3 +226,92 @@ oc.get("/auth/login")
 oc.cookies.set(auth.session_cookie_name, tok_o)
 assert unlink(oc, "oidc").status_code == 409 and auth.store.is_oidc_account(only)
 ok("OIDC: unlinked with a password left; an account with only the provider keeps it (409)")
+
+# ======================= B-18: unlinking OIDC drops the re-check rows of every session =======================
+# Signed in through the provider on two devices, a password set, then the OIDC identity unlinked: the refresh rows of
+# BOTH sessions go in the same transaction, the next re-check does not reach the provider for the unlinked identity,
+# and both sessions stay valid (the password is the way in that is left). Before the unlink the stub provider IS
+# reached — the check below is not blind.
+import io  # noqa: E402
+import logging  # noqa: E402
+from urllib.parse import parse_qs, urlparse  # noqa: E402
+
+from tinysesam import security  # noqa: E402
+from tinysesam.oidc import DEFAULT_CLIENT, OIDCClient  # noqa: E402
+
+
+class _Claims(dict):
+    def validate(self, *a, **k):
+        pass
+
+
+rauth = TinySesam(TinySesamConfig(
+    lang="en", db_path=os.path.join(tempfile.mkdtemp(), "r.db"), cookie_secure=False, base_url="http://testserver",
+    csrf_enabled=False, passkey_enabled=False, oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe",
+    oidc_client_secret="secret", oidc_session_refresh_minutes=5))
+rapp = FastAPI()
+rapp.include_router(rauth.router())
+rauth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize", "token_endpoint": IDP + "/token",
+                    "userinfo_endpoint": IDP + "/userinfo", "jwks_uri": IDP + "/jwks"}
+_rclaims = {"sub": "rhea-1", "preferred_username": "rhea", "email": "rhea@example.com", "email_verified": True}
+rauth.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+    _Claims({**_rclaims, "nonce": nonce}), {"access_token": "at", "refresh_token": "rt"})
+rauth.oidc.userinfo = lambda at, expected_sub="": OIDCClient.check_userinfo({}, expected_sub)
+
+
+def oidc_device():
+    c = TestClient(rapp)
+    start = c.get("/auth/oidc/start", follow_redirects=False)
+    got = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    r = c.get(f"/auth/oidc/callback?code=x&state={got}", follow_redirects=False)
+    assert r.status_code == 303, (r.status_code, r.text[:300])
+    return c
+
+
+def recheck_rows(c):
+    return rauth.store.get_oidc_sessions(rauth.store.session_hash(c.cookies.get(rauth.session_cookie_name)))
+
+
+asked = []
+rauth.oidc_clients[DEFAULT_CLIENT].refresh = lambda rt, sub: (asked.append(sub)
+                                                              or ("ok", {"sub": sub}, {"refresh_token": "rt-new"}))
+
+
+def due_recheck(c):
+    rauth.store._exec("UPDATE oidc_session SET checked_at=?", (int(time.time()) - 600,))
+    r = c.get("/auth/me")
+    rauth._oidc_outcome.wait()
+    return r
+
+
+phone, laptop = oidc_device(), oidc_device()
+rhea = rauth.store.get_user_by_name("rhea")["id"]
+rauth.set_password(rhea, PW)
+assert len(recheck_rows(phone)) == 1 and len(recheck_rows(laptop)) == 1
+assert due_recheck(phone).status_code == 200 and asked == ["rhea-1"], asked
+ok("B-18 harness: two devices signed in through the provider, each with a re-check row; the stub provider is reached")
+
+buf = io.StringIO()
+handler = logging.StreamHandler(buf)
+security.seclog.addHandler(handler)
+level = security.seclog.level
+security.seclog.setLevel(logging.INFO)         # as with a security log file (`attach_security_log`)
+try:
+    r = phone.post("/auth/identities/unlink", data={"source": "oidc"}, follow_redirects=False)
+finally:
+    security.seclog.removeHandler(handler)
+    security.seclog.setLevel(level)
+assert r.status_code == 303, (r.status_code, r.text[:300])
+assert not rauth.store.is_oidc_account(rhea)
+assert recheck_rows(phone) == [] and recheck_rows(laptop) == [], "a re-check row of the unlinked identity stayed"
+unlinked = [a for a in rauth.store.recent_audit(50) if a["event"] == "oidc_unlinked"]
+assert unlinked and "rechecks_dropped=2" in (unlinked[0]["detail"] or ""), unlinked
+assert "re-check row(s) of the running sessions dropped" in buf.getvalue() and "user=rhea" in buf.getvalue(), \
+    buf.getvalue()
+asked.clear()
+for device in (phone, laptop):
+    me = due_recheck(device)
+    assert me.status_code == 200 and me.json()["username"] == "rhea", (me.status_code, me.text[:200])
+assert asked == [], f"the re-check still asked the provider about the unlinked identity: {asked}"
+ok("B-18: unlinking OIDC drops the re-check rows of every session in one go (audit rechecks_dropped=2, security log); "
+   "the provider is no longer asked, both sessions stay valid")

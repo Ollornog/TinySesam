@@ -185,6 +185,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- Unlinking an OIDC identity on the account page now drops the re-check rows (`oidc_session`) of every session of the
+  account in the same transaction (B-18). Before, the running sessions kept exchanging the refresh token of the
+  released identity until they ended — and a no from the provider still ended them and counted against the account.
+  The sessions stay valid through the way in that is left; the audit line reads `oidc_unlinked by=holder
+  rechecks_dropped=<n>`, and the security log names the dropped rows.
 - An OIDC sign-in without the group claim (the scope `groups` not asked, a provider that leaves it out) no longer
   withdraws the mapped roles and the provider's admin flag: a missing claim is not an empty list (T-99). Only a claim
   that is there synchronises, an empty one included; a missing one leaves the roles and writes a warning to the
