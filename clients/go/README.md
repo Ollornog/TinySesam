@@ -52,7 +52,8 @@ mux.Handle("/profile", tinysesam.RequireAccountKind(tinysesam.AccountUser, profi
 http.ListenAndServe("127.0.0.1:8080", gate.Middleware(mux))
 ```
 
-A complete program is in [`examples/basic`](examples/basic/main.go).
+A complete program is in [`examples/basic`](examples/basic/main.go). Example Ex1, [`examples/ex1`](examples/ex1/main.go),
+runs behind the TinySesam server with local accounts and uses the account API; its stack is in `deploy/ex1`.
 
 ### Duties of the proxy
 

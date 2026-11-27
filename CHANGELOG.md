@@ -21,6 +21,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Example Ex1 (T-97): a Go application behind the TinySesam server with local accounts — `clients/go/examples/ex1`
+  (identity from the `Remote-*` headers, members through the account API with the service account's key) and the
+  stack `deploy/ex1` (`tinysesam.toml` by `TINYSESAM_CONFIG`, Caddy with forward auth, both built from the checkout).
+  `tests/test_example_ex1.py` builds the server from that file and makes the program's calls.
 - Linking a local account with an OIDC identity, and pre-created OIDC accounts (T-99, ADR-18) — never by an address
   alone. The account page offers "Link with <provider>" (`POST /auth/oidc/link`, CSRF): a fresh confirmation here, an
   active sign-in at the provider (`auth_time` after the request), bound only in the session that started it and only for

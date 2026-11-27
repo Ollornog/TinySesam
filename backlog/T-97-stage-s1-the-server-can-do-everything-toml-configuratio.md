@@ -36,6 +36,18 @@ The gateway is today an OIDC-only preset configured by environment variables (no
   server built from a configuration file with every feature on (`server_routes`), routes behind a missing extra
   checked against the static scan. Gaps: `grant_mfa_enrollment`, `revoke_mfa_enrollment` → [T-130](T-130-server-path-for-the-mfa-enrollment-pass.md).
 
+- 2026-11-27, part 3: example **Ex1** — `clients/go/examples/ex1` (header mode, account API with the service
+  account's automation key), `deploy/ex1` (`tinysesam.toml`, compose built from the checkout, Dockerfile with
+  digest-pinned bases in Dependabot), `tests/test_example_ex1.py` (the server from that file serves sign-in, panel,
+  account page and forward auth; list and invite through the account API).
+
+**Open (rest of T-97):**
+- Image variant with the `[saml]` extra: a second published image (libxmlsec1 and its libraries in the distroless
+  runtime, its own release jobs, attestation, image probe and Dependabot entry) — an architecture decision for the
+  maintainer before it is built (named in the S4 report).
+- `deploy/quickstart` with a configuration file: waits for the next release (release stop until the end of M-2), as
+  the published images before it cannot read `TINYSESAM_CONFIG`.
+
 ## Acceptance
 - Example **Ex1** (a Go application behind the server, local accounts): sign-in, panel and account API without a line of Python in the application.
 - Parity test green; a mutation (remove a server route) turns it red.
