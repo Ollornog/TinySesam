@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 12/23 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 13/23 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 91/100 erledigt
@@ -175,7 +175,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-16](B-16-the-sql-check-of-test-english-code-goes-blind-afte.md)** The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment · M-1
 * ☑ **[B-17](B-17-scorecard-red-upstream-image-of-scorecard-action-2-6-0.md)** Scorecard red: the image of scorecard-action 2.6.0 cannot be pulled (upstream) · M-5
 * ☑ **[B-18](B-18-oidc-unlink-leaves-the-refresh-row-of-the-running-session.md)** OIDC unlink leaves the refresh row of the running session · M-2
-* ☐ **[B-19](B-19-a-removed-role-keeps-its-permission-assignments.md)** A role removed from available_roles keeps its permission assignments · M-2
+* ☑ **[B-19](B-19-a-removed-role-keeps-its-permission-assignments.md)** A role removed from available_roles keeps its permission assignments · M-2
 
 ## Entscheidungen (ADR)
 

@@ -1108,7 +1108,7 @@ _KEYS = (
     "src_both src_accounts accounts_n take_over delete_role why_in_use why_in_ladder role_invalid_mark entry_hint "
     "entry_key entry_add entry_delete confirm.role_delete confirm.entry_delete usage_users usage_keys usage_services "
     "usage_links usage_approvals usage_permissions perms_btn perms_title perms_hint perms_none perm_col perm_danger "
-    "perm_orphaned perm_suspended perm_delete perm_suggested confirm.perm_delete "
+    "perm_orphaned perm_suspended perm_delete perm_suggested confirm.perm_delete perm_role_removed perm_withdraw "
     "src_idp idp_mark import_title import_hint import_skipped skip_config skip_catalog skip_case skip_accounts "
     "skip_ladder skip_invalid skip_full import_missing import_over"
 ).split()
@@ -1515,7 +1515,9 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
 // ---------- Permissions (`#perms`, T-100): per application, which role holds which permission. Administrators see every
 // application and role; an area administrator only the applications of its area and the roles it manages (the server
 // decides again). A dangerous permission says so with a symbol and a word, and the server asks for a fresh
-// confirmation before it changes; an orphaned one grants nothing and shows the roles that held it (suspended).
+// confirmation before it changes; an orphaned one grants nothing and shows the roles that held it (suspended). A role
+// that left the configuration and the catalog (B-19) keeps a column while it holds assignments: marked with the symbol
+// and the word, its cells say "suspended" and offer only to withdraw (the server never assigns to an unknown role).
 const tx=x=>x&&typeof x==="object"?(x[document.documentElement.lang]||x.en||Object.values(x)[0]||""):(x||"");
 async function permsview(){const R=await g("/api/permissions");let n=0;
   const cell=(a,p,r)=>{const held=p.roles.includes(r),sus=p.suspended_roles.includes(r),id="pm"+(n++);
@@ -1526,14 +1528,17 @@ async function permsview(){const R=await g("/api/permissions");let n=0;
       +(p.orphaned?` <span class=badge>⊘ ${esc(L.perm_orphaned)}</span>`:"");
     const del=p.orphaned&&!R.area?` <button class=warn ${on("permdel",a.id,p.name)}>${esc(L.perm_delete)}</button>`:"";
     const hint=p.suggested_roles.length?`<div class="muted small">${esc(L.perm_suggested.replace("{roles}",p.suggested_roles.join(", ")))}</div>`:"";
-    return `<tr id="perm-${esc(a.id)}-${esc(p.name)}"><th scope=row>${esc(tx(p.label)||p.name)}<div class="muted small">${esc(p.name)}</div>${tag}${del}${hint}</th>${R.roles.map(r=>cell(a,p,r)).join("")}</tr>`};
-  const card=a=>`<section class=card><h2>${esc(tx(a.name)||a.id)}</h2><div class=tablewrap><table class=permgrid><thead><tr><th scope=col>${esc(L.perm_col)}</th>${R.roles.map(r=>`<th scope=col>${esc(r)}${(R.idp_roles||[]).includes(r)?`<div class="muted small idp">${esc(L.idp_mark)}</div>`:""}</th>`).join("")}</tr></thead><tbody>${a.permissions.map(p=>row(a,p)).join("")}</tbody></table></div></section>`;
+    return `<tr id="perm-${esc(a.id)}-${esc(p.name)}"><th scope=row>${esc(tx(p.label)||p.name)}<div class="muted small">${esc(p.name)}</div>${tag}${del}${hint}</th>${R.roles.map(r=>cell(a,p,r)).join("")}${(R.removed_roles||[]).map(r=>goneCell(a,p,r)).join("")}</tr>`};
+  const gone=R.removed_roles||[];
+  const goneCell=(a,p,r)=>p.roles.includes(r)||p.suspended_roles.includes(r)?`<td class=removedcell><span class="muted small">⏸ ${esc(L.perm_suspended)}</span> <button class=sec ${on("permdrop",a.id,p.name,r)}>${esc(L.perm_withdraw)}</button></td>`:"<td></td>";
+  const card=a=>`<section class=card><h2>${esc(tx(a.name)||a.id)}</h2><div class=tablewrap><table class=permgrid><thead><tr><th scope=col>${esc(L.perm_col)}</th>${R.roles.map(r=>`<th scope=col>${esc(r)}${(R.idp_roles||[]).includes(r)?`<div class="muted small idp">${esc(L.idp_mark)}</div>`:""}</th>`).join("")}${gone.map(r=>`<th scope=col class=removedrole>${esc(r)}<div class=badge>⊘ ${esc(L.perm_role_removed)}</div></th>`).join("")}</tr></thead><tbody>${a.permissions.map(p=>row(a,p)).join("")}</tbody></table></div></section>`;
   V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
     <section class=card><h2>${esc(L.perms_title)}</h2><div class="muted small">${esc(L.perms_hint)}</div></section>
     ${R.apps.map(card).join("")||`<span class=muted>${esc(L.perms_none)}</span>`}`)}
 async function permset(app,permission,role,id){const el=document.getElementById(id);if(!el)return;
   const r=await p("/api/permissions/assign",{app,permission,role,granted:!!el.checked});
   if(rejected(r))el.checked=!el.checked;else permsview()}
+async function permdrop(app,permission,role){if(!rejected(await p("/api/permissions/assign",{app,permission,role,granted:false})))permsview()}
 async function permdel(app,permission){if(!await tsConfirm(L["confirm.perm_delete"].replace("{perm}",permission),{danger:true}))return;
   if(!rejected(await p("/api/permissions/delete",{app,permission})))permsview()}
 // ---------- Roles (`#roles`, administrators only): the role catalog — roles added here are offered like those of the
@@ -1697,7 +1702,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,totpreset,totpwin,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,permset,permdel,copylink};
+const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,totpreset,totpwin,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,permset,permdel,permdrop,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 // Back/forward to an account or the new-account form also from another tab.

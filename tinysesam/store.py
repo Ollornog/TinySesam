@@ -428,8 +428,8 @@ _PART_METHODS = {
     ),
     "permissions": (
         "active_permission_count", "app_permission_rows", "current_permissions", "delete_orphaned_permission",
-        "effective_permissions", "get_app_permission", "grant_role_permission", "permission_apps",
-        "revoke_role_permission", "sync_permissions",
+        "effective_permissions", "get_app_permission", "grant_role_permission", "has_role_permissions",
+        "permission_apps", "revoke_role_permission", "suspend_assignments_of_removed_roles", "sync_permissions",
     ),
     "roles": (
         "_catalog_hook", "_role_usage_locked", "add_catalog_roles", "catalog_roles",

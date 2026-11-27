@@ -238,6 +238,10 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Vergeben** mit `auth.grant_permission(role, permission, app=…)` und entziehen mit `auth.revoke_permission(…)` — an
   eine Rolle der Konfiguration (auch das Ziel einer Gruppenzuordnung) oder des Rollenkatalogs. Eine Rolle mit
   Berechtigungen gilt als benutzt: der Katalog löscht sie nicht, eine neue Rolle gleichen Namens erbt also nie etwas.
+  Eine Rolle, die die Konfiguration verlässt, vergibt ab da nichts mehr, auch an einem Konto, das sie noch trägt; der
+  nächste Start setzt ihre Zuweisungen aus und nennt sie im Sicherheitslog, das Panel zeigt sie in einer Spalte mit ⊘
+  „Rolle entfernt" und einem Knopf „Zurückziehen", und eine unter dem Namen neu angelegte Rolle hat nichts, bis jemand
+  neu vergibt.
 - **Verwaist:** eine Berechtigung, die ihr Manifest verlässt, vergibt ab da nichts mehr; `auth.app_permissions("docs")`
   zeigt sie (`orphaned`) mit den Rollen, die sie hatten (`suspended_roles`). Kommt sie zurück, bleiben diese
   Zuweisungen ausgesetzt, bis jemand sie neu vergibt — nie still wieder erteilt. `auth.delete_permission(…)` entfernt

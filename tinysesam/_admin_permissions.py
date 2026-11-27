@@ -4,8 +4,9 @@ Registered by `admin.build_admin_router` on the panel's router. Administrators s
 permissions and assign to every known role; an area administrator (a delegate role with `apps` and the action
 `permissions`, T-74) sees only the applications of its area and assigns only to the roles it manages. A `danger`
 permission needs a fresh confirmation for everyone (`_require_fresh`), also with `admin_require_mfa=False`. Orphaned
-permissions are shown with the roles that held them (suspended); an administrator deletes them. Every change is
-audited (`permission_granted`, `permission_revoked`, `permission_deleted` with the actor).
+permissions are shown with the roles that held them (suspended); an administrator deletes them. Assignments of a role
+that left the configuration and the catalog (B-19) get a column of their own, marked, for administrators to withdraw
+them. Every change is audited (`permission_granted`, `permission_revoked`, `permission_deleted` with the actor).
 """
 from __future__ import annotations
 
@@ -57,7 +58,11 @@ def register(ar, auth, team, json_body_of) -> None:
             out.append({"id": app_id, "name": name, "permissions": rows})
         # Imported roles (T-102) carry their mark in the matrix header too.
         idp = sorted(r["name"] for r in auth.store.catalog_roles() if r.get("source") and r["name"] in roles)
-        return {"apps": out, "roles": roles, "idp_roles": idp, "area": apps_ok is not None}
+        # B-19: roles that left the configuration and the catalog but still hold (suspended) assignments — their own
+        # columns, for administrators only (an area administrator manages known roles), to withdraw them.
+        removed = sorted({r for a in out for p in a["permissions"] for r in p["roles"] + p["suspended_roles"]}
+                         - set(known) - {"admin"}) if roles_ok is None else []
+        return {"apps": out, "roles": roles, "idp_roles": idp, "removed_roles": removed, "area": apps_ok is not None}
 
     @ar.post("/api/permissions/assign")
     async def permissions_assign(request: Request):

@@ -9,9 +9,15 @@
       an area gets 403
   (d) an orphaned permission is shown with its suspended roles, offers no tick, and an administrator deletes it
   (e) the panel page offers the matrix (button, view, texts) and the JS refers to the routes; CSRF guards the writes
+  (f) B-19: a role that leaves the configuration keeps no effective permission — at once (an account may still carry
+      it), and from the next start its assignments are suspended, named in the security log and audited; the panel
+      shows them in a marked column (symbol and word) for administrators to withdraw; a role created again under the
+      same name (configuration or catalog) does not take them over until an administrator assigns anew
 """
 from __future__ import annotations
 
+import io
+import logging
 import os
 import sys
 import tempfile
@@ -22,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import TinySesam, TinySesamConfig, _role_catalog, security  # noqa: E402
 from tinysesam.errors import ConfigError  # noqa: E402
 
 PW = "a long probe password 4711"
@@ -166,3 +172,80 @@ for needle in ("const PERMS=", "async function permsview", '"/api/permissions/as
 area_page = session(auth2, app2, area).get("/auth/admin").text
 assert '"apps": ["docs"]' in area_page or '"apps":["docs"]' in area_page, "the area is not in the delegate's view"
 ok("(e) the panel page carries the matrix: button, view, routes; the delegate's view names its area")
+
+# ── (f) B-19 ────────────────────────────────────────────────────────────────────────────────────────
+ROLES = ["docs-reader", "docs-editor", "wiki-editor", "area-docs", "plain-delegate", "roles-only"]
+
+
+def started(db, roles):
+    """A start on `db` with `roles` as `available_roles`, and the security log it wrote."""
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    security.seclog.addHandler(handler)
+    try:
+        a, ap = build(db_path=db, available_roles=roles)
+    finally:
+        security.seclog.removeHandler(handler)
+    return a, ap, buf.getvalue()
+
+
+auth4, app4 = build(available_roles=ROLES + ["temp-role"])
+db4 = auth4.cfg.db_path
+boss4 = int(auth4.create_user("boss", password=PW, is_admin=True))
+tia = int(auth4.create_user("tia", password=PW, roles=["temp-role"]))
+anne4 = int(auth4.create_user("anne", password=PW, roles=["area-docs"]))
+assert auth4.grant_permission("temp-role", "docs.delete", app="docs", by="boss")
+assert auth4.has_permission(auth4.get_user(tia), "docs.delete", app="docs")
+# At once: the role leaves the configuration while the instance runs — the assignment grants nothing any more.
+auth4.cfg.available_roles = list(ROLES)
+assert not auth4.has_permission(auth4.get_user(tia), "docs.delete", app="docs"), \
+    "a role no longer in the configuration still granted its permission"
+auth4.cfg.available_roles = ROLES + ["temp-role"]
+assert auth4.has_permission(auth4.get_user(tia), "docs.delete", app="docs")
+
+# The next start without the role: suspended, named, audited; the account still carries the role and holds nothing.
+auth5, app5, log5 = started(db4, list(ROLES))
+assert "temp-role" in auth5.user_roles(auth5.get_user(tia)), "the probe needs the role still on the account"
+assert not auth5.has_permission(auth5.get_user(tia), "docs.delete", app="docs")
+assert row(auth5, "docs", "docs.delete")["suspended_roles"] == ["temp-role"], row(auth5, "docs", "docs.delete")
+assert "1 permission assignment(s) of role(s) no longer in the configuration" in log5 and \
+    "temp-role → docs/docs.delete" in log5, log5
+lines = [a for a in auth5.store.recent_audit(50) if a["event"] == "permissions_suspended"]
+assert len(lines) == 1 and "reason=role_removed temp-role:docs/docs.delete" in lines[0]["detail"], lines
+c5 = session(auth5, app5, boss4)
+assert c5.get("/auth/admin/api/permissions").json()["removed_roles"] == ["temp-role"]
+assert session(auth5, app5, anne4).get("/auth/admin/api/permissions").json()["removed_roles"] == [], \
+    "an area administrator saw a column it cannot act on"
+assert assign(c5, "docs", "docs.delete", "temp-role").status_code == 409, "assigned to a role that does not exist"
+page5 = c5.get("/auth/admin").text
+for needle in ("removed_roles", "perm_role_removed", "permdrop", auth5.t("admin.perm_role_removed")):
+    assert needle in page5, needle
+_, _, log5b = started(db4, list(ROLES))
+assert "temp-role → docs/docs.delete" in log5b and len(
+    [a for a in auth5.store.recent_audit(80) if a["event"] == "permissions_suspended"]) == 1, \
+    "a second start must name the row again, but not audit it again"
+ok("(f) B-19: a removed role grants nothing at once; the next start suspends its assignment, names it in the "
+   "security log and audits it once; the panel lists it for administrators only")
+
+# The role comes back — in the configuration, and as a catalog role: the assignment stays suspended.
+auth6, app6, log6 = started(db4, ROLES + ["temp-role"])
+assert not auth6.has_permission(auth6.get_user(tia), "docs.delete", app="docs"), \
+    "a role created again under the same name inherited the old assignment"
+assert row(auth6, "docs", "docs.delete")["suspended_roles"] == ["temp-role"] and "temp-role" not in log6
+c6 = session(auth6, app6, boss4)
+assert c6.get("/auth/admin/api/permissions").json()["removed_roles"] == []
+auth7, app7, _ = started(db4, list(ROLES))
+_role_catalog.create(auth7.cfg, auth7.store, "temp-role", "boss")        # the panel's and the CLI's path
+assert not auth7.has_permission(auth7.get_user(tia), "docs.delete", app="docs"), "the catalog role inherited it"
+assert assign(c6, "docs", "docs.delete", "temp-role").json() == {"ok": True, "changed": True}
+assert auth6.has_permission(auth6.get_user(tia), "docs.delete", app="docs")
+ok("(f) B-19: a role created again (configuration or catalog) does not take the old assignment over; an "
+   "administrator's tick gives it back")
+
+# Withdrawn by an administrator while the role is gone: the row goes, the next start says nothing.
+auth8, app8, _ = started(db4, list(ROLES))
+assert assign(session(auth8, app8, boss4), "docs", "docs.delete", "temp-role", granted=False).json()["changed"]
+auth9, app9, log9 = started(db4, list(ROLES))
+assert "temp-role" not in log9 and session(auth9, app9, boss4).get(
+    "/auth/admin/api/permissions").json()["removed_roles"] == []
+ok("(f) B-19: an administrator withdraws the assignment of a removed role; the next start names nothing")

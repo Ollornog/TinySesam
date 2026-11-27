@@ -1259,12 +1259,16 @@ Schema 27 (T-100, ADR-17) adds two tables; nothing existing changes.
   every start; `app` = `register_permissions`), `registered_at`, `orphaned_at` (set when it left its manifest; then it
   grants nothing).
 - `role_permission` — which role holds which permission of which application: `role`, `app`, `name`, `active` (0 = the
-  permission was orphaned meanwhile; shown, grants nothing, also after it comes back, until an administrator assigns
-  it anew), `granted_at`, `granted_by`. Deleting a permission deletes its rows (only an orphaned one can be deleted).
+  permission was orphaned meanwhile, or its role left the configuration and the catalog; shown, grants nothing, also
+  after it comes back, until an administrator assigns it anew), `granted_at`, `granted_by`. Deleting a permission deletes its rows (only an orphaned one can be deleted).
 - **Audit events:** `permissions_registered` (`app= source= added=… updated=… returned=… orphaned=…`, only when
-  something changed), `permission_granted`, `permission_revoked` (`app= permission= role=`), `permission_deleted`.
+  something changed), `permission_granted`, `permission_revoked` (`app= permission= role=`), `permission_deleted`,
+  `permissions_suspended` (`reason=role_removed <role>:<app>/<permission> …`, B-19).
 - **Start:** the configuration's manifests are registered; an application whose configured permissions are gone gets
-  an empty manifest — its configured permissions become orphaned, never deleted silently.
+  an empty manifest — its configured permissions become orphaned, never deleted silently. Assignments of a role that
+  is neither in the configuration nor in the catalog any more are suspended (B-19; audited once) and named in a
+  security-log warning at every start until an administrator withdraws them (panel: the column marked "Role removed",
+  or `auth.revoke_permission(role, permission, app=…)`). Such a role grants nothing even before that start.
 
 ## Pairing code for people's programs: columns
 

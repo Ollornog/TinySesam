@@ -130,6 +130,29 @@ def grant_role_permission(self, role: str, app: str, name: str, by: Optional[str
     return "ok"
 
 
+def has_role_permissions(self) -> bool:
+    """Is any permission assigned to any role at all (the start skips the B-19 check otherwise)?"""
+    return self._one("SELECT 1 AS x FROM role_permission LIMIT 1") is not None
+
+
+def suspend_assignments_of_removed_roles(self, known) -> list:
+    """B-19: the assignments of roles that are not in `known` (the configuration's and the catalog's roles) — every
+    such row, `[{"role", "app", "name", "suspended"}]` sorted, where `suspended` is True for a row this call has just
+    suspended (`active` = 0). In ONE transaction: a role created later under the same name finds them suspended and
+    holds nothing until an administrator assigns again (`grant_role_permission` re-activates)."""
+    known = sorted({r for r in known if isinstance(r, str)})
+    marks = ",".join("?" * len(known))
+    where = f"role NOT IN ({marks})" if known else "1"
+    with self._writing():
+        self._begin_immediate()
+        rows = [dict(r) for r in self.db.execute(
+            f"SELECT role, app, name, active FROM role_permission WHERE {where} ORDER BY role, app, name", known)]
+        if any(r["active"] for r in rows):
+            self.db.execute(f"UPDATE role_permission SET active = 0 WHERE active = 1 AND {where}", known)
+        self.db.commit()
+    return [{"role": r["role"], "app": r["app"], "name": r["name"], "suspended": bool(r["active"])} for r in rows]
+
+
 def revoke_role_permission(self, role: str, app: str, name: str) -> bool:
     """Withdraw an assignment (also a suspended one). True if there was one."""
     return self._exec("DELETE FROM role_permission WHERE role = ? AND app = ? AND name = ?",

@@ -185,6 +185,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- A role removed from the configuration no longer keeps its permissions (B-19). It grants nothing from then on, also
+  on an account that still carries it; the next start suspends its assignments (`active` = 0, audit
+  `permissions_suspended reason=role_removed`) and names them in a security-log warning at every start until an
+  administrator withdraws them. The panel's matrix shows such a role in a column of its own, marked "⊘ Role removed —
+  grants nothing", with "Withdraw" (`GET <admin>/api/permissions` carries `removed_roles`, for administrators). A role
+  created again under the same name, in the configuration or the catalog, holds nothing until an administrator
+  assigns anew. No schema change.
 - Unlinking an OIDC identity on the account page now drops the re-check rows (`oidc_session`) of every session of the
   account in the same transaction (B-18). Before, the running sessions kept exchanging the refresh token of the
   released identity until they ended — and a no from the provider still ended them and counted against the account.
