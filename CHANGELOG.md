@@ -31,6 +31,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   a pin pull request of a breaking release as a draft. The hygiene test allows the hold — exactly the whole line
   `gh pr ready "$PR" --repo "$REPO" --undo` in `ausfuehren` (without `--undo` it would release a held pull request) —
   and in `entscheiden` the read-only app token for the source repo, no other action.
+- A breaking commit since the latest release tag needs a line in `[Unreleased]` with one of the marks the fleet's
+  auto-merge reads (`breaking`, `Upgrading from`, `Upgrade-Hinweis`; read from the generated workflow), otherwise the
+  hygiene test is red: the pin pull request of such a release is then held as a draft by the shared test kit 0.69
+  instead of being merged unseen (T-129).
 - The hygiene test no longer carries branches for test kits before 0.65: the release automation's halt must be the
   0.65+ shape (green with a notice), and every whole-line permission of the auto-merge must be met (T-128).
 - CodeQL notes fixed in code (unused imports, a module imported both ways); four `py/overly-permissive-file` findings

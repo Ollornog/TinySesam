@@ -1914,6 +1914,47 @@ assert not _gaps, "breaking commits the upgrade list (\"Upgrading from 0.30.x\")
 print(f"  upgrade list: the same in CHANGELOG and OPERATIONS, names all {len(_breaking)} breaking commit(s) of "
       f"{len(_commits)} in {UPGRADE_BASE}..{_end}")
 
+# ---------- A breaking change since the last release is marked where the fleet's auto-merge reads it (T-129) ----------
+# The pin PR of a release opens in the maintainer's deployment repository; since kit 0.69 its auto-merge holds it as a
+# draft when the release is breaking — at 0.x every minor, and whatever release gains a CHANGELOG line with one of the
+# marks below (the regex is read from the generated auto-merge, so it follows the kit). A release is cut from
+# `[Unreleased]`, so a breaking commit since the latest release tag needs such a line there already — otherwise a
+# breaking 1.x minor or a patch would be merged into the fleet unseen (0.31.0's pin was merged after seven minutes).
+_marks = re.search(r"local z re='([^']+)'", read(".github/workflows/dependabot-auto-merge.yml"))
+assert _marks, "the auto-merge no longer names the breaking marks (`local z re='…'`) — check the kit (0.69+)"
+BREAKING_MARKS = re.compile(_marks.group(1), re.I)
+
+
+def unreleased_section(text: str) -> str:
+    """The text of `## [Unreleased]` up to the next version heading, "" without one."""
+    m = re.search(r"(?ms)^## \[Unreleased\]\s*$(.*?)(?=^## \[)", text)
+    return m.group(1) if m else ""
+
+
+def unmarked_breaks(section: str, commits: list) -> list:
+    """The breaking commits (sha, subject, body) — all of them, when `section` has no line with a mark."""
+    if any(BREAKING_MARKS.search(line) for line in section.splitlines()):
+        return []
+    return [f"{sha[:7]} {subject}" for sha, subject, body in commits if is_breaking(subject, body)]
+
+
+assert BREAKING_MARKS.search("#### Upgrading from 0.31.x") and BREAKING_MARKS.search("**A breaking release**")
+assert unmarked_breaks("- a fix\n", [("a" * 40, "feat!: gone (T-1)", "")]) == ["aaaaaaa feat!: gone (T-1)"]
+assert unmarked_breaks("#### Upgrading from 0.31.x\n- gone (T-1)\n", [("a" * 40, "feat!: gone (T-1)", "")]) == []
+assert unmarked_breaks("- a fix\n", [("a" * 40, "fix: fine", "")]) == []
+assert unreleased_section("## [Unreleased]\n\n- x\n\n## [1.0.0] — d\n- y\n").strip() == "- x"
+_latest = (_later or [UPGRADE_BASE])[-1]
+_log = _git("log", "--format=%H%x1f%s%x1f%b%x1e", f"{_latest}..HEAD")
+assert _log.returncode == 0, _log.stderr
+_since = [tuple(c.strip("\n").split("\x1f", 2)) for c in _log.stdout.split("\x1e") if c.strip()]
+_unmarked = unmarked_breaks(unreleased_section(read("CHANGELOG.md")), _since)
+assert not _unmarked, (f"breaking commits since {_latest}, but [Unreleased] in CHANGELOG.md has no line with "
+                       f"{BREAKING_MARKS.pattern!r} (say \"#### Upgrading from {_latest[1:].rsplit('.', 1)[0]}.x\" "
+                       "above the list) — the fleet's auto-merge would not hold the pin:\n  " + "\n  ".join(_unmarked))
+print(f"  breaking marks: {sum(1 for c in _since if is_breaking(c[1], c[2]))} breaking commit(s) since {_latest}, "
+      "[Unreleased] carries the mark the fleet's auto-merge reads" if any(is_breaking(c[1], c[2]) for c in _since)
+      else f"  breaking marks: no breaking commit since {_latest}")
+
 # ---------- Backlog: structure, references, generated index ----------
 # The backlog is part of the repo, so the suite checks it like any other file.
 # A backlog that is only "mostly right" is not believed and then not maintained.
