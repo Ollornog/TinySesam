@@ -251,6 +251,63 @@ for f in LIB:
                                  f"{node.func.id}(...)")
 print("  no print()/breakpoint() in tinysesam/")
 
+# ---------- No call with a side effect inside an assert (CodeQL py/side-effect-in-assert, T-138) ----------
+# The sprint lane runs no CodeQL; twice in a row this finding first showed in the closing pull request of a sprint and
+# cost a full round (S4, S5). This check mirrors the rule of CodeQL's query `Statements/SideEffectInAssert.ql` — the
+# same names, the same subprocess calls, the same yields — so the hygiene test, which runs in the sprint lane and in
+# the pre-push hook, catches what CodeQL would. It does not widen the rule: `client.post(...)` inside an assert is no
+# CodeQL finding and no finding here. Under `python -O` an assert is dropped with everything in it.
+_SIDE_EFFECT_NAMES = frozenset({"print", "write", "append", "pop", "remove", "discard", "delete", "close", "open",
+                                "exit"})
+_SIDE_EFFECT_SUBPROCESS = frozenset({"call", "check_call", "check_output"})
+
+
+def assert_side_effects(source: str) -> list:
+    """(line, what) of every expression inside an `assert` that CodeQL counts as a probable side effect."""
+    tree = _ast.parse(source)
+    from_subprocess = {alias.asname or alias.name for node in _ast.walk(tree)
+                       if isinstance(node, _ast.ImportFrom) and node.module == "subprocess"
+                       for alias in node.names if alias.name in _SIDE_EFFECT_SUBPROCESS}
+    found = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Assert):
+            continue
+        for sub in _ast.walk(node):
+            if isinstance(sub, (_ast.Yield, _ast.YieldFrom)):
+                found.append((sub.lineno, type(sub).__name__.lower()))
+            if not isinstance(sub, _ast.Call):
+                continue
+            func = sub.func
+            if isinstance(func, _ast.Attribute) and isinstance(func.value, _ast.Name) \
+                    and func.value.id == "subprocess" and func.attr in _SIDE_EFFECT_SUBPROCESS:
+                found.append((sub.lineno, f"subprocess.{func.attr}()"))
+            elif isinstance(func, _ast.Name) and func.id in from_subprocess:
+                found.append((sub.lineno, f"{func.id}() from subprocess"))
+            elif isinstance(func, _ast.Attribute) and func.attr in _SIDE_EFFECT_NAMES:
+                found.append((sub.lineno, f".{func.attr}()"))
+            elif isinstance(func, _ast.Name) and func.id in _SIDE_EFFECT_NAMES:
+                found.append((sub.lineno, f"{func.id}()"))
+    return found
+
+
+# Self-probe: the two findings of S5 and S4 are caught, a plain HTTP call is not (no CodeQL finding), and the same
+# call outside the assert is clean.
+assert assert_side_effects('assert delete(reader, "d1").status_code == 403\n') == [(1, "delete()")]
+assert assert_side_effects('assert values_from_file(write("s.toml", "x"))["a"] == 1\n') == [(1, "write()")]
+assert sorted(assert_side_effects("assert out.pop() and subprocess.check_output(['x'])\n")) == [
+    (1, ".pop()"), (1, "subprocess.check_output()")]
+assert assert_side_effects("from subprocess import call as run_it\nassert run_it(['x']) == 0\n") == [
+    (2, "run_it() from subprocess")]
+assert assert_side_effects('assert client.post("/auth/x").status_code == 403\n') == []
+assert assert_side_effects('r = delete(reader, "d1")\nassert r.status_code == 403\n') == []
+_assert_scanned = [f for f in FILES if f.endswith(".py") and os.path.isfile(os.path.join(ROOT, f))]
+_assert_findings = [f"{f}:{line}: {what}" for f in _assert_scanned for line, what in assert_side_effects(read(f))]
+assert not _assert_findings, ("a call with a side effect inside an assert (CodeQL py/side-effect-in-assert) — "
+                              "do the call before the assert and check its result:\n  "
+                              + "\n  ".join(_assert_findings[:20]))
+assert len(_assert_scanned) > 100, f"side-effect-in-assert check saw only {len(_assert_scanned)} Python files"
+print(f"  no call with a side effect inside an assert in {len(_assert_scanned)} Python files (CodeQL rule mirrored)")
+
 # ---------- No obvious secrets ----------
 leaks = hygiene.pruefe_geheimnisse(ROOT, FILES, POLICY)
 assert not leaks, f"possible key in {leaks[:3]}"
