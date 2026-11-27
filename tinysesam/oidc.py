@@ -921,6 +921,9 @@ def register_oidc_routes(router, auth):
             security.seclog.warning("OIDC sign-in without the group claim %s (user_id=%s): the mapped roles stay as "
                                     "they were — ask the provider for it (oidc_scopes, e.g. \"groups\")",
                                     security.for_log(cfg.oidc_group_claim), uid)
+        # The group import (T-102) follows the same rule: a missing claim (None) changes nothing.
+        if cfg.oidc_group_import:
+            auth._import_idp_groups(uid, "oidc", _groups if cfg.oidc_group_claim in info else None)
 
         # client_ip instead of the raw peer IP — behind a proxy the peer is the proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")

@@ -923,6 +923,7 @@ def check_config(config) -> tuple[list[str], list[str]]:
     _admin_delegates(config, error, warnings)
     _delegates_and_app_allowlists(config, warnings)
     _role_level_ladders(config, error, warnings)
+    _group_import(config, error, warnings)
 
     # `audit_retention_days` is checked by NUMBER_LIMITS (below): a negative period would be in `gc()` a
     # point in time in the future — the whole audit log would vanish on the next run. The own
@@ -1497,6 +1498,7 @@ def _combinations(config, error: list, warnings: list) -> None:
 # The rules by feature (T-112): split into parts, every name re-exported here.
 from ._config_check_roles import (  # noqa: E402
     _admin_delegates,
+    _group_import,
     _mapped_roles,
     _role_level_ladders,
     _role_names,

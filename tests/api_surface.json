@@ -1380,6 +1380,10 @@
       "field": "str = 'warn'",
       "tier": "A"
     },
+    "idp_group_labels": {
+      "field": "dict = {}",
+      "tier": "B"
+    },
     "invite_ttl_min": {
       "field": "int = 1440",
       "tier": "A"
@@ -1435,6 +1439,14 @@
     "ldap_group_attr": {
       "field": "str = 'memberOf'",
       "tier": "A"
+    },
+    "ldap_group_import": {
+      "field": "bool = False",
+      "tier": "B"
+    },
+    "ldap_group_import_filter": {
+      "field": "list[str] = []",
+      "tier": "B"
     },
     "ldap_group_role_map": {
       "field": "dict = {}",
@@ -1628,6 +1640,14 @@
       "field": "str = 'groups'",
       "tier": "A"
     },
+    "oidc_group_import": {
+      "field": "bool = False",
+      "tier": "B"
+    },
+    "oidc_group_import_filter": {
+      "field": "list[str] = []",
+      "tier": "B"
+    },
     "oidc_group_role_map": {
       "field": "dict = {}",
       "tier": "A"
@@ -1795,6 +1815,14 @@
     "saml_enabled": {
       "field": "bool = False",
       "tier": "A"
+    },
+    "saml_group_import": {
+      "field": "bool = False",
+      "tier": "B"
+    },
+    "saml_group_import_filter": {
+      "field": "list[str] = []",
+      "tier": "B"
     },
     "saml_group_role_map": {
       "field": "dict = {}",

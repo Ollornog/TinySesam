@@ -25,6 +25,17 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Importing IdP groups as roles at sign-in (T-102, ADR-18 stage 1): `oidc_group_import`, `saml_group_import`,
+  `ldap_group_import` with `*_group_import_filter` (exact names or a prefix `team-*`; without a filter at most 100
+  groups per sign-in, above that a security-log warning and no import) and `idp_group_labels` (display names, e.g. for
+  Entra object ids). A delivered group becomes a role of the same raw name (LDAP: the DN's first value) and a catalog
+  row with its source and last sign-in (`role_catalog()` and `Store.catalog_roles()` carry `source` and
+  `last_seen_at`). Each sign-in — and each OIDC re-check — replaces what the source delivered last; roles assigned by
+  hand and roles of other sources stay. A group colliding with a role of the configuration, a local catalog role, a
+  hand-typed role, another case or a role level entry is skipped and logged. A missing OIDC claim withdraws nothing;
+  SAML and LDAP read an absent group attribute as "no groups". The start names imported roles no sign-in delivered for
+  90 days. Audit `idp_roles_synced`. Schema 28 (additive: `idp_role`, `idp_role_membership`). Suites
+  `tests/test_group_import.py` and `tests/test_group_import_saml.py`.
 - Example Ex2 (T-100 acceptance): `examples/ex2/app.py`, a Python application with TinySesam as a library —
   `docs.read` / `docs.delete`, the roles assigned locally in the panel, the delete button only with the permission, the
   route checks again. `tests/test_example_ex2.py` runs it through the real panel routes (assign, withdraw, roles).

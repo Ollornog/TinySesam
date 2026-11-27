@@ -619,6 +619,10 @@ def _check_ldap(self, username, password) -> Optional[dict]:
     # memberOf delivers whole DNs → comparison by components (F-19). Up to 0.20.0
     # `substring=True` was hard-wired here, and `group_match` had no effect for LDAP.
     self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map, dn=True)
+    if self.cfg.ldap_group_import:
+        # The entry is read with the group attribute by name; a directory stores no empty attribute, so an absent one
+        # is "no groups" and withdraws the imported roles at this sign-in (T-102).
+        self._import_idp_groups(u["id"], "ldap", info.get("groups") or [])
     return self._as_dict(self.store.get_user(u["id"]))   # fresh (mapped roles)
 
 

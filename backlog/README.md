@@ -117,7 +117,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md)** Stage S3 — every origin is equal: source, step-up, linking local and IdP · M-2
 * ☑ **[T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md)** Stage S4 — permissions: app identity, registration, assignment, has_permission · M-2
 * ☐ **[T-101](T-101-stage-s5-permissions-at-the-server-and-in-the-clients.md)** Stage S5 — permissions at the server and in the clients · M-2
-* ☐ **[T-102](T-102-stage-s6-idp-role-sync-stage-1-import-groups-at-sign-in.md)** Stage S6 — IdP role sync stage 1: import groups at sign-in · M-2
+* ◐ **[T-102](T-102-stage-s6-idp-role-sync-stage-1-import-groups-at-sign-in.md)** Stage S6 — IdP role sync stage 1: import groups at sign-in · M-2
 * ☐ **[T-103](T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)** Stage S7 — shell on top and at the side: one component, layout top or side · M-2
 * ☐ **[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md)** Stage S8 — hybrid: TinySesam area with name and icon, library layout slot · M-2
 * ☐ **[T-105](T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md)** Stage S9 — headless writing: action pages with a way back · M-2

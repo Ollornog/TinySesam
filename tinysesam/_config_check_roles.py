@@ -382,3 +382,51 @@ def ladder_coverage(config, known) -> list:
                                       "levels from there up are not offered",
                               ladder=ladder["name"], key=row["key"], roles=", ".join(missing)))
     return out
+
+
+def _group_import(config, error: list, warnings: list) -> None:
+    """The group import (T-102): every filter entry an exact name or a prefix with one trailing `*` (`*` alone would
+    import everything without the limit), the labels plain text, and no switch without its source — nor a filter
+    without its switch (a setting nothing reads). A filter entry the configuration names as a role would only ever be
+    skipped."""
+    from ._role_catalog import filter_problem
+    owned = {str(r).casefold() for _, r in configured_roles(config) if isinstance(r, str)} | {"admin", "__admin__"}
+    # Each field by its literal name (the read paths stay greppable, `tests/test_security_findings.py`).
+    switches = (("oidc", getattr(config, "oidc_group_import", False), getattr(config, "oidc_group_import_filter", None),
+                 _an(config, "oidc_enabled")),
+                ("saml", getattr(config, "saml_group_import", False), getattr(config, "saml_group_import_filter", None),
+                 _an(config, "saml_enabled")),
+                ("ldap", getattr(config, "ldap_group_import", False), getattr(config, "ldap_group_import_filter", None),
+                 _an(config, "ldap_enabled")))
+    for source, on, patterns, source_on in switches:
+        if not isinstance(on, bool):
+            error.append(_t(config, "{field}={v!r} — True or False", field=f"{source}_group_import", v=on))
+            continue
+        patterns = patterns or []
+        if not isinstance(patterns, (list, tuple)):
+            error.append(_t(config, "{field}: a list of group names or prefixes ending in \"*\"",
+                            field=f"{source}_group_import_filter"))
+            continue
+        for p in patterns:
+            why = filter_problem(p)
+            if why:
+                error.append(_t(config, "{field}: {p!r} — {why}", field=f"{source}_group_import_filter", p=p, why=why))
+            elif on and not p.endswith("*") and p.casefold() in owned:
+                warnings.append(_t(config, "{field} names {p!r}, a role of the configuration: that group is always "
+                                           "skipped — an IdP group never takes over a configured role",
+                                   field=f"{source}_group_import_filter", p=p))
+        if on and not source_on:
+            warnings.append(_t(config, "{field}=True, but {source}_enabled is off: nothing is imported",
+                               field=f"{source}_group_import", source=source))
+        if patterns and not on:
+            warnings.append(_t(config, "{field} is set, but {source}_group_import is off: the filter has no effect",
+                               field=f"{source}_group_import_filter", source=source))
+    labels = getattr(config, "idp_group_labels", None) or {}
+    if not isinstance(labels, dict):
+        error.append(_t(config, "idp_group_labels: a mapping group → display name"))
+        return
+    for group, label in labels.items():
+        if (not isinstance(group, str) or not group or not isinstance(label, str) or not 1 <= len(label) <= 80
+                or any(z < " " or z == "\x7f" for z in label)):
+            error.append(_t(config, "idp_group_labels: {g!r} — a group name and a display name of 1 to 80 characters "
+                                    "without control characters", g=group))

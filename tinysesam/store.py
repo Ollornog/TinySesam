@@ -433,7 +433,8 @@ _PART_METHODS = {
     ),
     "roles": (
         "_catalog_hook", "_role_usage_locked", "add_catalog_roles", "catalog_roles",
-        "delete_catalog_roles_if_unused", "role_usage", "roles_in_use",
+        "delete_catalog_roles_if_unused", "idp_group_notes", "idp_role_sources", "import_idp_roles",
+        "note_idp_groups", "role_usage", "roles_in_use",
     ),
     "sessions": (
         "backdate_confirmation", "create_session",
@@ -646,7 +647,10 @@ class Store(metaclass=_StoreParts):
     #: 27 — permissions (T-100, ADR-17), additive: the tables `app_permission` and `role_permission` and their index.
     #:      The step from 26 is the schema script itself (`CREATE … IF NOT EXISTS` adds them, nothing else changes);
     #:      a 0.31.x opens a 27 file with the "newer version" warning and never reads the two tables.
-    SCHEMA_VERSION = 27
+    #: 28 — IdP group import (T-102, ADR-18), additive: the tables `idp_role` and `idp_role_membership` and an index.
+    #:      The step from 27 (and 26) is again the schema script; a version with schema 27 opens a 28 file with the
+    #:      "newer version" warning and never reads the two tables (imported roles stay on the accounts as plain roles).
+    SCHEMA_VERSION = 28
 
     #: The oldest schema this version opens: the baseline. A database below it was written by a version before
     #: `LAST_MIGRATING_RELEASE` (or never reached it) and is refused at start (`ConfigError`).

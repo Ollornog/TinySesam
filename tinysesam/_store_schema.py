@@ -515,4 +515,24 @@ CREATE TABLE IF NOT EXISTS role_permission (
     FOREIGN KEY (app, name) REFERENCES app_permission(app, name) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_role_permission_app ON role_permission(app, name);
+-- IdP group import (schema 28, T-102, ADR-18 stage 1). A group a source delivers at sign-in becomes a role of the same
+-- name: a row in `role_catalog` (created_by `idp:<source>`) plus its note here — the origin is a note, not a prefix.
+-- Deleting the catalog row (only when unused) takes the note along.
+CREATE TABLE IF NOT EXISTS idp_role (
+    name         TEXT PRIMARY KEY REFERENCES role_catalog(name) ON DELETE CASCADE,
+    source       TEXT NOT NULL,            -- the source that delivered it first: oidc | saml | ldap
+    last_seen_at INTEGER NOT NULL          -- the last sign-in (any source) that delivered it
+);
+-- What a source delivered last per account: at each sign-in exactly the set of that source is replaced. The roles
+-- themselves stay on `users.roles` (headers, tokens and `has_role` read only those); this table says which of them a
+-- source granted, so a withdrawal takes only those — never a role assigned by hand or delivered by another source.
+CREATE TABLE IF NOT EXISTS idp_role_membership (
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source      TEXT NOT NULL,             -- oidc | saml | ldap
+    role        TEXT NOT NULL,
+    held_before INTEGER NOT NULL DEFAULT 0,    -- 1: the account held it by hand when the source first delivered it
+    seen_at     INTEGER NOT NULL,
+    PRIMARY KEY (user_id, source, role)
+);
+CREATE INDEX IF NOT EXISTS idx_idp_role_membership_role ON idp_role_membership(role);
 """

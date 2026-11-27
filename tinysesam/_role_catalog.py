@@ -30,6 +30,45 @@ NAME_MAX = 64
 #: Names the configuration owns whatever it lists: the admin flag in `Remote-Groups` and the group-map target.
 RESERVED = ("admin", "__admin__")
 
+#: The identity sources that can import their groups as roles (T-102).
+SOURCES = ("oidc", "saml", "ldap")
+
+
+def filter_problem(pattern) -> Optional[str]:
+    """Why `pattern` is no usable filter entry, or None. An exact name, or a prefix of at least one character followed
+    by one trailing `*` — `*` alone would be "everything" (use an empty filter, which keeps the limit), and a `*`
+    elsewhere is no pattern this filter knows."""
+    if not isinstance(pattern, str) or not pattern or pattern != pattern.strip():
+        return "a non-empty name without surrounding spaces"
+    if pattern == "*":
+        return "\"*\" alone imports everything — leave the filter empty instead (then at most 100 groups count)"
+    if "*" in pattern[:-1]:
+        return "a \"*\" only at the end (a prefix)"
+    return None
+
+
+def filter_matches(pattern: str, name: str) -> bool:
+    """Exact (`staff` matches only `staff`) or prefix (`team-*` matches `team-docs`, never `team-` itself, `team` or
+    `xteam-docs`). Case counts: the role keeps the raw name, so the filter compares it raw too."""
+    if pattern.endswith("*"):
+        prefix = pattern[:-1]
+        return len(name) > len(prefix) and name.startswith(prefix)
+    return name == pattern
+
+
+def group_names(source: str, groups) -> list:
+    """The raw names a source delivers, de-duplicated in order. LDAP's `memberOf` holds whole DNs: the name is the value
+    of the first part (`cn=team-docs,ou=groups,…` → `team-docs`) — a DN holds commas and cannot be a role."""
+    from .manager import _dn_parts
+    out = []
+    for g in groups or []:
+        name = str(g)
+        if source == "ldap" and "=" in name:
+            # An escaped comma stays in the value (`cn=a\,b` → `a\,b`) and is refused as a role name later.
+            name = _dn_parts(name)[0].partition("=")[2].strip()
+        out.append(name)
+    return list(dict.fromkeys(out))
+
 
 def detail(name) -> str:
     """A role name for an audit detail (`key=value` pairs separated by spaces): percent-encoded, so a space or a
