@@ -578,6 +578,23 @@ MESSAGES = {
         "admin.usage_links": "open links",
         "admin.usage_approvals": "pending approvals",
         "admin.usage_permissions": "assigned permissions",
+        "admin.src_idp": "⇄ from IdP ({source}) — last delivered {date}",
+        "admin.idp_mark": "⇄ from IdP",
+        "admin.import_title": "Group import",
+        "admin.import_hint": "Groups an identity provider delivered at sign-in but that were not imported, and "
+                             "sign-ins that changed nothing. A hint goes once a later sign-in resolves it.",
+        "admin.import_skipped": "⚠ Not imported: {name} ({source}) — {why}, since {date}",
+        "admin.skip_config": "a role of the configuration has this name",
+        "admin.skip_catalog": "a local catalog role has this name",
+        "admin.skip_case": "an imported role has this name in another case",
+        "admin.skip_accounts": "an account holds a role of this name assigned by hand",
+        "admin.skip_ladder": "it would belong to two role level entries",
+        "admin.skip_invalid": "not usable as a role name",
+        "admin.skip_full": "the role catalog is full",
+        "admin.import_missing": "⚠ {source}: the last sign-in carried no group claim — the imported roles stayed as they "
+                                "were ({date})",
+        "admin.import_over": "⚠ {source}: a sign-in delivered {count} groups, more than 100 without a filter — nothing "
+                             "imported, nothing withdrawn ({date})",
         "admin.perms_btn": "Permissions",
         "admin.perms_title": "Permissions per application",
         "admin.perms_hint": "What each application declares it can do, and which role may. Declaring grants nothing; a tick here does. A dangerous permission asks for a fresh confirmation; an orphaned one grants nothing.",
@@ -1366,6 +1383,24 @@ MESSAGES = {
         "admin.usage_links": "offene Links",
         "admin.usage_approvals": "offene Freigaben",
         "admin.usage_permissions": "zugewiesene Berechtigungen",
+        "admin.src_idp": "⇄ vom IdP ({source}) — zuletzt geliefert {date}",
+        "admin.idp_mark": "⇄ vom IdP",
+        "admin.import_title": "Gruppenimport",
+        "admin.import_hint": "Gruppen, die ein Identitätsprovider bei der Anmeldung geliefert hat, die aber nicht "
+                             "importiert wurden, und Anmeldungen, die nichts geändert haben. Ein Hinweis geht, sobald "
+                             "eine spätere Anmeldung ihn auflöst.",
+        "admin.import_skipped": "⚠ Nicht importiert: {name} ({source}) — {why}, seit {date}",
+        "admin.skip_config": "eine Rolle der Konfiguration heißt so",
+        "admin.skip_catalog": "eine lokale Katalogrolle heißt so",
+        "admin.skip_case": "eine importierte Rolle heißt so in anderer Schreibweise",
+        "admin.skip_accounts": "ein Konto trägt eine von Hand vergebene Rolle dieses Namens",
+        "admin.skip_ladder": "sie gehörte zu zwei Rollenstufen-Einträgen",
+        "admin.skip_invalid": "als Rollenname nicht verwendbar",
+        "admin.skip_full": "der Rollenkatalog ist voll",
+        "admin.import_missing": "⚠ {source}: Die letzte Anmeldung brachte keinen Gruppen-Claim — die importierten Rollen "
+                                "blieben, wie sie waren ({date})",
+        "admin.import_over": "⚠ {source}: Eine Anmeldung lieferte {count} Gruppen, mehr als 100 ohne Filter — nichts "
+                             "importiert, nichts entzogen ({date})",
         "admin.perms_btn": "Berechtigungen",
         "admin.perms_title": "Berechtigungen je Anwendung",
         "admin.perms_hint": "Was jede Anwendung anmeldet, das sie kann, und welche Rolle es darf. Anmelden vergibt nichts; ein Haken hier schon. Eine gefährliche Berechtigung verlangt eine frische Bestätigung; eine verwaiste vergibt nichts.",

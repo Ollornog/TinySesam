@@ -2077,6 +2077,16 @@ wie bei jeder Rolle.
   (`Set <source>_group_import_filter`).
 - **Entra ID:** App-Rollen statt Gruppen mit `oidc_group_claim="roles"`; Objekt-IDs bekommen Anzeigenamen mit
   `idp_group_labels={"5f1c…": "Docs-Team"}` (nur Anzeige — die Rolle behält die ID).
+- **Im Panel** (*Konten → Rollen*): Eine importierte Rolle zeigt **⇄ vom IdP** mit ihrer Quelle, der letzten
+  Lieferung und ihrem Anzeigenamen; die Karte **Gruppenimport** listet jede übersprungene Gruppe mit ihrem Grund, eine
+  Anmeldung ohne Gruppen-Claim und eine Liste über der Grenze (jeder Hinweis geht, sobald eine spätere Anmeldung ihn
+  auflöst, ein ungelöster nach 30 Tagen). Auch die Berechtigungsmatrix markiert die Spalte einer importierten Rolle mit
+  **⇄ vom IdP**.
+- **Eine vollständige Anwendung:** Beispiel Ex3,
+  [`examples/ex3/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex3/app.py) — die
+  Dokumenten-Anwendung aus Ex2 mit Anmeldung über einen OIDC-Provider und importierten `team-*`-Gruppen;
+  `tests/test_example_ex3.py` ist ihre Abnahme: Die Gruppe kommt an, der Administrator vergibt `docs.read` in der
+  Matrix, der Provider entzieht die Gruppe, und nach der Nachprüfung der Sitzung ist die Berechtigung weg.
 - **Aufräumen:** Der Start nennt importierte Rollen, die 90 Tage keine Anmeldung geliefert hat, und die einer Quelle,
   deren Import aus ist; eine unbenutzte lässt sich auf der Rollenseite löschen (die nächste Anmeldung, die sie liefert,
   bringt sie zurück). Audit `idp_roles_synced source=… granted=… withdrawn=…`.
@@ -3172,7 +3182,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**153 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**154 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

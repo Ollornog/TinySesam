@@ -235,8 +235,9 @@ def delete_entry(cfg, store, ladder_name, key) -> dict:
 
 
 def listing(cfg, store, accounts_only=()) -> dict:
-    """What the panel's role page shows: every known role and every role only accounts hold, with its origin, its
-    usage and whether it can be deleted (and why not); per ladder its templates and entries."""
+    """What the panel's role page shows: every known role and every role only accounts hold, with its origin (`idp` for
+    an imported one, T-102), its usage and whether it can be deleted (and why not); per ladder its templates and
+    entries; the group import's hints (`import`: skipped groups, a missing claim, a list over the limit)."""
     owned = config_names(cfg)
     listed = {r for r in getattr(cfg, "available_roles", None) or [] if isinstance(r, str)}
     catalog = {r["name"]: r for r in store.catalog_roles()}
@@ -245,8 +246,11 @@ def listing(cfg, store, accounts_only=()) -> dict:
     ladders = _ladders(cfg)
     still = set(known(cfg, store))
     roles = []
+    labels = getattr(cfg, "idp_group_labels", None) or {}
+    labels = labels if isinstance(labels, dict) else {}
     for name in names:
-        source = ("both" if name in catalog and name in owned else "catalog" if name in catalog
+        source = ("both" if name in catalog and name in owned else
+                  "idp" if name in catalog and catalog[name].get("source") else "catalog" if name in catalog
                   else "config" if name in owned else "accounts")
         reason = None
         if name not in catalog:
@@ -257,10 +261,13 @@ def listing(cfg, store, accounts_only=()) -> dict:
             hit = _role_levels.assign(ladders, name)
             if hit is not None and any(r in still and r != name for r in _entry_roles(ladders[hit[0]], hit[2])):
                 reason = "in_ladder"
+        row = catalog.get(name) or {}
         roles.append({"name": name, "source": source, "usage": usage[name], "deletable": reason is None,
-                      "reason": reason, "invalid": role_invalid(name),
-                      "created_at": catalog[name]["created_at"] if name in catalog else None})
-    return {"roles": roles, "limit": LIMIT, "ladders": [
+                      "reason": reason, "invalid": role_invalid(name), "created_at": row.get("created_at"),
+                      # T-102: an imported role names its source, the last sign-in that delivered it, a display name
+                      "idp_source": row.get("source"), "last_seen_at": row.get("last_seen_at"),
+                      "label": labels.get(name) if isinstance(labels.get(name), str) else None})
+    return {"roles": roles, "limit": LIMIT, "import": store.idp_group_notes(), "ladders": [
         {"name": ladder["name"], "label": _role_levels.label(ladder.get("label"), getattr(cfg, "lang", "en"),
                                                              ladder["name"]),
          "templates": [v["role"] for v in ladder["levels"]]} for ladder in ladders]}

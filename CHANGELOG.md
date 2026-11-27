@@ -25,6 +25,15 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Example Ex3 (T-102 acceptance): `examples/ex3/app.py`, the documents application with sign-in through an OIDC
+  provider and its `team-*` groups imported as roles. `tests/test_example_ex3.py` runs it through the real routes: the
+  group arrives and is listed as from the IdP, the administrator assigns `docs.read` in the matrix, the provider
+  withdraws the group and the permission is gone after the session's re-check.
+- The admin panel shows the group import (T-102): on *Accounts → Roles* an imported role carries "⇄ from IdP" (symbol
+  and word) with its source, its last delivery and its display name (`idp_group_labels`); a card "Group import" lists
+  skipped groups with their reason, a sign-in without the group claim and a list over the limit. The permission matrix
+  marks an imported role's column. `GET <admin>/api/roles` carries `source: "idp"`, `idp_source`, `last_seen_at`,
+  `label` and `import`; `GET <admin>/api/permissions` carries `idp_roles`. Browser test `idp_import_panel`.
 - Importing IdP groups as roles at sign-in (T-102, ADR-18 stage 1): `oidc_group_import`, `saml_group_import`,
   `ldap_group_import` with `*_group_import_filter` (exact names or a prefix `team-*`; without a filter at most 100
   groups per sign-in, above that a security-log warning and no import) and `idp_group_labels` (display names, e.g. for

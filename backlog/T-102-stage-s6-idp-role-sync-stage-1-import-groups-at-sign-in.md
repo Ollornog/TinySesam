@@ -2,7 +2,7 @@
 id: T-102
 type: Task
 title: "Stage S6 — IdP role sync stage 1: import groups at sign-in"
-status: in-arbeit
+status: erledigt
 points: 8
 milestone: M-2
 blocked_by: [T-99, T-100]
@@ -35,4 +35,11 @@ created: 2026-11-23
   SAML and LDAP read an absent attribute as "no groups" (they carry no empty attribute; T-99 kept the same for the maps)
   — a missing attribute release costs access instead of keeping a withdrawn group's role. Suites
   `tests/test_group_import.py`, `tests/test_group_import_saml.py`; 29 mutations, all red.
+- 2026-11-27 (PR 2, panel and acceptance): the role page marks an imported role "⇄ from IdP" (symbol and word) with
+  source, last delivery and display name; the card "Group import" lists skipped groups with their reason, a missing
+  claim and a list over the limit; the permission matrix marks the column. Browser test `idp_import_panel`.
+  Acceptance **Ex3** (`examples/ex3/app.py`, `tests/test_example_ex3.py`): the group arrives at the OIDC sign-in and is
+  listed as from the IdP, the administrator assigns `docs.read` in the matrix, the application lets the person read;
+  the provider withdraws the group and after the session's re-check the role and the permission are gone (403).
+  Mutations: 4 panel (browser test) + 3 acceptance, all red. Done.
 

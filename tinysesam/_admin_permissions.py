@@ -55,7 +55,9 @@ def register(ar, auth, team, json_body_of) -> None:
                 continue
             name = entry.get("name") or app_id
             out.append({"id": app_id, "name": name, "permissions": rows})
-        return {"apps": out, "roles": roles, "area": apps_ok is not None}
+        # Imported roles (T-102) carry their mark in the matrix header too.
+        idp = sorted(r["name"] for r in auth.store.catalog_roles() if r.get("source") and r["name"] in roles)
+        return {"apps": out, "roles": roles, "idp_roles": idp, "area": apps_ok is not None}
 
     @ar.post("/api/permissions/assign")
     async def permissions_assign(request: Request):

@@ -2041,6 +2041,15 @@ permissions to it in the matrix, and the application asks `has_permission` as fo
   and withdraws nothing, with a security-log warning (`Set <source>_group_import_filter`).
 - **Entra ID:** app roles instead of groups with `oidc_group_claim="roles"`; object ids get display names with
   `idp_group_labels={"5f1c…": "Docs team"}` (display only — the role keeps the id).
+- **In the panel** (*Accounts → Roles*): an imported role says **⇄ from IdP** with its source, the last delivery and
+  its display name; the card **Group import** lists every skipped group with its reason, a sign-in without the group
+  claim and a list over the limit (each hint goes once a later sign-in resolves it, an unresolved one after 30 days).
+  The permission matrix marks an imported role's column with **⇄ from IdP** as well.
+- **A complete application:** example Ex3,
+  [`examples/ex3/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex3/app.py) — the documents
+  application of Ex2 with sign-in through an OIDC provider and its `team-*` groups imported; `tests/test_example_ex3.py`
+  is its acceptance: the group arrives, the administrator assigns `docs.read` in the matrix, the provider withdraws the
+  group, and after the session's re-check the permission is gone.
 - **Housekeeping:** the start names imported roles no sign-in delivered for 90 days and those of a source whose import
   is off; an unused one can be deleted on the role page (the next sign-in that delivers it brings it back). Audit
   `idp_roles_synced source=… granted=… withdrawn=…`.
@@ -3096,7 +3105,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**153 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**154 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
