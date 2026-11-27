@@ -34,6 +34,15 @@
 #     push: text only if all of them together are text only (before..HEAD). Full suite when before is missing or all
 #     zeros (first push, new branch), when the push was forced, when it pushes a tag, when the payload is unreadable
 #     (neither jq nor python3), or when before cannot be fetched.
+#   * SPRINT LANE (since kit 0.68.0, PO 2026-11-26 "sprint branch for every repo but the FleetCommander"): event
+#     pull_request whose base branch ($GITHUB_BASE_REF) is `sprint/<name>` (letters, digits, `.`, `_`, `-`; no further
+#     `/`) → exit 0 whatever the PR changes, once HEAD is the merge commit and its base is here (as above). The reason
+#     line starts with "SPRINT LANE". Effect: check.sh runs tests/test_repo.py, whose `hygiene.pruefe_nur_text` sees
+#     that line and runs the fast checks of the pre-push hook (`PREPUSH_SPRINT_BASIS=<base> .githooks/pre-push`:
+#     format/lint and the tests of the changed files) — a red one is a red hygiene; every classifier job answers
+#     `nur_text=ja`, so the heavy jobs skip. The full suite runs once, in the closing PR sprint/<name> → default branch
+#     (an ordinary PR). `aus alles` in the narrowing (below) switches the sprint lane off as well. Push, schedule and
+#     every other event never take it.
 #   * Any other event in GitHub Actions (schedule, workflow_dispatch, release, merge_group …) → full suite, always.
 #   * Keine Änderung (Push auf den Standardzweig selbst) → volle Suite. Der Standardzweig wird immer voll geprüft.
 #     Since 0.53.0 that holds outside Actions; in Actions a push that changes only text runs the fast check (above).
@@ -59,6 +68,11 @@
 #   Programm nennt diese Markdown-Datei (zweite Stufe, gleiche Ordnerregel). Ist die Datei über einen getrackten Symlink außerhalb der Liste erreichbar,
 #   fährt ebenfalls die volle Suite. Submodule zählen immer (`--ignore-submodules=none`).
 #   Grenze (benannt): Ein Programm, das Text per Glob liest (`docs/*.md`), nennt keinen Namen — das Repo verengt dann.
+#   NOT A READ (since kit 0.65.0): a mention on a comment line (the line starts with `#`, `//`, `/*`, `* `, `*/` or `<!--`)
+#   and a mention inside a URL (`https://…/blob/main/README.md`, a link in a page). Measured on 2026-11-24: C22 (a CSS
+#   comment, a link), EightPerDay and UnderDoc (a Go comment), paperlaiss (a link) ran the full suite for a pure README or
+#   CHANGELOG change. Named limit: a docstring is no comment, and a program that builds the URL to fetch the file reads it
+#   (it then names the file outside the URL as well, or the repo narrows).
 #
 # VERENGEN, nie erweitern: scripts/nur-text-verengung.txt im Repo, je Zeile
 #     aus <ERE-Muster>   # Begründung      → eine passende Datei löst die volle Suite aus
@@ -70,6 +84,9 @@ set -uo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." || { echo "volle Suite: Repo nicht gefunden"; exit 1; }
 
 VERENGUNG="scripts/nur-text-verengung.txt"
+# Base branch of a sprint PR (sprint lane, kit 0.68.0): sprint/<name>, a plain ref name. hygiene.SPRINT_ZWEIG is the
+# same pattern (Python spelling), a test holds the two together.
+SPRINT_ZWEIG='^sprint/[A-Za-z0-9][A-Za-z0-9._-]*$'
 
 erlaubt() {
     [[ "$1" =~ ^[^/[:space:][:cntrl:]]+\.md$ ]] && return 0
@@ -130,6 +147,11 @@ if [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_EVENT_NAME:-}" == pull_request 
             && ! git fetch -q --no-tags --depth=1 origin "$basis" 2>/dev/null; then
         echo "volle Suite: Basis ${basis:0:7} des PR nicht abrufbar"
         exit 1
+    fi
+    # Sprint lane (since kit 0.68.0, see the head): a PR into sprint/<name> takes the fast lane whatever it changes.
+    if [[ "${GITHUB_BASE_REF:-}" =~ $SPRINT_ZWEIG ]]; then
+        echo "SPRINT LANE — fast checks instead of the full suite: PR into $GITHUB_BASE_REF, base ${basis:0:7}; the hygiene (tests/test_repo.py) runs them, the full suite runs once in the closing PR into the default branch"
+        exit 0
     fi
     git diff --quiet --no-renames --ignore-submodules=none "$basis" HEAD 2>/dev/null; rc=$?
     if [[ $rc -gt 1 ]]; then
@@ -262,6 +284,28 @@ while IFS= read -r -d '' eintrag; do
     symlink_ziele+=("$(readlink -m -- "$l")")
 done < <(git ls-files -s -z 2>/dev/null)
 
+# Does <file> name <name> on a line that reads it? 0 = yes, 1 = no, 2 = search failed. Extra arguments: `-e <part>` words
+# of which one must stand in the same line (folder rule). Not a read: a comment line, a mention only inside a URL.
+echte_nennung() {  # echte_nennung <file> <name> [-e <part>]…
+    local datei="$1" name="$2" zeilen rc z ohne
+    shift 2
+    if [[ $# -gt 0 ]]; then
+        zeilen="$(git -c core.quotePath=false grep -h -F -w -e "$name" --and \( "$@" \) -- ":(literal)$datei" 2>/dev/null)"
+    else
+        zeilen="$(git -c core.quotePath=false grep -h -F -w -e "$name" -- ":(literal)$datei" 2>/dev/null)"
+    fi
+    rc=$?
+    [[ $rc -gt 1 ]] && return 2
+    [[ $rc -eq 0 ]] || return 1
+    while IFS= read -r z; do
+        [[ "$z" =~ ^[[:space:]]*(#|//|/\*|\*/|\*[[:space:]]|\*$|<!--) ]] && continue
+        ohne="$(sed -E 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]"'"'"'<>()]*##g' <<<"$z")"
+        # The word test of `grep -w` again, on the line without its URLs.
+        grep -q -F -w -e "$name" <<<"$ohne" && return 0
+    done <<<"$zeilen"
+    return 1
+}
+
 # Wer nennt den Namen? 0 = ein Programm (stdout: wer), 1 = niemand, 2 = Suche gescheitert. $2 = auch über Texte der
 # Liste weitersuchen (eine Stufe): Ein Text, der selbst ausgeführt wird (Doctest in der README), ist ein Leser, wenn
 # ihn ein Programm beim Namen nennt (Fund 4).
@@ -283,7 +327,11 @@ genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner> der Dat
         for teil in "${teile[@]}"; do [[ -n "$teil" ]] && muster+=(-e "$teil"); done
         while IFS= read -r l; do
             [[ -z "$l" ]] && continue
-            if [[ "$l" != "$ordner"/* ]]; then
+            if [[ "$l" != "$ordner"/* && "$l" != *.md ]]; then
+                echte_nennung "$l" "$name" "${muster[@]}"; rc=$?
+                [[ $rc -gt 1 ]] && return 2
+                [[ $rc -eq 0 ]] || continue
+            elif [[ "$l" != "$ordner"/* ]]; then
                 git -c core.quotePath=false grep -q -F -w -e "$name" --and \( "${muster[@]}" \) -- ":(literal)$l" \
                     2>/dev/null; rc=$?
                 [[ $rc -gt 1 ]] && return 2
@@ -315,6 +363,9 @@ genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner> der Dat
             continue
         fi
         workflow_liest "$l" || continue
+        echte_nennung "$l" "$name"; rc=$?
+        [[ $rc -gt 1 ]] && return 2
+        [[ $rc -eq 0 ]] || continue
         echo "$l"; return 0
     done <<<"$treffer"
     return 1

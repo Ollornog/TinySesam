@@ -804,13 +804,17 @@ _KIT = tuple(int(x) for x in read("tests/_kit/KIT_VERSION").strip().split("."))
 # Writes of the git refs API bound to ONE job and ONE whole command line each — never `gh api` wholesale, never for
 # another job. Kit 0.67 (fast-forward auto-merge): `ausfuehren` moves the base to the checked head with `force=false`
 # (GitHub refuses everything but a fast-forward), `aufraeumen` deletes only the head branch `nachsehen` named.
-# (Mutation probes: `-F force=true` in `ausfuehren`; the DELETE line in `ausfuehren`; a third `gh api` in `aufraeumen` →
-# each red.)
+# Kit 0.69 holds a pin PR of a breaking release as a draft: `ausfuehren` runs `gh pr ready --undo` — a whole line, since
+# `gh pr ready` without `--undo` would release a held PR. (Mutation probes: `-F force=true` in `ausfuehren`; the DELETE
+# line in `ausfuehren`; a third `gh api` in `aufraeumen`; `--undo` dropped → each red.)
 PERMITTED_LINE_IN_JOB = {
-    (".github/workflows/dependabot-auto-merge.yml", "ausfuehren"):
+    (".github/workflows/dependabot-auto-merge.yml", "ausfuehren"): {
         'gh api "repos/$REPO/git/refs/heads/$BASIS" -X PATCH -f sha="$HEAD_SHA" -F force=false',
-    (".github/workflows/dependabot-auto-merge.yml", "aufraeumen"):
+        'GH_TOKEN="${APP_TOKEN:-$GH_TOKEN}" gh pr ready "$PR" --repo "$REPO" --undo',
+    },
+    (".github/workflows/dependabot-auto-merge.yml", "aufraeumen"): {
         'gh api "repos/$REPO/git/refs/heads/$ZWEIG" -X DELETE',
+    },
 }
 
 
@@ -897,17 +901,18 @@ for wf in WORKFLOWS:
         assert not re.search(r"^\s+(?:- )?shell:", block, re.M), \
             f"{wf} job `{job}` holds {sorted(permissions)} and sets its own `shell:`"
         for k in _command_list(lines):
-            if k == PERMITTED_LINE_IN_JOB.get((wf, job)):
-                _lines_seen.add((wf, job))
+            if k in PERMITTED_LINE_IN_JOB.get((wf, job), ()):
+                _lines_seen.add((wf, job, k))
                 continue
             for command in _commands(k):
                 assert _permitted(command), (f"{wf} job `{job}` holds {sorted(permissions)} and runs "
                                           f"`{command}`: {k}")
 assert _exceptions_seen == set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT), \
     f"exceptions without job: {set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT) - _exceptions_seen} — tidy up the list"
-# Before kit 0.67 the auto-merge has neither job; from it on both lines must be met (else the list holds stale entries).
-assert _KIT < (0, 67) or _lines_seen == set(PERMITTED_LINE_IN_JOB), \
-    f"ref writes without their job: {set(PERMITTED_LINE_IN_JOB) - _lines_seen} — tidy up the list"
+# Before kit 0.67 the auto-merge has neither job; from it on every line must be met (else the list holds stale entries).
+_lines_permitted = {(wf, job, k) for (wf, job), lines in PERMITTED_LINE_IN_JOB.items() for k in lines}
+assert _KIT < (0, 67) or _lines_seen == _lines_permitted, \
+    f"permitted lines without their job: {_lines_permitted - _lines_seen} — tidy up the list"
 assert _checked_identity >= 6, f"only {_checked_identity} jobs with write permission found — check the parser"
 print(f"  {_checked_identity} jobs with identity/write permission (every spelling): only "
       f"{'/'.join(sorted(PERMITTED_WITH_RIGHT))}, checkout only with a justified exception")
@@ -922,11 +927,15 @@ _am_jobs = _jobs(_am)
 _am_on = "\n".join(_code(_am.split("\njobs:", 1)[0]))
 # Triggered by the end of the mandatory workflows, never by `pull_request_target` (foreign context with
 # write permission). `workflow_run` runs in the context of main — PR code is never checked out (the
-# loop above forbids checkout in jobs with permission; `entscheiden` has no `uses:`).
+# loop above forbids checkout in jobs with permission; `entscheiden` uses no action but the app token).
 assert re.search(r"^  workflow_run:", _am_on, re.M) and "pull_request_target" not in _am_on, \
     "dependabot-auto-merge.yml: trigger must be `workflow_run`"
-assert not any("uses:" in z for z in _am_jobs.get("entscheiden", [])), \
-    "dependabot-auto-merge.yml: `entscheiden` uses an action (checkout?) — API only"
+# Kit 0.69: `entscheiden` mints a read-only app token for the source repo of a pin PR (to read its changelog) — that
+# action alone, SHA-pinned like every action; checkout or any other action stays red.
+# (Mutation probe: `uses: actions/checkout@…` in `entscheiden` → red.)
+_am_uses = [z.split("uses:", 1)[1].split("@", 1)[0].strip() for z in _am_jobs.get("entscheiden", []) if "uses:" in z]
+assert set(_am_uses) <= {"actions/create-github-app-token"}, \
+    f"dependabot-auto-merge.yml: `entscheiden` uses {sorted(set(_am_uses))} (checkout?) — API and app token only"
 _am_ent = " ".join(z.strip() for z in _am_jobs.get("entscheiden", []))
 assert "github.event.workflow_run.event == 'pull_request'" in _am_ent and \
     "github.event.workflow_run.head_repository.full_name == github.repository" in _am_ent, \

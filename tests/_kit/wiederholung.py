@@ -413,7 +413,8 @@ def rendere(root: str, je_repo: str, suite: str) -> tuple[str, list[str]]:
             .replace("@@SUITE@@", suite)
             .replace("@@RECHTE@@\n", _rechte_zeilen(text_suite))
             .replace("@@SECRETS@@\n", geheim)
-            .replace("@@RUNNER@@", am.runner(wfs)))
+            .replace("@@RUNNER@@", am.runner(wfs))
+            .replace("@@LASTVERMERK@@\n", am.lastvermerk_schritt(probleme)))
     return text, probleme
 
 

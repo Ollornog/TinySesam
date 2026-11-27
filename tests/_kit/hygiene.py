@@ -636,8 +636,10 @@ _FREMD_MUSTER: list[tuple[str, re.Pattern[str]]] = [
         r"""<link\b(?:[^>]*?\s)?href\s*=\s*["']\s*(https?:)?//([a-z0-9.-]+)""", re.I | re.S)),
     ("css url()", re.compile(r"""url\(\s*["']?\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
     ("@import", re.compile(r"""@import\s+(?:url\()?\s*["']\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+    # Not a PHP method or static call (`$account->fetch(…)`, `Account::fetch(…)`, since 0.65.0): that runs on the server,
+    # no browser sends it (TinySesam #328, a PHP repo). A script in a .php page still calls a bare `fetch(` and counts.
     ("fetch()/import()", re.compile(
-        r"""(?:\bfetch|\bimport)\s*\(\s*["'`]\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+        r"""(?<!->)(?<!::)(?:\bfetch|\bimport)\s*\(\s*["'`]\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
     ("<iframe src=", re.compile(r"""<iframe\b[^>]*?\bsrc\s*=\s*["']\s*(https?:)?//([a-z0-9.-]+)""",
                                re.I | re.S)),
 ]
@@ -3301,6 +3303,57 @@ def pruefe_texte(root: str, dateien: list[str] | None = None, frontmatter: list[
 NUR_TEXT_SKRIPT = "scripts/_nur_text.sh"
 NUR_TEXT_VERENGUNG = "scripts/nur-text-verengung.txt"
 NUR_TEXT_PRUEFUNG = "tests/test_repo.py"
+# Sprint lane (kit 0.68.0): base branch of a sprint PR. Same pattern as SPRINT_ZWEIG in scripts/_nur_text.sh.
+SPRINT_ZWEIG = re.compile(r"^sprint/[A-Za-z0-9][A-Za-z0-9._-]*$")
+SPRINT_HOOK = ".githooks/pre-push"
+SPRINT_SCHUTZ = "REPOKIT_SPRINT_SCHNELL"   # set while the fast checks run: no second run from inside them
+
+
+def sprint_schnellpruefung(root: str) -> list[str]:
+    """Sprint lane (kit 0.68.0, PO 2026-11-26): run the fast checks of the pre-push hook in the PR CI.
+
+    WHY: a PR into `sprint/<name>` runs only the fast checks — hygiene, format/lint and the tests of the changed files,
+    the same as the fast pre-push; the full suite runs once, in the closing PR into the default branch.
+    `scripts/_nur_text.sh` answers such a PR with exit 0 and a line "SPRINT LANE …", so every classifier job skips the
+    heavy jobs (`nur_text=ja`) and check.sh runs only tests/test_repo.py — with no change to any repo's check.sh or
+    workflow. The rest of the fast checks hangs here, because tests/test_repo.py is what check.sh runs in that lane and
+    every repo's tests/test_repo.py calls `pruefe_nur_text`.
+
+    Runs only if ALL hold, else returns [] at once: base branch `sprint/<name>` in $GITHUB_BASE_REF, not already
+    inside such a run (env REPOKIT_SPRINT_SCHNELL), and `scripts/_nur_text.sh` answers "SPRINT LANE" — it alone
+    decides that this is a pull_request in GitHub Actions, that HEAD is GitHub's merge commit, and fetches its base;
+    any other answer means the full suite or the text lane runs, and this adds nothing. Then the base is the first
+    parent of HEAD and `PREPUSH_SPRINT_BASIS=<base> .githooks/pre-push` runs in the checkout as it is, with this
+    interpreter as $PYTHON (unless set). Its output goes to the log as it comes. A finding: the hook is missing or
+    red.
+    """
+    # Cheap way out first (every local hygiene run passes here); whether this IS a sprint PR in GitHub Actions decides
+    # _nur_text.sh alone (event pull_request, merge commit, base fetched) — no second, drifting copy of its rules here.
+    if not SPRINT_ZWEIG.match(os.environ.get("GITHUB_BASE_REF", "")) or os.environ.get(SPRINT_SCHUTZ):
+        return []
+    try:
+        entscheid = subprocess.run([os.path.join(root, NUR_TEXT_SKRIPT)], cwd=root, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL)
+    except OSError as fehler:
+        return [f"sprint lane: {NUR_TEXT_SKRIPT} not runnable ({fehler})"]
+    if entscheid.returncode != 0 or not entscheid.stdout.startswith("SPRINT LANE"):
+        return []
+    hook = os.path.join(root, SPRINT_HOOK)
+    if not os.access(hook, os.X_OK):
+        return [f"sprint lane: {SPRINT_HOOK} missing or not executable — the fast checks cannot run (`repokit sync`)"]
+    # "SPRINT LANE" means _nur_text.sh found HEAD to be GitHub's merge commit with two parents and fetched the first
+    # one, the base. Read from the raw object (a shallow clone shows no parents in `git log`). No parent here would be
+    # an IndexError: the hygiene crashes, red.
+    roh = subprocess.run(["git", "cat-file", "commit", "HEAD"], cwd=root, capture_output=True, text=True)
+    eltern = [z[7:] for z in zeilen_wie_grep(roh.stdout.split("\n\n", 1)[0]) if z.startswith("parent ")]
+    umgebung = dict(os.environ, PREPUSH_SPRINT_BASIS=eltern[0], **{SPRINT_SCHUTZ: "1"})
+    umgebung.setdefault("PYTHON", sys.executable)
+    print(f"\n▸ Sprint lane: fast checks against {eltern[0][:9]} ({SPRINT_HOOK})", flush=True)
+    sys.stderr.flush()
+    lauf = subprocess.run([hook], cwd=root, env=umgebung, stdin=subprocess.DEVNULL)
+    if lauf.returncode != 0:
+        return [f"sprint lane: the fast checks are red (exit {lauf.returncode}, {SPRINT_HOOK} — output above)"]
+    return []
 
 
 def _nur_text_block_faehrt_pruefung(code: list[str]) -> bool:
@@ -3403,9 +3456,13 @@ def pruefe_nur_text(root: str) -> list[str]:
       scheitert der Klassifizier-Job, wäre ein `== 'nein'` (oder ein `if` ohne `!cancelled()`, das bei einem roten
       `needs` gar nicht ausgewertet wird) ein grüner Check ohne Prüfung. Leer oder kaputt heißt so: der Job läuft.
       Und der Workflow muss `scripts/_nur_text.sh` selbst rufen.
+    - Sprint lane (since 0.68.0): in the PR CI of a PR into `sprint/<name>` the fast checks of the pre-push hook run
+      here (`sprint_schnellpruefung`); a red one is a finding. Everywhere else that adds nothing.
     """
     treffer = []
     treffer += _nur_text_in_workflows(root)
+    # Sprint lane (kit 0.68.0): in a PR into sprint/<name> this is where the fast checks run (sprint_schnellpruefung).
+    treffer += sprint_schnellpruefung(root)
     if _lies(root, NUR_TEXT_SKRIPT) is None:
         treffer.append(f"{NUR_TEXT_SKRIPT} fehlt — `repokit sync`")
     verzicht = False
