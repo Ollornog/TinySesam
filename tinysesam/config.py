@@ -511,6 +511,9 @@ class TinySesamConfig:
     #: counts: API keys, OAuth tokens and app passwords carry neither the panel nor the delegate role. The same
     #: step-up as administrators (`admin_require_mfa`). Every role must stand in `available_roles`; a delegate role
     #: stands in no `roles` list, only in `manages`. See README, "Delegated administration".
+    #: Optional `"apps": ["docs", …]` (T-100) — the delegate's area: application ids of `apps` whose permissions it
+    #: assigns, in the panel's permission matrix, to the roles it manages (with the action `"permissions"` in `can`);
+    #: a `danger` permission only after a fresh confirmation. Without `apps` it assigns none.
     admin_delegates: dict = field(default_factory=dict)
 
     # --- Approvals: confirm one sensitive action with a step-up (stage A: TinySesam actions) ---

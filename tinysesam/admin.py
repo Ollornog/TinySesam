@@ -987,6 +987,10 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         return auth.all_security()
 
+    # The permission matrix (T-100): administrators everywhere, an area administrator in its applications.
+    from . import _admin_permissions
+    _admin_permissions.register(ar, auth, team, auth.json_body)
+
     @ar.post("/api/security")
     async def security_set(request: Request):
         me = guard(request)
@@ -1103,7 +1107,8 @@ _KEYS = (
     "roles_btn role_filter show_all roles_title roles_hint new_role role_add catalog_count src_config src_catalog "
     "src_both src_accounts accounts_n take_over delete_role why_in_use why_in_ladder role_invalid_mark entry_hint "
     "entry_key entry_add entry_delete confirm.role_delete confirm.entry_delete usage_users usage_keys usage_services "
-    "usage_links usage_approvals usage_permissions"
+    "usage_links usage_approvals usage_permissions perms_btn perms_title perms_hint perms_none perm_col perm_danger "
+    "perm_orphaned perm_suspended perm_delete perm_suggested confirm.perm_delete"
 ).split()
 
 
@@ -1117,6 +1122,11 @@ def panel_texts(auth) -> dict:
     for k in ("copy", "copied", "copy_manual"):
         texts[k] = auth.t(f"dlg.{k}")
     return texts
+
+
+def _admin_permissions_area(auth, scope) -> tuple:
+    from . import _admin_permissions
+    return _admin_permissions.area(auth, scope)
 
 
 def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None, csrf: str = "",
@@ -1133,7 +1143,9 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
     """
     cfg = auth.cfg
     view = None if scope is None else {"roles": sorted({r for _, roles, _ in scope for r in roles}),
-                                       "can": sorted({a for _, _, can in scope for a in can})}
+                                       "can": sorted({a for _, _, can in scope for a in can}),
+                                       # T-100: the applications whose permissions it assigns (its area)
+                                       "apps": sorted(_admin_permissions_area(auth, scope)[0])}
     # The role levels over the roles THIS viewer may grant: a delegate is offered a level only when every role of it
     # lies in their scope (`_role_levels.entries`) — a view, the roles route checks the scope itself.
     # An administrator is offered `available_roles` ∪ the role catalog (`auth.known_roles`), a delegate their scope.
@@ -1209,6 +1221,8 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 /* overflow-x (T-35): the wide user table scrolls inside .wrap instead of widening the page — on a phone the wider
    page widened the layout viewport, and the dialog centred in it sat beside the screen. */
 .tsadmin table{width:100%;border-collapse:collapse;font-size:13px}
+.tsadmin .tablewrap{overflow-x:auto;max-width:100%}
+.tsadmin table.permgrid td{text-align:center}
 .tsadmin th{text-align:left;color:var(--ts-muted);font-weight:600}
 .tsadmin td,.tsadmin th{padding:7px 8px;border-bottom:1px solid var(--ts-line-soft);white-space:nowrap}
 .tsadmin button{cursor:pointer;background:var(--ts-accent);color:var(--ts-accent-ink);border:0;
@@ -1320,6 +1334,7 @@ const LADDERS=__LADDERS__;                             // config.role_levels ove
 const APPS=__APPS__;                                   // applications with the account API: [{id,name}] (administrators only; [] for a delegate)
 const ME=__ME__;                                       // the viewer: {id, owner} — hides what the server would refuse anyway
 const CAN=a=>!SCOPE||SCOPE.can.includes(a);            // may the viewer do this action (`can` of their delegate roles)?
+const PERMS=!SCOPE||(CAN("permissions")&&SCOPE.apps.length>0);  // the permission matrix: administrators, an area administrator
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (e-mail required)
 const L=__I18N__;                                      // texts in config.lang — see messages.py
 const LINKS=__LINKS__;                                 // config.magiclink_enabled: admin may issue sign-in links
@@ -1391,12 +1406,13 @@ function route(){if(cur!=="users")return;const m=location.hash.match(/^#user\/(\
   const u=m&&US.find(x=>x.id===+m[1]);if(u)return detail(u);
   if(location.hash==="#new"&&CAN("create"))return newform();
   if(location.hash==="#roles"&&!SCOPE)return rolesview();
+  if(location.hash==="#perms"&&PERMS)return permsview();
   const rm=location.hash.match(/^#role\/(.+)$/);RF=rm?decodeURIComponent(rm[1]):"";
   list()}
 function list(){
   V(`${SCOPE?`<div class="muted small">${esc(L.delegate_note)} ${esc(SCOPE.roles.join(", "))}</div>`:""}
     <div class="row bar"><input id=us type=search class=grow data-filter=rows aria-label="${esc(L.search)}" placeholder="${esc(L.search)}">
-    ${appfilter()}${SCOPE?"":`<button class=sec ${on("nav","#roles")}>${esc(L.roles_btn)}</button>`}${CAN("create")?`<button ${on("nav","#new")}>${esc(L.new_user)}</button>`:""}</div>
+    ${appfilter()}${SCOPE?"":`<button class=sec ${on("nav","#roles")}>${esc(L.roles_btn)}</button>`}${PERMS?`<button class=sec ${on("nav","#perms")}>${esc(L.perms_btn)}</button>`:""}${CAN("create")?`<button ${on("nav","#new")}>${esc(L.new_user)}</button>`:""}</div>
     ${RF?`<div class="row rfilter"><span class=chip>${esc(L.role_filter.replace("{role}",RF))}</span><a href="#" ${on("nav","")}>${esc(L.show_all)}</a></div>`:""}
     <table class=ulist><thead><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th></tr></thead><tbody>`+
     US.map(u=>`<tr class=click data-app="${esc(u.managed_by||"")}" data-roles="${esc(JSON.stringify(u.roles||[]))}" data-q="${esc([u.username,u.email,u.display_name,...(u.roles||[])].join(" ").toLowerCase())}" ${on("nav","#user/"+u.id)}>
@@ -1494,6 +1510,30 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
     ${appl?`<section class="card appcard"><h2>${esc(L.app_section)}</h2>${appl}</section>`:""}
     ${danger?`<section class="card danger"><h2>${esc(L["sec.danger"])}</h2>${danger}</section>`:""}`);
   if(admin){keys(u.id);if(!svc){pks(u.id);totp(u)}}}
+// ---------- Permissions (`#perms`, T-100): per application, which role holds which permission. Administrators see every
+// application and role; an area administrator only the applications of its area and the roles it manages (the server
+// decides again). A dangerous permission says so with a symbol and a word, and the server asks for a fresh
+// confirmation before it changes; an orphaned one grants nothing and shows the roles that held it (suspended).
+const tx=x=>x&&typeof x==="object"?(x[document.documentElement.lang]||x.en||Object.values(x)[0]||""):(x||"");
+async function permsview(){const R=await g("/api/permissions");let n=0;
+  const cell=(a,p,r)=>{const held=p.roles.includes(r),sus=p.suspended_roles.includes(r),id="pm"+(n++);
+    const mark=sus&&!held?` <span class="muted small">⏸ ${esc(L.perm_suspended)}</span>`:"";
+    if(p.orphaned)return `<td>${sus?`<span class="muted small">⏸ ${esc(L.perm_suspended)}</span>`:""}</td>`;
+    return `<td><input type=checkbox id=${id} ${held?"checked":""} aria-label="${esc(r)} · ${esc(p.name)}" ${on("permset",a.id,p.name,r,id)}>${mark}</td>`};
+  const row=(a,p)=>{const tag=(p.danger?` <span class="badge red">⚠ ${esc(L.perm_danger)}</span>`:"")
+      +(p.orphaned?` <span class=badge>⊘ ${esc(L.perm_orphaned)}</span>`:"");
+    const del=p.orphaned&&!R.area?` <button class=warn ${on("permdel",a.id,p.name)}>${esc(L.perm_delete)}</button>`:"";
+    const hint=p.suggested_roles.length?`<div class="muted small">${esc(L.perm_suggested.replace("{roles}",p.suggested_roles.join(", ")))}</div>`:"";
+    return `<tr id="perm-${esc(a.id)}-${esc(p.name)}"><th scope=row>${esc(tx(p.label)||p.name)}<div class="muted small">${esc(p.name)}</div>${tag}${del}${hint}</th>${R.roles.map(r=>cell(a,p,r)).join("")}</tr>`};
+  const card=a=>`<section class=card><h2>${esc(tx(a.name)||a.id)}</h2><div class=tablewrap><table class=permgrid><thead><tr><th scope=col>${esc(L.perm_col)}</th>${R.roles.map(r=>`<th scope=col>${esc(r)}</th>`).join("")}</tr></thead><tbody>${a.permissions.map(p=>row(a,p)).join("")}</tbody></table></div></section>`;
+  V(`<a href="#" class=back ${on("nav","")}>← ${esc(L.all_accounts)}</a>
+    <section class=card><h2>${esc(L.perms_title)}</h2><div class="muted small">${esc(L.perms_hint)}</div></section>
+    ${R.apps.map(card).join("")||`<span class=muted>${esc(L.perms_none)}</span>`}`)}
+async function permset(app,permission,role,id){const el=document.getElementById(id);if(!el)return;
+  const r=await p("/api/permissions/assign",{app,permission,role,granted:!!el.checked});
+  if(rejected(r))el.checked=!el.checked;else permsview()}
+async function permdel(app,permission){if(!await tsConfirm(L["confirm.perm_delete"].replace("{perm}",permission),{danger:true}))return;
+  if(!rejected(await p("/api/permissions/delete",{app,permission})))permsview()}
 // ---------- Roles (`#roles`, administrators only): the role catalog — roles added here are offered like those of the
 // configuration. Adding grants nothing; only an unused catalog role can be deleted (the server checks again). After a
 // change the page reloads, so the role picker and the role levels know the new list.
@@ -1648,12 +1688,12 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,totpreset,totpwin,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,copylink};
+const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,totpreset,totpwin,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,permset,permdel,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 // Back/forward to an account or the new-account form also from another tab.
 window.addEventListener("hashchange",()=>{if(cur==="users")return route();
-  if(/^#(user\/\d+|new|roles|role\/.+)$/.test(location.hash)){cur="users";tabs();users()}});
+  if(/^#(user\/\d+|new|roles|perms|role\/.+)$/.test(location.hash)){cur="users";tabs();users()}});
 tabs();users();
 </script>
 </div>__FOOTER__</body></html>"""

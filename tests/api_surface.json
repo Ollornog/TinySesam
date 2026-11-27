@@ -2744,6 +2744,10 @@
       "keys": [],
       "tier": "B"
     },
+    "GET <admin>/api/permissions": {
+      "keys": [],
+      "tier": "B"
+    },
     "GET <admin>/api/resources": {
       "keys": [],
       "tier": "B"
@@ -3136,6 +3140,14 @@
       "tier": "B"
     },
     "POST <admin>/api/oauth/services/{client_id}/revoke": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/permissions/assign": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/permissions/delete": {
       "keys": [],
       "tier": "B"
     },

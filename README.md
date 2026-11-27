@@ -233,6 +233,10 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Guard a route** with `Depends(auth.require_permission("docs.delete", app="docs"))` (401 without a session, 403
   without the permission; `mfa=True` wants a fresh confirmation too). A misspelt application id fails when the route is
   built, not as a 403 forever.
+- **In the panel** (*Accounts → Permissions*): one matrix per application — permissions down, roles across, a tick
+  assigns. A dangerous permission carries ⚠ and the word, and the server asks for a fresh confirmation before it
+  changes (also with `admin_require_mfa=False`); an orphaned one carries ⊘ and the word, shows its suspended roles and
+  a "Delete" button. An area administrator (`admin_delegates[…]["apps"]`) sees only its applications and roles.
 - **Assign** with `auth.grant_permission(role, permission, app=…)` and withdraw with `auth.revoke_permission(…)` — to a
   role of the configuration (also a group map's target) or of the role catalog. A role holding permissions counts as
   in use: the catalog does not delete it, so a new role of the same name never inherits them.
@@ -2064,8 +2068,12 @@ cfg = TinySesamConfig(
 - **Never sideways or upwards:** a `team-a-admin` sees neither team B, nor other `team-a-admin` accounts, nor the
   `area-admin`. A delegate never grants their own delegate role or one above it. An account with several delegate
   roles may do what one of them allows, on that role's accounts.
-- **`can`** narrows the actions of one delegate role (`create`, `invite`, `disable`, `roles`, `signin_link`; without
-  it, all of them). It is not inherited up or down.
+- **`can`** narrows the actions of one delegate role (`create`, `invite`, `disable`, `roles`, `signin_link`,
+  `permissions`; without it, all of them). It is not inherited up or down.
+- **`apps`** (T-100) is the area of an *area administrator*: application ids of `apps` whose permissions it assigns,
+  in the panel's permission matrix, to the roles it manages — `{"roles": ["docs-reader", "docs-editor"], "apps":
+  ["docs"]}`. Not inherited either; without it (or without the action `permissions`) it assigns none. A `danger`
+  permission asks for a fresh confirmation; deleting an orphaned permission stays with administrators.
 - **The rest of the panel stays with administrators** — password reset, rename, delete, keys, passkeys, sessions,
   connected programs, app passwords, hardening, audit. Every limit is enforced on the server, route by route; the
   panel shows a delegate only their tab, their accounts, their roles and their buttons. The top bar and the account
@@ -3052,7 +3060,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**149 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**150 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
