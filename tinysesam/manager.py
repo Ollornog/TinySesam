@@ -365,6 +365,11 @@ _PART_METHODS = {
         "_bind_identity", "_finish_saml_link", "_identities_view", "_link_directory", "_linked_sources",
         "_other_way_in", "_unlink_identity",
     ),
+    "permissions": (
+        "_known_roles", "_permission_app", "_register_config_permissions", "_sync_permissions", "app_permissions",
+        "delete_permission", "grant_permission", "has_permission", "permissions_of", "register_permissions",
+        "require_permission", "revoke_permission",
+    ),
     "links": (
         "_app_link_refused", "_duration", "_signin_link", "_verify_mail", "create_invite", "create_magic_token",
         "create_signin_link", "magic_url", "peek_magic", "redeem_magic", "send_verify_email",
@@ -767,6 +772,10 @@ class TinySesam(metaclass=_BuildingBlocks):
         for _source, _an in (("ldap", config.ldap_enabled), ("saml", config.saml_enabled)):
             if _an:
                 self._report_name_binding_inventory(_source, self._federation_since(_source))
+        # Permissions (T-100): the configuration's manifests — and an empty one where configured ones are gone.
+        if any(isinstance(e, dict) and "permissions" in e for e in (config.apps or {}).values()) \
+                or self.store.permission_apps("config"):
+            self._register_config_permissions()
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_announce(tok)

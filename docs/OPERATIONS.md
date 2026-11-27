@@ -1007,6 +1007,10 @@ there.
    Code that matches the reasons exhaustively handles it; nothing changes for existing data.
 <!-- upgrade-list 0.31.x:end -->
 
+**Schema 27** (T-100, permissions) is additive: this version adds the tables `app_permission` and `role_permission` at
+the first start and stamps the file 27. Going back to 0.31.x needs no SQL: it opens a 27 file with the warning "comes
+from a newer version" and never reads the two tables — assigned permissions are then simply not asked for.
+
 ### From a version before 0.30.0: two steps
 
 **0.30.0 is the last release with database migrations.** Since the schema baseline (T-111) a new database is created
@@ -1229,13 +1233,29 @@ nothing — accounts hold their roles in `users.roles` as before.
   ```
 
 - **Deleting** is refused while anything holds or waits for the role: accounts, API key scopes (not revoked, not
-  expired), OAuth service scopes, open invitations and pairing codes, pending approvals that would add it. Remove it
-  there first; nothing cascades. A role that is one level of a role level entry goes with the whole entry (panel).
+  expired), OAuth service scopes, open invitations and pairing codes, pending approvals that would add it, permissions
+  assigned to it (T-100). Remove it there first; nothing cascades. A role that is one level of a role level entry goes with the whole entry (panel).
 - **Start messages:** a catalog row with a comma, a control character or surrounding spaces (written by hand; never
   offered); a catalog role the configuration names too (redundant — delete the row, the role stays known); a role
   level ladder without an entry or an entry missing a level role among the known roles.
 - **Audit events:** `role_created`, `role_deleted` (`name=` percent-encoded, `via=panel|cli|code`, `entry=` for a role
-  level entry) and `role_delete_refused` (`where=users|keys|services|links|approvals`).
+  level entry) and `role_delete_refused` (`where=users|keys|services|links|approvals|permissions`).
+
+## Permissions: tables (schema 27)
+
+Schema 27 (T-100, ADR-17) adds two tables; nothing existing changes.
+
+- `app_permission` — what an application declares: `app` (the id in `apps`), `name`, `label` and `description` (JSON
+  language → text), `danger`, `suggested_roles` (JSON), `source` (`config` = `apps[id].permissions`, registered at
+  every start; `app` = `register_permissions`), `registered_at`, `orphaned_at` (set when it left its manifest; then it
+  grants nothing).
+- `role_permission` — which role holds which permission of which application: `role`, `app`, `name`, `active` (0 = the
+  permission was orphaned meanwhile; shown, grants nothing, also after it comes back, until an administrator assigns
+  it anew), `granted_at`, `granted_by`. Deleting a permission deletes its rows (only an orphaned one can be deleted).
+- **Audit events:** `permissions_registered` (`app= source= added=… updated=… returned=… orphaned=…`, only when
+  something changed), `permission_granted`, `permission_revoked` (`app= permission= role=`), `permission_deleted`.
+- **Start:** the configuration's manifests are registered; an application whose configured permissions are gone gets
+  an empty manifest — its configured permissions become orphaned, never deleted silently.
 
 ## Pairing code for people's programs: columns
 

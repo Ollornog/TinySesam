@@ -355,9 +355,10 @@ def role_catalog(self) -> list:
 
 
 def role_usage(self, name: str) -> dict:
-    """Where a role is held or waits to be: `{"users", "keys", "services", "links", "approvals"}` — accounts,
-    API key scopes (not revoked, not expired), OAuth service scopes, open invitations and pairing codes, pending
-    approvals of `tinysesam.account.set_roles`. What `delete_role` checks."""
+    """Where a role is held or waits to be: `{"users", "keys", "services", "links", "approvals", "permissions"}` —
+    accounts, API key scopes (not revoked, not expired), OAuth service scopes, open invitations and pairing codes,
+    pending approvals of `tinysesam.account.set_roles`, permissions assigned to it (T-100). What `delete_role`
+    checks."""
     return self.store.role_usage([name])[name]
 
 

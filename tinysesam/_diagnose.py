@@ -82,6 +82,7 @@ FIELDS: dict[str, Any] = {
     "topbar_links": REDACT,
     "topbar_menu_links": REDACT,
     "admin_implies_roles": SHOW,
+    "admin_implies_permissions": SHOW,
     "group_match": _one_of("exact", "substring"),
     "available_roles": REDACT,
     "role_levels": REDACT,
