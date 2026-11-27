@@ -366,9 +366,9 @@ _PART_METHODS = {
         "_other_way_in", "_unlink_identity",
     ),
     "permissions": (
-        "_known_roles", "_permission_app", "_register_config_permissions", "_sync_permissions", "app_permissions",
-        "delete_permission", "grant_permission", "has_permission", "permissions_of", "register_permissions",
-        "require_permission", "revoke_permission",
+        "_known_roles", "_permission_app", "_register_config_permissions", "_suspend_removed_role_permissions",
+        "_sync_permissions", "app_permissions", "delete_permission", "grant_permission", "has_permission",
+        "permissions_of", "register_permissions", "require_permission", "revoke_permission",
     ),
     "links": (
         "_app_link_refused", "_duration", "_signin_link", "_verify_mail", "create_invite", "create_magic_token",
@@ -777,6 +777,9 @@ class TinySesam(metaclass=_BuildingBlocks):
         if any(isinstance(e, dict) and "permissions" in e for e in (config.apps or {}).values()) \
                 or self.store.permission_apps("config"):
             self._register_config_permissions()
+        # B-19: assignments of a role that left the configuration and the catalog are suspended and named.
+        if self.store.has_role_permissions():
+            self._suspend_removed_role_permissions()
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_announce(tok)

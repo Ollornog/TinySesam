@@ -15,7 +15,7 @@ from typing import Optional
 
 from fastapi import HTTPException, Request
 
-from . import _permissions
+from . import _permissions, security
 from .errors import ConfigError
 from .store import role_invalid
 
@@ -74,7 +74,13 @@ def permissions_of(self, user, *, app: str) -> list:
         return []
     if self.cfg.admin_implies_permissions and bool(user["is_admin"]):
         return self.store.current_permissions(app)
-    return self.store.effective_permissions(self.user_roles(user), app)
+    roles = self.user_roles(user)
+    if roles:
+        # B-19: a role that left the configuration and the catalog grants nothing, even before the next start
+        # suspends its assignments (an account may still carry it in `users.roles`).
+        known = self._known_roles()
+        roles = [r for r in roles if r in known]
+    return self.store.effective_permissions(roles, app)
 
 
 def has_permission(self, user, permission: str, *, app: str) -> bool:
@@ -103,6 +109,28 @@ def _known_roles(self) -> set:
     from . import _role_catalog, config_check
     configured = {r for _, r in config_check.configured_roles(self.cfg) if isinstance(r, str)}
     return (configured | set(_role_catalog.catalog_names(self.store))) - set(_role_catalog.RESERVED)
+
+
+def _suspend_removed_role_permissions(self) -> list:
+    """At start (B-19): the assignments of roles that are neither in the configuration nor in the catalog any more.
+    Active ones are suspended (`active` = 0, audit `permissions_suspended reason=role_removed`): they grant nothing,
+    and a role created later under the same name does not inherit them — an administrator assigns again. Every such
+    row is named in a security-log warning at each start until an administrator withdraws it (the panel shows it).
+    Returns the rows (`role`, `app`, `name`, `suspended` = just now)."""
+    rows = self.store.suspend_assignments_of_removed_roles(self._known_roles())
+    if not rows:
+        return rows
+    fresh = [r for r in rows if r["suspended"]]
+    if fresh:
+        self.audit("permissions_suspended", None, None, "reason=role_removed " + " ".join(
+            f"{r['role']}:{r['app']}/{r['name']}" for r in fresh[:20]) + (" …" if len(fresh) > 20 else ""))
+    security.seclog.warning(
+        "%d permission assignment(s) of role(s) no longer in the configuration or the catalog: %s%s. They grant "
+        "nothing (suspended; a role created again under the same name does not take them over). Withdraw them in the "
+        "admin panel (Permissions) or with auth.revoke_permission(role, permission, app=…); assign anew to give them "
+        "back.", len(rows), ", ".join(security.for_log(f"{r['role']} → {r['app']}/{r['name']}") for r in rows[:10]),
+        " (more follow)" if len(rows) > 10 else "")
+    return rows
 
 
 def grant_permission(self, role: str, permission: str, *, app: str, by: Optional[str] = None) -> bool:

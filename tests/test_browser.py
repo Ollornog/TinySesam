@@ -2342,6 +2342,22 @@ async def _idp_import_panel(p, carol):
                ".querySelector('input[type=checkbox]').click();true")
     await until_py(lambda: t33.has_permission(t33.get_user(carol), "docs.read", app="docs"), "tick did not assign")
     await shot("idp-perms-1280.png")
+    # B-19: an assignment of a role that left the configuration and the catalog — suspended at start — has a column of
+    # its own, marked with the symbol AND the word; its cell says "suspended" and the button withdraws it.
+    t33.store._exec("INSERT INTO role_permission(role, app, name, active, granted_at, granted_by) "
+                    "VALUES ('gone-role', 'docs', 'docs.read', 1, 1, 'boss')")
+    assert [r["role"] for r in t33._suspend_removed_role_permissions()] == ["gone-role"]
+    await p.js("permsview();true")
+    await p.until("!!document.querySelector('table.permgrid th.removedrole')", "no column for the removed role")
+    head = await p.js("document.querySelector('table.permgrid th.removedrole').innerText")
+    assert head.startswith("gone-role") and "⊘ Role removed — grants nothing" in head, head
+    cell = await p.js("document.querySelector('table.permgrid td.removedcell').innerText")
+    assert "⏸ suspended" in cell and "Withdraw" in cell, cell
+    await shot("removed-role-perms-1280.png")
+    await p.js("document.querySelector('table.permgrid td.removedcell button').click();true")
+    await until_py(lambda: "gone-role" not in t33.app_permissions("docs")[0]["suspended_roles"],
+                   "the withdraw button did not withdraw")
+    await p.until("!document.querySelector('table.permgrid th.removedrole')", "the removed role's column stayed")
     await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
     for theme in ("light", "dark"):
         await p.js(f"localStorage.setItem('themeMode','{theme}');true")

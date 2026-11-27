@@ -240,7 +240,10 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
   a "Delete" button. An area administrator (`admin_delegates[…]["apps"]`) sees only its applications and roles.
 - **Assign** with `auth.grant_permission(role, permission, app=…)` and withdraw with `auth.revoke_permission(…)` — to a
   role of the configuration (also a group map's target) or of the role catalog. A role holding permissions counts as
-  in use: the catalog does not delete it, so a new role of the same name never inherits them.
+  in use: the catalog does not delete it, so a new role of the same name never inherits them. A role that leaves the
+  configuration grants nothing from then on, even on an account that still carries it; the next start suspends its
+  assignments and names them in the security log, the panel shows them in a column marked ⊘ "Role removed" with a
+  "Withdraw" button, and a role created again under that name holds nothing until someone assigns anew.
 - **Orphaned:** a permission that leaves its manifest grants nothing from then on; `auth.app_permissions("docs")` shows
   it (`orphaned`) with the roles that held it (`suspended_roles`). If it comes back, those assignments stay suspended
   until someone assigns it anew — never silently re-granted. `auth.delete_permission(…)` removes an orphaned one.
