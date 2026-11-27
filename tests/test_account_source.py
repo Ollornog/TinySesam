@@ -8,6 +8,7 @@ a binding gets the same answer from every check (the equivalence rule of ADR-18)
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 import tempfile
@@ -22,6 +23,10 @@ from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import gate_client  # noqa: E402
 
 BASE = "https://auth.example.com"
+#: The passkey routes need the extra [passkey]; the job `minimal` runs without it. This suite reads the origin of an
+#: account from the store (a passkey row is written directly), not from WebAuthn, so it runs in full either way and
+#: only switches the passkey routes off where the extra is missing.
+HAS_PASSKEY = importlib.util.find_spec("webauthn") is not None
 JSON = {"Accept": "application/json"}
 
 
@@ -30,7 +35,7 @@ def ok(name):
 
 
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="en", db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
-                                 cookie_secure=False, base_url=BASE, admin_require_mfa=False, passkey_enabled=True,
+                                 cookie_secure=False, base_url=BASE, admin_require_mfa=False, passkey_enabled=HAS_PASSKEY,
                                  pin_enabled=True))
 app = FastAPI()
 app.include_router(auth.router())

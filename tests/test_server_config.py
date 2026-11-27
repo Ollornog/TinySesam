@@ -171,14 +171,17 @@ ok("unknown key (with the nearest field), broken TOML and a missing file end the
 # (g) secrets: never a literal; env:NAME or <field>_file; nested client secrets the same
 for name in SECRET_FIELDS:
     refused(f'{name} = "hunter2-literal"\n', name, "never stands in the file as a literal")
-    assert values_from_file(write("s.toml", f'{name} = "env:MY_SECRET"\n'),
-                            env={"MY_SECRET": "from-env"})[name] == "from-env"
+    # The files are written outside the asserts: under `python -O` an assert is dropped with its side effects.
+    from_env = values_from_file(write("s.toml", f'{name} = "env:MY_SECRET"\n'), env={"MY_SECRET": "from-env"})
+    assert from_env[name] == "from-env"
     refused(f'{name} = "env:MISSING_ONE"\n', "MISSING_ONE", "is not set")
     secret_file = write("secret.txt", "from-file\n")
-    assert values_from_file(write("s.toml", f'{name}_file = "{secret_file}"\n'), env={})[name] == "from-file"
+    from_file = values_from_file(write("s.toml", f'{name}_file = "{secret_file}"\n'), env={})
+    assert from_file[name] == "from-file"
     refused(f'{name} = "env:X"\n{name}_file = "{secret_file}"\n', "not both", env={"X": "1"})
     refused(f'{name}_file = "{os.path.join(TMP, "absent")}"\n', "cannot be read")
-    assert values_from_file(write("s.toml", f'{name} = ""\n'), env={})[name] == ""
+    empty = values_from_file(write("s.toml", f'{name} = ""\n'), env={})
+    assert empty[name] == ""
 refused('[oidc_clients."app.example.com"]\nclient_id = "a"\nclient_secret = "literal"\n',
         "oidc_clients", "client_secret", "literal")
 clients = values_from_file(write("c.toml", '[oidc_clients."App.Example.com"]\nclient_id = "a"\n'
