@@ -615,8 +615,14 @@ class TinySesamConfig:
     # `^[a-z][a-z0-9_-]{0,31}(\.[a-z0-9_-]{1,32}){1,3}$`, at most 200. Registered at the start (the application may
     # register its own with `register_permissions`); it grants nothing until an administrator assigns a permission to a
     # role, and a name that leaves the manifest is orphaned, never deleted silently. An entry that only declares
-    # permissions needs no `account`; `account` is required with `provisioning` or `approvals`. See README
-    # "Permissions".
+    # permissions needs no `account`; `account` is required with `provisioning`, `approvals` or `permission_scopes`.
+    # See README "Permissions".
+    # `hosts` (T-101) lists the hosts the application is served on behind the gate (lower case, no port; each host in
+    # at most one application): forward auth sends the account's permissions for THAT application along — the claim
+    # `ts_perms` of the gate token and the header `Remote-Permissions` — and `account.json` names them; a host of
+    # `forward_apps` without its own `name` takes the application's. `permission_scopes` lets the service account's
+    # automation key register the manifest (`"permissions:register"`, `PUT /auth/api/apps/{id}/permissions`) and read
+    # an account's permissions for the application (`"permissions:read"`, `GET /auth/api/users/{id}/permissions?app=`).
     apps: dict = field(default_factory=dict)
 
     # --- Sessions (server-side, revocable) ---

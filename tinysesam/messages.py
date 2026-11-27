@@ -81,6 +81,7 @@ MESSAGES = {
         "api.owner_settings": 'Only an owner may change the hardening values',
         "api.name_invalid": 'This account name cannot be passed on — the operator has to rename the account',
         "api.role_invalid": 'A role of this account cannot be passed on — an administrator has to remove it',
+        "api.permissions_too_large": 'This account holds too many permissions for this application to pass them on — an administrator has to assign fewer',
         "api.role_name": 'Role name not allowed: {role} — no comma, no control character, no surrounding spaces',
         "api.catalog_invalid": 'Role name not allowed: {role} — no comma, no control or invisible character, no '
                                'surrounding spaces, at most 64 characters, no clash with a role level entry',
@@ -900,6 +901,7 @@ MESSAGES = {
         "api.owner_settings": 'Die Härtungswerte ändert nur ein Owner',
         "api.name_invalid": 'Dieser Kontoname lässt sich nicht weitergeben — der Betreiber muss das Konto umbenennen',
         "api.role_invalid": 'Eine Rolle dieses Kontos lässt sich nicht weitergeben — ein Administrator muss sie entfernen',
+        "api.permissions_too_large": 'Dieses Konto hat für diese Anwendung zu viele Berechtigungen, um sie weiterzugeben — ein Administrator muss weniger vergeben',
         "api.role_name": 'Rollenname nicht erlaubt: {role} — kein Komma, kein Steuerzeichen, keine Leerzeichen am Rand',
         "api.catalog_invalid": 'Rollenname nicht erlaubt: {role} — kein Komma, kein Steuer- oder unsichtbares Zeichen, '
                                'keine Leerzeichen am Rand, höchstens 64 Zeichen, kein Konflikt mit einer Rollenstufe',

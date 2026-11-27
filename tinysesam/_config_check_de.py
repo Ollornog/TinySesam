@@ -992,6 +992,20 @@ _DE: dict[str, str] = {
      "({{\"en\": \"Example\", \"de\": \"Example\"}})"):
         ("apps[{app!r}]: \"name\" ist ein Text oder eine Zuordnung Sprache → Text "
          "({{\"en\": \"Example\", \"de\": \"Example\"}})"),
+    ("apps[{app!r}].hosts: a non-empty list of at most {max} host names in lower case, without scheme, port or "
+     "trailing dot (\"docs.example.com\")"):
+        ("apps[{app!r}].hosts: eine nicht leere Liste von höchstens {max} Hostnamen in Kleinbuchstaben, ohne Schema, "
+         "Port oder Punkt am Ende (\"docs.example.com\")"),
+    ("apps: {a!r} and {b!r} both name the host {host!r} — a host belongs to at most one application (its permissions "
+     "travel with the requests to it)"):
+        ("apps: {a!r} und {b!r} nennen beide den Host {host!r} — ein Host gehört zu höchstens einer Anwendung (ihre "
+         "Berechtigungen reisen mit den Anfragen an ihn)"),
+    "apps[{app!r}].permission_scopes: a non-empty list of {scopes}":
+        "apps[{app!r}].permission_scopes: eine nicht leere Liste aus {scopes}",
+    ("apps with permission_scopes and apikey_enabled=False: an application calls the permission API with an "
+     "automation key of its service account"):
+        ("apps mit permission_scopes und apikey_enabled=False: eine Anwendung ruft die Berechtigungs-API mit einem "
+         "Automations-Key ihres Dienstkontos auf"),
     "apps[{app!r}].provisioning: {v!r} — allowed members are {keys}":
         "apps[{app!r}].provisioning: {v!r} — erlaubt sind {keys}",
     ("apps[{app!r}].provisioning.roles: a non-empty list of roles the application "

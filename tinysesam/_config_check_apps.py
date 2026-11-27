@@ -303,8 +303,15 @@ def _approvals(config, error: list) -> None:
 #: The id of an application in `apps` — the same rule as the first segment of an approval type.
 APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 #: The members of one `apps` entry: the account API (`provisioning`), the approvals of the application's own
-#: actions (`approvals`, stage B) and its permissions (`permissions`, T-100).
-APP_KEYS = ("account", "name", "provisioning", "approvals", "permissions")
+#: actions (`approvals`, stage B), its permissions (`permissions`, T-100), the hosts it is served on (`hosts`) and what
+#: its service account may do with the permission API (`permission_scopes`, T-101).
+APP_KEYS = ("account", "name", "provisioning", "approvals", "permissions", "hosts", "permission_scopes")
+#: The scopes of the permission API (T-101): register the manifest (`PUT /auth/api/apps/{id}/permissions`), read the
+#: permissions of an account for the application (`GET /auth/api/users/{id}/permissions?app=`).
+PERMISSION_SCOPES = ("permissions:register", "permissions:read")
+#: A host of `apps[id].hosts`: lower case, no port, no scheme, no trailing dot — what forward auth compares against.
+APP_HOST = re.compile(r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$")
+APP_HOSTS_MAX = 32
 #: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stages A and B).
 PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role", "delete_grace_days",
                      "welcome_url")
@@ -347,7 +354,9 @@ def _apps(config, error: list, warnings: list) -> None:
     mapped = set(_mapped_roles(config))
     accounts: dict = {}
     role_owner: dict = {}
+    host_owner: dict = {}
     provisioning = False
+    permission_api = False
     max_ttl = _integer(config, "signin_link_max_ttl_min", 24 * 60) or 24 * 60
     for app_id, entry in raw.items():
         if not isinstance(app_id, str) or not APP_ID.match(app_id):
@@ -373,8 +382,30 @@ def _apps(config, error: list, warnings: list) -> None:
                                                        "which the configuration does not name — the panel "
                                                        "shows the hint anyway, it grants nothing", app=app_id,
                                                perm=spec["name"], role=role))
+        hosts = entry.get("hosts")
+        if hosts is not None:
+            if (not isinstance(hosts, list) or not hosts or len(hosts) > APP_HOSTS_MAX
+                    or not all(isinstance(h, str) and APP_HOST.match(h) for h in hosts)):
+                error.append(_t(config, "apps[{app!r}].hosts: a non-empty list of at most {max} host names in lower "
+                                        "case, without scheme, port or trailing dot (\"docs.example.com\")",
+                                app=app_id, max=APP_HOSTS_MAX))
+            else:
+                for host in hosts:
+                    other = host_owner.get(host)
+                    if other is not None and other != app_id:
+                        error.append(_t(config, "apps: {a!r} and {b!r} both name the host {host!r} — a host belongs to "
+                                                "at most one application (its permissions travel with the requests "
+                                                "to it)", a=other, b=app_id, host=host))
+                    host_owner.setdefault(host, app_id)
+        scopes_api = entry.get("permission_scopes")
+        if scopes_api is not None:
+            permission_api = True
+            if (not isinstance(scopes_api, list) or not scopes_api
+                    or not all(isinstance(x, str) and x in PERMISSION_SCOPES for x in scopes_api)):
+                error.append(_t(config, "apps[{app!r}].permission_scopes: a non-empty list of {scopes}",
+                                app=app_id, scopes=", ".join(PERMISSION_SCOPES)))
         account = entry.get("account")
-        if account is None and "provisioning" not in entry and "approvals" not in entry:
+        if account is None and not {"provisioning", "approvals", "permission_scopes"} & set(entry):
             pass                    # an entry that only declares permissions (or a name) speaks through no key
         elif (not isinstance(account, str) or not account.strip() or account != account.strip()
                 or any(ord(z) < 32 or ord(z) == 127 for z in account)):
@@ -473,7 +504,15 @@ def _apps(config, error: list, warnings: list) -> None:
             error.append(_t(config, "apps[{app!r}].provisioning.limits: {v!r} — numbers from 1 to {max} for {keys}",
                             app=app_id, v=limits, max=PROVISIONING_LIMIT_MAX, keys=", ".join(PROVISIONING_LIMITS)))
     _approver_roles(config, raw, known, error, warnings)
+    if permission_api and not _an(config, "apikey_enabled"):
+        error.append(_t(config, "apps with permission_scopes and apikey_enabled=False: an application calls the "
+                                "permission API with an automation key of its service account"))
+    if not provisioning and not permission_api:
+        return
     if not provisioning:
+        if str(getattr(config, "admin_path", "") or "").rstrip("/") == "/auth":
+            error.append(_t(config, "admin_path='/auth' with apps: /auth/api/ is reserved for the machine APIs — the "
+                                    "panel's JSON would lie under /auth/api/users, the path of the account API"))
         return
     if not _an(config, "apikey_enabled"):
         error.append(_t(config, "apps with provisioning and apikey_enabled=False: an application calls the account "

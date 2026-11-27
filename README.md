@@ -250,6 +250,16 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Who holds what:** an API key's scope narrows the roles first, so a service holds the intersection; the admin flag
   grants nothing unless `admin_implies_permissions=True` (never through an automation key, which does not carry the
   flag). Object-level rights ("folder X") stay in the application.
+- **Behind the gate** (`apps[id].hosts`): forward auth sends the account's permissions for the application of the
+  request's host as `Remote-Permissions` (joined with `,`, like `Remote-Groups`), the gate token carries them as
+  `ts_perms`, and `/.tinysesam/account.json` on that host names them (`permissions: {"app", "names"}`). A host of no
+  application gets none. A change counts at the next request — at the proxy path once the gate token expires
+  (`gate_token_ttl_sec`). A set above `PERMISSIONS_VALUE_MAX` bytes is refused with 403, never cut. Update the proxy
+  configuration first: the templates in `deploy/` strip a `Remote-Permissions` the client sends.
+- **From another language** (`apps[id].permission_scopes` with the service account `apps[id].account`): the
+  application registers its manifest with `PUT /auth/api/apps/{id}/permissions` (`permissions:register`; it grants
+  nothing) and reads an account's permissions with `GET /auth/api/users/{id}/permissions?app={id}`
+  (`permissions:read`), with an automation key, straight to TinySesam.
 - **A complete application:** example Ex2,
   [`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) — `docs.read` and
   `docs.delete`, the roles assigned locally in the panel, the delete button only with the permission (and the route
@@ -3010,7 +3020,7 @@ Building blocks for pages you build yourself — signatures and descriptions in
   `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
   `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`; the [role catalog](#role-catalog): `create_role`, `delete_role`,
   `known_roles`, `role_catalog`, `role_usage`, `RoleError`; [permissions](#permissions-the-application-declares-the-operator-assigns):
-  `grant_permission`, `revoke_permission`, `delete_permission`, `app_permissions`.
+  `grant_permission`, `revoke_permission`, `delete_permission`, `app_permissions`, `PERMISSIONS_VALUE_MAX`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
   `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link` (one-time
   sign-in link without mail, address from `base_url`).
@@ -3108,7 +3118,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**154 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**155 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

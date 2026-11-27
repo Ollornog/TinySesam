@@ -1601,6 +1601,12 @@ def build_router(auth) -> APIRouter:
         from .provisioning import register_routes as register_provisioning_routes
         register_provisioning_routes(r, auth)
 
+    # ---------- Permission API for applications (T-101, only with an application that has permission_scopes) ----
+    if any(isinstance(e, dict) and e.get("permission_scopes")
+           for e in (cfg.apps.values() if isinstance(getattr(cfg, "apps", None), dict) else [])):
+        from ._permissions_api import register_routes as register_permission_routes
+        register_permission_routes(r, auth)
+
     # ---------- SAML 2.0 SP (only if enabled) ----------
     if auth.saml:
         from fastapi.responses import Response as _Resp

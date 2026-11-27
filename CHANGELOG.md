@@ -21,10 +21,29 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    LDAP identity on the account page is never bound back by the name at a later sign-in; the refusal carries the new
    code in the audit line `<source>_name_binding_closed reason=…` and in the report of `federation_bind_existing`.
    Code that matches the reasons exhaustively handles it; nothing changes for existing data.
+3. **A new forward-auth header `Remote-Permissions` and claim `ts_perms`** (T-101, ADR-17,
+   `FORWARD_HEADERS_DEFAULT`, tier A). Forward auth sends the account's permissions for the application of the
+   request's host (`apps[id].hosts`), joined with `,`; empty, and so not set by the templates, for a host of no
+   application. Update your proxy configuration from `deploy/forward-auth/` (or `deploy/quickstart/`,
+   `deploy/home-network/`) **before** an application reads the header: the templates strip a `Remote-Permissions` the
+   client sends and set TinySesam's — an older template passes the client's own through. Behind a `Caddyfile.gate`
+   add `ts_perms` to `meta_claims` and the `header_up Remote-Permissions` line. An own `forward_headers` mapping is
+   the complete list and sends no permissions until it names the slot `perms`. A set above `PERMISSIONS_VALUE_MAX`
+   (2048 bytes) is refused with 403, never cut.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- Permissions at the server (T-101 server core, ADR-17 stage S5): `apps[id].hosts` names the hosts an application is
+  served on (each host in at most one application); forward auth sends the account's permissions for that
+  application as `Remote-Permissions` and the gate token carries them as `ts_perms` (a change counts at the next
+  request, at the proxy path after the gate token's TTL); `/.tinysesam/account.json` on the application's host names
+  them (`permissions: {app, names}`). The permission API for applications: `PUT /auth/api/apps/{id}/permissions`
+  registers the manifest (grants nothing) and `GET /auth/api/users/{id}/permissions?app=` reads an account's
+  permissions — with an automation key of the application's service account and `apps[id].permission_scopes`
+  (`permissions:register`, `permissions:read`). A host of `forward_apps` without its own name takes the application's.
+  All proxy templates strip and set `Remote-Permissions` (`tests/test_remote_auth.py` holds them to every default
+  header). `tests/test_permissions_server.py`.
 - Example Ex3 (T-102 acceptance): `examples/ex3/app.py`, the documents application with sign-in through an OIDC
   provider and its `team-*` groups imported as roles. `tests/test_example_ex3.py` runs it through the real routes: the
   group arrives and is listed as from the IdP, the administrator assigns `docs.read` in the matrix, the provider

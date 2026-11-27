@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 233
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 418 · B 334 names.
+**Status:** A 418 · B 335 names.
 
 ## A · Methods of `TinySesam`
 
@@ -323,7 +323,7 @@ Class attributes, read as `TinySesam.NAME` or `auth.NAME`. The value is part of 
 
 Default: the set that Authelia/Traefik setups expect.
 
-Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth', 'kind': 'Remote-Kind'}`
+Value: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id', 'auth': 'Remote-Auth', 'kind': 'Remote-Kind', 'perms': 'Remote-Permissions'}`
 
 ### `FORWARD_HEADERS_MANDATORY` — Constant
 
@@ -782,6 +782,12 @@ The pages that can be replaced — the same list that `render_page()` serves.
 
 Values: `account`, `account_setup`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
 
+### `PERMISSIONS_VALUE_MAX` — Constant
+
+The longest `Remote-Permissions` value (bytes): a larger set is refused with 403, never cut — a cut list would be a different set of rights. 2048 keeps the gate token below the 4096 bytes a client accepts (spec §4.4).
+
+Value: `2048`
+
 ### `TOKEN_PATHS` — Constant
 
 Where a token is redeemed — a separate endpoint per purpose.
@@ -1133,12 +1139,12 @@ Observed on probe instances; values are recorded where they are the contract (`X
 
 | Case | Response |
 |---|---|
-| forward: API key | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User |
+| forward: API key | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-Permissions, Remote-User |
 | forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login |
 | forward: role missing (?roles=) | 403 \| X-TinySesam-Reason: role |
 | forward: role missing (X-TinySesam-Roles) | 403 \| X-TinySesam-Reason: role |
-| forward: role present (?roles=) | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
-| forward: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: role present (?roles=) | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-Permissions, Remote-User, X-TinySesam-Gate-Cookie |
+| forward: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-Permissions, Remote-User, X-TinySesam-Gate-Cookie |
 | forward: signed out of this application | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /auth/login \| X-TinySesam-Reason: app-signed-out |
 | gate logout: host not protected | 404 |
 | gate logout: sign out everywhere | 303 \| Location -> /.tinysesam/after-logout \| cookies: __Host-tinysesam_gate (cleared), tinysesam_session (cleared) |
@@ -1148,12 +1154,12 @@ Observed on probe instances; values are recorded where they are the contract (`X
 | gateway callback: unknown code | 400 |
 | gateway callback: valid code | 303 \| Location -> /page \| cookies: __Host-tinysesam_link, __Host-tinysesam_linkflow (cleared) |
 | gateway forward: not signed in | 401 \| WWW-Authenticate: FormBased realm="TinySesam" \| X-TinySesam-Location -> /.tinysesam/start |
-| gateway forward: signed in via the connection | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| gateway forward: signed in via the connection | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-Permissions, Remote-User, X-TinySesam-Gate-Cookie |
 | gateway logged-out page: host not protected | 400 |
 | gateway logout: host not protected | 400 |
 | gateway start | 303 \| Location -> /auth/gate/authorize \| cookies: __Host-tinysesam_linkflow |
 | gateway start: host not protected | 404 |
-| verify alias: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-User, X-TinySesam-Gate-Cookie |
+| verify alias: signed in | 200 \| headers: Remote-Auth, Remote-Email, Remote-Groups, Remote-Id, Remote-Kind, Remote-Name, Remote-Permissions, Remote-User, X-TinySesam-Gate-Cookie |
 
 #### Headers, reasons, inputs, cookies
 
@@ -1331,4 +1337,4 @@ The shipped fail2ban filters in `deploy/fail2ban/` are held against exactly thes
 
 ---
 
-144 methods, 3 properties, 9 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+144 methods, 3 properties, 10 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

@@ -184,7 +184,7 @@ def add_routes(r, auth, cfg, *, _account_json, _provider_logout_url, _topbar_jso
                            f"url={security.url_for_log(orig)} missing={';'.join(','.join(g) for g in absent)}")
                 return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
             # Which headers these are is controlled by config.forward_headers (default: Remote-*).
-            head = auth._forward_response_headers(u)
+            head = auth._forward_response_headers(u, _host)
             # Gate token (ADR-9): the proxy sets it as a cookie on the application's host and
             # then checks it itself — until it expires, no request gets here any more.
             gate = auth._gate_cookie(request, u, orig, _required_roles(request), session=s)
