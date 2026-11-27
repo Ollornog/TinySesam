@@ -564,9 +564,10 @@ HELP = """tinysesam.gateway — TinySesam as an OIDC forward-auth gateway
 
   python -m tinysesam.gateway          starts the service
   python -m tinysesam.gateway pair <account> [--create-service] [--resource URL]… [--name LABEL] [--roles a,b]
-                                       a one-time pairing code for a service (T-60) — the gateway has no
-                                       account page or admin panel to issue one; run it with the service's
-                                       environment (docker exec <container> python -m tinysesam.gateway pair …)
+                                       a one-time pairing code for a service (T-60) — the OIDC preset has no
+                                       account page or admin panel to issue one (a TINYSESAM_CONFIG file can
+                                       switch them on); run it with the service's environment
+                                       (docker exec <container> python -m tinysesam.gateway pair …)
   python -m tinysesam.gateway diagnose [--log FILE]
                                        a redacted report of this gateway and a prefilled bug-form link (T-79);
                                        no network request, nothing written, nothing sent — you check and submit
