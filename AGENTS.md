@@ -56,7 +56,8 @@ python tests/run_all.py test_core.py     # one suite while you work
 - `tests/test_browser.py` drives headless Chrome against the showcase (console errors, CSP, dialogs, light/dark).
   Without Chrome it skips — a skip is not a green; run it before a UI change goes out.
 - `tests/test_repo.py` is the hygiene test: versions agree, no secrets, no private infrastructure, generated files
-  current, every Python block of the READMEs, this file and the skill runs, every dotted name in the docs exists.
+  current, every Python block of the READMEs, this file and the skill runs, every dotted name in the docs exists, no
+  call with a side effect inside an `assert` (CodeQL's `py/side-effect-in-assert`, which the sprint lane does not run).
 - **Mutation proves a fix.** Break the code you fixed (or the guard you wrote), watch the suite go red, restore it
   from a saved copy. Guards carry self-probes: a check that cannot fail proves nothing.
 - Never bypass the gate: no `--no-verify`, no `|| true`, no retry over red.

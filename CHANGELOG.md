@@ -143,6 +143,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- Hygiene test: no call with a side effect inside an `assert` (T-138). `tests/test_repo.py` mirrors CodeQL's
+  `py/side-effect-in-assert` (the names `print`, `write`, `append`, `pop`, `remove`, `discard`, `delete`, `close`,
+  `open`, `exit`, the `subprocess` calls, `yield`) over every tracked Python file, with a self-probe. The sprint lane
+  runs no CodeQL, and the finding twice showed first in a sprint's closing pull request; the hygiene test runs in the
+  sprint lane and in the pre-push hook, in under a second.
 - CI: a pull request into `sprint/<name>` runs only the fast checks in every workflow, not just in
   `scripts/check.sh` (T-131). Each workflow with heavy jobs (`tests`, the four clients, `audit`, `release`) has a job
   `classify` that asks the shared kit's `scripts/_nur_text.sh`; on `nur_text=ja` the heavy jobs skip, everything after
