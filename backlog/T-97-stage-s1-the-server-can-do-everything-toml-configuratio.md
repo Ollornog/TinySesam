@@ -2,7 +2,7 @@
 id: T-97
 type: Task
 title: "Stage S1 — the server can do everything: TOML configuration, parity test"
-status: offen
+status: in-arbeit
 points: 13
 milestone: M-2
 blocked_by: [T-96, T-112]
@@ -23,6 +23,14 @@ The gateway is today an OIDC-only preset configured by environment variables (no
 - `deploy/quickstart` with a configuration file.
 - Includes the open item "Gateway variable `TINYSESAM_APPS`" of [T-90](T-90-account-api-for-applications-stage-a-create-read-u.md) (Later): `apps` come from the file, with the switches the gateway preset turns off.
 - Related idea: [T-73](T-73-tenants-multiple-hostnames-each-with-its-own-sign-in-choice.md) (tenants) stays separate; the file format must not block it.
+
+## Progress
+
+- 2026-11-27, part 1: `TINYSESAM_CONFIG` file (`tinysesam/_server_config.py`), secrets only `env:NAME` / `<field>_file`
+  (checked in the loader, where the source of a value is still visible — `config_check` sees only the resolved value),
+  unknown keys refused, the gateway variables as overlay (`gateway.ENVIRONMENT_FIELDS`, held to the preset path per
+  variable), panel, account page and approvals mount through `auth.router()` when the file switches them on.
+  Suite `tests/test_server_config.py`.
 
 ## Acceptance
 - Example **Ex1** (a Go application behind the server, local accounts): sign-in, panel and account API without a line of Python in the application.

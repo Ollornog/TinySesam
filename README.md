@@ -1384,7 +1384,7 @@ step-up on both sides, never silently by the same address).
 
 | | **Library** | **Server** |
 |---|---|---|
-| What runs | TinySesam inside your Python application | the gateway container, any language behind a proxy; configured by environment variables today, by a TOML file with an environment overlay from T-97 on (`TINYSESAM_CONFIG`) |
+| What runs | TinySesam inside your Python application | the gateway container, any language behind a proxy; configured by a TOML file with an environment overlay (`TINYSESAM_CONFIG`, T-97) or, for the OIDC-only preset, by environment variables |
 | What the application gets | function calls (`get_user`, `has_role`, `topbar_data`, the account API) | the gate token, the `Remote-*` headers, `account.json`, `topbar.json`, the account API, through the clients (Go, Rust, JS/TS, PHP, Python) |
 | Trust | one trust boundary: application and TinySesam share the process, the database and the secrets | two boundaries: the application holds no TinySesam secret and cannot read its database |
 
@@ -2531,6 +2531,36 @@ single-route app.
 Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (gateway + Caddy) ships with it.
 
+### The server with a configuration file (T-97)
+
+The environment variables above configure an OIDC-only preset. **`TINYSESAM_CONFIG`** naming a TOML file (say /etc/tinysesam.toml) makes the
+same gateway the full TinySesam — local accounts, admin panel, account page, `apps`, SAML, LDAP, everything the library
+has. The keys are the field names of `TinySesamConfig` ([`CONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/CONFIGURATION.md)), read with the standard
+library (`tomllib`); the file starts from the library's defaults, not from the preset:
+
+```toml
+base_url = "https://auth.example.com"
+db_path = "/data/tinysesam.db"
+trusted_redirect_hosts = ["app.example.com"]
+oidc_enabled = true                          # local accounts stay on beside it (password_enabled)
+oidc_issuer = "https://id.example.com"
+oidc_client_id = "tinysesam"
+oidc_client_secret = "env:OIDC_CLIENT_SECRET"   # or: oidc_client_secret_file = "/run/secrets/oidc"
+
+[oidc_clients."wiki.example.com"]
+client_id = "wiki"
+client_secret_file = "/run/secrets/wiki"
+```
+
+- **Secrets never as a literal.** `oidc_client_secret`, `smtp_password`, `ldap_bind_password` and `client_secret` in an
+  `oidc_clients` entry take `"env:NAME"` or the sibling key `<field>_file`; a literal ends the start. The file can be
+  reviewed and kept in git.
+- **A key that is no field ends the start** and names the nearest field (`password_enabeld` → `password_enabled`).
+- **The environment overlays the file:** each gateway variable above that is set wins over the field it stands for
+  (`TINYSESAM_BASE_URL` → `base_url`, `TINYSESAM_PROTECTED_HOSTS` → `trusted_redirect_hosts`, …;
+  `python -m tinysesam.gateway --help`); an unset or empty one changes nothing. None of them is required with a file.
+- **Without `TINYSESAM_CONFIG` nothing changes:** a running gateway keeps its variables and its preset.
+
 ### Gateway and Caddy in 5 minutes
 
 [`deploy/quickstart/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/quickstart/) is one stack: the gateway,
@@ -2973,7 +3003,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**137 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**138 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

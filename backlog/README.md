@@ -112,7 +112,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-94](T-94-first-sign-in-by-link-recovery-codes-off-totp-hint-target.md)** First sign-in by one-time link: recovery codes switchable, TOTP app hint, target after the setup · M-5
 * ☑ **[T-95](T-95-pairing-code-for-people-s-programs-and-a-simpler-consent-page.md)** Pairing code for people's programs (consent given in advance) and a consent page for laypeople · M-5
 * ☑ **[T-96](T-96-stage-s0-documentation-of-the-grid-surfaces-origins-dep.md)** Stage S0 — documentation of the grid: surfaces, origins, deployment · M-2
-* ☐ **[T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)** Stage S1 — the server can do everything: TOML configuration, parity test · M-2
+* ◐ **[T-97](T-97-stage-s1-the-server-can-do-everything-toml-configuratio.md)** Stage S1 — the server can do everything: TOML configuration, parity test · M-2
 * ☑ **[T-98](T-98-stage-s2-reset-a-totp-factor-in-the-panel-and-cli.md)** Stage S2 — reset a TOTP factor in the panel and CLI · M-2
 * ☐ **[T-99](T-99-stage-s3-every-origin-is-equal-source-step-up-linking-l.md)** Stage S3 — every origin is equal: source, step-up, linking local and IdP · M-2
 * ☐ **[T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md)** Stage S4 — permissions: app identity, registration, assignment, has_permission · M-2
