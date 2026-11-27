@@ -2,12 +2,14 @@
 id: T-128
 type: Task
 title: "Drop the branch for test kits before 0.65 in the release-automation check"
-status: offen
+status: erledigt
 milestone: M-5
 tags: [ci, kit, cleanup]
 created: 2026-11-26
 ---
 # T-128 — Drop the pre-0.65 kit branch
+
+**Done (2026-11-27):** with kit 0.69.0 on main the hygiene test accepts only the 0.65+ halt (rc 0, `::notice::`, "Release automation skipped"); a halt with rc 1 and `::error::` is red (mutation of the kit halt in a probe copy). The kit-version switch `_KIT` is gone, together with the dead pre-0.67 branch of the whole-line allowlist.
 
 **Story points:** 1 · **Estimate:** 1 h · **Milestone:** [M-5](M-5-after-1-0.md)
 

@@ -11,7 +11,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 1/15 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 88/97 erledigt
+* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 89/97 erledigt
 * ☑ **[M-6](M-6-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -143,7 +143,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-125](T-125-attestation-retry-in-the-tag-jobs.md)** Attestation retry in the tag jobs of release.yml (image, SBOM) · M-5
 * ☑ **[T-126](T-126-breaking-release-after-the-baseline-with-an-upgrade-list.md)** Breaking release after the baseline, with one upgrade list · M-1
 * ☑ **[T-127](T-127-compare-the-schema-baseline-with-the-tag-in-ci.md)** CI compares the schema baseline with the tag v0.30.0, not only with the checked-in file · M-1
-* ☐ **[T-128](T-128-drop-the-pre-0-65-branch-of-the-kit-check.md)** Drop the branch for test kits before 0.65 in the release-automation check · M-5
+* ☑ **[T-128](T-128-drop-the-pre-0-65-branch-of-the-kit-check.md)** Drop the branch for test kits before 0.65 in the release-automation check · M-5
 * ☐ **[T-129](T-129-fleet-pin-of-a-breaking-release-opens-as-a-draft.md)** The fleet pin of a breaking release opens as a draft · M-5
 
 ## Fehler

@@ -798,9 +798,6 @@ PERMITTED_WITH_RIGHT = {"echo", "printf", "gh release", "gh attestation", "git l
                      # tag object and its ref —, never `gh api` wholesale.
                      'gh api "repos/$GITHUB_REPOSITORY/git/tags"', 'gh api "repos/$GITHUB_REPOSITORY/git/refs"'}
 
-# The kit version this copy carries (`tests/_kit/KIT_VERSION`): guards on kit-generated workflows follow it.
-_KIT = tuple(int(x) for x in read("tests/_kit/KIT_VERSION").strip().split("."))
-
 # Writes of the git refs API bound to ONE job and ONE whole command line each — never `gh api` wholesale, never for
 # another job. Kit 0.67 (fast-forward auto-merge): `ausfuehren` moves the base to the checked head with `force=false`
 # (GitHub refuses everything but a fast-forward), `aufraeumen` deletes only the head branch `nachsehen` named.
@@ -909,9 +906,9 @@ for wf in WORKFLOWS:
                                           f"`{command}`: {k}")
 assert _exceptions_seen == set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT), \
     f"exceptions without job: {set(CHECKOUT_WITH_RIGHT) | set(REUSABLE_WITH_RIGHT) - _exceptions_seen} — tidy up the list"
-# Before kit 0.67 the auto-merge has neither job; from it on every line must be met (else the list holds stale entries).
+# Every permitted line must be met (else the list holds stale entries).
 _lines_permitted = {(wf, job, k) for (wf, job), lines in PERMITTED_LINE_IN_JOB.items() for k in lines}
-assert _KIT < (0, 67) or _lines_seen == _lines_permitted, \
+assert _lines_seen == _lines_permitted, \
     f"permitted lines without their job: {_lines_permitted - _lines_seen} — tidy up the list"
 assert _checked_identity >= 6, f"only {_checked_identity} jobs with write permission found — check the parser"
 print(f"  {_checked_identity} jobs with identity/write permission (every spelling): only "
@@ -1788,16 +1785,12 @@ def read_at_file(path: str) -> str:
 
 
 _r = _kit_probe(_fit.replace("### Fixed", "### Added — new API"))
-if _KIT >= (0, 65):
-    # Since kit 0.65 a minor under [Unreleased] is a halt by design: green, a notice on stdout, "skipped" in the summary —
-    # still no release PR (nothing past the check: no commit, no branch in the probe tree, see `_kit_probe`).
-    assert _r.returncode == 0 and "::notice::" in _r.stdout and "Added" in _r.stdout and "[Unreleased]" in _r.stdout \
-        and "::error::" not in _r.stderr, (_r.returncode, _r.stdout, _r.stderr)
-    assert "Release automation skipped (a human cuts this release)" in _r.summary, f"no job summary: {_r.summary!r}"
-else:
-    assert _r.returncode == 1 and "::error::" in _r.stderr and "Added" in _r.stderr and "[Unreleased]" in _r.stderr, \
-        (_r.returncode, _r.stdout, _r.stderr)
-    assert "Release automation stopped" in _r.summary, "no job summary"
+# A minor under [Unreleased] is a halt by design (kit 0.65+): green, a notice on stdout, "skipped" in the summary — still
+# no release PR (nothing past the check: no commit, no branch in the probe tree, see `_kit_probe`). The kit before 0.65
+# stopped with rc 1 and `::error::`; that shape is red now (T-128).
+assert _r.returncode == 0 and "::notice::" in _r.stdout and "Added" in _r.stdout and "[Unreleased]" in _r.stdout \
+    and "::error::" not in _r.stderr, (_r.returncode, _r.stdout, _r.stderr)
+assert "Release automation skipped (a human cuts this release)" in _r.summary, f"no job summary: {_r.summary!r}"
 assert _r.refs == ["refs/heads/main", "refs/tags/v1.0.0"] and _r.commits == 1, \
     f"the stopped probe prepared a release anyway: {_r.refs}, {_r.commits} commits"
 _r = _kit_probe(_fit)
