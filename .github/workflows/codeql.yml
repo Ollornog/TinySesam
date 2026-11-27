@@ -35,14 +35,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           languages: python
           # `security-and-quality` instead of the default: the package is small enough that the
           # additional queries do not produce a flood.
           queries: security-and-quality
 
-      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           category: "/language:python"
 
@@ -64,7 +64,7 @@ jobs:
           go-version: stable
           cache: false
 
-      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           languages: go
           build-mode: manual
@@ -74,7 +74,7 @@ jobs:
         working-directory: clients/go
         run: go build ./...
 
-      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           category: "/language:go"
           upload: never
@@ -101,7 +101,7 @@ jobs:
           name: codeql-go-sarif
           path: sarif-go
 
-      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           sarif_file: sarif-go
           category: "/language:go"
@@ -121,7 +121,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           languages: javascript-typescript
           build-mode: none
@@ -130,7 +130,7 @@ jobs:
             paths:
               - clients/js
 
-      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           category: "/language:javascript-typescript"
           upload: never
@@ -157,7 +157,7 @@ jobs:
           name: codeql-js-sarif
           path: sarif-js
 
-      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           sarif_file: sarif-js
           category: "/language:javascript-typescript"
@@ -178,7 +178,7 @@ jobs:
           rustup default stable
           rustc --version
 
-      - uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           languages: rust
           build-mode: none
@@ -187,7 +187,7 @@ jobs:
             paths:
               - clients/rust
 
-      - uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           category: "/language:rust"
           upload: never
@@ -214,7 +214,7 @@ jobs:
           name: codeql-rust-sarif
           path: sarif-rust
 
-      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
+      - uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
         with:
           sarif_file: sarif-rust
           category: "/language:rust"
