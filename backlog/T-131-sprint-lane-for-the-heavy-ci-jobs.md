@@ -2,7 +2,7 @@
 id: T-131
 type: Task
 title: "Sprint lane for the heavy CI jobs (classifier in the workflows)"
-status: offen
+status: erledigt
 points: 3
 milestone: M-5
 tags: [ci, kit]
@@ -11,6 +11,14 @@ created: 2026-11-27
 # T-131 — Sprint lane for the heavy CI jobs
 
 **Story points:** 3 · **Estimate:** 3–4 h · **Milestone:** [M-5](M-5-after-1-0.md)
+
+**Done (2026-11-27):** a job `classify` in `ci.yml`, the four client workflows, `audit.yml` and `release.yml` runs
+`scripts/_nur_text.sh` on the merge commit; `full`, `minimal`, `browser`, `gate-caddy`, the client legs, `audit`,
+`verify`, `image-probe` and `rehearsal-targets` carry the kit's fail-safe gate, every job after them skips with them;
+`repeat` stays ungated (its `scripts/check.sh` runs the fast checks). The aggregates count a skipped job green only
+with `nur_text=ja`. CodeQL already ran only on pull requests into `main`. `tests/test_ci_aggregate.py` checks the
+gating of every job and runs the classifier and the aggregate's script; mutations in the pull request. Like the
+kit's docs fast lane, a pull request of text only skips the heavy jobs as well.
 
 Found in sprint S4 (2026-11-27, pull request #378): a pull request into `sprint/<name>` takes the shared kit's sprint
 lane (0.68) only where `scripts/check.sh` runs — the job `repeat` printed "SPRINT LANE" and ran the fast checks. Every

@@ -30,6 +30,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- CI: a pull request into `sprint/<name>` runs only the fast checks in every workflow, not just in
+  `scripts/check.sh` (T-131). Each workflow with heavy jobs (`tests`, the four clients, `audit`, `release`) has a job
+  `classify` that asks the shared kit's `scripts/_nur_text.sh`; on `nur_text=ja` the heavy jobs skip, everything after
+  them with them, and the aggregate checks (`suite-ok`, `client-*-ok`) count a skipped job green only with that answer.
+  A pull request of text only skips them too; a pull request into `main` with code, the closing pull request of a
+  sprint, tags and schedules run everything. `tests/test_ci_aggregate.py` runs the classifier against a merge commit
+  and the aggregate's script against the results it must turn green or red.
 - One upgrade list per release series (T-132): the breaks since 0.31.0 go into "Upgrading from 0.31.x" (in
   `[Unreleased]` and in `docs/OPERATIONS.md`, "Updating"), no longer into the list from 0.30.x, which keeps the breaks
   of 0.31.0. Whoever comes from 0.30.x works through both lists. The hygiene test checks each series (vX.Y.0 up to the

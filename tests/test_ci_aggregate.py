@@ -1,21 +1,45 @@
-"""The branch protection names one aggregate job per workflow, not the legs of a matrix (T-115).
+"""The branch protection names one aggregate job per workflow, not the legs of a matrix (T-115); the sprint lane (T-131).
 
 A required check carries the name of a matrix leg (`full (3.14)`, `test (php 8.4)`); dropping or adding a release then
 blocks every merge until someone edits the protection. The aggregate job (`suite-ok`, `client-go-ok` …) needs every
-other job of its workflow, runs `always()` and is red unless every one of them succeeded — skipped, cancelled and failed
-all count as not green.
+other job of its workflow, runs `always()` and is red unless every one of them succeeded — cancelled and failed count as
+not green, skipped only in the sprint or text lane.
+
+Sprint lane (T-131): a pull request into `sprint/<name>` runs only the fast checks; the full suite runs once in the
+closing pull request into main. Every workflow with heavy jobs has a job `classify` that asks the shared kit's
+`scripts/_nur_text.sh` and answers `nur_text=ja`; the heavy jobs skip on that answer (the kit's fail-safe form, checked
+by `hygiene.pruefe_nur_text` in `tests/test_repo.py`), every job after them skips with them. The script of `classify` is
+run here against a throwaway repository with a pull request's merge commit, the aggregate's script against the results
+it must turn green or red.
 """
+import json
+import os
 import pathlib
 import re
+import shutil
+import subprocess
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = {  # workflow file → (aggregate job, the jobs it needs: every job with a matrix; ci.yml has other required jobs)
-    "ci.yml": ("suite-ok", ["full"]),
+    "ci.yml": ("suite-ok", ["classify", "full"]),
     "client-go.yml": ("client-go-ok", None),
     "client-js.yml": ("client-js-ok", None),
     "client-php.yml": ("client-php-ok", None),
     "client-rust.yml": ("client-rust-ok", None),
 }
+# Workflows of the sprint lane → jobs that run on a pull request although the lane skips the rest, with the reason.
+# Every other job is either gated on `classify` or needs a job that is (it skips with it).
+LANE = {
+    "ci.yml": {"repeat": "runs scripts/check.sh, whose hygiene runs the fast checks of the sprint lane"},
+    "client-go.yml": {},
+    "client-js.yml": {},
+    "client-php.yml": {},
+    "client-rust.yml": {},
+    "audit.yml": {},
+    "release.yml": {"automatik": "release automation, workflow_dispatch only"},
+}
+GATE = "${{ !cancelled() && needs.classify.outputs.nur_text != 'ja'"
 
 
 def jobs_of(text):
@@ -25,21 +49,182 @@ def jobs_of(text):
     return dict(zip(parts[1::2], parts[2::2]))
 
 
+def without_comments(job):
+    return "\n".join(z for z in job.splitlines() if z.strip() and not z.lstrip().startswith("#"))
+
+
+def needs_of(job):
+    m = re.search(r"^    needs: (?:\[([^\]]*)\]|([A-Za-z0-9_-]+))\s*$", job, re.M)
+    if not m:
+        return []
+    return [x.strip() for x in (m.group(1) or m.group(2)).split(",") if x.strip()]
+
+
+def if_of(job):
+    m = re.search(r"^    if: (.+(?:\n      .+)*)", job, re.M)
+    return " ".join(m.group(1).split()) if m else ""
+
+
+def step_script(job, step_name):
+    """The `run: |` block of the step `- name: <step_name>` (dedented), and the env names of that step."""
+    lines = job.splitlines()
+    start = next(i for i, z in enumerate(lines) if z.strip().startswith(f"- name: {step_name}"))
+    env, script, i = [], [], start + 1
+    while i < len(lines) and not lines[i].strip().startswith("- "):
+        z = lines[i]
+        m = re.match(r"^          ([A-Z_]+): ", z)
+        if m:
+            env.append(m.group(1))
+        if z.strip() == "run: |":
+            i += 1
+            while i < len(lines) and (lines[i].startswith("          ") or not lines[i].strip()):
+                script.append(lines[i][10:])
+                i += 1
+            break
+        i += 1
+    assert script, f"step {step_name!r}: no `run: |` block"
+    return "\n".join(script) + "\n", env
+
+
+texts = {wf: (ROOT / ".github/workflows" / wf).read_text(encoding="utf-8") for wf in set(WORKFLOWS) | set(LANE)}
+
+# ── Aggregate jobs ───────────────────────────────────────────────────────────────────────────────────────────────────
 for wf, (agg, expected) in WORKFLOWS.items():
-    jobs = jobs_of((ROOT / ".github/workflows" / wf).read_text(encoding="utf-8"))
+    jobs = jobs_of(texts[wf])
     assert agg in jobs, f"{wf}: aggregate job `{agg}` missing"
     text = jobs[agg]
     others = expected or sorted(j for j in jobs if j != agg)
     m = re.search(r"^    needs: \[([^\]]*)\]\s*$", text, re.M)
     assert m, f"{wf}/{agg}: `needs: [...]` missing"
     needed = sorted(x.strip() for x in m.group(1).split(","))
-    assert needed == others, f"{wf}/{agg}: needs {needed}, but expected {others}"
+    assert needed == sorted(others), f"{wf}/{agg}: needs {needed}, but expected {sorted(others)}"
     assert re.search(r"^    if: \$\{\{ always\(\) \}\}\s*$", text, re.M), \
         f"{wf}/{agg}: without `if: ${{{{ always() }}}}` the job is skipped when a leg fails — a skipped required check hangs"
     assert re.search(rf"^    name: {re.escape(agg)}\s*$", text, re.M), f"{wf}/{agg}: the check name must be `{agg}`"
-    assert "toJSON(needs)" in text and ".result == \"success\"" in text and "jq -e 'all(" in text, \
-        f"{wf}/{agg}: the job must fail unless every needed job has the result `success`"
     assert "continue-on-error" not in text, f"{wf}/{agg}: a check that cannot turn red checks nothing"
-    print(f"  {wf}: `{agg}` needs {', '.join(needed)}, runs always(), red unless all succeeded")
+    print(f"  {wf}: `{agg}` needs {', '.join(needed)}, runs always()")
+
+# The aggregate's script, run: the verdict for every combination that matters. Every workflow carries the same script.
+agg_scripts = {wf: step_script(jobs_of(texts[wf])[agg], "Every job it needs succeeded") for wf, (agg, _) in WORKFLOWS.items()}
+script, env_names = agg_scripts["ci.yml"]
+for wf, got in agg_scripts.items():
+    assert got == (script, env_names), f"{wf}: the aggregate's step differs from the one in ci.yml"
+assert env_names == ["NEEDS", "LANE_ANSWER"], f"aggregate: env {env_names}, expected NEEDS and LANE_ANSWER"
+assert "LANE_ANSWER: ${{ needs.classify.outputs.nur_text }}" in jobs_of(texts["ci.yml"])["suite-ok"], \
+    "suite-ok: LANE_ANSWER must be the answer of `classify`"
+assert shutil.which("jq") and shutil.which("bash"), "jq and bash are needed to run the aggregate's script (GitHub's runners carry both)"
+
+
+def verdict(results, lane):
+    needs = {k: {"result": v, "outputs": {}} for k, v in results.items()}
+    run = subprocess.run(["bash", "-c", script], env={"PATH": os.environ["PATH"], "NEEDS": json.dumps(needs),
+                                                     "LANE_ANSWER": lane}, capture_output=True, text=True, timeout=30)
+    return run.returncode == 0
+
+
+CASES = [  # (results of the needed jobs, answer of classify, green?)
+    ({"classify": "success", "full": "success"}, "", True),                # full suite, all green
+    ({"classify": "success", "full": "skipped"}, "ja", True),              # sprint lane / text only
+    ({"classify": "success", "full": "skipped"}, "", False),               # skipped without the lane: never green
+    ({"classify": "success", "full": "failure"}, "ja", False),             # a failure stays red in any lane
+    ({"classify": "success", "full": "cancelled"}, "ja", False),
+    ({"classify": "failure", "full": "success"}, "", True),                # broken classifier: the job ran and decides
+    ({"classify": "failure", "full": "failure"}, "", False),
+    ({"classify": "success", "full": "success", "image": "skipped"}, "no", False),
+]
+for results, lane, green in CASES:
+    assert verdict(results, lane) is green, f"aggregate: {results} with nur_text={lane!r} must be {'green' if green else 'red'}"
+print(f"  aggregate script: {len(CASES)} combinations, skipped is green only with nur_text=ja")
+
+# ── Sprint lane: every heavy job gated, everything after it follows ──────────────────────────────────────────────────
+classify_ci = jobs_of(texts["ci.yml"])["classify"]
+for wf, exempt in LANE.items():
+    jobs = jobs_of(texts[wf])
+    assert "classify" in jobs, f"{wf}: job `classify` missing (T-131)"
+    assert without_comments(jobs["classify"]) == without_comments(classify_ci), \
+        f"{wf}: job `classify` differs from the one in ci.yml"
+    agg = WORKFLOWS.get(wf, (None,))[0]
+    gated = {j for j, t in jobs.items() if GATE in if_of(t)}
+    for j in gated:
+        cond = if_of(jobs[j])
+        assert "classify" in needs_of(jobs[j]), f"{wf}/{j}: gated on classify without `needs: classify`"
+        assert cond == GATE + " }}" or (cond.startswith(GATE + " && (") and cond.endswith(") }}")), \
+            f"{wf}/{j}: `if: {cond}` — an older condition goes only behind the gate, in brackets"
+    # Jobs that follow a gated job: skipped with it — unless their `if` runs them anyway, then they must ask for success.
+    follows = set(gated)
+    changed = True
+    while changed:
+        changed = False
+        for j, t in jobs.items():
+            if j in follows or j in ("classify", agg) or j in exempt:
+                continue
+            before = [n for n in needs_of(t) if n in follows]
+            if not before:
+                continue
+            cond = if_of(t)
+            if "always()" in cond or "!cancelled()" in cond or "failure()" in cond:
+                assert any(f"needs.{n}.result == 'success'" in cond for n in before), \
+                    f"{wf}/{j}: its `if` runs it when {before} skipped — ask for `needs.<job>.result == 'success'`"
+            follows.add(j)
+            changed = True
+    rest = sorted(set(jobs) - follows - {"classify", agg} - set(exempt))
+    assert not rest, f"{wf}: {rest} run in the sprint lane — gate them on classify or name the reason in LANE"
+    for j in exempt:
+        assert j in jobs, f"{wf}: LANE names `{j}`, which is not a job"
+        assert j not in follows, f"{wf}/{j}: gated, but LANE names it as running in the sprint lane"
+    print(f"  {wf}: gated {', '.join(sorted(gated))}; {len(follows) - len(gated)} job(s) follow; runs anyway: "
+          f"{', '.join(exempt) or 'nothing'}")
+
+# ── The classify script, run against a pull request's merge commit ───────────────────────────────────────────────────
+classify_script, _ = step_script(classify_ci, "Classify")
+GIT = ["git", "-c", "user.name=probe", "-c", "user.email=probe@example.com", "-c", "commit.gpgsign=false",
+       "-c", "init.defaultBranch=main"]
+
+
+def classify(base_ref, changed):
+    """Answer of `classify` for a pull request into <base_ref> that writes <changed> (path → text)."""
+    with tempfile.TemporaryDirectory() as d:
+        env = {"PATH": os.environ["PATH"], "HOME": d, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+               "LC_ALL": "C"}
+
+        def git(*a):
+            return subprocess.run(GIT + list(a), cwd=d, env=env, check=True, capture_output=True, text=True).stdout.strip()
+
+        git("init", "-q")
+        os.makedirs(os.path.join(d, "scripts"))
+        shutil.copy(ROOT / "scripts/_nur_text.sh", os.path.join(d, "scripts/_nur_text.sh"))
+        with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
+            f.write("# probe\n")
+        with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as f:
+            f.write("print(1)\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "base")
+        git("switch", "-q", "-c", "feature")
+        for path, content in changed.items():
+            with open(os.path.join(d, path), "a", encoding="utf-8") as f:
+                f.write(content)
+        git("commit", "-q", "-am", "change")
+        git("switch", "-q", "main")
+        git("merge", "-q", "--no-ff", "-m", "merge", "feature")
+        out = os.path.join(d, "github_output")
+        open(out, "w").close()
+        run = subprocess.run(["bash", "-c", classify_script], cwd=d, capture_output=True, text=True, timeout=60,
+                             env=env | {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request",
+                                        "GITHUB_BASE_REF": base_ref, "GITHUB_SHA": git("rev-parse", "HEAD"),
+                                        "GITHUB_OUTPUT": out})
+        assert run.returncode == 0, f"classify failed: {run.stdout}{run.stderr}"
+        with open(out, encoding="utf-8") as f:
+            return f.read().strip(), run.stdout
+
+
+answer, log = classify("sprint/2026-11-27-probe", {"app.py": "print(2)\n"})
+assert answer == "nur_text=ja" and "SPRINT LANE" in log, f"sprint PR with code: {answer!r} {log!r}"
+answer, log = classify("main", {"app.py": "print(2)\n"})
+assert answer == "", f"PR into main with code must run the full suite: {answer!r} {log!r}"
+answer, log = classify("main", {"README.md": "more text\n"})
+assert answer == "nur_text=ja", f"PR into main with text only: {answer!r} {log!r}"
+answer, log = classify("sprint/a/b", {"app.py": "print(2)\n"})
+assert answer == "", f"not a sprint branch (two slashes) must run the full suite: {answer!r} {log!r}"
+print("  classify: sprint PR → fast lane, PR into main with code → full suite, text only → fast lane")
 
 print("OK test_ci_aggregate")
