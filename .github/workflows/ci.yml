@@ -195,6 +195,12 @@ jobs:
         run: |
           docker build -t tinysesam-gateway:ci .
           TINYSESAM_QUICKSTART_IMAGES="tinysesam-gateway:ci tinysesam-caddy-gate:ci" python tests/test_quickstart.py
+      # The recipe of an own server image with SAML (T-134, deploy/saml-server/Dockerfile): built from this checkout,
+      # a sign-in through the suites' test identity provider — required here, skipped without the variable elsewhere.
+      - name: SAML server image recipe (deploy/saml-server)
+        run: |
+          pip install -e ".[saml]"
+          TINYSESAM_SAML_IMAGE=1 python tests/test_saml_image.py
       # Acceptance of the reference stack deploy/forward-auth/docker-compose.yml (since 2026-10-11): This way a
       # required check also covers the Dependabot PRs of the docker-compose entry, and they merge themselves. The file must
       # resolve, every image in it must be pullable by tag and digest, and the Caddy FROM THE

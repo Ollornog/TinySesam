@@ -2,7 +2,7 @@
 id: T-134
 type: Task
 title: "Docs: recipe for an own server image with the [saml] extra"
-status: offen
+status: erledigt
 points: 1
 milestone: M-2
 tags: [docs, saml, deploy]
@@ -24,3 +24,13 @@ SAML at the server build their own image.
 ## Acceptance
 - A test builds the recipe's image in a throwaway container (own label) and the server signs in through the SAML test
   provider of the suite; without Docker it skips with a reason (a skip is not a green: it runs in CI).
+
+## Progress
+
+- 2026-11-27: done. Recipe `deploy/saml-server/Dockerfile` and the section "A server image with SAML" in
+  `docs/OPERATIONS.md`. Deviation from the content above: no libxmlsec1 from apt — the `xmlsec` and `lxml` wheels
+  (amd64, arm64) bring libxmlsec1 and libxml2 built against each other, and mixing a wheel with Debian's library is what
+  breaks `import xmlsec`; `--only-binary` keeps it so (measured: the runtime stage without any apt package signs in).
+  `tests/test_saml_image.py` (label `tinysesam.test=saml-image`, only its own container and image are removed), required
+  in the CI job `gate-caddy`.
+

@@ -25,6 +25,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- A recipe for an own server image with SAML (T-134): `deploy/saml-server/Dockerfile` (`python:3.15-slim`, a venv with
+  `tinysesam[gateway,saml]` whose `xmlsec` and `lxml` wheels bring libxmlsec1 and libxml2, uid 1000 and `/data` as in
+  the published image; refuses to build without a pinned version), described in `docs/OPERATIONS.md` ("A server image
+  with SAML"). The published image stays without SAML; the operator owns updates and scanning of this one.
+  `tests/test_saml_image.py` builds the recipe from the checkout in a throwaway container (label
+  `tinysesam.test=saml-image`) and signs in through the SAML test identity provider; required in the CI job
+  `gate-caddy` (`TINYSESAM_SAML_IMAGE=1`), skipped with the reason elsewhere.
 - Linking SAML and LDAP identities, and unlinking, by the person (T-99, ADR-18) — the rules of the OIDC link. The
   account page offers "Link with <provider>" for SAML (`POST /auth/saml/link`: `ForceAuthn`, an `AuthnInstant` from
   after the request, only the starting session, `saml_allowed_groups`; a link flow never signs in or creates an

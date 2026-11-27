@@ -247,6 +247,7 @@ updates:
   # `gomod` entry above. The CI job gate-caddy checks the result. And nginx and Traefik of tests/proxies (the real
   # proxies tests/test_proxies.py runs the templates with, in the same job). And the image of the PHP gate client
   # (clients/php/ci: the newest PHP and Composer, by digest), which the `image` job of client-php.yml builds and runs.
+  # And the recipe of an own server image with SAML (deploy/saml-server, T-134), built by the CI job gate-caddy.
   #
   # DAILY, not monthly (2026-11-12): the cooldown of the docker ecosystem is measured against Docker Hub's
   # `tag_last_pushed` of the candidate tag (dependabot-core docker/update_checker.rb, apply_cooldown). Official images
@@ -257,7 +258,8 @@ updates:
   # days — the cooldown stays, only the chance to miss it goes. Also: as long as a newer minor exists (3.15 while the pin
   # says 3.14), Dependabot offers only the minor, never a digest refresh of the old one — stay on the newest line.
   - package-ecosystem: docker
-    directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies", "/clients/php/ci", "/clients/go/examples/ex1"]
+    directories: ["/", "/deploy/forward-auth/caddy-gate", "/tests/proxies", "/clients/php/ci", "/clients/go/examples/ex1",
+                  "/deploy/saml-server"]
     # nginx of tests/proxies: the stable line only (even minor). Mainline (odd minor) minors are ignored; patch releases
     # of the stable line and the digest still come. The move to the next stable line (1.32) is a deliberate change (T-114).
     ignore:
