@@ -381,7 +381,8 @@ _PART_METHODS = {
     ),
     "signin": (
         "_extract_api_key", "app_password_hosts",
-        "_after_the_factor", "_confirm", "_confirms_at_provider", "_counts_as_stepup", "_create_session",
+        "_after_the_factor", "_confirm", "_confirms_at_oidc", "_confirms_at_provider", "_confirms_at_saml",
+        "_counts_as_stepup", "_create_session",
         "_enforce", "_enforce_route_chain", "_first_password", "_fresh_enough", "_login_redirect_after",
         "_note_login", "_only_with_session", "_other_after_completion", "_reauth_target", "_redeem_sign_in",
         "_redirect_factor", "_require_fresh", "_reserve_sign_in", "_setup_password", "_sign_in_locked",

@@ -927,9 +927,15 @@ there.
 
 ### Upgrading from 0.31.x
 
-No breaking change since 0.31.0 yet. The first one brings its list here and in the changelog's `[Unreleased]`
-("#### Upgrading from 0.31.x"), between the markers `upgrade-list 0.31.x` — the hygiene test then checks that it
-names every breaking commit since the tag v0.31.0.
+<!-- upgrade-list 0.31.x:start -->
+1. **SAML: a silent round through the provider no longer makes a session fresh** (T-70, `saml_reauth_check`, default
+   on). A new SAML session counts as confirmed from the assertion's `AuthnInstant`, and a SAML round on a full session
+   no longer refreshes it: people signed in through the provider's running session are asked to confirm before new
+   access (passkey, TOTP, API key, OAuth consent) and in the panel with `admin_require_mfa`. They confirm with their own
+   factors or the new "Confirm with <provider>" button, which sends `ForceAuthn`. Nothing to do for most installations;
+   an identity provider that ignores `ForceAuthn` makes the button fail with a message — then the account confirms
+   with its own factors or by signing in again. `saml_reauth_check = false` restores the behaviour up to 0.31.x.
+<!-- upgrade-list 0.31.x:end -->
 
 ### From a version before 0.30.0: two steps
 

@@ -206,6 +206,7 @@ MESSAGES = {
         "reauth.pin": "PIN to confirm",
         "reauth.submit": "Confirm",
         "reauth.oidc": "Confirm with {name}",
+        "err.saml_reauth_stale": "The provider did not ask for your sign-in again, so this does not count as a confirmation. Sign in there again, or sign out here and back in.",
         "err.oidc_reauth_stale": "The provider did not ask for your sign-in again, so this does not count as a confirmation. Sign in there again, or sign out here and back in.",
         # --- totp setup ---
         "setup.title": "Set up 2FA",
@@ -969,6 +970,7 @@ MESSAGES = {
         "reauth.pin": "PIN zur Bestätigung",
         "reauth.submit": "Bestätigen",
         "reauth.oidc": "Mit {name} bestätigen",
+        "err.saml_reauth_stale": "Der Anbieter hat nicht erneut nach deiner Anmeldung gefragt, deshalb zählt das nicht als Bestätigung. Melde dich dort neu an, oder melde dich hier ab und wieder an.",
         "err.oidc_reauth_stale": "Der Anbieter hat nicht erneut nach deiner Anmeldung gefragt, deshalb zählt das nicht als Bestätigung. Melde dich dort neu an, oder melde dich hier ab und wieder an.",
         "setup.title": "2FA einrichten",
         "setup.start_hint": "Ein neues Geheimnis entsteht erst auf deinen Klick — so kann ein "

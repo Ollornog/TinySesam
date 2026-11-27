@@ -792,7 +792,7 @@ class Approvals:
         out = list(auth.stepup_options(u))
         if auth.webauthn is not None and auth.store.list_webauthn(u["id"]):
             out.append("passkey")
-        if auth._confirms_at_provider(u):
+        if auth._confirms_at_oidc(u):       # a per-approval provider step-up exists for OIDC only (T-70: not SAML)
             out.append("oidc")
         return out
 

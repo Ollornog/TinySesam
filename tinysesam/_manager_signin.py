@@ -1194,9 +1194,21 @@ def _fresh_enough(self, request: Request, user: dict) -> Optional[str]:
 
 
 def _confirms_at_provider(self, user) -> bool:
-    """Can this account confirm on the confirmation page through the OIDC provider (T-49)?"""
+    """Can this account confirm on the confirmation page through its provider — OIDC (T-49) or SAML (T-70)?"""
+    return self._confirms_at_oidc(user) or self._confirms_at_saml(user)
+
+
+def _confirms_at_oidc(self, user) -> bool:
+    """Through the OIDC provider (T-49): the page's button `/auth/oidc/start?reauth=1`."""
     return bool(self.cfg.oidc_enabled and self.cfg.oidc_reauth_check and user
                 and self.store.is_oidc_account(user["id"]))
+
+
+def _confirms_at_saml(self, user) -> bool:
+    """Through the SAML provider (T-70): the page's button `/auth/saml/login?reauth=1` (`ForceAuthn`). An account bound
+    to a SAML identity, on an installation with SAML and `saml_reauth_check`."""
+    return bool(self.cfg.saml_enabled and self.cfg.saml_reauth_check and user and self.saml is not None
+                and self.store.get_federated_identifier("saml", user["id"]))
 
 
 def _require_fresh(self, request: Request, user: Optional[dict] = None) -> dict:

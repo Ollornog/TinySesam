@@ -1224,6 +1224,10 @@ def _reauth(auth, ctx) -> str:
     if ctx.get("reauth_oidc"):
         fuss = (f"<a class=btn2 id=reauthoidc href='__TS_P__/auth/oidc/start?reauth=1&amp;next="
                 f"{_next_q(ctx.get('next') or '/')}'>{_e(t('reauth.oidc', name=auth.cfg.oidc_name))}</a>" + fuss)
+    # T-70: the same for an account bound to the SAML provider — `ForceAuthn`, checked by the `AuthnInstant`.
+    if ctx.get("reauth_saml"):
+        fuss = (f"<a class=btn2 id=reauthsaml href='__TS_P__/auth/saml/login?reauth=1&amp;next="
+                f"{_next_q(ctx.get('next') or '/')}'>{_e(t('reauth.oidc', name=auth.cfg.saml_name))}</a>" + fuss)
     if not methods:
         return _page(auth, t("reauth.title"), head + fuss, below=messages, ctx=ctx)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(
