@@ -748,6 +748,13 @@ class TinySesamConfig:
     oidc_client_secret: str = ""      # client secret — belongs in an environment variable, not in the source code
     oidc_scopes: str = "openid profile email" # requested scopes; `openid` is mandatory, `email`/`profile` fill the account
     oidc_auto_create: bool = True         # create an unknown OIDC user automatically
+    #: Bind a pre-created account at the first OIDC sign-in by its verified address (T-99, opt-in). An identity the
+    #: provider sends with `email_verified` explicitly true (not `oidc_email_verified_default`) and no binding yet goes
+    #: to the account with that address when the operator created it and nobody ever used it: never signed in, no
+    #: password, passkey, PIN or TOTP, no other identity, not self-registered, not an administrator, owner, service
+    #: or application account. Anything else gets no binding by address (a new account, or 409 when the address is
+    #: taken). Binding by `sub` needs no switch: `tinysesam oidc-link` pre-registers it.
+    oidc_bind_precreated: bool = False
     # What applies if the provider does NOT send `email_verified`? The claim is optional in
     # OIDC Core 5.1 (Entra ID, for one, omits it). Default False = the address counts as unconfirmed:
     # It is taken into the account as usual and passed on (`Remote-Email`), but carries

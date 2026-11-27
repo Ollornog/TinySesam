@@ -34,7 +34,16 @@ Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-syn
   `tests/test_account_source.py`.
 - 2026-11-27: LDAP step-up by a fresh bind (`_directory_password`, `_verify_directory_password` through `_check_ldap`;
   the entry must lead to this account; outage 503 without a count); suite `tests/test_ldap_stepup.py`.
-- 2026-11-27: SAML step-up done in T-70 (`ForceAuthn`, `AuthnInstant`). Open: pre-created OIDC accounts, linking.
+- 2026-11-27: SAML step-up done in T-70 (`ForceAuthn`, `AuthnInstant`).
+- 2026-11-27: linking by the person (`POST /auth/oidc/link`: CSRF, `_require_fresh`, active provider sign-in, the
+  starting session, never an identity of another account), pre-registration by `sub` (`tinysesam oidc-link`), opt-in
+  `oidc_bind_precreated` (verified address, only an unused operator-created account); attack tests in
+  `tests/test_oidc_link.py`. The administrator's path is a sign-in link plus the person's link (documented, no route
+  of its own).
+
+**Open (rest of T-99):** the acceptance test "same scenario (role, approval, admin action) once local, once OIDC, once
+SAML with the same result" as one suite; linking for SAML and LDAP identities (today OIDC only — SAML and LDAP bind by
+their stable identifier at sign-in, an operator unbinds with `federation_unbind`); unlinking by the person.
 
 ## Acceptance
 - Same scenario (role, approval, admin action) once local, once OIDC, once SAML (test IdP) with the same result.

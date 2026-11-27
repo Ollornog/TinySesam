@@ -9,6 +9,8 @@
     audit --db auth.db [--user X]    look into the log (even if nobody gets in)
     unlock --db auth.db <user>       lift a brute-force lockout
     reset-totp --db auth.db <user>   reset a lost authenticator app (TOTP and its recovery codes)
+    oidc-link --db auth.db <user> --issuer URL --sub SUB
+                                     pre-register an account's OIDC identity: the first sign-in binds by `sub`
     owner --db auth.db <user>        make an account an owner (emergency route)
     rename --db auth.db <old> <new>  rename an account (resolve an identifier collision)
     delete --db auth.db <user>       delete an account (asks; --yes for scripts; not an owner)
@@ -411,6 +413,50 @@ def _reset_totp(argv) -> int:
     store.audit_log("totp_reset_cli", str(account["username"]), None, f"user={uid} recovery_codes_deleted={codes}")
     print(f"Authenticator app of '{_z(account['username'])}' reset ({codes} recovery codes deleted). "
           "A new one is set up at the next sign-in or on the account page.")
+    return 0
+
+
+def _oidc_link(argv) -> int:
+    """`tinysesam oidc-link` (T-99): pre-register the OIDC identity (issuer, sub) of an account, so the first sign-in
+    with it lands in that account — the operator's binding by `sub`, without an address involved."""
+    ap = argparse.ArgumentParser(
+        prog="tinysesam oidc-link",
+        description="Pre-register an account's identity at the OIDC provider (issuer and subject).",
+        epilog="The first sign-in with this identity then signs in to the account instead of creating a new one. "
+               "Refused when the identity already belongs to another account or the account already has one at "
+               "this provider. The issuer is exactly the provider's `issuer` (its discovery document). Audit line "
+               "oidc_linked with by=cli.")
+    ap.add_argument("username", help="username of the account")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database")
+    ap.add_argument("--issuer", required=True, help="the provider's issuer, e.g. https://id.example.com")
+    ap.add_argument("--sub", required=True, help="the identity's subject (`sub` claim) at the provider")
+    a = ap.parse_args(argv)
+    store = _open(a.db)
+    if store is None:
+        return 1
+    from .security import line_fixed as _z
+    account = store.get_user_by_name(a.username)
+    if account is None:
+        print(f"No account '{_z(a.username)}' in {a.db}.", file=sys.stderr)
+        return 1
+    issuer, sub = a.issuer.strip(), a.sub.strip()
+    if not issuer or not sub:
+        print("--issuer and --sub must not be empty.", file=sys.stderr)
+        return 1
+    uid = int(account["id"])
+    owner = store.get_oidc_user(issuer, sub)
+    if owner and int(owner) != uid:
+        print("This identity already belongs to another account — unbind it there first.", file=sys.stderr)
+        return 1
+    if owner:
+        print(f"'{_z(account['username'])}' is already linked with this identity.")
+        return 0
+    if store._one("SELECT 1 AS x FROM oidc_identity WHERE user_id=? AND issuer=?", (uid, issuer)):
+        print(f"'{_z(account['username'])}' already has an identity at this provider.", file=sys.stderr)
+        return 1
+    store.link_oidc(issuer, sub, uid)
+    store.audit_log("oidc_linked", str(account["username"]), None, f"by=cli user={uid}")
+    print(f"'{_z(account['username'])}' linked: the first sign-in with this identity signs in to it.")
     return 0
 
 
@@ -877,6 +923,8 @@ def main(argv=None):
             sys.exit(_unlock(argv[1:]))
         elif cmd == "reset-totp":
             sys.exit(_reset_totp(argv[1:]))
+        elif cmd == "oidc-link":
+            sys.exit(_oidc_link(argv[1:]))
         elif cmd == "owner":
             sys.exit(_owner(argv[1:]))
         elif cmd == "rename":
@@ -908,6 +956,7 @@ def main(argv=None):
                   "       python -m tinysesam audit  --db <file> [--user X]\n"
                   "       python -m tinysesam unlock --db <file> <user>\n"
                   "       python -m tinysesam reset-totp --db <file> <user>\n"
+                  "       python -m tinysesam oidc-link --db <file> <user> --issuer <url> --sub <sub>\n"
                   "       python -m tinysesam owner  --db <file> <user>\n"
                   "       python -m tinysesam rename --db <file> <user> <new-name>\n"
                   "       python -m tinysesam delete --db <file> <user> [--yes]\n"

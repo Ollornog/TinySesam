@@ -320,6 +320,7 @@ individual ones can be overridden via `**overrides`.
 | `oidc_client_secret` | `str` | `""` | client secret — belongs in an environment variable, not in the source code |
 | `oidc_scopes` | `str` | `"openid profile email"` | requested scopes; `openid` is mandatory, `email`/`profile` fill the account |
 | `oidc_auto_create` | `bool` | `True` | create an unknown OIDC user automatically |
+| `oidc_bind_precreated` | `bool` | `False` | Bind a pre-created account at the first OIDC sign-in by its verified address (T-99, opt-in). An identity the provider sends with `email_verified` explicitly true (not `oidc_email_verified_default`) and no binding yet goes to the account with that address when the operator created it and nobody ever used it: never signed in, no password, passkey, PIN or TOTP, no other identity, not self-registered, not an administrator, owner, service or application account. Anything else gets no binding by address (a new account, or 409 when the address is taken). Binding by `sub` needs no switch: `tinysesam oidc-link` pre-registers it. |
 | `oidc_email_verified_default` | `bool` | `False` | What applies if the provider does NOT send `email_verified`? The claim is optional in OIDC Core 5.1 (Entra ID, for one, omits it). Default False = the address counts as unconfirmed: It is taken into the account as usual and passed on (`Remote-Email`), but carries no rights — first admin via `admin_identifiers` demands the proof (recorded as `users.email_verified=0`, then applies to EVERY sign-in method of this account). True only for IdPs that do not send the claim AND whose addresses the operator vouches for themselves (own directory, one tenant): then an address without the claim counts as proven and can carry the first admin. A claim that explicitly says `false` stays a no in both cases. |
 | `oidc_rp_logout` | `bool` | `False` | on sign-out also sign out of the OIDC provider (end_session), optional |
 | `oidc_group_claim` | `str` | `"groups"` | claim with the groups |
@@ -390,4 +391,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-224 fields, generated from `tinysesam/config.py`.
+225 fields, generated from `tinysesam/config.py`.

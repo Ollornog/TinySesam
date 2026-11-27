@@ -21,6 +21,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Linking a local account with an OIDC identity, and pre-created OIDC accounts (T-99, ADR-18) — never by an address
+  alone. The account page offers "Link with <provider>" (`POST /auth/oidc/link`, CSRF): a fresh confirmation here, an
+  active sign-in at the provider (`auth_time` after the request), bound only in the session that started it and only for
+  an identity of nobody else (audit `oidc_linked`, `oidc_link_refused`). `tinysesam oidc-link` pre-registers an
+  account's identity by `sub`. Opt-in `oidc_bind_precreated` binds a first sign-in by the explicitly verified address to
+  an account the operator created and nobody ever used (audit `oidc_bound_precreated`).
 - SAML re-authentication (T-70, part of T-99; ASVS 5.0 6.8.4, SAML 2.0 Core §3.4.1, §2.7.2): `saml_reauth_check`
   (default on). The confirmation page offers "Confirm with <provider>" to an account bound to a SAML identity
   (`/auth/saml/login?reauth=1`, `ForceAuthn="true"`), which confirms only with an `AuthnInstant` from after the
