@@ -282,7 +282,9 @@ print(f"  no private infrastructure ({len(POLICY['private_muster'])} patterns"
 # Local pattern, built from pieces so that this file does not match itself. Files that the test kit
 # manages (`repokit sync`) are not edited here and therefore not scanned.
 _KIT_MANAGED = {".githooks/pre-push", "scripts/_nur_text.sh", "scripts/_residue_check.sh",
-                  "scripts/_backlog.py", "backlog/README-KONVENTION.md"}
+                  "scripts/_backlog.py", "backlog/README-KONVENTION.md",
+                  # kit 0.73.0: its cargo-machete cache defaults to the XDG cache under the home folder
+                  "scripts/_abhaengigkeiten.py"}
 _PRIVATE_PATH = re.compile("(?:~/\\." + "|/ho" + "me/[a-z]|\\." + "claude/)")
 
 
@@ -1522,8 +1524,9 @@ print(f"  Gateway image: {len(_lock)} packages from hashed lock list, covers pyp
 # on every PR and nightly, and the gate must not be able to turn red without blocking.
 _audit = read(".github/workflows/audit.yml")
 _audit_code = "\n".join(_code(_audit))
+# Kit 0.73.0: the unused-dependency check runs here (it fetches pinned tools). (Mutation probe: drop the step → red.)
 for necessary in ("pull_request:", "schedule:", "pip-audit", "--strict", "--resolution lowest-direct",
-               "--all-extras"):
+               "--all-extras", "scripts/_abhaengigkeiten.py"):
     assert necessary in _audit_code, f"audit.yml: `{necessary}` missing — the gate checks less than it says"
 assert "continue-on-error" not in _audit_code, "audit.yml must not wave things through (continue-on-error)"
 BLOCKLISTS = sorted(f for f in FILES if os.path.basename(f) == "requirements.txt")

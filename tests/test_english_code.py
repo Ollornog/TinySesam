@@ -46,7 +46,8 @@ Explicit and small exceptions (everything else is a finding):
 
 * files that the shared test kit manages (`repokit sync`, they change there, not here): `tests/_kit/**`,
   `tests/voraussetzung.py`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`,
-  `scripts/_release_automatik.py` (release automation, kit 0.47.0),
+  `scripts/_release_automatik.py` (release automation, kit 0.47.0), `scripts/_abhaengigkeiten.py` (unused
+  dependencies, kit 0.73.0) with its configuration `.github/abhaengigkeiten.json`,
   `.githooks/pre-push`, `backlog/README-KONVENTION.md`, `.github/workflows/dependabot-auto-merge.yml`,
   `.github/release-automatik.json` (its keys are the kit script's interface), and the names the
   Python ones define or read (computed, not listed); what the repo takes from them stays quoted in `backticks`;
@@ -86,7 +87,9 @@ KIT_FILES = ("scripts/_backlog.py", "scripts/_nur_text.sh", "scripts/_residue_ch
              "tests/voraussetzung.py",
              ".githooks/pre-push", "backlog/README-KONVENTION.md", ".github/workflows/dependabot-auto-merge.yml",
              # the keys of this file are the interface of the kit script scripts/_release_automatik.py (kit 0.47.0)
-             ".github/release-automatik.json")
+             ".github/release-automatik.json",
+             # the unused-dependency check (kit 0.73.0) and its configuration, whose name the kit script reads
+             "scripts/_abhaengigkeiten.py", ".github/abhaengigkeiten.json")
 KIT_DIRS = ("tests/_kit/",)
 #: Not German, although a word of the list looks like it (project name, technical terms) — spelled out, with the reason.
 NOT_GERMAN_TOKENS = frozenset({

@@ -115,6 +115,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      # Unused dependencies (shared kit 0.73.0): deptry over pyproject.toml and deploy/gateway/requirements.in,
+      # `go mod tidy -diff` over every go.mod (clients/go, the caddy gate, .github/audit), cargo-machete over
+      # clients/rust. It fetches its pinned tools, so it runs here and not in the offline hygiene. Exceptions with their
+      # reasons: .github/abhaengigkeiten.json. A tool that cannot run is red, never a skip.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Unused dependencies
+        run: python scripts/_abhaengigkeiten.py
+
       # Is the lock list of the image complete? (A-1 from the re-check of B4-7.) The
       # Dockerfile installs it with `--no-deps` — pip does not notice a missing transitive dependency
       # there. And Dependabot bumps only single lines in a hashed list: if a
