@@ -2,7 +2,7 @@
 id: T-97
 type: Task
 title: "Stage S1 — the server can do everything: TOML configuration, parity test"
-status: in-arbeit
+status: erledigt
 points: 13
 milestone: M-2
 blocked_by: [T-96, T-112]
@@ -18,7 +18,7 @@ The gateway is today an OIDC-only preset configured by environment variables (no
 ## Content
 - `TINYSESAM_CONFIG=/etc/tinysesam.toml` (stdlib `tomllib`) builds the full `TinySesamConfig`; the environment overlays the file. Secrets only as `*_file` or `env:NAME`; `config_check` refuses a literal at a secret field.
 - The gateway mounts panel, account page, approvals and the account API when switched on.
-- Image variant with the `[saml]` extra (libxmlsec1) kept apart from the slim image.
+- ~~Image variant with the `[saml]` extra (libxmlsec1) kept apart from the slim image.~~ Dropped 2026-11-27, see below.
 - Parity test over `tests/api_surface.json` (extended, no new guard): every tier A/B name has a server route or an entry on the "library only" list with a reason.
 - `deploy/quickstart` with a configuration file.
 - Includes the open item "Gateway variable `TINYSESAM_APPS`" of [T-90](T-90-account-api-for-applications-stage-a-create-read-u.md) (Later): `apps` come from the file, with the switches the gateway preset turns off.
@@ -41,12 +41,13 @@ The gateway is today an OIDC-only preset configured by environment variables (no
   digest-pinned bases in Dependabot), `tests/test_example_ex1.py` (the server from that file serves sign-in, panel,
   account page and forward auth; list and invite through the account API).
 
-**Open (rest of T-97):**
-- Image variant with the `[saml]` extra: a second published image (libxmlsec1 and its libraries in the distroless
-  runtime, its own release jobs, attestation, image probe and Dependabot entry) — an architecture decision for the
-  maintainer before it is built (named in the S4 report).
-- `deploy/quickstart` with a configuration file: waits for the next release (release stop until the end of M-2), as
-  the published images before it cannot read `TINYSESAM_CONFIG`.
+**Done (2026-11-27):** both acceptance criteria hold (Ex1, parity test with mutation). What was left moved out:
+- Image variant with the `[saml]` extra: **dropped** (maintainer's decision 2026-11-27). A second published image means
+  libxmlsec1 and its libraries in the distroless runtime, its own release jobs, attestation, image probe and Dependabot
+  entry — lasting upkeep for a demand nobody has named; the gateway signs in through OIDC. SAML stays in the library,
+  and a recipe for an operator's own image goes to the docs: [T-134](T-134-docs-recipe-for-an-own-server-image-with-saml.md).
+- `deploy/quickstart` with a configuration file waits for the next release (release stop until the end of M-2), as
+  the published images before it cannot read `TINYSESAM_CONFIG`: [T-133](T-133-quickstart-with-a-configuration-file.md).
 
 ## Acceptance
 - Example **Ex1** (a Go application behind the server, local accounts): sign-in, panel and account API without a line of Python in the application.
