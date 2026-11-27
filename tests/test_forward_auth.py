@@ -164,8 +164,9 @@ default = auth._forward_response_headers(auth.store.get_user_by_name("admin"))
 # proxy would pass on one forged by the browser).
 # Since T-75 `Remote-Auth` (how the request signed in) as well — the same way: CHANGELOG, templates.
 # Since spec v2 `Remote-Kind` (user | service), always sent (tests/test_remote_kind.py).
+# Since T-101 `Remote-Permissions` (the permissions for the application of the host; empty here, no host).
 assert sorted(default) == ["Remote-Auth", "Remote-Email", "Remote-Groups", "Remote-Id", "Remote-Kind", "Remote-Name",
-                           "Remote-User"]
+                           "Remote-Permissions", "Remote-User"]
 assert default["Remote-Id"] == str(auth.store.get_user_by_name("admin")["id"])
 assert default["Remote-Kind"] == "user"
 ok("default: Remote-User/-Name/-Email/-Groups, Remote-Id (the account ID), Remote-Auth and Remote-Kind")

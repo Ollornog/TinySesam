@@ -69,6 +69,7 @@ https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
 	request_header -Remote-Id
 	request_header -Remote-Auth
 	request_header -Remote-Kind
+	request_header -Remote-Permissions
 	# Nor a target the browser made up (F1): an X-Original-URL/-URI of its own reached the application, which
 	# builds addresses or decides from it (measured in tests/test_gate_caddy.py).
 	request_header -X-Original-URL
@@ -106,6 +107,7 @@ https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
 				@ts_id not vars {rp.header.Remote-Id} ""
 				@ts_auth not vars {rp.header.Remote-Auth} ""
 				@ts_kind not vars {rp.header.Remote-Kind} ""
+				@ts_perms not vars {rp.header.Remote-Permissions} ""
 				request_header @ts_user Remote-User {rp.header.Remote-User}
 				request_header @ts_groups Remote-Groups {rp.header.Remote-Groups}
 				request_header @ts_email Remote-Email {rp.header.Remote-Email}
@@ -113,6 +115,7 @@ https://{$TS_APP_HOST}:{$TS_APP_PORT:443} {
 				request_header @ts_id Remote-Id {rp.header.Remote-Id}
 				request_header @ts_auth Remote-Auth {rp.header.Remote-Auth}
 				request_header @ts_kind Remote-Kind {rp.header.Remote-Kind}
+				request_header @ts_perms Remote-Permissions {rp.header.Remote-Permissions}
 			}
 			# An OAuth client gets TinySesam's 401 with its Bearer challenge, not a login page — before @denied.
 			@oauth {

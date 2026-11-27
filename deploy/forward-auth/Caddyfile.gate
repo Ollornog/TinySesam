@@ -54,6 +54,7 @@ app.example.com {
 	request_header -Remote-Id
 	request_header -Remote-Auth
 	request_header -Remote-Kind
+	request_header -Remote-Permissions
 	# Nor a target the browser made up (F1): an X-Original-URL/-URI of its own reached the application, which
 	# builds addresses or decides from it (measured in tests/test_gate_caddy.py).
 	request_header -X-Original-URL
@@ -117,6 +118,7 @@ app.example.com {
 			header_up -Remote-Id
 			header_up -Remote-Auth
 			header_up -Remote-Kind
+			header_up -Remote-Permissions
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
 			header_up Cookie "^[;\s]+" ""
 		}
@@ -146,7 +148,7 @@ app.example.com {
 			# every request falls back to the fallback path (safe, just slow).
 			audience_whitelist app.example.com
 			user_claims sub
-			meta_claims ts_user ts_name ts_email ts_groups ts_id ts_auth ts_kind
+			meta_claims ts_user ts_name ts_email ts_groups ts_id ts_auth ts_kind ts_perms
 		}
 		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
 			# The client's credentials end here (A-3, see the first application upstream above).
@@ -164,6 +166,9 @@ app.example.com {
 			# none — caddy-jwt then sends Remote-Kind with an EMPTY value, never placeholder text (measured in
 			# tests/test_gate_caddy.py), and a gate client after spec v2 refuses the request until the token expires.
 			header_up Remote-Kind {http.auth.user.ts_kind}
+			# The account's permissions for the application of this host (`apps[id].hosts`, T-101); empty for a host of no
+			# application or a token issued before the update.
+			header_up Remote-Permissions {http.auth.user.ts_perms}
 			# TinySesam's cookies do not reach the application — the gate cookie is also named
 			# tinysesam_* and falls under the same rule (B-20, see ./Caddyfile).
 			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
@@ -212,6 +217,7 @@ app.example.com {
 					@ts_id not vars {rp.header.Remote-Id} ""
 					@ts_auth not vars {rp.header.Remote-Auth} ""
 					@ts_kind not vars {rp.header.Remote-Kind} ""
+					@ts_perms not vars {rp.header.Remote-Permissions} ""
 					request_header @ts_user Remote-User {rp.header.Remote-User}
 					request_header @ts_name Remote-Name {rp.header.Remote-Name}
 					request_header @ts_email Remote-Email {rp.header.Remote-Email}
@@ -219,6 +225,7 @@ app.example.com {
 					request_header @ts_id Remote-Id {rp.header.Remote-Id}
 					request_header @ts_auth Remote-Auth {rp.header.Remote-Auth}
 					request_header @ts_kind Remote-Kind {rp.header.Remote-Kind}
+					request_header @ts_perms Remote-Permissions {rp.header.Remote-Permissions}
 					# The new gate token goes to the browser with the application's response.
 					# Placeholder in Go-canonical form (H-16, see ./Caddyfile).
 					header +Set-Cookie {rp.header.X-Tinysesam-Gate-Cookie}

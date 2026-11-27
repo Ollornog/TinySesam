@@ -353,7 +353,9 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     passwords are off), `totp` ({enabled, recovery_left, recovery_low} or None), `passkeys` ({count, items} or None),
     `pin` (bool or None); `sessions` ({count, items: created_at, last_seen, method, device, current}); `programs` —
     `oauth`, `services`, `app_passwords` (lists of {name, created_at, last_used}, None when the feature is off) and
-    `api_keys_active` (a number, None when keys are off); `approvals` ({pending} or None); `links` (the account page
+    `api_keys_active` (a number, None when keys are off); `approvals` ({pending} or None); `permissions` ({app, names}:
+    the account's permissions for the application whose `apps[id].hosts` name `app_host`, T-101 — None for any other
+    host or without one); `links` (the account page
     and its sections, absolute). None means "not offered here", `[]` "offered, empty". Never a hash, a secret, a key
     prefix, an address or an id of another object.
 
@@ -421,6 +423,9 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
         links[key] = f"{account}#{anchor}" if cfg.account_enabled and offered[key] else None
     links["approvals"] = f"{base}/auth/approvals{q}" if pending is not None else None
     source = self.store.account_sources([uid]).get(uid, ["local"])
+    # T-101: on an application's host (`apps[id].hosts`) the account's permissions for that application.
+    app = self._app_of_host(app_host) if app_host else None
+    permissions = {"app": app, "names": self.permissions_of(row, app=app)} if app else None
     return {"account": {"username": row["username"], "display_name": row["display_name"] or row["username"],
                         "source": source},
             "sign_in": {"password": password, "totp": totp, "passkeys": passkeys, "pin": pin},
@@ -428,6 +433,7 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
             "programs": {"oauth": oauth, "services": services, "app_passwords": app_passwords,
                          "api_keys_active": keys},
             "approvals": {"pending": pending} if pending is not None else None,
+            "permissions": permissions,
             "links": links}
 
 

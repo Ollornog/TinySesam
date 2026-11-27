@@ -570,6 +570,17 @@ working throughout: they ignore the new header and claim. `forward_headers` send
 leaves it out; rename it with `{"kind": "X-Account-Kind"}` and carry the new name through the proxy and the clients'
 header names. No schema change, nothing to roll back in the database.
 
+### `Remote-Permissions` (T-101): the same order
+
+`Remote-Permissions` (the account's permissions for the application of the host, `apps[id].hosts`; claim `ts_perms`)
+is in the default header set. It is empty — and the templates then set nothing — for a host of no application, so a
+client must never read its absence as anything but "no permissions". The order is the one above: first the proxy
+(strip `Remote-Permissions` on every path, set it only from TinySesam's answer or from `{http.auth.user.ts_perms}` with
+`ts_perms` in `meta_claims`; nginx/FastCGI `HTTP_REMOTE_PERMISSIONS`, Traefik `"Remote-Permissions"`), then wait
+`gate_token_ttl_sec` (an older token has no `ts_perms`: the fast path sends the header empty), then the applications
+that read it. An application behind an older template must not read the header: the client could send its own. A set
+above `PERMISSIONS_VALUE_MAX` (2048 bytes) is refused with 403 and a security-log line, never cut.
+
 ### Top bar: account menu links and the logo's tooltip (gateway)
 
 `TINYSESAM_TOPBAR_MENU_LINKS` takes the links of the account menu in the JSON form of `TINYSESAM_TOPBAR_LINKS`
@@ -1008,6 +1019,15 @@ there.
    LDAP identity on the account page is never bound back by the name at a later sign-in; the refusal carries the new
    code in the audit line `<source>_name_binding_closed reason=…` and in the report of `federation_bind_existing`.
    Code that matches the reasons exhaustively handles it; nothing changes for existing data.
+3. **A new forward-auth header `Remote-Permissions` and claim `ts_perms`** (T-101, ADR-17,
+   `FORWARD_HEADERS_DEFAULT`, tier A). Forward auth sends the account's permissions for the application of the
+   request's host (`apps[id].hosts`), joined with `,`; empty, and so not set by the templates, for a host of no
+   application. Update your proxy configuration from `deploy/forward-auth/` (or `deploy/quickstart/`,
+   `deploy/home-network/`) **before** an application reads the header: the templates strip a `Remote-Permissions` the
+   client sends and set TinySesam's — an older template passes the client's own through. Behind a `Caddyfile.gate`
+   add `ts_perms` to `meta_claims` and the `header_up Remote-Permissions` line. An own `forward_headers` mapping is
+   the complete list and sends no permissions until it names the slot `perms`. A set above `PERMISSIONS_VALUE_MAX`
+   (2048 bytes) is refused with 403, never cut.
 <!-- upgrade-list 0.31.x:end -->
 
 **Schema 27** (T-100, permissions) is additive: this version adds the tables `app_permission` and `role_permission` at

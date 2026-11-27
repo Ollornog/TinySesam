@@ -13,7 +13,7 @@ from typing import Optional
 from . import manager as _manager
 
 
-def _forward_response_headers(self, user) -> dict:
+def _forward_response_headers(self, user, host: str = "") -> dict:
     """The headers the proxy passes on to the app on a successful check.
 
     `config.forward_headers` is the **complete** list, not an addition: whoever sets only
@@ -30,7 +30,7 @@ def _forward_response_headers(self, user) -> dict:
         security.seclog.warning("forward-auth rejected: account name with control characters (user_id=%s)",
                                 user["id"])
         raise HTTPException(403, self.t("api.name_invalid"))
-    values = self._forward_values(user)
+    values = self._forward_values(user, host)
     out = {}
     for slot, names in self._forward_header_map().items():
         for name in ([names] if isinstance(names, str) else names):
@@ -62,9 +62,23 @@ def _account_kind(self, user) -> str:
     raise HTTPException(403, self.t("api.kind_invalid"))
 
 
-def _forward_values(self, user) -> dict:
+def _app_of_host(self, host: str) -> Optional[str]:
+    """The id of the application in `apps` whose `hosts` name `host` (T-101) — or None. Read at request time."""
+    host = str(host or "").strip().lower().rstrip(".")
+    apps = self.cfg.apps if isinstance(getattr(self.cfg, "apps", None), dict) else {}
+    for app_id, entry in apps.items():
+        if isinstance(entry, dict) and isinstance(entry.get("hosts"), list) and host in entry["hosts"]:
+            return app_id
+    return None
+
+
+def _forward_values(self, user, host: str = "") -> dict:
     """The values behind the forward-auth headers and the claims of the gate token — ONE source,
     so that the proxy passes on the same identity on both routes.
+
+    `perms` (T-101): the account's permissions for the application of `host` (`apps[id].hosts`), joined with `,`;
+    empty for a host of no application. A set longer than `PERMISSIONS_VALUE_MAX` bytes is refused with 403 — never
+    cut, a cut list would be another set of rights.
 
     An account that still holds a role which cannot travel as one role (T-85, `store.role_invalid` — stored by an
     older version or a raw write) is refused with 403, like an account name with a control character: stripping
@@ -82,7 +96,22 @@ def _forward_values(self, user) -> dict:
         "groups": ",".join(self.user_roles(user) + (["admin"] if user["is_admin"] else [])),
         "auth": self._FORWARD_AUTH_KINDS.get(str(user.get("_via") or ""), "") if isinstance(user, dict) else "",
         "kind": self._account_kind(user),
+        # Only when the slot is sent: an own `forward_headers` without `perms` is never refused for the set's size.
+        "perms": self._forward_permissions(user, host) if "perms" in self._forward_header_map() else "",
     }
+
+
+def _forward_permissions(self, user, host: str) -> str:
+    """`Remote-Permissions` / `ts_perms` for `host` — see `_forward_values`."""
+    app = self._app_of_host(host) if host else None
+    if app is None:
+        return ""
+    value = ",".join(self.permissions_of(user, app=app))
+    if len(value.encode("utf-8")) > self.PERMISSIONS_VALUE_MAX:
+        security.seclog.warning("forward-auth rejected: %d bytes of permissions for app=%s exceed %d — assign fewer "
+                                "(user_id=%s)", len(value.encode("utf-8")), app, self.PERMISSIONS_VALUE_MAX, user["id"])
+        raise HTTPException(403, self.t("api.permissions_too_large"))
+    return value
 
 
 def gate_public_key(self) -> str:
@@ -215,7 +244,7 @@ def _gate_cookie(self, request, user, orig_url: str, roles_groups, session=None)
         return None
     # Every mandatory slot is in the token too, whatever `forward_headers` lists: `ts_kind` is always signed.
     fields = self._forward_header_map()
-    values = self._forward_values(user)
+    values = self._forward_values(user, host)
     # The token stands for the session row checked above, whatever way the account dict came in (T-75): signed,
     # so the fast path at the proxy says `Remote-Auth: session` exactly like the way back through /auth/forward.
     values["auth"] = self._FORWARD_AUTH_KINDS["session"]
@@ -307,7 +336,14 @@ def _forward_app(self, url_or_host: str) -> dict:
         if str(h).strip().lower().rstrip(".") == host:
             e = dict(values or {})
             break
-    return {"name": str(e.get("name") or ""), "login": str(e.get("login") or self.cfg.forward_login),
+    name: object = e.get("name")
+    if not name:
+        # T-101: a host of `apps[id].hosts` without its own name in `forward_apps` takes the application's.
+        owner = self._app_of_host(host)
+        label = (self.cfg.apps or {}).get(owner, {}).get("name") if owner else None
+        name = (label.get(self.cfg.lang) or label.get("en") or next(iter(label.values()), "")
+                if isinstance(label, dict) else label)
+    return {"name": str(name or ""), "login": str(e.get("login") or self.cfg.forward_login),
             "logout": str(e.get("logout") or self.cfg.forward_logout),
             # T-66: only the literal True switches Basic auth on (config_check refuses anything else).
             "app_passwords": e.get("app_passwords") is True}

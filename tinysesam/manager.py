@@ -338,8 +338,9 @@ _PART_METHODS = {
         "_recheck", "admin_router", "close", "install_error_pages", "install_https", "router",
     ),
     "forward": (
-        "_account_kind", "_approval_private", "_approval_ring", "_delete_gate_cookie", "_forward_app",
-        "_forward_header_map", "_forward_login_url", "_forward_response_headers", "_forward_values",
+        "_account_kind", "_app_of_host", "_approval_private", "_approval_ring", "_delete_gate_cookie", "_forward_app",
+        "_forward_header_map", "_forward_login_url", "_forward_permissions",
+        "_forward_response_headers", "_forward_values",
         "_forwarded_conflict", "_forwarded_url", "_gate_cookie", "_gate_host", "_gate_hosts",
         "_gate_link_session", "_gate_link_url", "_gate_session", "_gate_set_cookie", "_login_schema",
         "_oidc_application", "_oidc_approval_valid", "_record_oidc_approval",         "approval_jwks", "gate_issuer", "gate_jwks", "gate_public_key",
@@ -1270,9 +1271,14 @@ class TinySesam(metaclass=_BuildingBlocks):
     #: browser session and a token (a token never carries `admin`) can tell why.
     #: `Remote-Kind` says WHAT the account is: `service` for a service account (`is_service`), otherwise `user`. It is
     #: always sent (see `FORWARD_HEADERS_MANDATORY`): a gate client after spec v2 refuses a request without it.
+    #: `Remote-Permissions` (T-101, ADR-17) carries the account's permissions for the application of the request's host
+    #: (`apps[id].hosts`), joined with `,` like the groups; empty (not set) for a host of no application. Claim `ts_perms`.
     FORWARD_HEADERS_DEFAULT = {"user": "Remote-User", "name": "Remote-Name",
                                "email": "Remote-Email", "groups": "Remote-Groups", "id": "Remote-Id",
-                               "auth": "Remote-Auth", "kind": "Remote-Kind"}
+                               "auth": "Remote-Auth", "kind": "Remote-Kind", "perms": "Remote-Permissions"}
+    #: The longest `Remote-Permissions` value (bytes): a larger set is refused with 403, never cut — a cut list would
+    #: be a different set of rights. 2048 keeps the gate token below the 4096 bytes a client accepts (spec §4.4).
+    PERMISSIONS_VALUE_MAX = 2048
     #: Slots sent even when an own `forward_headers` mapping leaves them out — under their default name. A slot here
     #: can be renamed (`{"kind": "X-Account-Kind"}`), never dropped: failing closed at the client works only when the
     #: server always delivers the value. The account kind is no personal data, so it needs no switch to omit it.

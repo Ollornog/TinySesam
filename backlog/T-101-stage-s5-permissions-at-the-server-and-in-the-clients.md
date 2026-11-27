@@ -2,7 +2,7 @@
 id: T-101
 type: Task
 title: Stage S5 — permissions at the server and in the clients
-status: offen
+status: in-arbeit
 points: 14
 milestone: M-2
 blocked_by: [T-100]
@@ -14,6 +14,12 @@ created: 2026-11-23
 **Story points:** 14 (13 + 1 for `apps[id].hosts`, taken over from T-100 on 2026-11-27) · **Estimate:** 22–30 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 Server and client side of [ADR-17](ADR-17-permission-layer-and-admin-levels.md).
+
+**Progress (2026-11-28):** server core done — `apps[id].hosts` and `apps[id].permission_scopes` (configuration
+check), `Remote-Permissions` / `ts_perms` (default header set, every proxy template, a set above
+`PERMISSIONS_VALUE_MAX` refused with 403), `account.json.permissions` on an application's host, the permission API
+(`_permissions_api.py`), `tests/test_permissions_server.py`. Open: spec §3/§8a with `permissions.json`, the five
+clients, Ex1.
 
 ## Content
 - App identity, taken over from [T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md): `apps[id].hosts`

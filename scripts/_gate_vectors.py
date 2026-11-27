@@ -1006,7 +1006,9 @@ class AccountProbe:
         finally:
             for k, v in saved.items():
                 setattr(cfg, k, v)
-        assert view is not None
+        assert view is not None and view["permissions"] is None, "the probe has no application host"
+        # `permissions` (T-101) is the server's since the server core; §8a and the clients take it up in the spec step.
+        del view["permissions"]
         return {"signed_in": True, **view}
 
 
