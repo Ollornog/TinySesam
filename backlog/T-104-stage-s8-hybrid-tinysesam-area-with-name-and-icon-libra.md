@@ -16,6 +16,9 @@ created: 2026-11-23
 The application draws its own navigation; everything of TinySesam sits in a delimited TinySesam area.
 
 ## Content
+- `apps[id].icon`, taken over from [T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md) on
+  2026-11-27: it enters the configuration together with its reader, the area's frame and the gate heading (ADR-19);
+  within the re-estimate at the start.
 - `/auth/area?app=<id>`: tiles for account, security, sessions, programs, approvals and — for administrators of the application — administration, framed with the application's name, links and return path.
 - Library: slot `page_layout` (head and foot HTML of the application, nonce from TinySesam, CSP unchanged).
 - Mail links carry the frame (`app=` inside the token).
