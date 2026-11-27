@@ -566,6 +566,21 @@ side and does not change:
   `-1` = unlimited as up to 0.20.x (the configuration check warns). The same applies to the replacement
   of an origin placeholder and — for a source without a stable identifier — to the first
   assignment of an existing account.
+- **Linking local and OIDC, pre-created OIDC accounts** (T-99, ADR-18) — never by an address alone:
+  - *By the person:* the account page offers "Link with <provider>" (a form, `POST /auth/oidc/link` with the CSRF
+    token). It needs a fresh confirmation here (`_require_fresh`) and an active sign-in at the provider
+    (`prompt=login`, `max_age=0`; the ID token's `auth_time` must lie after the request); the callback binds only in
+    the session that started it, only an identity that belongs to nobody else, and only one per account at the
+    provider. Refusals: audit `oidc_link_refused` with `reason=session|stale|identity_taken|already_linked`; success:
+    `oidc_linked by=holder`. *By an administrator:* hand the person a sign-in link (panel or `issue_login_link`);
+    signed in by it, the session is fresh and the person links as above.
+  - *By the operator, by `sub`:* `tinysesam oidc-link --db <file> <user> --issuer <issuer> --sub <sub>` pre-registers
+    the identity; its first sign-in lands in that account (audit `oidc_linked by=cli`).
+  - *By the verified address, opt-in:* `oidc_bind_precreated = true` binds a first sign-in whose provider sends
+    `email_verified` explicitly true to the account with that address — only when the operator created it and nobody
+    ever used it (never signed in, no password, passkey, PIN or TOTP, no other identity, not self-registered, not an
+    administrator, owner, service or application account). Audit `oidc_bound_precreated`. Any other account with that
+    address keeps the old rule (no binding; a new account or 409 when the address is taken).
 - **A self-chosen name never binds via the name** (G2-N): accounts from registration
   (also with an invitation) and accounts that were renamed on the account page
   (`users.name_self_chosen`) are bound by no sign-in via LDAP/SAML — otherwise a

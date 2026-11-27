@@ -144,7 +144,6 @@ assert auth.store.get_oidc_user(IDP, "lena-idp") is None
 ok("a callback in another session than the one that started the link binds nothing (403)")
 
 # An identity that belongs to another account is not moved.
-kim, kim_resp = oidc_sign_in(app) if False else (None, None)
 state["claims"] = {"sub": "kim-idp", "preferred_username": "kim"}
 _, r0 = oidc_sign_in(app)
 assert r0.status_code == 303 and auth.store.get_oidc_user(IDP, "kim-idp")
@@ -193,11 +192,16 @@ state3["claims"] = {"sub": "pre-1", "email": "pre@example.com", "email_verified"
 _, r = oidc_sign_in(app3)
 assert r.status_code == 303 and auth3.store.get_oidc_user(IDP, "pre-1") == pre and audited(auth3, "oidc_bound_precreated")
 ok("opt-in: a pre-created, never used account is bound by the explicitly verified address")
-auth3.store.mark_first_login(pre) if hasattr(auth3.store, "mark_first_login") else None
+auth3.store.mark_first_login(pre, int(time.time()))
 state3["claims"] = {"sub": "pre-2", "email": "pre@example.com", "email_verified": True}
 oidc_sign_in(app3)
 assert auth3.store.get_oidc_user(IDP, "pre-2") != pre, "a used account was bound to a second identity by address"
-ok("once used (or bound), the address binds no further identity")
+linky = int(auth3.create_user("linky", email="linky@example.com"))   # signed in once by a link: no factor, no identity
+auth3.store.mark_first_login(linky, int(time.time()))
+state3["claims"] = {"sub": "linky-1", "email": "linky@example.com", "email_verified": True}
+oidc_sign_in(app3)
+assert auth3.store.get_oidc_user(IDP, "linky-1") != linky, "an account in use (signed in by a link) was taken by address"
+ok("once used (or bound), the address binds no further identity — also an account used only through sign-in links")
 
 # ======================= the operator pre-registers the sub =======================
 db = auth2.cfg.db_path
