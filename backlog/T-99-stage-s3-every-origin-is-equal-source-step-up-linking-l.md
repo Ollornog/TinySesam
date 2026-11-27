@@ -2,7 +2,7 @@
 id: T-99
 type: Task
 title: "Stage S3 — every origin is equal: source, step-up, linking local and IdP"
-status: in-arbeit
+status: erledigt
 points: 8
 milestone: M-2
 blocked_by: [T-97]
@@ -45,9 +45,14 @@ Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-syn
   local, once OIDC, once SAML (test identity provider `tests/_saml_idp.py`) with the same result. It found the gap: a
   pure SAML account could not confirm an approval at all — the per-approval provider step-up now exists for SAML too
   (`/auth/saml/login?approval=<id>`, `ForceAuthn`, `AuthnInstant`, `stepup_amr` `["saml"]`).
+- 2026-11-27: linking SAML and LDAP identities by the person (`POST /auth/saml/link`: `ForceAuthn`, fresh
+  `AuthnInstant`, starting session, group gate, never a sign-in or a new account; `POST /auth/ldap/link`: a bind with
+  the directory password booked like a sign-in under the typed name, never the name of another local account) and
+  unlinking by the person (`POST /auth/identities/unlink`, OIDC/SAML/LDAP, fresh confirmation, never the last way in;
+  a released SAML/LDAP identity is not bound back by the name, `unlinked_by_holder`). Suites
+  `tests/test_identity_link.py`, `tests/test_saml_link.py`.
 
-**Open (rest of T-99):** linking for SAML and LDAP identities (today OIDC only — SAML and LDAP bind by
-their stable identifier at sign-in, an operator unbinds with `federation_unbind`); unlinking by the person.
+Done: every point of the content and the acceptance.
 
 ## Acceptance
 - Same scenario (role, approval, admin action) once local, once OIDC, once SAML (test IdP) with the same result.

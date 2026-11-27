@@ -20,7 +20,7 @@ FEATURES: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]] = {
                      ("/auth/forward", "/.tinysesam/callback", "/.tinysesam/start")),
     "qr_login": ("qr_login_enabled", ("_manager_qr",), ("/auth/qr",)),
     "resource_locks": ("resource_locks_enabled", ("_manager_resource",), ("/auth/resource/",)),
-    "ldap": ("ldap_enabled", ("_manager_ldap",), ()),
+    "ldap": ("ldap_enabled", ("_manager_ldap",), ("/auth/ldap/",)),
     "saml": ("saml_enabled", ("_manager_saml", "saml_"), ("/auth/saml/",)),
     "oidc": ("oidc_enabled", ("oidc",), ("/auth/oidc/",)),
     "passkeys": ("passkey_enabled", ("webauthn_",), ("/auth/passkey/",)),

@@ -1410,7 +1410,8 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 
 **Lokal** (Passwort, Passkey, TOTP, PIN, Anmeldelink), **IdP** (OIDC, SAML oder LDAP: TinySesam speichert ein Abbild
 und die Rollenzuordnung) und **gemischt** (beides in einer Installation; ein IdP-Konto lässt sich von einer Person mit
-Step-up auf beiden Seiten mit einem lokalen verknüpfen, nie stillschweigend über dieselbe Adresse).
+Step-up auf beiden Seiten mit einem lokalen verknüpfen, nie stillschweigend über dieselbe Adresse). Die Kontoseite
+verknüpft OIDC-, SAML- und LDAP-Identitäten und löst sie wieder — nie die letzte Anmeldung.
 
 ### Die zwei Betriebsarten
 
@@ -3073,7 +3074,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**145 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**147 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

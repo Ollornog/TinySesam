@@ -563,6 +563,7 @@ def _account(auth, ctx) -> str:
             f"<p class='msg evhint'>{_e(t('acc.oidc_link_hint', name=auth.cfg.oidc_name))}</p>"
             f"<form method=post action='__TS_P__/auth/oidc/link'>{_cf(ctx)}"
             f"<button type=submit>{_e(t('acc.oidc_link', name=auth.cfg.oidc_name))}</button></form></div>")
+    sections.extend(_identity_sections(auth, ctx))
 
     # Passkeys
     if "passkey" in methods:
@@ -1686,6 +1687,43 @@ def _approval(auth, ctx) -> str:
             f"</div></form>")
     msgs = _messages([("error", ctx.get("error"))])
     return _page(auth, str(a.get("title") or ""), body, ctx=ctx, head=head, below=msgs)
+
+
+def _identity_sections(auth, ctx) -> list:
+    """The account page's providers (T-99): the linked ones with "Unlink" — or, for the last way in, the reason instead
+    of a button that refuses —, and the links SAML and LDAP offer. Every action is a POST with the CSRF token; the
+    status is a symbol AND a word, never colour alone."""
+    t = auth.t
+    names = {"oidc": auth.cfg.oidc_name, "saml": auth.cfg.saml_name, "ldap": t("acc.ldap_name")}
+    linked, offers = "", []
+    for item in ctx.get("identities") or []:
+        source = str(item.get("source") or "")
+        name = names.get(source, source)
+        if item.get("linked"):
+            action = (f"<form method=post action='__TS_P__/auth/identities/unlink'>{_cf(ctx)}"
+                      f"<input type=hidden name=source value='{_e(source)}'>"
+                      f"<button type=submit class=warn>{_e(t('acc.identity_unlink', name=name))}</button></form>"
+                      if item.get("can_unlink") else f"<p class='msg evhint'>{_e(t('acc.identity_last'))}</p>")
+            linked += f"<li id=idl_{_e(source)}><span class=ok>✓ {_e(t('acc.identity_linked', name=name))}</span>{action}</li>"
+        elif source == "saml":
+            offers.append(
+                f"<div class=sec><h2 id=link_saml>{_e(t('acc.oidc_link_title', name=name))}</h2>"
+                f"<p class='msg evhint'>{_e(t('acc.oidc_link_hint', name=name))}</p>"
+                f"<form method=post action='__TS_P__/auth/saml/link'>{_cf(ctx)}"
+                f"<button type=submit>{_e(t('acc.oidc_link', name=name))}</button></form></div>")
+        elif source == "ldap":
+            offers.append(
+                f"<div class=sec><h2 id=link_ldap>{_e(t('acc.ldap_link_title'))}</h2>"
+                f"<p class='msg evhint'>{_e(t('acc.ldap_link_hint'))}</p>"
+                f"<form method=post action='__TS_P__/auth/ldap/link'>{_cf(ctx)}"
+                f"<label for=ldl_user>{_e(t('login.user'))}</label>"
+                f"<input id=ldl_user name=username autocomplete=off required>"
+                f"<label for=ldl_pw>{_e(t('login.password'))}</label>"
+                f"<input id=ldl_pw name=password type=password autocomplete=off required>"
+                f"<button type=submit>{_e(t('acc.ldap_link'))}</button></form></div>")
+    head = (f"<div class=sec><h2 id=identities>{_e(t('acc.identities'))}</h2><ul id=idlist>{linked}</ul></div>"
+            if linked else "")
+    return ([head] if head else []) + offers
 
 
 def _app_passwords_section(auth, ctx, u) -> str:

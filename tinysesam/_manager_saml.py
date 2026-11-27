@@ -59,7 +59,7 @@ def _check_saml(self, nameid, attrs, ip: Optional[str] = None) -> Optional[dict]
     trusted = blanket or proof
     # The stable identifier is the `NameID` — or an attribute if the IdP sends transient
     # NameIDs (`saml_attr_id`). The name is only the fallback (F-11).
-    identifier = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
+    identifier = self._saml_identifier(nameid, attrs)
     # Without trust in this IdP's addresses (default) as with H-3 for OIDC: a name with `@`
     # (NameID in emailAddress format, a UPN) is the same unverified address under another
     # name — as account name and `Remote-User` it would occupy the real owner's identifier.
@@ -210,3 +210,10 @@ def _address_proven_by_source(self, u, mail, trusted, source: str = "") -> None:
         # without one ever having been delivered. The next attempt is dampened by memory as
         # after a failed delivery (`quellmail:<id>`, the window of the mail throttle).
         send.discard()
+
+
+def _saml_identifier(self, nameid, attrs) -> str:
+    """The stable identifier of a SAML identity: the `NameID` — or the attribute `saml_attr_id` when the identity
+    provider sends transient NameIDs (F-11). The sign-in (`_check_saml`) and the link by the person (T-99) read it here."""
+    from .saml_ import first
+    return str((first(attrs, self.cfg.saml_attr_id) if self.cfg.saml_attr_id else nameid) or "")

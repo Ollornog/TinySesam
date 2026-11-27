@@ -1277,6 +1277,9 @@ def build_router(auth) -> APIRouter:
                                     password_directory=sign_in.get("password") == "directory",
                                     # T-99: link this account with an identity at the OIDC provider (not yet linked).
                                     oidc_link=bool(cfg.oidc_enabled and not auth.store.is_oidc_account(u["id"])),
+                                    # …and with SAML, LDAP; the linked ones with "Unlink" (never the last way in).
+                                    identities=(auth._identities_view(u) if cfg.oidc_enabled or cfg.saml_enabled
+                                                or cfg.ldap_enabled else []),
                                     has_totp=bool(totp.get("enabled")),
                                     recovery_left=totp.get("recovery_left"),
                                     recovery_warn=auth._RECOVERY_WARN_THRESHOLD,
@@ -1637,6 +1640,10 @@ def build_router(auth) -> APIRouter:
         def _saml_base_url(request: Request) -> str:
             return auth.require_public_base(request, _saml_base(request))
 
+        from ._routes_link import SAML_LINK_FLOW, register_saml_link     # T-99: the person links a SAML identity
+        register_saml_link(r, auth, _saml_req, _saml_base_url, _SAMLFLOW,
+                           "none" if cfg.cookie_secure else cfg.cookie_samesite)
+
         @r.get("/auth/saml/login")
         def saml_login(request: Request, next: str = "", reauth: str = "", approval: str = ""):
             base = _saml_base_url(request)
@@ -1676,6 +1683,16 @@ def build_router(auth) -> APIRouter:
                 # run against a real IdP in the wrong direction. The reason is in the log.
                 auth.audit("saml_invalid", None, ip, "assertion rejected (reason in the security log)")
                 raise HTTPException(400, auth.t("err.saml"))
+            link = auth.store.pop_flow(SAML_LINK_FLOW + rid) if rid else None
+            if link:
+                # A link flow (T-99): bind this identity to the account that started it — never a sign-in, no account
+                # found or created by the assertion (`_check_saml` is not asked).
+                refused = auth._finish_saml_link(request, link, data)
+                if refused is not None:
+                    raise HTTPException(refused[0], auth.t(refused[1]))
+                resp = RedirectResponse(auth.browser_path(request, "/auth/account"), 303)
+                auth._delete_flow_cookie(resp, _SAMLFLOW, samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
+                return resp
             u = auth._check_saml(data.get("nameid"), data.get("attrs") or {}, ip=ip)
             if not u:
                 # The reason (group, no account, blocked, identifier taken) is written by
@@ -1755,6 +1772,11 @@ def build_router(auth) -> APIRouter:
         def saml_metadata(request: Request):
             base = _saml_base_url(request)
             return _Resp(content=auth.saml.metadata(base), media_type="application/xml")
+
+    # ---------- The person's links to providers (T-99): unlink, link LDAP ----------
+    if cfg.oidc_enabled or cfg.saml_enabled or cfg.ldap_enabled:
+        from ._routes_link import register_routes as register_link_routes
+        register_link_routes(r, auth)
 
     # ---------- API keys: self-service for the signed-in user ----------
     if cfg.apikey_enabled:
