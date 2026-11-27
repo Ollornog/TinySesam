@@ -1024,8 +1024,8 @@ systemctl start tinysesam
 > `docs/OPERATIONS.md`, „Updating“. Vor jedem Schritt sichern (`tinysesam backup` lässt die Quelle
 > unangetastet); zurück von dieser Fassung auf 0.30.0 braucht kein SQL (dasselbe Schema). **Von 0.30.x**
 > aus gilt dort die Liste „Upgrading from 0.30.x“ (API-Schlüssel, offene Links und Wiederherstellungscodes
-> enden einmal); `tinysesam diagnose --db auth.db` nennt jeden Punkt, der den Start blockiert, mit seinem
-> Befehl.
+> enden einmal), danach „Upgrading from 0.31.x“, sobald es sie gibt; **von 0.31.x** aus nur diese.
+> `tinysesam diagnose --db auth.db` nennt jeden Punkt, der den Start blockiert, mit seinem Befehl.
 
 Statt `tinysesam backup` geht auch: den Dienst anhalten und `auth.db` zusammen mit `auth.db-wal` und `auth.db-shm` (soweit
 vorhanden) in ein eigenes Verzeichnis kopieren; zurück geht es mit allen dreien, bei angehaltenem

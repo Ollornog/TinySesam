@@ -882,9 +882,13 @@ login page (never the direct path to the provider) — with "Continue as …" fo
 
 ## Updating: the schema baseline (two steps)
 
+**One list per release series, worked through from yours up.** "Upgrading from 0.30.x" holds every break of 0.31.0;
+"Upgrading from 0.31.x" every break since 0.31.0 (the next release). Whoever comes from 0.30.x works through both lists,
+in this order; whoever is on 0.31.x only the second. A series without a breaking change has no list.
+
 ### Upgrading from 0.30.x
 
-<!-- upgrade-list:start -->
+<!-- upgrade-list 0.30.x:start -->
 In this order. The start of this version refuses a database with a blocking point (marked **blocks**) and names the
 command that clears it; `tinysesam diagnose --db auth.db` lists every blocking point at once, without starting.
 
@@ -919,7 +923,13 @@ command that clears it; `tinysesam diagnose --db auth.db` lists every blocking p
 Not affected: sessions, passkeys, TOTP itself, app passwords, OAuth access and refresh tokens issued by 0.26 or later.
 Going back to 0.30.0 needs no SQL (the schema is the same, 26); the API keys and links this version issued are unknown
 there.
-<!-- upgrade-list:end -->
+<!-- upgrade-list 0.30.x:end -->
+
+### Upgrading from 0.31.x
+
+No breaking change since 0.31.0 yet. The first one brings its list here and in the changelog's `[Unreleased]`
+("#### Upgrading from 0.31.x"), between the markers `upgrade-list 0.31.x` — the hygiene test then checks that it
+names every breaking commit since the tag v0.31.0.
 
 ### From a version before 0.30.0: two steps
 

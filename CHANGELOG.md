@@ -37,6 +37,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   A pull request of text only skips them too; a pull request into `main` with code, the closing pull request of a
   sprint, tags and schedules run everything. `tests/test_ci_aggregate.py` runs the classifier against a merge commit
   and the aggregate's script against the results it must turn green or red.
+- One upgrade list per release series (T-132): the breaks since 0.31.0 go into "Upgrading from 0.31.x" (in
+  `[Unreleased]` and in `docs/OPERATIONS.md`, "Updating"), no longer into the list from 0.30.x, which keeps the breaks
+  of 0.31.0. Whoever comes from 0.30.x works through both lists. The hygiene test checks each series (vX.Y.0 up to the
+  next series, the latest up to `HEAD`) against its own list between the markers `upgrade-list X.Y.x`; a series with a
+  breaking commit and no list, or a list in one of the two files only, is red.
 - Shared test kit 0.69.0 (from 0.63.0): fast-forward auto-merge, the sprint lane (a pull request into `sprint/<name>`
   runs only the fast checks, the full suite runs once in the closing pull request), and the Dependabot auto-merge holds
   a pin pull request of a breaking release as a draft. The hygiene test allows the hold — exactly the whole line
@@ -210,7 +215,7 @@ something; **[operators only]** — the operator or the developer of the embeddi
 
 #### Upgrading from 0.30.x
 
-<!-- upgrade-list:start -->
+<!-- upgrade-list 0.30.x:start -->
 In this order. The start of this version refuses a database with a blocking point (marked **blocks**) and names the
 command that clears it; `tinysesam diagnose --db auth.db` lists every blocking point at once, without starting.
 
@@ -245,7 +250,7 @@ command that clears it; `tinysesam diagnose --db auth.db` lists every blocking p
 Not affected: sessions, passkeys, TOTP itself, app passwords, OAuth access and refresh tokens issued by 0.26 or later.
 Going back to 0.30.0 needs no SQL (the schema is the same, 26); the API keys and links this version issued are unknown
 there.
-<!-- upgrade-list:end -->
+<!-- upgrade-list 0.30.x:end -->
 
 #### Every break in detail
 
