@@ -8,10 +8,10 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 11/20 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 11/23 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 90/97 erledigt
+* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 90/100 erledigt
 * ☑ **[M-6](M-6-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -150,6 +150,10 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-132](T-132-upgrade-list-for-breaks-after-0-31-0.md)** Upgrade list for the breaks after 0.31.0 · M-2
 * ☐ **[T-133](T-133-quickstart-with-a-configuration-file.md)** deploy/quickstart with a configuration file · M-2
 * ☑ **[T-134](T-134-docs-recipe-for-an-own-server-image-with-saml.md)** Docs: recipe for an own server image with the [saml] extra · M-2
+* ☐ **[T-135](T-135-account-page-shows-the-roles-each-source-delivers.md)** Account page in the panel: the roles each source delivers · M-2
+* ☐ **[T-136](T-136-knip-configuration-for-clients-js.md)** knip configuration for clients/js, so the unused-dependency check covers it · M-5
+* ☐ **[T-137](T-137-declare-optional-imports-requests-and-websockets.md)** Declare the optional imports: requests in client.py, websockets in tools/oauth-e2e · M-5
+* ☐ **[T-138](T-138-codeql-findings-before-the-closing-pr-of-a-sprint.md)** CodeQL findings before the closing PR of a sprint, not only in it · M-5
 
 ## Fehler
 
@@ -170,6 +174,8 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-15](B-15-totp-codes-in-the-suites-flip-at-a-step-boundary.md)** Test flake: TOTP codes in the suites flip at a 30-second step boundary · M-5
 * ☑ **[B-16](B-16-the-sql-check-of-test-english-code-goes-blind-afte.md)** The SQL check of test_english_code goes blind after an apostrophe in a SCHEMA comment · M-1
 * ☑ **[B-17](B-17-scorecard-red-upstream-image-of-scorecard-action-2-6-0.md)** Scorecard red: the image of scorecard-action 2.6.0 cannot be pulled (upstream) · M-5
+* ☐ **[B-18](B-18-oidc-unlink-leaves-the-refresh-row-of-the-running-session.md)** OIDC unlink leaves the refresh row of the running session · M-2
+* ☐ **[B-19](B-19-a-removed-role-keeps-its-permission-assignments.md)** A role removed from available_roles keeps its permission assignments · M-2
 
 ## Entscheidungen (ADR)
 
