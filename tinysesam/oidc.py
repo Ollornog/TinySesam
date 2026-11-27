@@ -13,7 +13,7 @@ import time
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import Request, HTTPException
+from fastapi import Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from . import security
@@ -651,6 +651,66 @@ def register_oidc_routes(router, auth):
         _set_flow_cookie(resp, flow_key)
         return resp
 
+    @router.post("/auth/oidc/link")
+    def oidc_link_start(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+        """Link the signed-in account with an identity at the provider (T-99, ADR-18) — a step-up on both sides: a
+        fresh confirmation here (`_require_fresh`), an active sign-in there (`prompt=login`, checked by `auth_time` in
+        the callback). A POST with the CSRF token from the account page: a link started by a foreign page (or a GET)
+        could bind the identity of whoever the browser is signed in as at the provider — login CSRF there would be a
+        takeover here. The flow remembers the account and THIS session; the callback binds only for both."""
+        auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
+        if not auth._rate_ok(auth.client_ip(request)):
+            raise HTTPException(429, auth.t("err.rate"))
+        u = auth.session_user(request)
+        if u is None:
+            raise HTTPException(401, auth.t("api.not_signed_in"))
+        u = auth._require_fresh(request, u)
+        if auth.store.is_oidc_account(u["id"]):
+            raise HTTPException(409, auth.t("api.oidc_link_exists"))
+        s = auth._session_from_request(request)
+        state, nonce, flow_key = secrets.token_urlsafe(24), secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+        verifier, challenge = pkce_pair()
+        auth.store.put_flow("oidc:" + state,
+                            {"nonce": nonce, "next": "/auth/account", "fk": _hash(flow_key), "app": DEFAULT_CLIENT,
+                             "pkce": verifier, "reauth": True, "asked": now(), "approval": "",
+                             "link": int(u["id"]), "link_session": s["token_hash"] if s else ""}, ttl=600)
+        resp = RedirectResponse(clients[DEFAULT_CLIENT].auth_url(_redirect_uri(request), state, nonce,
+                                                                 code_challenge=challenge, reauth=True), 303)
+        _set_flow_cookie(resp, flow_key)
+        return resp
+
+    def _finish_link(request: Request, flow: dict, issuer: str, sub: str, claims: dict):
+        """The callback of a link flow (`oidc_link_start`): bind (issuer, sub) to the flow's account — only in the
+        session that started it, still full, after an active sign-in at the provider, and only when the identity
+        belongs to nobody else and the account has no identity there yet. Never by an address."""
+        ip = auth.client_ip(request)
+        uid = int(flow["link"])
+        s = auth._session_from_request(request)
+        account = auth.store.get_user(uid)
+        name = str(account["username"]) if account else "?"
+        if (not s or s["user_id"] != uid or not s["mfa_ok"] or not flow.get("link_session")
+                or not secrets.compare_digest(str(s["token_hash"]), str(flow["link_session"]))):
+            auth.audit("oidc_link_refused", name, ip, "reason=session")
+            raise HTTPException(403, auth.t("api.oidc_link_session"))
+        authenticated = _auth_time(claims)
+        if authenticated is None or authenticated < int(flow.get("asked") or 0) - OIDCClient.CLOCK_TOLERANCE:
+            auth.audit("oidc_link_refused", name, ip,
+                       f"reason=stale auth_time={'missing' if authenticated is None else 'old'}")
+            raise HTTPException(401, auth.t("err.oidc_reauth_stale"))
+        owner = auth.store.get_oidc_user(issuer, sub)
+        if owner and int(owner) != uid:
+            auth.audit("oidc_link_refused", name, ip, f"reason=identity_taken account={int(owner)}")
+            raise HTTPException(409, auth.t("api.oidc_link_taken"))
+        if not owner:
+            if auth.store.is_oidc_account(uid):
+                auth.audit("oidc_link_refused", name, ip, "reason=already_linked")
+                raise HTTPException(409, auth.t("api.oidc_link_exists"))
+            auth.store.link_oidc(issuer, sub, uid)
+            auth.audit("oidc_linked", name, ip, "by=holder")
+        resp = RedirectResponse(auth.browser_path(request, "/auth/account"), 303)
+        auth._delete_flow_cookie(resp, _OIDCFLOW)
+        return resp
+
     @router.get(cfg.oidc_callback_path)
     def oidc_callback(request: Request, code: str = "", state: str = "", error: str = ""):
         if error:
@@ -725,7 +785,18 @@ def register_oidc_routes(router, auth):
             auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
                        "used=0")
 
+        if flow.get("link"):
+            return _finish_link(request, flow, issuer, str(sub), claims)
+
         uid = auth.store.get_oidc_user(issuer, sub)
+        if not uid and cfg.oidc_bind_precreated and mail and mail_confirmed and proof_explicit:
+            # T-99: a pre-created account bound by the provider's explicitly verified address (`_precreated_by_mail`
+            # names every condition). Logged, so the operator sees which identity took which account.
+            pre = auth._precreated_by_mail(mail)
+            if pre is not None:
+                auth.store.link_oidc(issuer, sub, int(pre["id"]))
+                auth.audit("oidc_bound_precreated", str(pre["username"]), auth.client_ip(request), "by=verified_email")
+                uid = int(pre["id"])
         if not uid:
             if not cfg.oidc_auto_create:
                 auth.audit("oidc_no_account", str(info.get("email") or sub or "?"),

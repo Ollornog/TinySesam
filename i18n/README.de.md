@@ -1037,6 +1037,7 @@ Dienst.
 python -m tinysesam audit  --db auth.db --user alice    # ins Protokoll, von der Kommandozeile
 python -m tinysesam unlock --db auth.db alice           # eine Brute-Force-Sperre aufheben
 python -m tinysesam reset-totp --db auth.db alice       # Authenticator-App verloren: TOTP und Recovery-Codes fallen weg
+python -m tinysesam oidc-link --db auth.db alice --issuer https://id.example.com --sub 2f9c…  # OIDC-Identität vorab eintragen
 ```
 
 Das Audit-Log hält fest, *warum* eine Anmeldung scheiterte (`no_account`, `account_locked`,
@@ -3072,7 +3073,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**142 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**143 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

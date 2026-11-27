@@ -250,6 +250,11 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   confirmation page — a fresh bind through the same directory check as the sign-in (group gate, one identifier one
   account), which must lead to this account; counted in the confirmation's own bucket, a directory outage is a 503
   and no failed attempt.
+- **Linking accounts with an identity provider is never done by an address** (T-99, ADR-18): the person links on
+  the account page with a fresh confirmation here and an active sign-in at the provider, in the session that started
+  it (a POST with the CSRF token — a link a foreign page could start would bind whatever identity the browser is
+  signed in as at the provider); the operator pre-registers a `sub` (`tinysesam oidc-link`). Only the opt-in
+  `oidc_bind_precreated` uses an explicitly verified address, and only for an account nobody ever used.
 - **Your own sign-in, step-up or password-change page: build it on the building blocks.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the

@@ -396,7 +396,7 @@ _PART_METHODS = {
         "_catalog_actor", "_claim_file_auto", "_claim_file_away", "_consume_admin_claim", "_create_account",
         "_delegate_scopes", "_delegation", "_determine_current_user", "_first_owner", "_lock_audit",
         "_lock_effects", "_maybe_promote_admin", "_mercy", "_oidc_recheck", "_oidc_swap", "_pin_chain_step",
-        "_purge_demo", "_remember_oidc_session", "_renew_password", "_renew_session", "_renew_user",
+        "_purge_demo", "_precreated_by_mail", "_remember_oidc_session", "_renew_password", "_renew_session", "_renew_user",
         "_reset_access", "_rotate_csrf", "_seed_demo", "_session_from_request", "_strip_delegate_roles",
         "admin_claim_token", "admin_exists", "apply_idp_groups", "create_role", "create_user", "current_user",
         "delete_role", "delete_user", "get_user", "grant_mfa_enrollment", "has_role", "identifier_taken",

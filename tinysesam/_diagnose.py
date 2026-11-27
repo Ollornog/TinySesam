@@ -254,6 +254,7 @@ FIELDS: dict[str, Any] = {
     "oidc_clients": REDACT,
     "oidc_revalidate_minutes": SHOW,
     "oidc_reauth_check": SHOW,
+    "oidc_bind_precreated": SHOW,
     "saml_reauth_check": SHOW,
     "oidc_session_refresh_minutes": SHOW,
     "oidc_session_max_unverified_hours": SHOW,

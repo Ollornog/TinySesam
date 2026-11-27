@@ -555,6 +555,15 @@ def _account(auth, ctx) -> str:
         sections.append(f"<div class=sec><h2 id=totp>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
                         f"{notice}</div>")
 
+    # T-99: link with the OIDC provider — a plain POST with the CSRF token (never a GET or a script call), a fresh
+    # confirmation here and an active sign-in there; the identity belongs to this account afterwards.
+    if ctx.get("oidc_link"):
+        sections.append(
+            f"<div class=sec><h2 id=link>{_e(t('acc.oidc_link_title', name=auth.cfg.oidc_name))}</h2>"
+            f"<p class='msg evhint'>{_e(t('acc.oidc_link_hint', name=auth.cfg.oidc_name))}</p>"
+            f"<form method=post action='__TS_P__/auth/oidc/link'>{_cf(ctx)}"
+            f"<button type=submit>{_e(t('acc.oidc_link', name=auth.cfg.oidc_name))}</button></form></div>")
+
     # Passkeys
     if "passkey" in methods:
         sections.append(

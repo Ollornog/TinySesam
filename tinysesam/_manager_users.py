@@ -1038,6 +1038,27 @@ def _session_from_request(self, request):
     return s
 
 
+def _precreated_by_mail(self, mail):
+    """The account a first OIDC sign-in may bind by its verified address (`oidc_bind_precreated`, T-99) — or None.
+
+    Only an account the operator created for that person and nobody ever used: the address is its own, it never
+    signed in, has no password, passkey, PIN or TOTP and no identity of any provider, did not choose its own name
+    (self-registration), and is no administrator, owner, service or application account. Each condition closes a way
+    to a takeover by an address an identity provider vouches for: an account in use has a holder who did not agree,
+    an administrator is too much to hand over on an address, an application account belongs to the application."""
+    row = self.store.get_user_by_email(mail)
+    if row is None:
+        return None
+    uid = int(row["id"])
+    if (row["disabled"] or row["is_service"] or row["is_admin"] or row["is_owner"] or row["managed_by"]
+            or row["first_login_at"] or row["last_login_at"] or row["name_self_chosen"]):
+        return None
+    if (self.store.get_password_hash(uid) or self.store.list_webauthn(uid) or self.store.has_pin(uid)
+            or self.store.has_confirmed_totp(uid) or self.store.has_foreign_identity(uid)):
+        return None
+    return row
+
+
 def _remember_oidc_session(self, token, client, sub, refresh_token) -> None:
     """Store the refresh token for the (just created) session (4a) — with the client_id to
     which it went."""

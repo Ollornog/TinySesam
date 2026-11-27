@@ -248,6 +248,12 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   dessen Passwort im Verzeichnis liegt, bestätigt auf der Bestätigungsseite damit — eine frische Bindung über dieselbe
   Verzeichnisprüfung wie die Anmeldung (Gruppensperre, eine Kennung ein Konto), die zu diesem Konto führen muss;
   gezählt im eigenen Topf der Bestätigung, ein Ausfall des Verzeichnisses ist ein 503 und kein Fehlversuch.
+- **Konten werden nie über eine Adresse mit einem Identitätsanbieter verknüpft** (T-99, ADR-18): die Person verknüpft
+  auf der Kontoseite mit einer frischen Bestätigung hier und einer aktiven Anmeldung beim Anbieter, in der Sitzung, die
+  es begonnen hat (ein POST mit dem CSRF-Token — eine Verknüpfung, die eine fremde Seite starten könnte, bände die
+  Identität, als die der Browser beim Anbieter angemeldet ist); der Betreiber trägt ein `sub` vorab ein (`tinysesam
+  oidc-link`). Nur das Opt-in `oidc_bind_precreated` nutzt eine ausdrücklich bestätigte Adresse, und nur für ein Konto,
+  das nie jemand benutzt hat.
 - **Eigene Login-, Step-up- oder Passwortwechsel-Seite: auf den Bausteinen bauen.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   und `change_password` (Stufe A, seit 0.22.0) drosseln, zählen, sperren und protokollieren genau

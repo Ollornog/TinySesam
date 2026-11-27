@@ -1022,6 +1022,7 @@ exist) into a separate directory; to go back, put all three back with the servic
 python -m tinysesam audit  --db auth.db --user alice    # the audit log, from the command line
 python -m tinysesam unlock --db auth.db alice           # lift a brute-force lockout
 python -m tinysesam reset-totp --db auth.db alice       # lost authenticator app: TOTP and recovery codes go
+python -m tinysesam oidc-link --db auth.db alice --issuer https://id.example.com --sub 2f9c…  # pre-register an OIDC identity
 ```
 
 The audit log records *why* a sign-in failed (`no_account`, `account_locked`,
@@ -3005,7 +3006,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**142 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**143 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

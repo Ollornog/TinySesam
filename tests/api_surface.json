@@ -1552,6 +1552,10 @@
       "field": "bool = True",
       "tier": "A"
     },
+    "oidc_bind_precreated": {
+      "field": "bool = False",
+      "tier": "A"
+    },
     "oidc_callback_path": {
       "field": "str = '/auth/oidc/callback'",
       "tier": "A"
@@ -2868,6 +2872,12 @@
     },
     "POST /auth/oauth/token": {
       "keys": [],
+      "tier": "B"
+    },
+    "POST /auth/oidc/link": {
+      "keys": [
+        "form:_csrf"
+      ],
       "tier": "B"
     },
     "POST /auth/passkey/delete": {

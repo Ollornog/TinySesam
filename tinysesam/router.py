@@ -1275,6 +1275,8 @@ def build_router(auth) -> APIRouter:
                                     password_initial=sign_in.get("password") == "unset",
                                     # A directory account without a local password changes it in the directory.
                                     password_directory=sign_in.get("password") == "directory",
+                                    # T-99: link this account with an identity at the OIDC provider (not yet linked).
+                                    oidc_link=bool(cfg.oidc_enabled and not auth.store.is_oidc_account(u["id"])),
                                     has_totp=bool(totp.get("enabled")),
                                     recovery_left=totp.get("recovery_left"),
                                     recovery_warn=auth._RECOVERY_WARN_THRESHOLD,
