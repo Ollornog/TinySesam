@@ -9,6 +9,12 @@ TinySesam or an older proxy template refuses every request, which is intended �
 then the applications (`SECURITY.md`). A version 1 client keeps working against a version 2 TinySesam: it reads six
 headers and ignores unknown claims.
 
+**Additions within version 2 ([T-101](../backlog/T-101-stage-s5-permissions-at-the-server-and-in-the-clients.md)):**
+the identity carries `permissions` — the account's permissions for the application, from the header
+`Remote-Permissions` or the claim `ts_perms` (§3.4); `account.json` carries `permissions` (§8a); a client offers
+`has_permission` and `register_permissions` (§3.4). The member is optional on the wire — missing means "none" — so a
+client without it still conforms to every earlier vector; `vectors/permissions.json` holds the new ones.
+
 A **gate client** is a small library inside an application that runs behind TinySesam's gate
 ([ADR-9](../backlog/ADR-9-gate-token-at-the-proxy.md)). It answers one question per request: *who is this, and may
 they do this?* It does not sign anyone in, holds no session and issues nothing. Sign-in, sessions, approvals per
@@ -27,7 +33,7 @@ of the specification: a client conforms when it passes every vector of the parts
 | The application trusts | the `Remote-*` headers the proxy sets | the signature of the gate token |
 | Who checks the token | the proxy (Caddy with caddy-jwt, `deploy/forward-auth/Caddyfile.gate`) or `/auth/forward` | the client |
 | Needs | a proxy that fulfils §2.1, and no other way to the application | the public gate key(s), §4 |
-| Identity from | `Remote-User`, `-Name`, `-Email`, `-Groups`, `-Id`, `-Auth`, `-Kind` | the claims `sub`, `ts_user`, `ts_name`, `ts_email`, `ts_groups`, `ts_id`, `ts_auth`, `ts_kind` |
+| Identity from | `Remote-User`, `-Name`, `-Email`, `-Groups`, `-Id`, `-Auth`, `-Kind`, `-Permissions` | the claims `sub`, `ts_user`, `ts_name`, `ts_email`, `ts_groups`, `ts_id`, `ts_auth`, `ts_kind`, `ts_perms` |
 
 A client MUST implement at least one mode and SHOULD implement both. The mode MUST be chosen explicitly by
 configuration; a client MUST NOT fall back from token mode to header mode, nor guess the mode from the request. In token
@@ -45,6 +51,7 @@ Both modes produce the same **identity**:
 | `auth` | string | how the request signed in: `session`, `oauth`, `apikey`, `app-password`, or empty |
 | `kind` | `session` or `token` | `session` only when `auth` is exactly `session`, otherwise `token` |
 | `account_kind` | `user` or `service` | what the account is: `service` for a service account, otherwise `user`; never empty |
+| `permissions` | list of strings | the account's permissions for this application, see §3.4; empty when none is sent |
 
 An application SHOULD key its own records by `id`, never by `user`, `name` or `email`.
 
@@ -60,7 +67,7 @@ The client cannot verify where a header came from. Header mode is only safe when
 the following, and a client's documentation MUST state them:
 
 1. The proxy **removes** every `Remote-User`, `Remote-Name`, `Remote-Email`, `Remote-Groups`, `Remote-Id`,
-   `Remote-Auth` and `Remote-Kind` the client sent, on **every** path — including public share paths, where it then
+   `Remote-Auth`, `Remote-Kind` and `Remote-Permissions` the client sent, on **every** path — including public share paths, where it then
    sets none. (A proxy template older than version 2 passes a client's `Remote-Kind` through unchanged; the client
    cannot tell. Hence the order: proxy first, then the applications.)
 2. The proxy sets each header only from TinySesam's answer (`/auth/forward`) or from the claims of a gate token it has
@@ -78,7 +85,8 @@ header names be configured, because TinySesam's `forward_headers` can rename the
 
 ### 2.2 Reading the headers
 
-Header field names are case-insensitive. For each of the seven headers:
+Header field names are case-insensitive. For each of the eight headers (`Remote-Permissions` included — missing or
+empty is no error, it means no permissions):
 
 1. A field that occurs more than once (also under different spellings) is an error `header`. The client MUST NOT
    join the values or pick one.
@@ -159,6 +167,31 @@ names, [T-85](../backlog/T-85-role-names-without-comma.md)). `has_role(identity,
 A client MUST NOT imply other roles from `admin`; whether an admin passes every role check is the application's
 decision and not part of the identity.
 
+### 3.4 Permissions
+
+`Remote-Permissions` and the claim `ts_perms` carry the account's permissions for the application of the request's
+host ([ADR-17](../backlog/ADR-17-permission-layer-and-admin-levels.md); TinySesam's `apps[id].hosts`) as **one
+string**, joined with `,`. They are read exactly like the groups (§3.3): split at every `,`, trim spaces, drop empty
+and repeated entries, no escapes. A missing header or claim, or an empty value, is the empty list — never an error and
+never "unknown": TinySesam sends nothing for a host of no application and for an account without permissions.
+
+- `has_permission(identity, permission)` is `permission ∈ permissions`, exactly (§3.1). A client MUST NOT imply a
+  permission from `admin`, from a role, from a prefix (`docs.*`) or from another application's set.
+- A permission name follows `^[a-z][a-z0-9_-]{0,31}(\.[a-z0-9_-]{1,32}){1,3}$`; a client compares what it gets and does
+  not refuse a request for an entry outside the rule (TinySesam never sends one; comparing exactly makes it harmless).
+- **When a change counts:** in token mode and at the proxy's fast path once the gate token expires
+  (`gate_token_ttl_sec`, default 300 s); through `/auth/forward`, in TinySesam's library and through the service path
+  (`GET /auth/api/users/{id}/permissions?app=`) at the next request.
+- **Registering** (`register_permissions(base_url, app, permissions, api_key)`): the client sends the application's
+  whole manifest as `PUT <base_url>/auth/api/apps/<app>/permissions` with the JSON body `{"permissions": [...]}` and the
+  automation key of the application's service account in `X-Api-Key` (scope `permissions:register`), straight to
+  TinySesam, never through the proxy. Before it sends anything it refuses (error `invalid`): a base URL that is not
+  `https` (plain `http` only to a loopback address, §5 rule 1), an application id outside `^[a-z][a-z0-9_]{0,31}$`, a
+  manifest that is no list or has more than 200 entries, an entry that is no object or whose `name` breaks the rule
+  above, and a name twice. Registering grants nothing; TinySesam answers `added`, `updated`, `returned` and
+  `orphaned` (lists of names) and checks labels and descriptions itself. `vectors/permissions.json` (`register`)
+  fixes the request and the refusals.
+
 ## 4. Token mode
 
 ### 4.1 The token
@@ -185,13 +218,13 @@ session with `gate_token_enabled`.
 | `iat`, `nbf` | integer | issuing time, equal to each other (seconds since the epoch) |
 | `exp` | integer | expiry: `nbf + gate_token_ttl_sec` (30–3600 s, default 300) |
 | `jti` | string | a random identifier |
-| `ts_user`, `ts_name`, `ts_email`, `ts_groups`, `ts_id`, `ts_auth` | string | the identity; each only when the installation's `forward_headers` include that slot |
+| `ts_user`, `ts_name`, `ts_email`, `ts_groups`, `ts_id`, `ts_auth`, `ts_perms` | string | the identity; each only when the installation's `forward_headers` include that slot (`ts_perms`: the slot `perms`, §3.4) |
 | `ts_kind` | string | **mandatory since version 2:** `user` or `service`, in every token whatever `forward_headers` lists. A gate token is issued only for a session, so in practice it is always `user` |
 
 Unknown claims MUST be ignored. `ts_auth` of a gate token is always `session`; a token without `ts_auth` counts as kind
 `token` (§2.3). The identity of a valid token is: `user` = `ts_user`, `name` = `ts_name`, `email` = `ts_email`,
-`groups` = §3.3 over `ts_groups`, `id` = `sub`, `auth`/`kind` from `ts_auth` as in §2.3, `account_kind` = `ts_kind`; any
-other missing claim gives an empty value. A token issued before the update has no `ts_kind` and is refused until it
+`groups` = §3.3 over `ts_groups`, `id` = `sub`, `auth`/`kind` from `ts_auth` as in §2.3, `account_kind` = `ts_kind`,
+`permissions` = §3.4 over `ts_perms`; any other missing claim gives an empty value. A token issued before the update has no `ts_kind` and is refused until it
 expires (at most `gate_token_ttl_sec`); the proxy then takes the way back through `/auth/forward`, and the browser gets a
 fresh token.
 
@@ -423,6 +456,7 @@ The members (TinySesam's answer; `null` means "not offered by this installation"
 | `programs.app_passwords` | list or null | live app passwords: `name`, `created_at`, `last_used`, `expires_at` |
 | `programs.api_keys_active` | integer or null | number of active API keys |
 | `approvals` | object or null | `pending` (integer) |
+| `permissions` | object or null | on an application's host (§3.4): `app` (string, the application id) and `names` (list of strings); `null` on any other host |
 | `links` | object | `account`, `sessions`, `totp`, `passkeys`, `devices`, `app_passwords`, `services`, `approvals`: each an `href` or `null` |
 
 Times are Unix seconds (integer) or `null` (never used). `device` is a coarse "browser · system" taken from the
@@ -435,7 +469,7 @@ stable.
 The normalized result of a helper (`vectors/account.json` shows it):
 
 - **Signed out** — any answer but a `200` with a JSON object whose `signed_in` is `true`: `{"signed_in": false}` with
-  `account`, `sign_in`, `sessions`, `programs`, `approvals` and `links` all `null`.
+  `account`, `sign_in`, `sessions`, `programs`, `approvals`, `permissions` and `links` all `null`.
 - **Signed in** — every member of the table is present, unknown ones are dropped:
   - a text, a flag or a count of the wrong type reads as `null`; a count or a time is a JSON integer from 0 to
     2^53 − 1 (a negative number, a fraction, a boolean or a string is none);
@@ -446,6 +480,8 @@ The normalized result of a helper (`vectors/account.json` shows it):
     when the answer has none or no list); an entry of a list that is no object is dropped, the members of an entry
     follow the same rules;
   - `approvals` is `{"pending": <count>}` when `pending` is a count, otherwise `null`;
+  - `permissions` is `{"app": <text or null>, "names": [<texts>]}` when the answer's member is an object (an entry of
+    `names` that is no string is dropped; `names` that is no list reads as `[]`), otherwise `null` — also signed out;
   - every member of `links` is an `href` that passes the rule of §8, or `null`;
   - `sign_in.password` is kept as text — a value besides the three of the table is for the application to ignore;
   - `account.source` is a list of texts or `null`: an entry that is no string is dropped, a value that is no list reads
@@ -467,6 +503,7 @@ request TinySesam answers carries `Remote-Kind`, the header vectors about other 
 | `jwks.json` | `sets`: a JWKS document → usable `kids` in order, or `error: jwks_invalid`; `scenarios`: steps with `now`, `jws` and a simulated `fetch` answer (`status`, `cache_control`, `body` or `body_text`, or `error`) → `expect` (`fetched`, `ok`, `error`). A client that fetches where no `fetch` is given fails the step |
 | `topbar.json` | §8: `input.topbar` → the normalized `expected.topbar` |
 | `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account` |
+| `permissions.json` | §3.4: `headers` (as in `headers.json`, `expected.permissions` + `has_permission`, or `error`), `tokens` (as in `token.json`, the same expectations) and `register` (`input` `base_url`, `app`, `permissions` → `expected.request` `method`, `url`, `body`, or `error: invalid`). The identities of `token.json` and `headers.json` do not list `permissions`; this file does |
 
 Every vector has an `id`, a `reason` and an `attack` class (`null` for a plain valid case). Every attack vector carries
 **one defect**: with that one check switched off it would be accepted, so a client that lacks the check fails the
@@ -522,6 +559,9 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `topbar-types` | an answer of the wrong shape, an `approvals` that is no count |
 | `account-href` | unsafe links in the account overview |
 | `account-types` | an account overview of the wrong shape, members of the wrong type, unknown and missing members |
+| `permissions-parsing` | commas, spaces, empty and repeated entries, case, a prefix, `admin` — exact comparison, nothing implied |
+| `permissions-header` | `Remote-Permissions` twice, with a control character, invalid UTF-8; a `ts_perms` of the wrong type or with a control character |
+| `register-manifest` | manifests the client refuses before sending: names outside the rule, a name twice, too many entries, an application id outside the rule, a plain `http` base URL |
 
 ### Relation to TinySesam's own check
 

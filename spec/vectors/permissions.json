@@ -1,0 +1,1390 @@
+{
+  "format": 2,
+  "kind": "permissions",
+  "spec": "spec/gate-client.md",
+  "generated_by": "scripts/_gate_vectors.py — do not edit by hand",
+  "defaults": {
+    "issuer": "https://auth.example.com",
+    "audience": "app.example.com",
+    "now": 1767225600
+  },
+  "headers": [
+    {
+      "id": "valid",
+      "attack": null,
+      "reason": "The headers /auth/forward sends on the application's host: the union over two roles, sorted.",
+      "input": {
+        "headers": {
+          "Remote-User": "juergen",
+          "Remote-Name": "JÃ¼rgen MÃ¼ller",
+          "Remote-Email": "juergen@example.com",
+          "Remote-Groups": "editors,reviewers",
+          "Remote-Id": "3",
+          "Remote-Auth": "session",
+          "Remote-Kind": "user",
+          "Remote-Permissions": "docs.delete,docs.read"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [
+          "docs.delete",
+          "docs.read"
+        ],
+        "has_permission": {
+          "docs.read": true,
+          "docs.delete": true,
+          "docs.share": false,
+          "Docs.read": false,
+          "docs": false,
+          "docs.read ": false
+        }
+      }
+    },
+    {
+      "id": "valid-one",
+      "attack": null,
+      "reason": "One role, one permission.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Name": "Anna Berg",
+          "Remote-Email": "anna@example.com",
+          "Remote-Groups": "editors",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Kind": "user",
+          "Remote-Permissions": "docs.read"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [
+          "docs.read"
+        ],
+        "has_permission": {
+          "docs.read": true,
+          "docs.delete": false
+        }
+      }
+    },
+    {
+      "id": "admin-holds-none",
+      "attack": "permissions-parsing",
+      "reason": "The admin flag implies no permission: TinySesam sends none, the client implies none.",
+      "input": {
+        "headers": {
+          "Remote-User": "admin",
+          "Remote-Name": "Admin",
+          "Remote-Email": "admin@example.com",
+          "Remote-Groups": "admin",
+          "Remote-Id": "2",
+          "Remote-Auth": "session",
+          "Remote-Kind": "user",
+          "Remote-Permissions": ""
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [],
+        "has_permission": {
+          "docs.read": false,
+          "admin": false
+        }
+      }
+    },
+    {
+      "id": "missing",
+      "attack": null,
+      "reason": "No Remote-Permissions at all (a host of no application, an older TinySesam): no permissions, no error.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [],
+        "has_permission": {
+          "docs.read": false
+        }
+      }
+    },
+    {
+      "id": "parsing",
+      "attack": "permissions-parsing",
+      "reason": "Spaces, empty and repeated entries are read like the groups (§3.3).",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Permissions": " docs.read, docs.read,,docs.delete , ",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [
+          "docs.read",
+          "docs.delete"
+        ],
+        "has_permission": {
+          "docs.read": true,
+          "docs.delete": true
+        }
+      }
+    },
+    {
+      "id": "case-and-prefix",
+      "attack": "permissions-parsing",
+      "reason": "Exact comparison: another case is another name, a prefix is no wildcard.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Permissions": "DOCS.READ,docs",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [
+          "DOCS.READ",
+          "docs"
+        ],
+        "has_permission": {
+          "docs.read": false,
+          "docs.delete": false,
+          "docs": true
+        }
+      }
+    },
+    {
+      "id": "twice",
+      "attack": "permissions-header",
+      "reason": "Remote-Permissions twice: an error, never joined or picked.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Permissions": [
+            "docs.read",
+            "docs.delete"
+          ],
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "twice-spelling",
+      "attack": "permissions-header",
+      "reason": "Remote-Permissions twice in two spellings.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Permissions": "docs.read",
+          "remote-permissions": "docs.delete",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "control",
+      "attack": "permissions-header",
+      "reason": "A control character in Remote-Permissions is refused, not stripped.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Permissions": "docs.read\u0001",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    },
+    {
+      "id": "invalid-utf8",
+      "attack": "permissions-header",
+      "reason": "Invalid UTF-8 in Remote-Permissions.",
+      "input": {
+        "headers": {
+          "Remote-User": "anna",
+          "Remote-Id": "1",
+          "Remote-Auth": "session",
+          "Remote-Permissions": "docs.readÃ",
+          "Remote-Kind": "user"
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "header"
+      }
+    }
+  ],
+  "tokens": [
+    {
+      "id": "token-valid",
+      "attack": null,
+      "reason": "The gate token /auth/forward issues on the application's host: ts_perms.",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIzIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicGVybS0wIiwidHNfdXNlciI6Imp1ZXJnZW4iLCJ0c19uYW1lIjoiSsO8cmdlbiBNw7xsbGVyIiwidHNfZW1haWwiOiJqdWVyZ2VuQGV4YW1wbGUuY29tIiwidHNfZ3JvdXBzIjoiZWRpdG9ycyxyZXZpZXdlcnMiLCJ0c19pZCI6IjMiLCJ0c19hdXRoIjoic2Vzc2lvbiIsInRzX2tpbmQiOiJ1c2VyIiwidHNfcGVybXMiOiJkb2NzLmRlbGV0ZSxkb2NzLnJlYWQifQ.uB5iklRohK103Gj98S-Fv3nnvJMzZoC9CGahqLqHQWncyCBLAU5Y3EgtF17ObDaTOVlhHJiCr58ck_8l2fkKDw",
+        "now": 1767225610,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "audience": "app.example.com",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [
+          "docs.delete",
+          "docs.read"
+        ],
+        "has_permission": {
+          "docs.read": true,
+          "docs.delete": true,
+          "docs.share": false,
+          "Docs.read": false,
+          "docs": false,
+          "docs.read ": false
+        }
+      }
+    },
+    {
+      "id": "token-admin-holds-none",
+      "attack": "permissions-parsing",
+      "reason": "The admin flag implies no permission.",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIyIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicGVybS1hZG1pbi0wIiwidHNfdXNlciI6ImFkbWluIiwidHNfbmFtZSI6IkFkbWluIiwidHNfZW1haWwiOiJhZG1pbkBleGFtcGxlLmNvbSIsInRzX2dyb3VwcyI6ImFkbWluIiwidHNfaWQiOiIyIiwidHNfYXV0aCI6InNlc3Npb24iLCJ0c19raW5kIjoidXNlciIsInRzX3Blcm1zIjoiIn0.PsmvhK4jc6N3FYJi9Cx8O7vXi3OjLMtNBlda68cSb6mqBRy4r6Ru89HGYyq3Kuz6y1TdRtSBqEsQBfE1Rj30AA",
+        "now": 1767225610,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "audience": "app.example.com",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [],
+        "has_permission": {
+          "docs.read": false
+        }
+      }
+    },
+    {
+      "id": "token-missing",
+      "attack": null,
+      "reason": "A token without ts_perms (issued before the update, a reduced forward_headers): none.",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicGVybS1taXNzaW5nLTAiLCJ0c191c2VyIjoiYW5uYSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiIsInRzX2tpbmQiOiJ1c2VyIn0.NiufxQsH-ftiSL8HAxfXJWMVUCgF82WsTDdmF6dBh77qi8ntljKgcMqyW9jcSo-hz18ltaHqx9DF4s8ALiooCA",
+        "now": 1767225610,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "audience": "app.example.com",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "permissions": [],
+        "has_permission": {
+          "docs.read": false
+        }
+      }
+    },
+    {
+      "id": "token-type",
+      "attack": "permissions-header",
+      "reason": "ts_perms as a list is the wrong type.",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicGVybS10eXBlLTAiLCJ0c191c2VyIjoiYW5uYSIsInRzX2dyb3VwcyI6ImVkaXRvcnMiLCJ0c19pZCI6IjEiLCJ0c19hdXRoIjoic2Vzc2lvbiIsInRzX2tpbmQiOiJ1c2VyIiwidHNfcGVybXMiOlsiZG9jcy5yZWFkIl19.ZXqkxmWWT2SUz2uVqNuJko9SDjHAh6pyq1v_k2lDKbX4RjVyaOW1kJUZjCiZsXHxs6nmq9fG8VU7qjkAOH9KDA",
+        "now": 1767225610,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "audience": "app.example.com",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    },
+    {
+      "id": "token-control",
+      "attack": "permissions-header",
+      "reason": "A line break in ts_perms is refused, not stripped.",
+      "input": {
+        "jws": "eyJhbGciOiJFZERTQSIsInR5cCI6InRpbnlzZXNhbS1nYXRlK2p3dCIsImtpZCI6ImEwMzM1MDdjYTYxYWQ5NzkifQ.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJhcHAuZXhhbXBsZS5jb20iLCJzdWIiOiIxIiwiaWF0IjoxNzY3MjI1NjAwLCJuYmYiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMCwianRpIjoicGVybS1jdGwtMCIsInRzX3VzZXIiOiJhbm5hIiwidHNfZ3JvdXBzIjoiZWRpdG9ycyIsInRzX2lkIjoiMSIsInRzX2F1dGgiOiJzZXNzaW9uIiwidHNfa2luZCI6InVzZXIiLCJ0c19wZXJtcyI6ImRvY3MucmVhZFxuZG9jcy5kZWxldGUifQ.yQd_M0TWSpX9qd8xLJmGqexlRxtUZEBn5YZEDQMZyuTFxrH5h72OrkbMWJnLVnDsERcW2i8PVKV1QAN0onzPCg",
+        "now": 1767225610,
+        "leeway": 0,
+        "issuer": "https://auth.example.com",
+        "audience": "app.example.com",
+        "jwks": {
+          "keys": [
+            {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "ecc3yanysDDBsjOxE03UuR3bhBJmVjsRPkXuVsCwVCY",
+              "kid": "a033507ca61ad979",
+              "alg": "EdDSA",
+              "use": "sig"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "claims"
+      }
+    }
+  ],
+  "register": [
+    {
+      "id": "register",
+      "attack": null,
+      "reason": "The whole manifest as the body of a PUT, straight to TinySesam.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          },
+          {
+            "name": "docs.delete",
+            "label": {
+              "en": "Delete documents"
+            },
+            "danger": true
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "request": {
+          "method": "PUT",
+          "url": "https://auth.example.com/auth/api/apps/docs/permissions",
+          "body": {
+            "permissions": [
+              {
+                "name": "docs.read",
+                "label": {
+                  "en": "Read documents",
+                  "de": "Dokumente lesen"
+                }
+              },
+              {
+                "name": "docs.delete",
+                "label": {
+                  "en": "Delete documents"
+                },
+                "danger": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "register-trailing-slash",
+      "attack": null,
+      "reason": "A trailing slash of the base URL is not doubled.",
+      "input": {
+        "base_url": "https://auth.example.com/",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "request": {
+          "method": "PUT",
+          "url": "https://auth.example.com/auth/api/apps/docs/permissions",
+          "body": {
+            "permissions": [
+              {
+                "name": "docs.read",
+                "label": {
+                  "en": "Read documents",
+                  "de": "Dokumente lesen"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "register-loopback-http",
+      "attack": null,
+      "reason": "Plain http only to a loopback address.",
+      "input": {
+        "base_url": "http://127.0.0.1:8000",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "request": {
+          "method": "PUT",
+          "url": "http://127.0.0.1:8000/auth/api/apps/docs/permissions",
+          "body": {
+            "permissions": [
+              {
+                "name": "docs.read",
+                "label": {
+                  "en": "Read documents",
+                  "de": "Dokumente lesen"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "register-empty",
+      "attack": null,
+      "reason": "An empty manifest orphans every name the application registered before.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": []
+      },
+      "expected": {
+        "ok": true,
+        "request": {
+          "method": "PUT",
+          "url": "https://auth.example.com/auth/api/apps/docs/permissions",
+          "body": {
+            "permissions": []
+          }
+        }
+      }
+    },
+    {
+      "id": "register-http",
+      "attack": "register-manifest",
+      "reason": "Plain http to another host is refused.",
+      "input": {
+        "base_url": "http://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-app-id",
+      "attack": "register-manifest",
+      "reason": "An application id outside the rule (upper case).",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "Docs",
+        "permissions": [
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-app-path",
+      "attack": "register-manifest",
+      "reason": "An application id with a path in it.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs/../admin",
+        "permissions": [
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-name-case",
+      "attack": "register-manifest",
+      "reason": "A name outside the rule: 'Docs.read'.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "Docs.read"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-name-no-dot",
+      "attack": "register-manifest",
+      "reason": "A name outside the rule: 'docs'.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-name-space",
+      "attack": "register-manifest",
+      "reason": "A name outside the rule: 'docs.read '.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs.read "
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-name-five",
+      "attack": "register-manifest",
+      "reason": "A name outside the rule: 'a.b.c.d.e'.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "a.b.c.d.e"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-name-missing",
+      "attack": "register-manifest",
+      "reason": "An entry without a name.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "label": "x"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-entry-type",
+      "attack": "register-manifest",
+      "reason": "An entry that is no object.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          "docs.read"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-twice",
+      "attack": "register-manifest",
+      "reason": "A name twice.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          },
+          {
+            "name": "docs.read",
+            "label": {
+              "en": "Read documents",
+              "de": "Dokumente lesen"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-too-many",
+      "attack": "register-manifest",
+      "reason": "More than 200 entries.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": [
+          {
+            "name": "docs.p0"
+          },
+          {
+            "name": "docs.p1"
+          },
+          {
+            "name": "docs.p2"
+          },
+          {
+            "name": "docs.p3"
+          },
+          {
+            "name": "docs.p4"
+          },
+          {
+            "name": "docs.p5"
+          },
+          {
+            "name": "docs.p6"
+          },
+          {
+            "name": "docs.p7"
+          },
+          {
+            "name": "docs.p8"
+          },
+          {
+            "name": "docs.p9"
+          },
+          {
+            "name": "docs.p10"
+          },
+          {
+            "name": "docs.p11"
+          },
+          {
+            "name": "docs.p12"
+          },
+          {
+            "name": "docs.p13"
+          },
+          {
+            "name": "docs.p14"
+          },
+          {
+            "name": "docs.p15"
+          },
+          {
+            "name": "docs.p16"
+          },
+          {
+            "name": "docs.p17"
+          },
+          {
+            "name": "docs.p18"
+          },
+          {
+            "name": "docs.p19"
+          },
+          {
+            "name": "docs.p20"
+          },
+          {
+            "name": "docs.p21"
+          },
+          {
+            "name": "docs.p22"
+          },
+          {
+            "name": "docs.p23"
+          },
+          {
+            "name": "docs.p24"
+          },
+          {
+            "name": "docs.p25"
+          },
+          {
+            "name": "docs.p26"
+          },
+          {
+            "name": "docs.p27"
+          },
+          {
+            "name": "docs.p28"
+          },
+          {
+            "name": "docs.p29"
+          },
+          {
+            "name": "docs.p30"
+          },
+          {
+            "name": "docs.p31"
+          },
+          {
+            "name": "docs.p32"
+          },
+          {
+            "name": "docs.p33"
+          },
+          {
+            "name": "docs.p34"
+          },
+          {
+            "name": "docs.p35"
+          },
+          {
+            "name": "docs.p36"
+          },
+          {
+            "name": "docs.p37"
+          },
+          {
+            "name": "docs.p38"
+          },
+          {
+            "name": "docs.p39"
+          },
+          {
+            "name": "docs.p40"
+          },
+          {
+            "name": "docs.p41"
+          },
+          {
+            "name": "docs.p42"
+          },
+          {
+            "name": "docs.p43"
+          },
+          {
+            "name": "docs.p44"
+          },
+          {
+            "name": "docs.p45"
+          },
+          {
+            "name": "docs.p46"
+          },
+          {
+            "name": "docs.p47"
+          },
+          {
+            "name": "docs.p48"
+          },
+          {
+            "name": "docs.p49"
+          },
+          {
+            "name": "docs.p50"
+          },
+          {
+            "name": "docs.p51"
+          },
+          {
+            "name": "docs.p52"
+          },
+          {
+            "name": "docs.p53"
+          },
+          {
+            "name": "docs.p54"
+          },
+          {
+            "name": "docs.p55"
+          },
+          {
+            "name": "docs.p56"
+          },
+          {
+            "name": "docs.p57"
+          },
+          {
+            "name": "docs.p58"
+          },
+          {
+            "name": "docs.p59"
+          },
+          {
+            "name": "docs.p60"
+          },
+          {
+            "name": "docs.p61"
+          },
+          {
+            "name": "docs.p62"
+          },
+          {
+            "name": "docs.p63"
+          },
+          {
+            "name": "docs.p64"
+          },
+          {
+            "name": "docs.p65"
+          },
+          {
+            "name": "docs.p66"
+          },
+          {
+            "name": "docs.p67"
+          },
+          {
+            "name": "docs.p68"
+          },
+          {
+            "name": "docs.p69"
+          },
+          {
+            "name": "docs.p70"
+          },
+          {
+            "name": "docs.p71"
+          },
+          {
+            "name": "docs.p72"
+          },
+          {
+            "name": "docs.p73"
+          },
+          {
+            "name": "docs.p74"
+          },
+          {
+            "name": "docs.p75"
+          },
+          {
+            "name": "docs.p76"
+          },
+          {
+            "name": "docs.p77"
+          },
+          {
+            "name": "docs.p78"
+          },
+          {
+            "name": "docs.p79"
+          },
+          {
+            "name": "docs.p80"
+          },
+          {
+            "name": "docs.p81"
+          },
+          {
+            "name": "docs.p82"
+          },
+          {
+            "name": "docs.p83"
+          },
+          {
+            "name": "docs.p84"
+          },
+          {
+            "name": "docs.p85"
+          },
+          {
+            "name": "docs.p86"
+          },
+          {
+            "name": "docs.p87"
+          },
+          {
+            "name": "docs.p88"
+          },
+          {
+            "name": "docs.p89"
+          },
+          {
+            "name": "docs.p90"
+          },
+          {
+            "name": "docs.p91"
+          },
+          {
+            "name": "docs.p92"
+          },
+          {
+            "name": "docs.p93"
+          },
+          {
+            "name": "docs.p94"
+          },
+          {
+            "name": "docs.p95"
+          },
+          {
+            "name": "docs.p96"
+          },
+          {
+            "name": "docs.p97"
+          },
+          {
+            "name": "docs.p98"
+          },
+          {
+            "name": "docs.p99"
+          },
+          {
+            "name": "docs.p100"
+          },
+          {
+            "name": "docs.p101"
+          },
+          {
+            "name": "docs.p102"
+          },
+          {
+            "name": "docs.p103"
+          },
+          {
+            "name": "docs.p104"
+          },
+          {
+            "name": "docs.p105"
+          },
+          {
+            "name": "docs.p106"
+          },
+          {
+            "name": "docs.p107"
+          },
+          {
+            "name": "docs.p108"
+          },
+          {
+            "name": "docs.p109"
+          },
+          {
+            "name": "docs.p110"
+          },
+          {
+            "name": "docs.p111"
+          },
+          {
+            "name": "docs.p112"
+          },
+          {
+            "name": "docs.p113"
+          },
+          {
+            "name": "docs.p114"
+          },
+          {
+            "name": "docs.p115"
+          },
+          {
+            "name": "docs.p116"
+          },
+          {
+            "name": "docs.p117"
+          },
+          {
+            "name": "docs.p118"
+          },
+          {
+            "name": "docs.p119"
+          },
+          {
+            "name": "docs.p120"
+          },
+          {
+            "name": "docs.p121"
+          },
+          {
+            "name": "docs.p122"
+          },
+          {
+            "name": "docs.p123"
+          },
+          {
+            "name": "docs.p124"
+          },
+          {
+            "name": "docs.p125"
+          },
+          {
+            "name": "docs.p126"
+          },
+          {
+            "name": "docs.p127"
+          },
+          {
+            "name": "docs.p128"
+          },
+          {
+            "name": "docs.p129"
+          },
+          {
+            "name": "docs.p130"
+          },
+          {
+            "name": "docs.p131"
+          },
+          {
+            "name": "docs.p132"
+          },
+          {
+            "name": "docs.p133"
+          },
+          {
+            "name": "docs.p134"
+          },
+          {
+            "name": "docs.p135"
+          },
+          {
+            "name": "docs.p136"
+          },
+          {
+            "name": "docs.p137"
+          },
+          {
+            "name": "docs.p138"
+          },
+          {
+            "name": "docs.p139"
+          },
+          {
+            "name": "docs.p140"
+          },
+          {
+            "name": "docs.p141"
+          },
+          {
+            "name": "docs.p142"
+          },
+          {
+            "name": "docs.p143"
+          },
+          {
+            "name": "docs.p144"
+          },
+          {
+            "name": "docs.p145"
+          },
+          {
+            "name": "docs.p146"
+          },
+          {
+            "name": "docs.p147"
+          },
+          {
+            "name": "docs.p148"
+          },
+          {
+            "name": "docs.p149"
+          },
+          {
+            "name": "docs.p150"
+          },
+          {
+            "name": "docs.p151"
+          },
+          {
+            "name": "docs.p152"
+          },
+          {
+            "name": "docs.p153"
+          },
+          {
+            "name": "docs.p154"
+          },
+          {
+            "name": "docs.p155"
+          },
+          {
+            "name": "docs.p156"
+          },
+          {
+            "name": "docs.p157"
+          },
+          {
+            "name": "docs.p158"
+          },
+          {
+            "name": "docs.p159"
+          },
+          {
+            "name": "docs.p160"
+          },
+          {
+            "name": "docs.p161"
+          },
+          {
+            "name": "docs.p162"
+          },
+          {
+            "name": "docs.p163"
+          },
+          {
+            "name": "docs.p164"
+          },
+          {
+            "name": "docs.p165"
+          },
+          {
+            "name": "docs.p166"
+          },
+          {
+            "name": "docs.p167"
+          },
+          {
+            "name": "docs.p168"
+          },
+          {
+            "name": "docs.p169"
+          },
+          {
+            "name": "docs.p170"
+          },
+          {
+            "name": "docs.p171"
+          },
+          {
+            "name": "docs.p172"
+          },
+          {
+            "name": "docs.p173"
+          },
+          {
+            "name": "docs.p174"
+          },
+          {
+            "name": "docs.p175"
+          },
+          {
+            "name": "docs.p176"
+          },
+          {
+            "name": "docs.p177"
+          },
+          {
+            "name": "docs.p178"
+          },
+          {
+            "name": "docs.p179"
+          },
+          {
+            "name": "docs.p180"
+          },
+          {
+            "name": "docs.p181"
+          },
+          {
+            "name": "docs.p182"
+          },
+          {
+            "name": "docs.p183"
+          },
+          {
+            "name": "docs.p184"
+          },
+          {
+            "name": "docs.p185"
+          },
+          {
+            "name": "docs.p186"
+          },
+          {
+            "name": "docs.p187"
+          },
+          {
+            "name": "docs.p188"
+          },
+          {
+            "name": "docs.p189"
+          },
+          {
+            "name": "docs.p190"
+          },
+          {
+            "name": "docs.p191"
+          },
+          {
+            "name": "docs.p192"
+          },
+          {
+            "name": "docs.p193"
+          },
+          {
+            "name": "docs.p194"
+          },
+          {
+            "name": "docs.p195"
+          },
+          {
+            "name": "docs.p196"
+          },
+          {
+            "name": "docs.p197"
+          },
+          {
+            "name": "docs.p198"
+          },
+          {
+            "name": "docs.p199"
+          },
+          {
+            "name": "docs.p200"
+          }
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "register-not-list",
+      "attack": "register-manifest",
+      "reason": "A manifest that is no list.",
+      "input": {
+        "base_url": "https://auth.example.com",
+        "app": "docs",
+        "permissions": {
+          "permissions": [
+            {
+              "name": "docs.read",
+              "label": {
+                "en": "Read documents",
+                "de": "Dokumente lesen"
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    }
+  ]
+}

@@ -55,6 +55,7 @@ __all__ = [
     "guard_status",
     "current_identity", "Topbar", "TopbarLink", "TopbarApprovals", "parse_topbar", "fetch_topbar",
     "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account",
+    "PermissionRequest", "register_request", "register_permissions", "RegistrationFailed",
 ]
 
 #: The gate cookie TinySesam sets (`gate_cookie_name`).
@@ -63,16 +64,17 @@ DEFAULT_GATE_COOKIE = "__Host-tinysesam_gate"
 _ALGORITHM = "EdDSA"
 _TOKEN_TYPE = "tinysesam-gate+jwt"
 _HEADER_MEMBERS = frozenset({"alg", "typ", "kid"})
-_IDENTITY_CLAIMS = ("ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth", "ts_kind")
+_IDENTITY_CLAIMS = ("ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth", "ts_kind", "ts_perms")
 _AUTH_KINDS = ("session", "oauth", "apikey", "app-password")
 _ACCOUNT_KINDS = ("user", "service")
 _MAX_TOKEN_BYTES = 4096
 _MAX_LEEWAY = 60
 _MAX_LIFETIME = 3600
 _MAX_SAFE_INTEGER = 2 ** 53 - 1
-_SLOTS = ("user", "name", "email", "groups", "id", "auth", "kind")
+_SLOTS = ("user", "name", "email", "groups", "id", "auth", "kind", "perms")
 _DEFAULT_HEADER_NAMES = {"user": "Remote-User", "name": "Remote-Name", "email": "Remote-Email",
-                         "groups": "Remote-Groups", "id": "Remote-Id", "auth": "Remote-Auth", "kind": "Remote-Kind"}
+                         "groups": "Remote-Groups", "id": "Remote-Id", "auth": "Remote-Auth", "kind": "Remote-Kind",
+                         "perms": "Remote-Permissions"}
 
 # Fetching the key set (spec §5).
 _FETCH_TIMEOUT = 5.0           # seconds for one fetch in total: connect, TLS, headers, body
@@ -209,10 +211,18 @@ class Identity:
     auth: str
     kind: str
     account_kind: str
+    #: The account's permissions for THIS application (spec §3.4, `Remote-Permissions` / `ts_perms`); empty when
+    #: TinySesam sends none — never a reason to conclude anything but "holds none".
+    permissions: tuple[str, ...] = ()
 
     def has_role(self, role: str) -> bool:
         """Exactly `role in groups`: no case folding, no normalization, `admin` implies nothing else."""
         return role in self.groups
+
+    def has_permission(self, permission: str) -> bool:
+        """Exactly `permission in permissions` (spec §3.4): no case folding, no wildcard, neither `admin` nor a role
+        implies one."""
+        return permission in self.permissions
 
     def is_session(self) -> bool:
         """True only when the request signed in with a browser session (`Remote-Auth`/`ts_auth` exactly `session`).
@@ -247,9 +257,11 @@ def _kind_of(auth: str) -> str:
     return "session" if auth == "session" else "token"
 
 
-def _identity(user: str, name: str, email: str, groups: str, uid: str, auth: str, account_kind: str) -> Identity:
+def _identity(user: str, name: str, email: str, groups: str, uid: str, auth: str, account_kind: str,
+              permissions: str = "") -> Identity:
     return Identity(user=user, name=name, email=email, groups=_parse_groups(groups), id=uid,
-                    auth=auth if auth in _AUTH_KINDS else "", kind=_kind_of(auth), account_kind=account_kind)
+                    auth=auth if auth in _AUTH_KINDS else "", kind=_kind_of(auth), account_kind=account_kind,
+                    permissions=_parse_groups(permissions))
 
 
 # ---------- the account kind (spec v2), one set of rules for both modes ----------
@@ -578,7 +590,8 @@ def _verify(jws: Any, lookup: Callable[[str], bytes], *, issuer: str, audience: 
 def _identity_from_claims(claims: dict[str, Any]) -> Identity:
     return _identity(claims.get("ts_user", ""), claims.get("ts_name", ""), claims.get("ts_email", ""),
                      str(claims.get("ts_groups", "")), claims["sub"], claims.get("ts_auth", ""),
-                     _account_kind(claims.get("ts_kind"), claims.get("ts_auth"), ClaimsError))
+                     _account_kind(claims.get("ts_kind"), claims.get("ts_auth"), ClaimsError),
+                     str(claims.get("ts_perms", "")))
 
 
 def _check_leeway(leeway: Any) -> int:
@@ -656,7 +669,7 @@ def _identity_from_headers(pairs: Iterable[tuple[Any, Any]], names: Mapping[str,
     _check_remote_id(values.get("id", ""))
     account_kind = _account_kind(values.get("kind"), values.get("auth"), HeaderError)
     return _identity(values["user"], values.get("name", ""), values.get("email", ""), values.get("groups", ""),
-                     values.get("id", ""), values.get("auth", ""), account_kind)
+                     values.get("id", ""), values.get("auth", ""), account_kind, values.get("perms", ""))
 
 
 def _pairs(headers: Any) -> list[tuple[Any, Any]]:
@@ -1305,7 +1318,7 @@ def fetch_topbar(url: str, cookie_header: str = "") -> Topbar:
 
 #: The normalized result for a person who is not signed in (any answer but a 200 with `signed_in: true`).
 SIGNED_OUT_ACCOUNT: Mapping[str, Any] = {"signed_in": False, "account": None, "sign_in": None, "sessions": None,
-                                         "programs": None, "approvals": None, "links": None}
+                                         "programs": None, "approvals": None, "permissions": None, "links": None}
 _ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
 
 
@@ -1377,8 +1390,95 @@ def parse_account(data: Any) -> dict[str, Any]:
                      "app_passwords": _offered_list(programs.get("app_passwords"), _APP_PASSWORD),
                      "api_keys_active": _count(programs.get("api_keys_active"))},
         "approvals": None if pending is None else {"pending": pending},
+        "permissions": _permissions_view(data.get("permissions")),
         "links": {name: _href(links.get(name)) for name in _ACCOUNT_LINKS},
     }
+
+
+def _permissions_view(value: Any) -> Optional[dict[str, Any]]:
+    """§8a `permissions`: `{"app": text or None, "names": [texts]}` for an object (an entry that is no string is
+    dropped, `names` that is no list reads as `[]`), otherwise None — the host belongs to no application."""
+    if not isinstance(value, dict):
+        return None
+    names = value.get("names")
+    return {"app": _text(value.get("app")),
+            "names": [n for n in names if isinstance(n, str)] if isinstance(names, list) else []}
+
+
+# ---------- registering the permissions, spec §3.4 ----------
+
+#: The application id rule of `apps` and the permission name rule of TinySesam (ADR-17); at most 200 per manifest.
+_APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_PERMISSION_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}(\.[a-z0-9_-]{1,32}){1,3}$")
+_MAX_PERMISSIONS = 200
+
+
+class RegistrationFailed(Exception):
+    """TinySesam did not take the manifest: not reachable, or any answer but 200 (`status`, 0 without an answer). A
+    manifest the client refuses before sending is a `ConfigError` (spec §3.4)."""
+
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PermissionRequest:
+    """The request `register_permissions` sends: `PUT <base>/auth/api/apps/<app>/permissions` with `body` as JSON."""
+    method: str
+    url: str
+    body: dict[str, Any]
+
+
+def register_request(base_url: str, app: str, permissions: Any) -> PermissionRequest:
+    """Check a manifest the way spec §3.4 asks and build the request — no network. `ConfigError` for an application
+    id outside the rule, a manifest that is no list of objects, a name outside the rule, a name twice or more than 200
+    entries; the server checks the rest (labels, descriptions) again."""
+    base = _check_fetch_url(base_url, "register_permissions").rstrip("/")
+    if not isinstance(app, str) or not _APP_ID.fullmatch(app):
+        raise ConfigError("the application id must match ^[a-z][a-z0-9_]{0,31}$")
+    if not isinstance(permissions, list) or len(permissions) > _MAX_PERMISSIONS:
+        raise ConfigError(f"the manifest is a list of at most {_MAX_PERMISSIONS} permissions")
+    seen: set[str] = set()
+    for entry in permissions:
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not _PERMISSION_NAME.fullmatch(name):
+            raise ConfigError("every permission is an object whose name matches the rule of spec §3.4")
+        if name in seen:
+            raise ConfigError("a permission name twice")
+        seen.add(name)
+    return PermissionRequest("PUT", f"{base}/auth/api/apps/{app}/permissions", {"permissions": permissions})
+
+
+def register_permissions(base_url: str, app: str, permissions: Any, api_key: str) -> dict[str, Any]:
+    """Register the application's whole manifest with TinySesam (`PUT /auth/api/apps/{id}/permissions`, an automation
+    key of the application's service account with the scope `permissions:register`). Registering grants nothing.
+    Returns TinySesam's answer (`added`, `updated`, `returned`, `orphaned`); `ConfigError` for a manifest the client
+    refuses, `RegistrationFailed` for any answer but 200 (`status`). 5-second deadline; the key goes in `X-Api-Key`,
+    never in a log."""
+    req = register_request(base_url, app, permissions)
+    if not isinstance(api_key, str) or not api_key or _has_control(api_key):
+        raise ConfigError("register_permissions: an API key is required")
+    data = json.dumps(req.body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(req.url, data=data, method=req.method, headers={
+        "Content-Type": "application/json", "Accept": "application/json", "X-Api-Key": api_key})
+    try:
+        with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT) as answer:  # noqa: S310 — https checked above
+            body = answer.read(_MAX_JWKS_BYTES + 1)
+            status = answer.status
+    except urllib.error.HTTPError as e:
+        raise RegistrationFailed(f"TinySesam refused the manifest ({e.code})", e.code) from None
+    except (OSError, ValueError) as e:
+        raise RegistrationFailed(f"TinySesam not reachable ({type(e).__name__})") from None
+    if status != 200 or len(body) > _MAX_JWKS_BYTES:
+        raise RegistrationFailed(f"unexpected answer ({status})", status)
+    try:
+        out = _strict_json(body)
+    except GateError:
+        raise RegistrationFailed("an answer that is no JSON", status) from None
+    if not isinstance(out, dict):
+        raise RegistrationFailed("an answer that is no object", status)
+    return out
 
 
 def fetch_account(url: str, cookie_header: str = "") -> dict[str, Any]:

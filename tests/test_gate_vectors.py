@@ -59,8 +59,8 @@ def load(name):
         return json.load(f)
 
 
-FILES = ("keys.json", "token.json", "headers.json", "jwks.json", "topbar.json", "account.json")
-TOKEN, HEADERS, JWKS, TOPBAR, ACCOUNT = (load(n) for n in FILES[1:])
+FILES = ("keys.json", "token.json", "headers.json", "jwks.json", "topbar.json", "account.json", "permissions.json")
+TOKEN, HEADERS, JWKS, TOPBAR, ACCOUNT, PERMISSIONS = (load(n) for n in FILES[1:])
 
 #: The attack classes the vectors must cover (spec/gate-client.md, "Attack classes"). Keep both lists equal.
 ATTACK_CLASSES = {
@@ -73,6 +73,7 @@ ATTACK_CLASSES = {
     "id-format",
     "jwks-entry", "jwks-shape", "jwks-cache",
     "topbar-href", "topbar-types", "account-href", "account-types",
+    "permissions-parsing", "permissions-header", "register-manifest",
 }
 
 # ---------- 1. current ----------
@@ -99,7 +100,8 @@ ok("the generator leaves gate.secrets and the clock as they were")
 # ---------- 2. complete ----------
 all_vectors = ([("token", v) for v in TOKEN["vectors"]] + [("headers", v) for v in HEADERS["vectors"]]
                + [("jwks", v) for v in JWKS["sets"]] + [("jwks", v) for v in JWKS["scenarios"]]
-               + [("topbar", v) for v in TOPBAR["vectors"]] + [("account", v) for v in ACCOUNT["vectors"]])
+               + [("topbar", v) for v in TOPBAR["vectors"]] + [("account", v) for v in ACCOUNT["vectors"]]
+               + [(f"permissions/{part}", v) for part in ("headers", "tokens", "register") for v in PERMISSIONS[part]])
 ids = [f"{kind}/{v['id']}" for kind, v in all_vectors]
 assert len(ids) == len(set(ids)), "duplicate vector ids"
 for kind, v in all_vectors:
@@ -129,8 +131,11 @@ def gate_keys(doc):
 
 
 def identity_dict(identity):
+    """The identity as `token.json` and `headers.json` list it — without `permissions`, which `permissions.json`
+    checks (spec §9: a client without permissions still passes the earlier files)."""
     d = dataclasses.asdict(identity)
     d["groups"] = list(d["groups"])
+    del d["permissions"]
     return d
 
 
@@ -218,6 +223,40 @@ def run_account(v, relax=frozenset()):
         return {"ok": True, "account": gc.parse_account(v["input"]["account"])}
 
 
+def permission_result(v, identify):
+    try:
+        identity = identify()
+    except gc.GateError as e:
+        return {"ok": False, "error": e.kind}
+    out = {"ok": True, "permissions": list(identity.permissions)}
+    if "has_permission" in v["expected"]:
+        out["has_permission"] = {p: identity.has_permission(p) for p in v["expected"]["has_permission"]}
+    return out
+
+
+def run_perm_headers(v, relax=frozenset()):
+    with relax_mod.relaxed(*relax):
+        return permission_result(v, lambda: gc.GateClient(mode="header").identify(v["input"]["headers"]))
+
+
+def run_perm_token(v, relax=frozenset()):
+    i = v["input"]
+    with relax_mod.relaxed(*relax):
+        client = gc.GateClient(mode="token", issuer=i["issuer"], audience=i["audience"],
+                               gate_keys=gate_keys(i["jwks"]), leeway=i["leeway"])
+        return permission_result(v, lambda: client.verify(i["jws"], now=i["now"])[0])
+
+
+def run_register(v, relax=frozenset()):
+    i = v["input"]
+    with relax_mod.relaxed(*relax):
+        try:
+            req = gc.register_request(i["base_url"], i["app"], i["permissions"])
+        except ConfigError:
+            return {"ok": False, "error": "invalid"}
+    return {"ok": True, "request": {"method": req.method, "url": req.url, "body": req.body}}
+
+
 def mismatches(relax=frozenset()) -> list:
     bad = []
     for v in TOKEN["vectors"]:
@@ -238,6 +277,10 @@ def mismatches(relax=frozenset()) -> list:
     for v in ACCOUNT["vectors"]:
         if run_account(v, relax) != v["expected"]:
             bad.append("account/" + v["id"])
+    for part, run in (("headers", run_perm_headers), ("tokens", run_perm_token), ("register", run_register)):
+        for v in PERMISSIONS[part]:
+            if run(v, relax) != v["expected"]:
+                bad.append(f"permissions/{part}/" + v["id"])
     return bad
 
 
@@ -252,7 +295,8 @@ if failed:
     raise AssertionError(f"the gate client misses {len(failed)} vectors: {failed[:10]} {detail[:5]}")
 ok(f"gate client: {len(TOKEN['vectors'])} token, {len(HEADERS['vectors'])} header, "
    f"{len(JWKS['sets'])} key-set, {len(JWKS['scenarios'])} cache, {len(TOPBAR['vectors'])} top-bar, "
-   f"{len(ACCOUNT['vectors'])} account vectors passed")
+   f"{len(ACCOUNT['vectors'])} account, {sum(len(PERMISSIONS[k]) for k in ('headers', 'tokens', 'register'))} "
+   "permission vectors passed")
 
 _token_cfg = {"mode": "token", "issuer": "https://auth.example.com", "audience": "app.example.com",
               "gate_keys": [load("keys.json")["keys"]["A"]["sign_key_base64"]]}
