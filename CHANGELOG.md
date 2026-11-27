@@ -25,6 +25,17 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Permissions, library side (T-100, ADR-17; schema 27, additive): an application declares what it can do —
+  `apps[id].permissions` in the configuration or `register_permissions(app, [...])` (name rule, at most 200, labels in
+  en/de, `danger`, `suggested_roles`) — and declaring grants nothing. The operator assigns: `grant_permission`,
+  `revoke_permission` (roles of the configuration or the catalog). `has_permission(user, perm, app=…)`,
+  `permissions_of`, `require_permission(perm, app=…)`: the union over the account's roles for that application only;
+  an API key's scope narrows the roles first; the admin flag grants nothing unless `admin_implies_permissions` (new,
+  default false). A permission that leaves its manifest is orphaned — grants nothing, shown by `app_permissions` with
+  its suspended roles, never silently re-granted when it comes back, deleted by `delete_permission`. A role holding
+  permissions counts as in use (`role_usage(...)["permissions"]`). An `apps` entry that only declares permissions
+  needs no `account`. Tables in `docs/OPERATIONS.md` ("Permissions: tables"); suite `tests/test_permissions.py`;
+  `tests/test_schema_baseline.py` checks the step 26 → 27 on a database of the state before.
 - A recipe for an own server image with SAML (T-134): `deploy/saml-server/Dockerfile` (`python:3.15-slim`, a venv with
   `tinysesam[gateway,saml]` whose `xmlsec` and `lxml` wheels bring libxmlsec1 and libxml2, uid 1000 and `/data` as in
   the published image; refuses to build without a pinned version), described in `docs/OPERATIONS.md` ("A server image

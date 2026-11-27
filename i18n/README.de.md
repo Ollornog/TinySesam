@@ -194,6 +194,51 @@ Admin-Regel, derselbe Schalter `admin_implies=False`.
   weist so einen Namen in jedem Feld ab, `create_user`/`set_roles` werfen `ConfigError` (`field="roles"`), und ein
   Konto, das aus Altbestand noch so eine Rolle trägt, bekommt beim Forward-Check `403`, bis die Rolle entfernt ist.
 
+### Berechtigungen: die Anwendung meldet an, der Betreiber vergibt
+
+Rollen sagen, wer jemand ist; **Berechtigungen** sagen, was eine Anwendung ihm erlaubt (T-100, ADR-17). Die Anwendung
+meldet an, was sie kann — `docs.read`, `docs.delete` —, und mehr kann sie nicht: Anmelden vergibt nichts. Der Betreiber
+weist Berechtigungen Rollen zu, je Anwendung; `has_permission` ist dann die Vereinigung über die Rollen des Kontos, nur
+für diese Anwendung.
+
+```python
+import os
+import tempfile
+
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(
+    db_path=os.path.join(tempfile.mkdtemp(), "perm.db"), available_roles=["editors", "viewers"],
+    apps={"docs": {"name": "Docs", "permissions": [
+        {"name": "docs.read", "label": {"en": "Read documents", "de": "Dokumente lesen"}},
+        {"name": "docs.delete", "label": {"en": "Delete documents", "de": "Dokumente löschen"}, "danger": True}]}}))
+ed = auth.get_user(auth.create_user("ed", password="a long probe password 4711", roles=["editors"]))
+assert not auth.has_permission(ed, "docs.delete", app="docs")       # angemeldet, aber noch hat sie niemand
+auth.grant_permission("editors", "docs.delete", app="docs")          # der Aufruf des Betreibers (das Panel nutzt ihn)
+assert auth.has_permission(auth.get_user(ed["id"]), "docs.delete", app="docs")
+assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete"]
+```
+
+- **Anmelden** in der Konfiguration (`apps[id].permissions`, bei jedem Start registriert) oder aus der Anwendung mit
+  `auth.register_permissions("docs", [...])` — jedes Mal das ganze Manifest, idempotent. Namensregel
+  `^[a-z][a-z0-9_-]{0,31}(\.[a-z0-9_-]{1,32}){1,3}$`, höchstens 200 je Anwendung; `label` und `description` als Text
+  oder `{"en": …, "de": …}`; `danger: true` markiert eine Berechtigung, deren Zuweisung im Panel eine frische
+  Bestätigung braucht; `suggested_roles` ist ein Hinweis, nie eine Vergabe. Ein Eintrag in `apps`, der nur
+  Berechtigungen anmeldet, braucht kein Dienstkonto.
+- **Eine Route schützen** mit `Depends(auth.require_permission("docs.delete", app="docs"))` (401 ohne Sitzung, 403 ohne
+  die Berechtigung; `mfa=True` verlangt zusätzlich eine frische Bestätigung). Eine vertippte Anwendungs-ID scheitert
+  beim Bauen der Route, nicht als 403 für immer.
+- **Vergeben** mit `auth.grant_permission(role, permission, app=…)` und entziehen mit `auth.revoke_permission(…)` — an
+  eine Rolle der Konfiguration (auch das Ziel einer Gruppenzuordnung) oder des Rollenkatalogs. Eine Rolle mit
+  Berechtigungen gilt als benutzt: der Katalog löscht sie nicht, eine neue Rolle gleichen Namens erbt also nie etwas.
+- **Verwaist:** eine Berechtigung, die ihr Manifest verlässt, vergibt ab da nichts mehr; `auth.app_permissions("docs")`
+  zeigt sie (`orphaned`) mit den Rollen, die sie hatten (`suspended_roles`). Kommt sie zurück, bleiben diese
+  Zuweisungen ausgesetzt, bis jemand sie neu vergibt — nie still wieder erteilt. `auth.delete_permission(…)` entfernt
+  eine verwaiste.
+- **Wer was hat:** der Geltungsbereich eines API-Keys engt zuerst die Rollen ein, ein Dienst hat also die Schnittmenge;
+  das Admin-Flag vergibt nichts, außer mit `admin_implies_permissions=True` (nie über einen Automations-Key, der das
+  Flag nicht trägt). Rechte an Objekten („Ordner X") bleiben in der Anwendung.
+
 ## Konten im Code
 
 `auth.create_user(…)` legt ein Konto an und gibt seine ID zurück. Es prüft dasselbe wie jeder
@@ -2971,7 +3016,9 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `revoke_mfa_enrollment`, `list_resource_secrets`,
   `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
   `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`; der [Rollenkatalog](#rollenkatalog):
-  `create_role`, `delete_role`, `known_roles`, `role_catalog`, `role_usage`, `RoleError`.
+  `create_role`, `delete_role`, `known_roles`, `role_catalog`, `role_usage`, `RoleError`;
+  [Berechtigungen](#berechtigungen-die-anwendung-meldet-an-der-betreiber-vergibt): `grant_permission`,
+  `revoke_permission`, `delete_permission`, `app_permissions`.
 - **Mail- und Token-Abläufe:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url`
   → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link`
   (Einmal-Anmeldelink ohne Mail, Adresse aus `base_url`).
@@ -3074,7 +3121,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**148 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**149 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

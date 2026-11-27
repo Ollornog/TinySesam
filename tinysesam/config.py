@@ -67,6 +67,11 @@ class TinySesamConfig:
     # CAUTION: if an app's permissions hang solely on an IdP group, this is a silent
     # privilege escalation — set False then, or use `require_role(..., admin_implies=False)` per guard.
     admin_implies_roles: bool = True
+    # Does an administrator hold every permission an application declares (T-100, ADR-17)? Default False: permissions
+    # are assigned to roles in the panel, and the admin flag alone grants none — `admin_implies_roles=True` already is
+    # the known trap. True = `has_permission` says yes to an administrator for every current permission of every
+    # application (an automation key never carries the admin flag, so never through a key).
+    admin_implies_permissions: bool = False
     # How are IdP groups compared with the keys of *_group_role_map?
     # "exact" (default, safe) or "substring" (the old substring comparison, on request only).
     # With "exact", LDAP compares a memberOf DN by its parts: the whole DN, "cn=staff" or "staff".
@@ -583,6 +588,13 @@ class TinySesamConfig:
     # be sent back to when the person started in the application (no prefix match); `types_from` lets a second channel
     # of the same product (its own id, its own service account) ask for the types of another entry, while its
     # confirmations name only its own id. See README "Approvals for application actions".
+    # `permissions` (T-100, ADR-17) is the application's manifest: a list of `{"name": "docs.delete", "label": {"en":
+    # …, "de": …}, "description": …, "danger": true, "suggested_roles": [...]}` — name rule
+    # `^[a-z][a-z0-9_-]{0,31}(\.[a-z0-9_-]{1,32}){1,3}$`, at most 200. Registered at the start (the application may
+    # register its own with `register_permissions`); it grants nothing until an administrator assigns a permission to a
+    # role, and a name that leaves the manifest is orphaned, never deleted silently. An entry that only declares
+    # permissions needs no `account`; `account` is required with `provisioning` or `approvals`. See README
+    # "Permissions".
     apps: dict = field(default_factory=dict)
 
     # --- Sessions (server-side, revocable) ---

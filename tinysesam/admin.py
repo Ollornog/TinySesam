@@ -1103,7 +1103,7 @@ _KEYS = (
     "roles_btn role_filter show_all roles_title roles_hint new_role role_add catalog_count src_config src_catalog "
     "src_both src_accounts accounts_n take_over delete_role why_in_use why_in_ladder role_invalid_mark entry_hint "
     "entry_key entry_add entry_delete confirm.role_delete confirm.entry_delete usage_users usage_keys usage_services "
-    "usage_links usage_approvals"
+    "usage_links usage_approvals usage_permissions"
 ).split()
 
 

@@ -2,7 +2,7 @@
 id: T-100
 type: Task
 title: "Stage S4 — permissions: app identity, registration, assignment, has_permission"
-status: offen
+status: in-arbeit
 points: 13
 milestone: M-2
 blocked_by: [T-97]
@@ -22,6 +22,17 @@ The permission layer of [ADR-17](ADR-17-permission-layer-and-admin-levels.md), l
 - `has_permission(user, perm, app=…)` and `require_permission` dependency; effective permissions = union over roles, for this application only; services get the intersection with their scope.
 - Panel matrix per application; `danger` permissions need a step-up (symbol and word, never colour only); area administrators assign only inside their area; audit per change; orphaned assignments shown, never silently re-granted.
 - `admin_implies_permissions`, default false.
+
+## Progress
+
+- 2026-11-27: library core — schema 27 (`app_permission`, `role_permission`, additive; step tested on a database of
+  the state before), `apps[id].permissions` and `register_permissions` (idempotent, name rule, at most 200, per source:
+  the application's manifest never touches the configuration's names), `has_permission` / `permissions_of` /
+  `require_permission`, `grant_permission` / `revoke_permission` / `delete_permission` / `app_permissions`,
+  `admin_implies_permissions` (default false), orphaned permissions with suspended assignments (never re-granted
+  silently), a role holding permissions counts as in use. Suite `tests/test_permissions.py`.
+- Not taken over from the content above: `layout` and `icon` on `apps[id]` — they have no reader before T-103 (layout)
+  and T-104 (icon); a configuration field nobody reads is a false promise, so each comes with its reader.
 
 ## Acceptance
 - Example **Ex2** (Python library): `docs.read` / `docs.delete`, a role assigned locally, the delete button only with the permission.

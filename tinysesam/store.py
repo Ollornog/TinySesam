@@ -426,6 +426,11 @@ _PART_METHODS = {
         "oauth_use_consent_pairing", "oauth_user_grant_ids", "open_oauth_successor", "revoke_user_access",
         "seal_oauth_successor",
     ),
+    "permissions": (
+        "active_permission_count", "app_permission_rows", "current_permissions", "delete_orphaned_permission",
+        "effective_permissions", "get_app_permission", "grant_role_permission", "permission_apps",
+        "revoke_role_permission", "sync_permissions",
+    ),
     "roles": (
         "_catalog_hook", "_role_usage_locked", "add_catalog_roles", "catalog_roles",
         "delete_catalog_roles_if_unused", "role_usage", "roles_in_use",
@@ -638,7 +643,10 @@ class Store(metaclass=_StoreParts):
     #:
     #: 26 — the baseline (T-111): the schema 0.30.0 reaches, created in one step by `SCHEMA`, `INDEXES` and
     #:      `_trigger_sql`. The history up to 26 lives in the CHANGELOG of 0.30.0 and before.
-    SCHEMA_VERSION = 26
+    #: 27 — permissions (T-100, ADR-17), additive: the tables `app_permission` and `role_permission` and their index.
+    #:      The step from 26 is the schema script itself (`CREATE … IF NOT EXISTS` adds them, nothing else changes);
+    #:      a 0.31.x opens a 27 file with the "newer version" warning and never reads the two tables.
+    SCHEMA_VERSION = 27
 
     #: The oldest schema this version opens: the baseline. A database below it was written by a version before
     #: `LAST_MIGRATING_RELEASE` (or never reached it) and is refused at start (`ConfigError`).

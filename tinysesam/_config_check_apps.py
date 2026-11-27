@@ -18,6 +18,7 @@ from ._config_check_base import (
 )
 from ._config_check_roles import (
     _mapped_roles,
+    configured_roles,
 )
 
 
@@ -301,9 +302,9 @@ def _approvals(config, error: list) -> None:
 
 #: The id of an application in `apps` — the same rule as the first segment of an approval type.
 APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-#: The members of one `apps` entry: the account API (`provisioning`) and the approvals of the application's own
-#: actions (`approvals`, stage B).
-APP_KEYS = ("account", "name", "provisioning", "approvals")
+#: The members of one `apps` entry: the account API (`provisioning`), the approvals of the application's own
+#: actions (`approvals`, stage B) and its permissions (`permissions`, T-100).
+APP_KEYS = ("account", "name", "provisioning", "approvals", "permissions")
 #: The members of `apps[…].provisioning` and the scopes an application may hold (account API, stages A and B).
 PROVISIONING_KEYS = ("roles", "scopes", "link_ttl_min", "max_accounts", "limits", "approver_role", "delete_grace_days",
                      "welcome_url")
@@ -357,8 +358,25 @@ def _apps(config, error: list, warnings: list) -> None:
             error.append(_t(config, "apps[{app!r}]: {v!r} — allowed members are {keys}",
                             app=app_id, v=entry, keys=", ".join(APP_KEYS)))
             continue
+        manifest = entry.get("permissions")
+        if manifest is not None:
+            from . import _permissions
+            problem = _permissions.manifest_error(manifest)
+            if problem:
+                error.append(_t(config, "apps[{app!r}].permissions: {problem}", app=app_id, problem=problem))
+            else:
+                held = {r for _, r in configured_roles(config)}
+                for spec in manifest:
+                    for role in spec.get("suggested_roles", []):
+                        if role not in held:
+                            warnings.append(_t(config, "apps[{app!r}].permissions: {perm} suggests the role {role!r}, "
+                                                       "which the configuration does not name — the panel "
+                                                       "shows the hint anyway, it grants nothing", app=app_id,
+                                               perm=spec["name"], role=role))
         account = entry.get("account")
-        if (not isinstance(account, str) or not account.strip() or account != account.strip()
+        if account is None and "provisioning" not in entry and "approvals" not in entry:
+            pass                    # an entry that only declares permissions (or a name) speaks through no key
+        elif (not isinstance(account, str) or not account.strip() or account != account.strip()
                 or any(ord(z) < 32 or ord(z) == 127 for z in account)):
             error.append(_t(config, "apps[{app!r}]: \"account\" must name the service account (is_service) whose "
                                     "automation keys speak for the application", app=app_id))

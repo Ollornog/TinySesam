@@ -41,12 +41,13 @@ def add_catalog_roles(self, names, created_by: Optional[str], limit: int) -> str
 
 
 def _role_usage_locked(self, names, now: int) -> dict:
-    """`{name: {"users", "keys", "services", "links", "approvals"}}` — where each of `names` is held or waits to
-    be: accounts (every row), API key scopes (not revoked, not expired), OAuth service scopes (not revoked), open
-    one-time tokens with roles in their payload (invitations, service pairing codes) and pending approvals of
-    `tinysesam.account.set_roles` that would add it. Called inside a transaction (or under `_lock`)."""
+    """`{name: {"users", "keys", "services", "links", "approvals", "permissions"}}` — where each of `names` is held or
+    waits to be: accounts (every row), API key scopes (not revoked, not expired), OAuth service scopes (not revoked),
+    open one-time tokens with roles in their payload (invitations, service pairing codes), pending approvals of
+    `tinysesam.account.set_roles` that would add it, and permissions assigned to it (T-100: a role deleted and created
+    anew must not inherit them). Called inside a transaction (or under `_lock`)."""
     wanted = set(names)
-    out = {n: {"users": 0, "keys": 0, "services": 0, "links": 0, "approvals": 0} for n in wanted}
+    out = {n: {"users": 0, "keys": 0, "services": 0, "links": 0, "approvals": 0, "permissions": 0} for n in wanted}
 
     def count(kind: str, raw) -> None:
         try:
@@ -81,6 +82,9 @@ def _role_usage_locked(self, names, now: int) -> dict:
             continue
         if isinstance(payload, dict):
             count("approvals", payload.get("add"))
+    for r in self.db.execute(f"SELECT role, COUNT(*) AS n FROM role_permission WHERE role IN ({','.join('?' * len(wanted))}) "
+                             "GROUP BY role", sorted(wanted)):
+        out[r["role"]]["permissions"] += int(r["n"])
     return out
 
 

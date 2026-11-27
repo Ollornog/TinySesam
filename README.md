@@ -199,6 +199,50 @@ rule, same `admin_implies=False` switch.
   such a name in every field, `create_user`/`set_roles` raise `ConfigError` (`field="roles"`), and an account that
   still holds one from older data gets `403` at the forward check until the role is removed.
 
+### Permissions: the application declares, the operator assigns
+
+Roles say who someone is; **permissions** say what an application lets them do (T-100, ADR-17). The application
+declares what it can do — `docs.read`, `docs.delete` — and that is all it can do: declaring grants nothing. The
+operator assigns permissions to roles, per application; `has_permission` is then the union over the account's roles,
+for that application only.
+
+```python
+import os
+import tempfile
+
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(
+    db_path=os.path.join(tempfile.mkdtemp(), "perm.db"), available_roles=["editors", "viewers"],
+    apps={"docs": {"name": "Docs", "permissions": [
+        {"name": "docs.read", "label": {"en": "Read documents"}},
+        {"name": "docs.delete", "label": {"en": "Delete documents"}, "danger": True}]}}))
+ed = auth.get_user(auth.create_user("ed", password="a long probe password 4711", roles=["editors"]))
+assert not auth.has_permission(ed, "docs.delete", app="docs")       # declared, but nobody holds it yet
+auth.grant_permission("editors", "docs.delete", app="docs")          # the operator's call (the panel uses it)
+assert auth.has_permission(auth.get_user(ed["id"]), "docs.delete", app="docs")
+assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete"]
+```
+
+- **Declare** in the configuration (`apps[id].permissions`, registered at every start) or from the application with
+  `auth.register_permissions("docs", [...])` — the whole manifest each time, idempotent. Name rule
+  `^[a-z][a-z0-9_-]{0,31}(\.[a-z0-9_-]{1,32}){1,3}$`, at most 200 per application; `label` and `description` as a text
+  or `{"en": …, "de": …}`; `danger: true` marks a permission whose assignment needs a fresh confirmation in the panel;
+  `suggested_roles` is a hint, never a grant. An entry in `apps` that only declares permissions needs no service
+  account.
+- **Guard a route** with `Depends(auth.require_permission("docs.delete", app="docs"))` (401 without a session, 403
+  without the permission; `mfa=True` wants a fresh confirmation too). A misspelt application id fails when the route is
+  built, not as a 403 forever.
+- **Assign** with `auth.grant_permission(role, permission, app=…)` and withdraw with `auth.revoke_permission(…)` — to a
+  role of the configuration (also a group map's target) or of the role catalog. A role holding permissions counts as
+  in use: the catalog does not delete it, so a new role of the same name never inherits them.
+- **Orphaned:** a permission that leaves its manifest grants nothing from then on; `auth.app_permissions("docs")` shows
+  it (`orphaned`) with the roles that held it (`suspended_roles`). If it comes back, those assignments stay suspended
+  until someone assigns it anew — never silently re-granted. `auth.delete_permission(…)` removes an orphaned one.
+- **Who holds what:** an API key's scope narrows the roles first, so a service holds the intersection; the admin flag
+  grants nothing unless `admin_implies_permissions=True` (never through an automation key, which does not carry the
+  flag). Object-level rights ("folder X") stay in the application.
+
 ## Accounts in code
 
 `auth.create_user(…)` creates an account and returns its ID. It runs the same checks as every
@@ -2909,7 +2953,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   `list_service_clients`, `revoke_service_client` ([services](#a-service-calls-a-protected-app)), `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
   `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
   `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`; the [role catalog](#role-catalog): `create_role`, `delete_role`,
-  `known_roles`, `role_catalog`, `role_usage`, `RoleError`.
+  `known_roles`, `role_catalog`, `role_usage`, `RoleError`; [permissions](#permissions-the-application-declares-the-operator-assigns):
+  `grant_permission`, `revoke_permission`, `delete_permission`, `app_permissions`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
   `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`, `create_signin_link` (one-time
   sign-in link without mail, address from `base_url`).
@@ -3007,7 +3052,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**148 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**149 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

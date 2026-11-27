@@ -121,6 +121,11 @@
       "sig": "() -> 'list'",
       "tier": "B"
     },
+    "app_permissions": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(app: 'str') -> 'list'",
+      "tier": "B"
+    },
     "apply_factor": {
       "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
@@ -251,6 +256,11 @@
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "A"
     },
+    "delete_permission": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(permission: 'str', *, app: 'str', by: 'Optional[str]' = None) -> 'bool'",
+      "tier": "B"
+    },
     "delete_role": {
       "server": "POST <admin>/api/roles/delete",
       "sig": "(name: 'str', actor=None) -> 'dict'",
@@ -334,6 +344,16 @@
     "grant_mfa_enrollment": {
       "server": "POST <admin>/api/users/{uid}/mfa-enrollment",
       "sig": "(user_id: 'int', minutes: 'int' = 60) -> 'int'",
+      "tier": "A"
+    },
+    "grant_permission": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(role: 'str', permission: 'str', *, app: 'str', by: 'Optional[str]' = None) -> 'bool'",
+      "tier": "B"
+    },
+    "has_permission": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(user, permission: 'str', *, app: 'str') -> 'bool'",
       "tier": "A"
     },
     "has_pin": {
@@ -471,6 +491,11 @@
       "sig": "(request) -> 'Optional[dict]'",
       "tier": "B"
     },
+    "permissions_of": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(user, *, app: 'str') -> 'list'",
+      "tier": "A"
+    },
     "public_base": {
       "server": "library: a building block for an application's own pages in Python; the server serves its own pages",
       "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
@@ -485,6 +510,11 @@
       "server": "POST /auth/magic/{token}",
       "sig": "(raw, purpose=None) -> 'Optional[dict]'",
       "tier": "B"
+    },
+    "register_permissions": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(app: 'str', permissions: 'list') -> 'dict'",
+      "tier": "A"
     },
     "remove_passkey": {
       "server": "POST /auth/passkey/delete",
@@ -524,6 +554,11 @@
     "require_mfa": {
       "server": "GET /auth/reauth",
       "sig": "(request: 'Request') -> 'dict'",
+      "tier": "A"
+    },
+    "require_permission": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(permission: 'str', *, app: 'str', mfa: 'bool' = False)",
       "tier": "A"
     },
     "require_public_base": {
@@ -569,6 +604,11 @@
     "revoke_mfa_enrollment": {
       "server": "POST <admin>/api/users/{uid}/mfa-enrollment/delete",
       "sig": "(user_id: 'int') -> 'None'",
+      "tier": "B"
+    },
+    "revoke_permission": {
+      "server": "library: the permission layer of the library (T-100); the server's routes come with T-101",
+      "sig": "(role: 'str', permission: 'str', *, app: 'str', by: 'Optional[str]' = None) -> 'bool'",
       "tier": "B"
     },
     "revoke_service_client": {
@@ -1046,6 +1086,10 @@
     },
     "admin_identifiers": {
       "field": "list[str] = []",
+      "tier": "A"
+    },
+    "admin_implies_permissions": {
+      "field": "bool = False",
       "tier": "A"
     },
     "admin_implies_roles": {

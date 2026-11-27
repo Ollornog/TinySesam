@@ -30,6 +30,12 @@ _DE: dict[str, str] = {
          "(apps[…].provisioning mit dem Scope users:reset): Wer die Authenticator-App verliert, bleibt ausgesperrt, bis "
          "der Betreiber `tinysesam reset-totp` auf der Datenbank ausführt oder der Code der Anwendung das TOTP entfernt "
          "(totp_disable, grant_mfa_enrollment, create_signin_link)."),
+    ("apps[{app!r}].permissions: {problem}"):
+        ("apps[{app!r}].permissions: {problem}"),
+    ("apps[{app!r}].permissions: {perm} suggests the role {role!r}, which the configuration does not name — the panel "
+     "shows the hint anyway, it grants nothing"):
+        ("apps[{app!r}].permissions: {perm} schlägt die Rolle {role!r} vor, die die Konfiguration nicht nennt — das "
+         "Panel zeigt den Hinweis trotzdem, er vergibt nichts"),
     ("apps[{app!r}].provisioning.welcome_url={v!r} — a path (/…) or an http(s) address on the host of base_url or "
      "in trusted_redirect_hosts, printable ASCII without user part, at most {max} characters"):
         ("apps[{app!r}].provisioning.welcome_url={v!r} — ein Pfad (/…) oder eine http(s)-Adresse auf dem Host von "

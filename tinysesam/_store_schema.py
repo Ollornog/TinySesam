@@ -486,4 +486,33 @@ CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
 -- G1: "Which accounts still carry no identifier for this source?" (startup message, binding of existing accounts)
 -- asks for its row per account; without an index that would read all bindings of the source per account.
 CREATE INDEX IF NOT EXISTS idx_fed_source_user ON federated_identity(source, user_id);
+-- Permissions (schema 27, T-100, ADR-17): what an application declares it can do, per application (`apps` id). The
+-- application registers (configuration `apps[id].permissions` or `register_permissions`); registering grants nothing.
+-- A permission that leaves its manifest is `orphaned`: it grants nothing, is shown, and can be deleted.
+CREATE TABLE IF NOT EXISTS app_permission (
+    app             TEXT NOT NULL,            -- the application's id in `apps`
+    name            TEXT NOT NULL,            -- e.g. docs.delete (name rule in `permissions.NAME`)
+    label           TEXT NOT NULL DEFAULT '{}',   -- JSON {"en": …, "de": …}
+    description     TEXT NOT NULL DEFAULT '{}',   -- JSON {"en": …, "de": …}
+    danger          INTEGER NOT NULL DEFAULT 0,   -- 1: assigning it in the panel needs a fresh confirmation
+    suggested_roles TEXT NOT NULL DEFAULT '[]',   -- JSON list: a hint in the panel, never a grant
+    source          TEXT NOT NULL,            -- config | app: whose manifest names it
+    registered_at   INTEGER NOT NULL,
+    orphaned_at     INTEGER,                  -- set when it left its manifest: grants nothing from then on
+    PRIMARY KEY (app, name)
+);
+-- Which role holds which permission of which application — assigned by an administrator, never by the application.
+-- `active` = 0: the permission was orphaned meanwhile; the row is shown, but it grants nothing again by itself — not even
+-- when the permission comes back (an administrator assigns it anew).
+CREATE TABLE IF NOT EXISTS role_permission (
+    role       TEXT NOT NULL,
+    app        TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    active     INTEGER NOT NULL DEFAULT 1,
+    granted_at INTEGER NOT NULL,
+    granted_by TEXT,                          -- account name of the administrator, "config", or NULL (own code)
+    PRIMARY KEY (role, app, name),
+    FOREIGN KEY (app, name) REFERENCES app_permission(app, name) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_role_permission_app ON role_permission(app, name);
 """

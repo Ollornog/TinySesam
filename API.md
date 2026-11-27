@@ -21,7 +21,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 188 of 225 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 226 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 188 of 225
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 413 · B 320 names.
+**Status:** A 418 · B 324 names.
 
 ## A · Methods of `TinySesam`
 
@@ -119,6 +119,10 @@ Clean up: expired sessions/flows/magic tokens/realm unlocks + old login attempts
 
 Open a setup window and return its expiry.
 
+### `has_permission(user, permission: 'str', *, app: 'str') -> 'bool'`
+
+Does this account hold `permission` of the application `app`? Only assigned, current permissions of THAT application count (see `permissions_of`); an unknown or orphaned permission is no.
+
 ### `has_role(user, role, admin_implies=None) -> 'bool'`
 
 Does the user have the role? An admin satisfies EVERY role by default (`config.admin_implies_roles`). Whoever attaches rights solely to IdP groups switches that off — otherwise every local admin automatically is also "editor", "viewer", … .
@@ -163,9 +167,17 @@ Provide the TOTP step — with a TOTP code or a one-time code, throttled and loc
 
 End this request's session, the realm unlocks of this browser along with it, and delete the cookies — session, unlock and since 0.20.1 also the CSRF cookie, plus the cookies under the names from before the `__Host-` prefix.
 
+### `permissions_of(user, *, app: 'str') -> 'list'`
+
+The permissions of `app` this account holds, sorted: the union over its roles (an API key's scope narrows them first), every current one for an administrator with `admin_implies_permissions`.
+
 ### `public_base(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'`
 
 The public base URL for everything that leaves the house — mail links, redirect URIs, SAML metadata. Empty means: there is none, the caller aborts.
+
+### `register_permissions(app: 'str', permissions: 'list') -> 'dict'`
+
+Declare the permissions of the application `app` (an id in `apps`) — its whole manifest, idempotent.
 
 ### `render_page(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'`
 
@@ -186,6 +198,10 @@ For form POSTs: raises 403 if the CSRF token is missing/does not match.
 ### `require_mfa(request: 'Request') -> 'dict'`
 
 FastAPI dependency (direct): signed in + fresh step-up confirmation.
+
+### `require_permission(permission: 'str', *, app: 'str', mfa: 'bool' = False)`
+
+FastAPI dependency factory: signed in and holding `permission` of `app` — `Depends(auth.require_permission("docs.delete", app="docs"))`. `mfa=True` additionally wants a fresh confirmation. The application id is checked here, when the route is built: a typo fails at the start, not as a 403 forever.
 
 ### `require_resource(name: 'str')`
 
@@ -448,6 +464,10 @@ The kind of a key (`"automation"`/`"human"`) — without using it. `""` for an u
 
 The applications that accept app passwords: `[{"host": …, "name": …}]` — the `forward_apps` entries with `"app_passwords": True`. Empty without `forward_auth_enabled` (only the gate reads app passwords): then the account page shows no such section and the routes do not exist.
 
+### `app_permissions(app: 'str') -> 'list'`
+
+The declared permissions of `app` for a view (the panel): `name`, `label` and `description` (language → text), `danger`, `suggested_roles`, `source`, `orphaned` (bool), `roles` (assigned, active) and `suspended_roles` (assigned before it was orphaned — they grant nothing until an administrator assigns them anew), sorted by name.
+
 ### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
 Apply a confirmed factor: attach to the running session of the same user (chain step) OR start a new session (first factor/identity switch). Returns (token, session_ok, is_new). With is_new the caller must call set_cookie(resp, token).
@@ -500,6 +520,10 @@ A one-time pairing code for a service that will act as `user_id` (a service acco
 
 Issue a one-time sign-in link for an account — without mail, to hand over by any channel.
 
+### `delete_permission(permission: 'str', *, app: 'str', by: 'Optional[str]' = None) -> 'bool'`
+
+Delete an orphaned permission of `app` with its assignments — True if it was deleted. A permission its manifest still declares is refused (`ValueError`): it would only come back at the next registration.
+
 ### `delete_role(name: 'str', actor=None) -> 'dict'`
 
 Remove an unused role from the catalog. Refused with `RoleError` (`e.code`) while it is held or waiting anywhere (`in_use`, `e.usage` as in `role_usage`), when it is one level of a role level entry whose other roles are still known (`in_ladder`), `not_found`, `forbidden`. Check and delete run in one transaction; nothing cascades — remove the role from accounts and keys first. Audit `role_deleted`. Returns `{"name", "in_config"}` (`in_config`: the configuration names it, so it stays known).
@@ -543,6 +567,10 @@ Generate new one-time codes (replaces existing ones). Plaintext return ONLY ONCE
 ### `get_user(user_id) -> 'Optional[dict]'`
 
 Read an account by ID, or None.
+
+### `grant_permission(role: 'str', permission: 'str', *, app: 'str', by: 'Optional[str]' = None) -> 'bool'`
+
+Assign `permission` of `app` to `role` (the operator's call; the panel uses it) — True if it was not held before. Only a declared, current permission, only a known role; a suspended assignment becomes active again. `ValueError` otherwise. `by` names the actor in the audit.
 
 ### `has_pin(user_id) -> 'bool'`
 
@@ -644,6 +672,10 @@ Revoke one app password — of `user_id` only, if given (the account page). True
 
 Close an open enrollment window immediately.
 
+### `revoke_permission(role: 'str', permission: 'str', *, app: 'str', by: 'Optional[str]' = None) -> 'bool'`
+
+Withdraw `permission` of `app` from `role` (also a suspended assignment) — True if there was one.
+
 ### `revoke_service_client(client_id, user_id=None) -> 'bool'`
 
 Revoke a service at once: its keys are deleted, its tokens stop working with the next request. With `user_id` only a service of that account. True if one was live.
@@ -654,7 +686,7 @@ The roles administrators added (panel, `tinysesam roles`, `create_role`), sorted
 
 ### `role_usage(name: 'str') -> 'dict'`
 
-Where a role is held or waits to be: `{"users", "keys", "services", "links", "approvals"}` — accounts, API key scopes (not revoked, not expired), OAuth service scopes, open invitations and pairing codes, pending approvals of `tinysesam.account.set_roles`. What `delete_role` checks.
+Where a role is held or waits to be: `{"users", "keys", "services", "links", "approvals", "permissions"}` — accounts, API key scopes (not revoked, not expired), OAuth service scopes, open invitations and pairing codes, pending approvals of `tinysesam.account.set_roles`, permissions assigned to it (T-100). What `delete_role` checks.
 
 ### `send_mail(to, subject, text, html=None)`
 
@@ -1296,4 +1328,4 @@ The shipped fail2ban filters in `deploy/fail2ban/` are held against exactly thes
 
 ---
 
-136 methods, 3 properties, 9 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+144 methods, 3 properties, 9 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
