@@ -22,12 +22,14 @@ _DE: dict[str, str] = {
          "bis {max} Zeichen reiner Text ohne Steuerzeichen und Zeilenumbrüche"),
     "recovery_codes_enabled={v!r} — True or False":
         "recovery_codes_enabled={v!r} — True oder False",
-    ("recovery_codes_enabled=False and no application may reset an access (apps[…].provisioning with the scope "
-     "users:reset): whoever loses their authenticator app is locked out until the application's own code removes "
-     "the TOTP (totp_disable, grant_mfa_enrollment, create_signin_link) — the admin panel cannot."):
-        ("recovery_codes_enabled=False und keine Anwendung darf einen Zugang zurücksetzen (apps[…].provisioning mit "
-         "dem Scope users:reset): Wer die Authenticator-App verliert, bleibt ausgesperrt, bis der Code der Anwendung "
-         "das TOTP entfernt (totp_disable, grant_mfa_enrollment, create_signin_link) — das Admin-Panel kann es nicht."),
+    ("recovery_codes_enabled=False, the admin panel is off and no application may reset an access "
+     "(apps[…].provisioning with the scope users:reset): whoever loses their authenticator app is locked out until "
+     "the operator runs `tinysesam reset-totp` on the database or the application's own code removes the TOTP "
+     "(totp_disable, grant_mfa_enrollment, create_signin_link)."):
+        ("recovery_codes_enabled=False, das Admin-Panel ist aus und keine Anwendung darf einen Zugang zurücksetzen "
+         "(apps[…].provisioning mit dem Scope users:reset): Wer die Authenticator-App verliert, bleibt ausgesperrt, bis "
+         "der Betreiber `tinysesam reset-totp` auf der Datenbank ausführt oder der Code der Anwendung das TOTP entfernt "
+         "(totp_disable, grant_mfa_enrollment, create_signin_link)."),
     ("apps[{app!r}].provisioning.welcome_url={v!r} — a path (/…) or an http(s) address on the host of base_url or "
      "in trusted_redirect_hosts, printable ASCII without user part, at most {max} characters"):
         ("apps[{app!r}].provisioning.welcome_url={v!r} — ein Pfad (/…) oder eine http(s)-Adresse auf dem Host von "

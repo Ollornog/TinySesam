@@ -302,6 +302,27 @@ class PanelActions:
                         f"uid={uid} by=operator")
         return {"ok": True}
 
+    def reset_totp(self, request: Request, me, uid: int) -> dict:
+        """Reset the TOTP factor of an account (T-98) — `POST <admin>/api/users/{uid}/totp/reset` and the CLI
+        `tinysesam reset-totp`: the holder lost the authenticator app and has no recovery code left. Without it the
+        operator had only the whole access reset of an application (`tinysesam.account.reset_access`) or the database.
+
+        The authenticator goes with its recovery codes (`totp_disable`: audit line under the holder and the event
+        `totp_disabled`, so the holder learns of it). The failed TOTP attempts end with it — a new authenticator starts
+        without a lock someone else filled. Owner model as for passkeys; a fresh confirmation, because removing a
+        second factor from a stale admin session opens the account to whoever holds its password."""
+        destination = self.owner_protection(me, uid)
+        if destination is None:
+            raise HTTPException(404, self.auth.t("api.not_found"))
+        self.auth._require_fresh(request, me)
+        if not self.auth.store.has_confirmed_totp(uid):
+            raise HTTPException(409, self.auth.t("api.no_totp"))
+        codes = self.auth.store.count_recovery_codes(uid)
+        self.auth.totp_disable(uid)
+        self.auth.lift_lockout(uid, methods=("totp",))
+        self.log(request, "totp_reset_by_admin", f"uid={uid} recovery_codes_deleted={codes}")
+        return {"ok": True, "recovery_codes_deleted": codes}
+
     def revoke_key(self, me, kid: int) -> dict:
         """Revoke someone's API key as administrator — `POST <admin>/api/keys/{kid}/revoke` and the approval type
         `tinysesam.apikey.revoke` for a key of another account (an own key the holder revokes without the panel)."""
@@ -630,6 +651,19 @@ def build_admin_router(auth) -> APIRouter:
         if not auth.remove_passkey(uid, cid):
             raise HTTPException(404, auth.t("api.not_found"))
         return {"ok": True}
+
+    @ar.get("/api/users/{uid}/totp")
+    def user_totp(request: Request, uid: int):
+        """Whether the account has a TOTP set up (T-98) — the panel offers the reset only then."""
+        guard(request)
+        if auth.store.get_user(uid) is None:
+            raise HTTPException(404, auth.t("api.not_found"))
+        return {"enabled": auth.store.has_confirmed_totp(uid),
+                "recovery_left": auth.store.count_recovery_codes(uid)}
+
+    @ar.post("/api/users/{uid}/totp/reset")
+    def user_totp_reset(request: Request, uid: int):
+        return pa.reset_totp(request, guard(request), uid)
 
     @ar.post("/api/users/{uid}/owner")
     async def user_owner(request: Request, uid: int):
@@ -1009,6 +1043,7 @@ _KEYS = (
     "th.time th.event th.detail "
     "active disabled disabled_confirmation disabled_app revoked enable disable "
     "btn.pw btn.rename btn.roles btn.keys btn.passkeys btn.delete btn.owner_on btn.owner_off "
+    "totp totp_on totp_off totp_reset totp_hint confirm.totp_reset "
     "passkeys no_passkeys confirm.delete confirm.pk_delete confirm.owner_on confirm.owner_off "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
@@ -1387,6 +1422,7 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
   const signin=[
     admin&&!svc?line(L.password,L.pw_hint,`<button class=sec ${on("pw",u.id)}>${esc(L.set_password)}</button>`):"",
     admin&&!svc?line(L.passkeys,"","",`<div id=pkl class=sub></div>`):"",
+    admin&&!svc?line(L.totp,L.totp_hint,"",`<div id=tol class=sub></div>`):"",
     admin?line(L.api_keys,"","",`<div id=kl class=sub></div>`):"",
     LINKS&&CAN("signin_link")&&!svc&&!u.disabled?line(L.signin_link,L.link_hint,`<button class=sec ${on("link",u.id,u.username)}>${esc(L.issue_link)}</button>`,`<div id=lko class=sub></div>`):""].join("");
   const danger=[
@@ -1414,7 +1450,7 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
     ${signin?`<section class=card><h2>${esc(L["sec.signin"])}</h2>${signin}</section>`:""}
     ${appl?`<section class="card appcard"><h2>${esc(L.app_section)}</h2>${appl}</section>`:""}
     ${danger?`<section class="card danger"><h2>${esc(L["sec.danger"])}</h2>${danger}</section>`:""}`);
-  if(admin){keys(u.id);if(!svc)pks(u.id)}}
+  if(admin){keys(u.id);if(!svc){pks(u.id);totp(u)}}}
 // ---------- Roles (`#roles`, administrators only): the role catalog — roles added here are offered like those of the
 // configuration. Adding grants nothing; only an unused catalog role can be deleted (the server checks again). After a
 // change the page reloads, so the role picker and the role levels know the new list.
@@ -1494,6 +1530,13 @@ async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,
 async function pks(id){const put=claim("pkl");const ps=await g(`/api/users/${id}/passkeys`);
   put(ps.length?`<table>`+ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
       <td><button class=warn ${on("delpk",id,c.id)}>${esc(L.revoke)}</button></td></tr>`).join("")+`</table>`:`<div class="muted small">${esc(L.no_passkeys)}</div>`)}
+// TOTP (T-98): state and, for an account that has one, the reset — an owner account only by an owner (the server
+// checks again and asks for a step-up).
+async function totp(u){const put=claim("tol");const t=await g(`/api/users/${u.id}/totp`);
+  put(t.enabled?`<div class=row><span class="badge grn">${esc(L.totp_on)}</span>${!u.is_owner||ME.owner?`<button class=warn ${on("totpreset",u.id)}>${esc(L.totp_reset)}</button>`:""}</div>`
+    :`<div class="muted small">${esc(L.totp_off)}</div>`)}
+async function totpreset(id){if(!await tsConfirm(L["confirm.totp_reset"],{danger:true}))return;
+  if(!rejected(await p(`/api/users/${id}/totp/reset`)))totp(US.find(x=>x.id===id)||{id})}
 // Sign-in link without mail (T-33): shown ONCE — the server keeps only the hash.
 async function link(id,name){const v=await tsPrompt(L["prompt.link_ttl"],String(LINKTTL),{type:"number"});if(v===null)return;
   const put=claim("lko");const r=await p(`/api/users/${id}/signin-link`,{ttl_min:v.trim()?parseInt(v,10):null});if(rejected(r))return;
@@ -1556,7 +1599,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // One delegated listener for all buttons, including those loaded later via innerHTML. Only names
 // from ACT are callable — data-on selects an action, it does not name arbitrary code.
-const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,copylink};
+const ACT={go,nav,mkuser,own,dis,pw,ren,saveroles,keys,mkkey,mksvc,revk,revs,savesec,pks,delpk,totpreset,deluser,link,revdev,revsvc,revap,adopt,release,restore,mkrole,delrole,mkentry,delentry,copylink};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 // Back/forward to an account or the new-account form also from another tab.

@@ -2550,6 +2550,10 @@
       "keys": [],
       "tier": "B"
     },
+    "GET <admin>/api/users/{uid}/totp": {
+      "keys": [],
+      "tier": "B"
+    },
     "GET <admin>/api/version": {
       "keys": [],
       "tier": "B"
@@ -2967,6 +2971,10 @@
       "tier": "B"
     },
     "POST <admin>/api/users/{uid}/signin-link": {
+      "keys": [],
+      "tier": "B"
+    },
+    "POST <admin>/api/users/{uid}/totp/reset": {
       "keys": [],
       "tier": "B"
     },

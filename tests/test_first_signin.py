@@ -158,29 +158,33 @@ assert r.status_code == 303 and c.get("/who", headers=JSON).json() == {"u": "eri
 assert auth.recovery_codes_remaining(uid) == len(codes) - 1
 ok("off: an existing code is refused and kept; back on, it signs in again (the way back)")
 
-# config_check: the warning, and exactly the configured reset way silences it.
-WARN = "recovery_codes_enabled=False and no application may reset an access"
+# config_check: the warning, and exactly the configured reset ways silence it — the admin panel's TOTP reset (T-98)
+# and an application's users:reset.
+WARN = "recovery_codes_enabled=False, the admin panel is off and no application may reset an access"
+_, w = warnings_of(recovery_codes_enabled=False, admin_enabled=False)
+assert any(WARN in x for x in w) and any("tinysesam reset-totp" in x for x in w), w
 _, w = warnings_of(recovery_codes_enabled=False)
-assert any(WARN in x for x in w), w
-_, w = warnings_of()
+assert not any(WARN in x for x in w), "the admin panel resets a TOTP (T-98)"
+_, w = warnings_of(admin_enabled=False)
 assert not any(WARN in x for x in w)
-_, w = warnings_of(recovery_codes_enabled=False, totp_enabled=False)
+_, w = warnings_of(recovery_codes_enabled=False, totp_enabled=False, admin_enabled=False)
 assert not any(WARN in x for x in w), "without TOTP there is nothing to lose"
 reset_apps = {"example": {"account": "svc-example", "provisioning": {
     "roles": ["example-member"], "scopes": ["users:read", "users:invite", "users:reset"],
     "approver_role": "example-approver"}}}
-e, w = warnings_of(recovery_codes_enabled=False, apps=reset_apps, approvals_enabled=True, magiclink_enabled=True)
+e, w = warnings_of(recovery_codes_enabled=False, apps=reset_apps, approvals_enabled=True, magiclink_enabled=True,
+                   admin_enabled=False)
 assert not e and not any(WARN in x for x in w), (e, w)
 no_reset = json.loads(json.dumps(reset_apps))
 no_reset["example"]["provisioning"]["scopes"] = ["users:read", "users:invite"]
 del no_reset["example"]["provisioning"]["approver_role"]
-e, w = warnings_of(recovery_codes_enabled=False, apps=no_reset, magiclink_enabled=True)
+e, w = warnings_of(recovery_codes_enabled=False, apps=no_reset, magiclink_enabled=True, admin_enabled=False)
 assert not e and any(WARN in x for x in w), (e, w)
 e, _ = warnings_of(recovery_codes_enabled="no")
 assert any("recovery_codes_enabled='no'" in x for x in e), e
-_, w = warnings_of(recovery_codes_enabled=False, lang="de")
-assert any("recovery_codes_enabled=False und keine Anwendung" in x for x in w), w
-ok("config_check: warns without users:reset (not with it, not without TOTP); a non-bool is an error; German text")
+_, w = warnings_of(recovery_codes_enabled=False, admin_enabled=False, lang="de")
+assert any("recovery_codes_enabled=False, das Admin-Panel ist aus und keine Anwendung" in x for x in w), w
+ok("config_check: warns without panel and users:reset (not with either, not without TOTP); a non-bool is an error; German text")
 
 # =====================================================================================
 # 2) The TOTP hint per language

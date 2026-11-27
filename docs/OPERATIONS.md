@@ -1174,9 +1174,10 @@ the mailed link.
   `/auth/totp/recovery` answers `404`, the account page offers no code action, `generate_recovery_codes` raises
   `ConfigError`, and a code typed at `/auth/totp` counts as a wrong code (neither accepted nor used up, no
   `recovery_used` line). Codes created before stay in `recovery_code`; switching back on makes them valid again —
-  that is the way back. A lost authenticator then needs a reset: an application's `reset_access` (scope `users:reset`)
-  or the application's own code (`totp_disable`, `grant_mfa_enrollment`, `create_signin_link`). The start warns when
-  no application has `users:reset`.
+  that is the way back. A lost authenticator then needs a reset: the admin panel's TOTP reset (account page, with a
+  step-up, T-98), `tinysesam reset-totp --db <file> <user>`, an application's `reset_access` (scope `users:reset`) or
+  the application's own code (`totp_disable`, `grant_mfa_enrollment`, `create_signin_link`). The start warns when the
+  panel is off and no application has `users:reset`.
 - **`totp_app_hint`** — `{"en": …, "de": …}`, shown escaped above the QR code (`lang`, else `en`, else the first
   entry). A text longer than 300 characters, with a control or format character or a line break is a start error.
 - **`next` / `apps[…].provisioning.welcome_url`** — where the link leads once the setup is complete. Checked when it is

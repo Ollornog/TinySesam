@@ -273,9 +273,10 @@ after *I have written them down*. `/auth/totp/recovery` replaces them later (wit
 over a list of codes. The setup then shows no code page and creates no codes, `/auth/totp/recovery` answers `404`, the
 account page offers no code action, and no code is accepted anywhere. Codes an account already holds stay in the
 database untouched (switch back on, and they work again). The price: a lost authenticator app needs someone who resets
-the access — an application's `reset_access` (scope `users:reset`, below) or your own code (`totp_disable`,
-`grant_mfa_enrollment`, then `create_signin_link`); the admin panel removes no TOTP. `config_check` warns when no
-application has `users:reset`. **`totp_app_hint`** puts a short hint per language above the QR code — which app to
+it — the admin panel (account page, "Authenticator app (TOTP)" → "Reset", with a step-up), `tinysesam reset-totp`
+on the database, an application's `reset_access` (scope `users:reset`, below) or your own code (`totp_disable`,
+`grant_mfa_enrollment`, then `create_signin_link`). `config_check` warns when the panel is off and no application has
+`users:reset`. **`totp_app_hint`** puts a short hint per language above the QR code — which app to
 install: `{"en": "Install Example Authenticator.", "de": "…"}` (plain text, escaped,
 at most 300 characters, the page's `lang`, else `en`, else the first entry).
 
@@ -1019,6 +1020,7 @@ exist) into a separate directory; to go back, put all three back with the servic
 ```bash
 python -m tinysesam audit  --db auth.db --user alice    # the audit log, from the command line
 python -m tinysesam unlock --db auth.db alice           # lift a brute-force lockout
+python -m tinysesam reset-totp --db auth.db alice       # lost authenticator app: TOTP and recovery codes go
 ```
 
 The audit log records *why* a sign-in failed (`no_account`, `account_locked`,
@@ -2971,7 +2973,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**136 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**137 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -520,21 +520,23 @@ def _first_sign_in(config, error: list, warnings: list) -> None:
     if not isinstance(codes, bool):
         error.append(_t(config, "recovery_codes_enabled={v!r} — True or False", v=codes))
         return
-    if codes or not _an(config, "totp_enabled"):
+    if codes or not _an(config, "totp_enabled") or _an(config, "admin_enabled"):
         return
-    # The only configured way that resets a lost authenticator: an application's `reset_access` (an approval). The
-    # admin panel removes no TOTP; the application's own code (`totp_disable` + `grant_mfa_enrollment` + a link) is
-    # invisible here, so the text names it.
+    # The configured ways that reset a lost authenticator: the admin panel's TOTP reset (T-98, checked above) and an
+    # application's `reset_access` (an approval). Without both, the operator's CLI on the database file and the
+    # application's own code (`totp_disable` + `grant_mfa_enrollment` + a link) remain — invisible here, so the text
+    # names them.
     raw = getattr(config, "apps", None)
     reset = _an(config, "approvals_enabled") and isinstance(raw, dict) and any(
         isinstance(e, dict) and isinstance(e.get("provisioning"), dict)
         and isinstance(e["provisioning"].get("scopes"), list) and "users:reset" in e["provisioning"]["scopes"]
         and e["provisioning"].get("approver_role") for e in raw.values())
     if not reset:
-        warnings.append(_t(config, "recovery_codes_enabled=False and no application may reset an access (apps[…]."
-                                   "provisioning with the scope users:reset): whoever loses their authenticator app "
-                                   "is locked out until the application's own code removes the TOTP (totp_disable, "
-                                   "grant_mfa_enrollment, create_signin_link) — the admin panel cannot."))
+        warnings.append(_t(config, "recovery_codes_enabled=False, the admin panel is off and no application may reset "
+                                   "an access (apps[…].provisioning with the scope users:reset): whoever loses their "
+                                   "authenticator app is locked out until the operator runs `tinysesam reset-totp` on "
+                                   "the database or the application's own code removes the TOTP (totp_disable, "
+                                   "grant_mfa_enrollment, create_signin_link)."))
 
 
 def _approver_roles(config, raw: dict, known: set, error: list, warnings: list) -> None:
