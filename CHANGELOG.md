@@ -88,6 +88,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   of 0.31.0. Whoever comes from 0.30.x works through both lists. The hygiene test checks each series (vX.Y.0 up to the
   next series, the latest up to `HEAD`) against its own list between the markers `upgrade-list X.Y.x`; a series with a
   breaking commit and no list, or a list in one of the two files only, is red.
+- Shared test kit 0.73.0 (from 0.69.0): the new check for unused dependencies (`scripts/_abhaengigkeiten.py`) runs in
+  the `audit` workflow — deptry over `pyproject.toml` and `deploy/gateway/requirements.in`, `go mod tidy -diff` over
+  every `go.mod`, cargo-machete over `clients/rust` — and is red at once (no `warn_until`): its findings are fixed here.
+  `starlette` is declared (imported directly, so far only pulled in by FastAPI; floor 1.3.1 in the measured-floor
+  table, the gateway lock list regenerated), `.github/audit/go.sum` is tidy, and the gateway's lock-list input names
+  TinySesam's own dependencies on purpose (allow list with reasons in `.github/abhaengigkeiten.json`). The release
+  automation writes the downloaded grype owner-only (0o700, kit 0.71), so the CodeQL acceptance of alert 447 is gone;
+  the text lane no longer counts an ignore file or a mention behind another folder as a reader (kit 0.70, 0.72).
 - Shared test kit 0.69.0 (from 0.63.0): fast-forward auto-merge, the sprint lane (a pull request into `sprint/<name>`
   runs only the fast checks, the full suite runs once in the closing pull request), and the Dependabot auto-merge holds
   a pin pull request of a breaking release as a draft. The hygiene test allows the hold — exactly the whole line

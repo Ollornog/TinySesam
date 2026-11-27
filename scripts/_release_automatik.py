@@ -430,8 +430,24 @@ def behebbare_treffer(grype_json: str, schwelle: str = "High") -> list[str]:
         raise Fehler(f"grype: keine JSON-Ausgabe ({e})") from e
     if not isinstance(bericht, dict) or not isinstance(bericht.get("matches"), list):
         raise Fehler("grype: Bericht ohne `matches` — Format unbekannt, kein Urteil")
+    return sorted({f["zeile"] for f in _behebbare(bericht, schwelle)})
+
+
+def behebbare_funde(grype_json: str, schwelle: str = "High") -> list[dict]:
+    """Like `behebbare_treffer`, one dict per finding: id, schwere, paket, version, fix, pfade (locations in the image),
+    zeile (the line of `behebbare_treffer`). For the image audit (kit 0.72.0), whose exceptions name a path prefix."""
+    try:
+        bericht = json.loads(grype_json)
+    except ValueError as e:
+        raise Fehler(f"grype: keine JSON-Ausgabe ({e})") from e
+    if not isinstance(bericht, dict) or not isinstance(bericht.get("matches"), list):
+        raise Fehler("grype: Bericht ohne `matches` — Format unbekannt, kein Urteil")
+    return _behebbare(bericht, schwelle)
+
+
+def _behebbare(bericht: dict, schwelle: str) -> list[dict]:
     grenze = SCHWERE.index(schwelle)
-    aus: set[str] = set()
+    aus: list[dict] = []
     for t in bericht["matches"]:
         v = t.get("vulnerability") or {}
         fix = v.get("fix") or {}
@@ -441,8 +457,11 @@ def behebbare_treffer(grype_json: str, schwelle: str = "High") -> list[str]:
         if fix.get("state") != "fixed" or not fix.get("versions"):
             continue
         a = t.get("artifact") or {}
-        aus.add(f"{v.get('id', '?')} {schwere} {a.get('name', '?')} {a.get('version', '?')} → {', '.join(fix['versions'])}")
-    return sorted(aus)
+        pfade = sorted({str(o.get("path")) for o in a.get("locations") or [] if isinstance(o, dict) and o.get("path")})
+        zeile = f"{v.get('id', '?')} {schwere} {a.get('name', '?')} {a.get('version', '?')} → {', '.join(fix['versions'])}"
+        aus.append({"id": str(v.get("id", "?")), "schwere": schwere, "paket": a.get("name", "?"),
+                    "version": a.get("version", "?"), "fix": list(fix["versions"]), "pfade": pfade, "zeile": zeile})
+    return aus
 
 
 def dockerfile_fuer(abbild: str, konfig: dict, dateien: list[str]) -> str | None:
@@ -783,9 +802,12 @@ def grype_holen(bild: str, ziel: str) -> str:
         eintrag = tar.getmember("grype")
         if not eintrag.isfile():
             raise Fehler(f"grype {version}: kein Programm im Archiv")
-        with tar.extractfile(eintrag) as quelle, open(pfad, "wb") as aus:
+        # Owner only (0o700, CodeQL py/overly-permissive-file): the runner user runs it, nobody else needs to read or
+        # run the program. Created with that mode (no window with umask rights) and set again (umask cannot widen it).
+        fd = os.open(pfad, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o700)
+        with tar.extractfile(eintrag) as quelle, os.fdopen(fd, "wb") as aus:
             aus.write(quelle.read())
-    os.chmod(pfad, 0o755)
+            os.fchmod(aus.fileno(), 0o700)
     return pfad
 
 
@@ -918,6 +940,156 @@ def _neubau_pruefen(root: str, k: dict, tag: str, abbilder: list[str], dateien: 
     return gruende
 
 
+# ── image audit in the PR CI (kit 0.72.0) ─────────────────────────────────────────────────────────────────────────────
+# Todo @8fc1e1 (S2 2026-11-27, PO "only dependencies that are used, checked at build time"): the weekly rebuild sees a
+# finding only in a released image; a Dependabot PR on a base image or a new package reached main unchecked. Taken over
+# from a private repo's job `image-probe` (scripts/abbild-audit.sh, since 2026-10-15): after the build in the PR CI grype
+# scans the fresh image. Red: a finding WITH a fix at High or above that no valid exception covers. Exceptions live in
+# a text file with reason and expiry (grype's own `.grype.yaml` has no expiry; it still counts, as in `neubau`):
+#
+#     <vulnerability id>  <path prefix in the image>  <valid until YYYY-MM-DD>  <reason>
+#
+# A line without reason, with a bad date, expired or more than 90 days ahead is red; an exception that covers no
+# finding any more is a notice (remove it). Warning, never red: the final stage is not slim (distroless, static,
+# alpine, slim, scratch, chainguard, wolfi, busybox) and the Dockerfile gives no reason (`# runtime-base: <reason>`).
+
+AUSNAHME_TAGE = 90
+# grype source schemes; anything else is a local docker image (`name:tag`, whose `:` is no scheme).
+GRYPE_QUELLE = re.compile(r"^(docker|docker-archive|oci-archive|oci-dir|registry|podman|dir|file|sbom):")
+SCHLANK = re.compile(r"(?i)(distroless|/static|static-debian|alpine|-slim|slim-|:slim|scratch|chainguard|wolfi|busybox)")
+SCHLANK_GRUND = re.compile(r"(?im)^\s*#\s*runtime-base:\s*\S")
+
+
+def ausnahmen_lesen(text: str, heute: datetime.date) -> tuple[list[dict], list[str]]:
+    """Exception lines of the image audit: (rules, errors). Comment and empty lines are skipped. A rule is
+    {id, praefix, bis, grund, zeile}; every broken line is an error (red), never silently skipped."""
+    regeln: list[dict] = []
+    fehler: list[str] = []
+    for nr, roh in enumerate(text.splitlines(), 1):
+        z = roh.strip()
+        if not z or z.startswith("#"):
+            continue
+        teile = z.split(None, 3)
+        if len(teile) < 4 or not teile[3].strip():
+            fehler.append(f"line {nr}: expected `<id> <path prefix> <YYYY-MM-DD> <reason>`: {z}")
+            continue
+        vid, praefix, datum, grund = teile
+        try:
+            bis = datetime.date.fromisoformat(datum) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", datum) else None
+        except ValueError:
+            bis = None
+        if bis is None:
+            fehler.append(f"line {nr}: {datum!r} is no date YYYY-MM-DD")
+            continue
+        if bis < heute:
+            fehler.append(f"line {nr}: exception for {vid} expired on {bis} — fix it or give a new reason")
+            continue
+        if bis > heute + datetime.timedelta(days=AUSNAHME_TAGE):
+            fehler.append(f"line {nr}: exception for {vid} runs until {bis}, more than {AUSNAHME_TAGE} days ahead")
+            continue
+        if not praefix.startswith("/"):
+            fehler.append(f"line {nr}: path prefix {praefix!r} must start with /")
+            continue
+        regeln.append({"id": vid, "praefix": praefix, "bis": bis, "grund": grund.strip(), "zeile": nr})
+    return regeln, fehler
+
+
+def abbild_urteil(funde: list[dict], regeln: list[dict]) -> tuple[list[dict], set[int]]:
+    """(findings no rule covers, line numbers of the rules that covered something). A rule covers a finding when the id
+    matches and EVERY location of the finding starts with its prefix (a finding without location is never covered)."""
+    offen: list[dict] = []
+    genutzt: set[int] = set()
+    for f in funde:
+        treffer = [r for r in regeln
+                   if r["id"] == f["id"] and f["pfade"] and all(p.startswith(r["praefix"]) for p in f["pfade"])]
+        if treffer:
+            genutzt.update(r["zeile"] for r in treffer)
+        else:
+            offen.append(f)
+    return offen, genutzt
+
+
+def laufzeit_schlank(dockerfile: str) -> tuple[bool, str]:
+    """Is the final stage slim, or does the Dockerfile give a reason? (ok, description)."""
+    _extern, final = basis_kandidaten(dockerfile)
+    if SCHLANK_GRUND.search(dockerfile):
+        return True, f"final base `{final}`, reason given (`# runtime-base:`)"
+    if final is None:
+        return False, "final FROM not resolvable"
+    if final == "scratch" or SCHLANK.search(final):
+        return True, f"final base `{final}` is slim"
+    return False, f"final base `{final}` is not slim (distroless/static/alpine/slim) and no `# runtime-base: <reason>`"
+
+
+def grype_pin_aus_kit(root: str) -> str:
+    """The pinned grype image of the kit (tests/_kit/grype.Dockerfile, raised by Dependabot in repokit), "" if absent."""
+    for rel in ("tests/_kit/grype.Dockerfile", "kit/tests/_kit/grype.Dockerfile"):
+        pfad = os.path.join(root, rel)
+        if os.path.exists(pfad):
+            with open(pfad, encoding="utf-8") as fh:
+                for zeile in fh:
+                    m = re.match(r"^FROM\s+(\S+)\s*$", zeile.strip())
+                    if m:
+                        return m.group(1)
+    return ""
+
+
+def abbild_pruefen(root: str, quellen: list[str], schwelle: str, ausnahmen: str, dockerfiles: list[str],
+                   heute: datetime.date | None = None) -> int:
+    """The image audit: 0 = nothing open, 1 = open findings or broken exceptions. Fehler (rc 1 in main) when grype or a
+    report cannot be read — a scan that saw nothing is no "0 findings"."""
+    heute = heute or _heute()
+    zeilen: list[str] = []
+    rot = False
+    regeln: list[dict] = []
+    pfad = os.path.join(root, ausnahmen)
+    if os.path.exists(pfad):
+        with open(pfad, encoding="utf-8") as fh:
+            regeln, kaputt = ausnahmen_lesen(fh.read(), heute)
+        for k in kaputt:
+            print(f"::error file={ausnahmen}::{k}", file=sys.stderr)
+            zeilen.append(f"- exceptions {ausnahmen}: {k}")
+        rot = rot or bool(kaputt)
+    for df in dockerfiles:
+        with open(os.path.join(root, df), encoding="utf-8") as fh:
+            ok, text = laufzeit_schlank(fh.read())
+        zeilen.append(f"- runtime {df}: {text}")
+        if not ok:
+            print(f"::warning file={df}::{text}")
+    werkbank = tempfile.mkdtemp(prefix="abbild-")
+    genutzt: set[int] = set()
+    try:
+        grype = os.environ.get("GRYPE_BIN") or grype_holen(os.environ.get("GRYPE_IMAGE") or grype_pin_aus_kit(root),
+                                                           werkbank)
+        for quelle in quellen:
+            ref = quelle if GRYPE_QUELLE.match(quelle) else f"docker:{quelle}"
+            argv = [grype, ref, "-o", "json"]
+            if os.path.exists(os.path.join(root, ".grype.yaml")):
+                argv += ["-c", os.path.join(root, ".grype.yaml")]
+            funde = behebbare_funde(_lauf(argv), schwelle)
+            offen, g = abbild_urteil(funde, regeln)
+            genutzt |= g
+            if offen:
+                rot = True
+                zeilen.append(f"- `{quelle}`: {len(offen)} fixable finding(s) at {schwelle} or above without exception:")
+                for f in sorted(offen, key=lambda x: x["zeile"])[:30]:
+                    zeilen.append(f"  - {f['zeile']} ({', '.join(f['pfade']) or 'no location'})")
+                    print(f"::error::{quelle}: {f['zeile']}", file=sys.stderr)
+            else:
+                zeilen.append(f"- `{quelle}`: nothing fixable at {schwelle} or above"
+                              + (f" ({len(funde)} covered by exceptions)" if funde else ""))
+    finally:
+        shutil.rmtree(werkbank, ignore_errors=True)
+    for r in regeln:
+        if r["zeile"] not in genutzt:
+            zeilen.append(f"- exception line {r['zeile']} ({r['id']} {r['praefix']}) covers no finding — remove it")
+            print(f"::notice file={ausnahmen}::exception line {r['zeile']} ({r['id']}) covers no finding — remove it")
+    urteil = "**Red** — fix the image or add a dated exception." if rot else "**Green**"
+    _zusammenfassung(f"### Image audit (grype)\n\n{urteil}\n\n" + "\n".join(zeilen) + "\n")
+    print("\n".join(zeilen))
+    return 1 if rot else 0
+
+
 def anhaenge(repo: str, tag: str, ziel: str, basis: str, regeln: list[tuple[str, str]]) -> tuple[dict[str, bytes], dict[str, str]]:
     """Release-Anhänge für den Pin-PR: (Pfad → Bytes nur für abweichende Dateien, Pfad → Modus der bestehenden Datei).
 
@@ -1019,16 +1191,27 @@ def fc_pin(root: str, repo: str, tag: str, ziel: str, digests: dict[str, str] | 
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="_release_automatik.py")
-    p.add_argument("schritt", choices=["vorbereiten", "taggen", "fc-pin", "naechste", "neubau"])
+    p.add_argument("schritt", choices=["vorbereiten", "taggen", "fc-pin", "naechste", "neubau", "abbild-pruefen"])
+    # abbild-pruefen (kit 0.72.0): grype sources of freshly built images (`name:tag` = local docker image).
+    p.add_argument("quellen", nargs="*")
+    p.add_argument("--schwelle", "--threshold", dest="schwelle", choices=["High", "Critical"], default="High")
+    p.add_argument("--ausnahmen", "--exceptions", dest="ausnahmen", default=".github/abbild-ausnahmen.txt")
+    p.add_argument("--dockerfile", action="append", default=[])
     p.add_argument("--version", default="")
     p.add_argument("--tag", default="")
     # --target: dieselbe Option englisch — Repos mit Englisch-Wächter über ihre Workflows (TinySesam) rufen sie so.
     p.add_argument("--ziel", "--target", dest="ziel", default="")
     p.add_argument("--root", default=os.getcwd())
     p.add_argument("--basis", default="main")
-    a = p.parse_args(argv)
+    a = p.parse_intermixed_args(argv)   # images may stand after the options (abbild-pruefen)
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     try:
+        if a.schritt == "abbild-pruefen":
+            if not a.quellen:
+                raise Fehler("abbild-pruefen: no image given")
+            return abbild_pruefen(a.root, a.quellen, a.schwelle, a.ausnahmen, a.dockerfile)
+        if a.quellen:
+            raise Fehler(f"{a.schritt}: unexpected arguments {a.quellen}")
         if a.schritt == "naechste":
             print(vorbereiten(a.root, repo, a.basis, trocken=True))
             return 0

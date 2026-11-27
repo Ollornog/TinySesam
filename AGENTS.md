@@ -121,8 +121,10 @@ already hold one.
 - `scripts/check.sh` needs a Python that imports FastAPI; without one it builds `.venv` with `uv`.
 - The suites lower the password-hash cost only inside the test process (`tests/_starter.py`); a suite started
   directly hashes with production parameters and is slower.
-- `tests/_kit/`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`, `.githooks/pre-push`
-  and `backlog/README-KONVENTION.md` come from a shared kit: do not edit them here.
+- `tests/_kit/`, `scripts/_backlog.py`, `scripts/_nur_text.sh`, `scripts/_residue_check.sh`,
+  `scripts/_abhaengigkeiten.py`, `.githooks/pre-push` and `backlog/README-KONVENTION.md` come from a shared kit: do not
+  edit them here. The unused-dependency check runs in the `audit` workflow; exceptions with reasons go into
+  `.github/abhaengigkeiten.json`.
 - A change only to Markdown in the root, `docs/` or `backlog/` takes the text fast path of `scripts/check.sh`: only
   the hygiene test runs (it still executes the Python blocks of this file and checks the names in it).
 - CodeQL findings are fixed in code. A real false positive may be dismissed via the API (reason plus comment) and

@@ -4,6 +4,7 @@
 # uv ecosystem recompiles exactly ONE .in file (2026-10-10): the line-by-line pip update did not add new
 # transitive dependencies (fastapi 0.142 → opentelemetry-api, #126).
 fastapi>=0.165.0
+starlette>=1.10.0
 cryptography>=50.0
 pyotp>=2.12.1
 python-multipart>=0.0.34

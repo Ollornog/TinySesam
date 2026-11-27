@@ -1,0 +1,13 @@
+{
+  "_comment": "Unused-dependency check of the shared kit (scripts/_abhaengigkeiten.py, kit 0.73.0), run by the audit workflow. deploy/gateway/requirements.in is no app manifest of its own: it is the one input of the gateway image's hashed lock list, it repeats the dependencies + extra gateway of pyproject.toml (tests/test_repo.py keeps both equal), and the image installs it with --no-deps before TinySesam itself. The packages are imported by tinysesam, not by the image's own setup script.",
+  "allow": {
+    "deploy/gateway/requirements.in": {
+      "fastapi": "lock-list input of the gateway image: TinySesam's own dependency, installed --no-deps before the package",
+      "starlette": "lock-list input of the gateway image: TinySesam's own dependency, installed --no-deps before the package",
+      "cryptography": "lock-list input of the gateway image: TinySesam's own dependency, installed --no-deps before the package",
+      "pyotp": "lock-list input of the gateway image: TinySesam's own dependency, installed --no-deps before the package",
+      "httpx": "lock-list input of the gateway image: extra gateway of TinySesam, installed --no-deps before the package",
+      "authlib": "lock-list input of the gateway image: extra gateway of TinySesam, installed --no-deps before the package"
+    }
+  }
+}
