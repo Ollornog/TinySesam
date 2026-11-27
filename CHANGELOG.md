@@ -13,6 +13,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   and in `entscheiden` the read-only app token for the source repo, no other action.
 - The hygiene test no longer carries branches for test kits before 0.65: the release automation's halt must be the
   0.65+ shape (green with a notice), and every whole-line permission of the auto-merge must be met (T-128).
+- CodeQL notes fixed in code (unused imports, a module imported both ways); four `py/overly-permissive-file` findings
+  that resurfaced at moved lines — the 0640 security log and three negative tests — are dismissed with their reason
+  and recorded in `.github/codeql/accepted.md`.
 
 ## [0.31.0] — 2026-11-26
 

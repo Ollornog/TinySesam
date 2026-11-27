@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import importlib
 import inspect
 import json
 import re
@@ -119,7 +120,7 @@ def signature(fn) -> str:
 
 def gate_client_entry(name: str) -> str:
     """One name of `tinysesam.gate_client` (a module-level name or `Class.member`) with signature and first sentence."""
-    from tinysesam import gate_client as module
+    module = importlib.import_module("tinysesam.gate_client")   # not `from tinysesam import …` (see above)
     owner, _, member = name.partition(".")
     obj = getattr(module, owner)
     if member:

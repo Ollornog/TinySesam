@@ -19,10 +19,9 @@ from tinysesam import __version__ as TS_VERSION  # noqa: E402
 # Before the first web import: the website generator exists only in the repo, not in the sdist.
 # A precondition that comes AFTER the import is too late — the
 # ModuleNotFoundError has already been thrown.
-import pathlib  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
 
-braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
+braucht((Path(__file__).resolve().parent.parent / "web").is_dir(),
         "no `web/` — the website generator lives only in the repo, not in the sdist")
 
 from web.flows import FLOWS, render                       # noqa: E402
