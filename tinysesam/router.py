@@ -1629,6 +1629,7 @@ def build_router(auth) -> APIRouter:
         # Without `cookie_secure` it therefore stays with the config value: locally/in the TestClient the
         # POST is same-site and gets through, for a real IdP this setup is none anyway.
         _SAMLFLOW = "tinysesam_saml_flow"
+        _SAMLAPV = "samlapv:"       # flow row: the approval an AuthnRequest was sent for (T-99), keyed by its ID
 
         # SAML builds its own entity ID and the ACS URL from the base. If it comes from the
         # Host header, a foreign name migrates into the AuthnRequest and the metadata —
@@ -1637,13 +1638,19 @@ def build_router(auth) -> APIRouter:
             return auth.require_public_base(request, _saml_base(request))
 
         @r.get("/auth/saml/login")
-        def saml_login(request: Request, next: str = "", reauth: str = ""):
+        def saml_login(request: Request, next: str = "", reauth: str = "", approval: str = ""):
             base = _saml_base_url(request)
             # T-70: `reauth=1` (the confirmation page's provider button) sends `ForceAuthn="true"`; the request
             # remembers it and when it was sent, the ACS confirms only with an `AuthnInstant` from after that.
             # Passed only when asked: a client set by hand (`auth.saml = own_client`) without the argument keeps working.
-            force = {"force_authn": True} if reauth and cfg.saml_reauth_check else {}
+            # T-99: `approval=<id>` (an approval page's provider button) — always `ForceAuthn`, and a fresh `AuthnInstant`
+            # becomes the step-up of THAT approval only (the ACS leaves a one-time grant, as `/auth/oidc/start` does).
+            from .approvals import valid_id as _approval_id
+            bound = approval if (cfg.approvals_enabled and cfg.saml_reauth_check and _approval_id(approval)) else ""
+            force = {"force_authn": True} if (reauth or bound) and cfg.saml_reauth_check else {}
             url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next, request), **force)
+            if bound and rid:
+                auth.store.put_flow(_SAMLAPV + rid, {"approval": bound}, ttl=600)
             resp = RedirectResponse(url, 303)
             # `__Host-` in front where possible (A-1) — otherwise a neighbour subdomain sets the anchor.
             auth._set_flow_cookie(resp, _SAMLFLOW, rid or "", max_age=600,
@@ -1661,8 +1668,8 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(429, auth.t("err.rate"))
             form = await request.form()
             base = _saml_base_url(request)
-            data = auth.saml.process(_saml_req(request, form), base,
-                                     request_id=request.cookies.get(auth.flow_cookie_name(_SAMLFLOW)) or "")
+            rid = request.cookies.get(auth.flow_cookie_name(_SAMLFLOW)) or ""
+            data = auth.saml.process(_saml_req(request, form), base, request_id=rid)
             if not data:
                 # NOT the magic-link page ("this link is invalid, expired or already
                 # used") — this was about no link, and the message sent the first
@@ -1675,6 +1682,8 @@ def build_router(auth) -> APIRouter:
                 # `_check_saml` itself into the audit log — here only the answer to the browser.
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "", request)
+            # The approval this request was sent for — read once, bound to the request ID `process` just redeemed.
+            approval = str((auth.store.pop_flow(_SAMLAPV + rid) or {}).get("approval") or "") if rid else ""
             # T-70 (ASVS 5.0 6.8.4, SAML 2.0 Core §2.7.2 `AuthnInstant`): when did the person really authenticate at
             # the provider? A round through its running session is silent — up to 0.31.x it counted as a fresh
             # confirmation: a step-up on a full session, a new session "signed in now". With `saml_reauth_check` the
@@ -1688,6 +1697,15 @@ def build_router(auth) -> APIRouter:
             stepping_up = bool(before and before["user_id"] == u["id"] and before["mfa_ok"])
             if cfg.saml_reauth_check and stepping_up and not provider_fresh:
                 age = "missing" if authenticated is None else (asked - authenticated if asked else "unknown")
+                if approval:
+                    # The approval page asked for a sign-in and the provider did not do one: no grant — back to the
+                    # page, which says so. Fail-closed also without `AuthnInstant`.
+                    auth.audit("saml_reauth_stale", str(u["username"]), ip, f"approval={approval} authn_instant={age}")
+                    resp = RedirectResponse(auth.browser_path(request, f"/auth/approvals/{approval}")
+                                            + "?stepup=stale-saml", 303)
+                    auth._delete_flow_cookie(resp, _SAMLFLOW,
+                                             samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
+                    return resp
                 if data.get("reauth"):
                     # The confirmation page asked for a sign-in (`ForceAuthn`) and the provider did not do one: no
                     # step-up — the page says so instead of a silent success.
@@ -1721,6 +1739,10 @@ def build_router(auth) -> APIRouter:
             if is_new and authenticated is not None and not (before and before["user_id"] == u["id"]):
                 # A NEW session: its confirmation dates from the provider's sign-in, not from this round (T-70).
                 auth.store.backdate_confirmation(token, authenticated)
+            if approval and stepping_up and provider_fresh and authenticated is not None:
+                # The step-up of one approval: consumed once by `POST /auth/approvals/{id}` of this account (T-99).
+                auth.store.put_flow("apvsaml:" + approval, {"user_id": int(u["id"]), "auth_time": int(authenticated)},
+                                    ttl=300)
             resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)

@@ -1663,7 +1663,14 @@ def _approval(auth, ctx) -> str:
             back = f"/auth/approvals/{a.get('id', '')}"
             extra += (f"<a class=btn2 id=apvoidc href='__TS_P__/auth/oidc/start?approval={_e(a.get('id', ''))}"
                       f"&amp;next={_next_q('__TS_P__' + back)}'>{_e(t('reauth.oidc', name=auth.cfg.oidc_name))}</a>")
-    nothing = "" if methods else f"<div class=warnbar id=apvnomethod>{_e(t('apv.no_method'))}</div>"
+    if "saml" in methods:          # T-99: the same at the SAML provider (`ForceAuthn`)
+        if ctx.get("saml_ready"):
+            extra += f"<input type=hidden name=method value=saml><p class=hint id=apvsamlok>✓ {_e(t('apv.oidc_ready'))}</p>"
+        else:
+            back = f"/auth/approvals/{a.get('id', '')}"
+            extra += (f"<a class=btn2 id=apvsaml href='__TS_P__/auth/saml/login?approval={_e(a.get('id', ''))}"
+                      f"&amp;next={_next_q('__TS_P__' + back)}'>{_e(t('reauth.oidc', name=auth.cfg.saml_name))}</a>")
+    nothing ="" if methods else f"<div class=warnbar id=apvnomethod>{_e(t('apv.no_method'))}</div>"
     action = f"__TS_P__/auth/approvals/{_e(a.get('id', ''))}{_e(_app_q(ctx))}"
     body = (f"{title}{summary}{warn}{table}"
             f"<label>{_e(t('apv.code_question'))}</label><div class=apvcode id=apvcode>{_e(a.get('match_code'))}</div>"

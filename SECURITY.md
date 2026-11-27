@@ -283,8 +283,9 @@ person opens the link in their browser session, confirms once more and decides. 
 - **A step-up per approval, never a time window.** Password, PIN or TOTP (what `stepup_options()` offers, so
   `stepup_methods` narrows it), a passkey whose WebAuthn challenge is SHA-256(`"tinysesam-approval:"` ‖ server
   nonce ‖ id ‖ payload hash) — single use, bound to exactly this action, so an agent driving the browser cannot replay
-  a gesture —, or a fresh sign-in at the provider (`prompt=login`, `max_age=0`) whose `auth_time` must be later than
-  the request (without `auth_time`: no approval, fail-closed). A fresh session does not count, and confirming an
+  a gesture —, or a fresh sign-in at the provider (OIDC: `prompt=login`, `max_age=0`, whose `auth_time` must be later
+  than the request; SAML, T-99: `ForceAuthn="true"`, whose `AuthnInstant` must be later — without the time: no
+  approval, fail-closed). The provider round leaves a one-time grant for THIS approval and this account only. A fresh session does not count, and confirming an
   approval does not make the session fresh. The secret checks run through the reauth page's lock, counter and
   fail2ban lines.
 - **The rights at confirmation time decide (E4).** TinySesam executes with the admin panel's own code

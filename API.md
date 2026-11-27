@@ -1210,7 +1210,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/reset` | `form:_csrf`, `form:password`, `form:token` |
 | GET | `/auth/resource/{name}` | `query:error`, `query:next` |
 | POST | `/auth/resource/{name}` | `form:_csrf`, `form:next`, `form:secret` |
-| GET | `/auth/saml/login` | `query:next`, `query:reauth` |
+| GET | `/auth/saml/login` | `query:approval`, `query:next`, `query:reauth` |
 | GET | `/auth/sessions` | — |
 | POST | `/auth/sessions/revoke` | — |
 | POST | `/auth/sessions/revoke-after-login` | — |

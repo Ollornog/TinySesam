@@ -1036,8 +1036,10 @@ The table `approval` (T-89, stage A) holds one request per row; `DROP TABLE appr
   line too (`user_roles`, `user_disable`, `apikey_revoke`) with the confirming person as actor.
 - **A flood of requests** from one key: revoke the key (`/auth/apikeys`, the panel). The limits answer `429` before.
 - **Step-up through the provider** needs `oidc_reauth_check` (default on) and a provider that sends `auth_time` with
-  `max_age=0`; without it an account that has only the provider cannot confirm (fail-closed) — give it a passkey or a
-  TOTP.
+  `max_age=0`; for SAML (T-99) `saml_reauth_check` (default on) and an identity provider that honours `ForceAuthn`
+  (a fresh `AuthnInstant`). Without it an account that has only the provider cannot confirm (fail-closed) — give it a
+  passkey or a TOTP. A refused SAML round sends the person back to the approval page with the reason (audit
+  `saml_reauth_stale approval=…`).
 
 ## Account API for applications: columns and lock value
 
