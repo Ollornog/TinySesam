@@ -175,6 +175,70 @@ for wf, exempt in LANE.items():
     print(f"  {wf}: gated {', '.join(sorted(gated))}; {len(follows) - len(gated)} job(s) follow; runs anyway: "
           f"{', '.join(exempt) or 'nothing'}")
 
+# ── Required checks of a called workflow: they must report in the lane too ───────────────────────────────────────────
+# A job that calls a reusable workflow (`uses:` at job level) produces the checks `<caller> / <inner job>`. When the
+# caller is SKIPPED, GitHub reports only `<caller>` and never the inner checks — a required `provenance / rebuild` then
+# hangs for good, the pull request stays blocked although everything is green (#395, a backlog-only pull request into
+# main after T-131). A skipped ordinary job does report "skipped" (green). So in every required workflow (the list the
+# auto-merge waits for, PFLICHT_WORKFLOWS) a caller must run whenever the lane skips the jobs it needs, and hand the
+# lane on as `skip`; the called workflow's jobs without `needs` skip by their OWN `if: !inputs.skip`. The caller sees
+# the lane in the `skipped` of a job it needs that carries exactly the lane's gate (that job skips only in the lane;
+# the kit allows `outputs.nur_text` in an `if:` only in the gate's form). For a tag `skip` is false whatever the
+# classifier answers. (Mutation probes: the old caller `needs: [build, checksums]` without `if:`; drop the `if:` of
+# `rebuild`; drop `github.ref_type != 'tag'` from `skip`; drop the success of `checksums` → each red.)
+CALLER_IF = "${{ !cancelled() && ("
+SKIP_INPUT = "skip: ${{ github.ref_type != 'tag' && needs.classify.outputs.nur_text == 'ja' }}"
+_am = (ROOT / ".github/workflows/dependabot-auto-merge.yml").read_text(encoding="utf-8")
+_m = re.search(r'PFLICHT_WORKFLOWS: "([^"]+)"', _am)
+assert _m, "dependabot-auto-merge.yml: PFLICHT_WORKFLOWS missing"
+_callers_seen = 0
+for wf in _m.group(1).split():
+    jobs = jobs_of((ROOT / ".github/workflows" / wf).read_text(encoding="utf-8"))
+    # Jobs that skip in the lane: gated on classify, or needing one that is — unless their `if:` runs them anyway
+    # (`always()`, or the lane's own answer `nur_text == 'ja'`); asking for success of a skipped job skips too.
+    lane_skipped = set()
+    changed = True
+    while changed:
+        changed = False
+        for j, tx in jobs.items():
+            if j in lane_skipped or re.search(r"^    uses: ", tx, re.M):
+                continue
+            cond = if_of(tx)
+            if GATE in cond or (any(n in lane_skipped for n in needs_of(tx)) and
+                                cond != "${{ always() }}" and "needs.classify.outputs.nur_text == 'ja'" not in cond):
+                lane_skipped.add(j)
+                changed = True
+    for j, tx in jobs.items():
+        m_uses = re.search(r"^    uses: (\S+)", tx, re.M)
+        if not m_uses:
+            continue
+        _callers_seen += 1
+        cond, before = if_of(tx), [n for n in needs_of(tx) if n in lane_skipped]
+        if not before:
+            assert not cond, f"{wf}/{j}: a call with its own `if: {cond}` — when it skips, `{j} / <job>` never reports"
+            continue
+        gates = [n for n in before if if_of(jobs[n]) == GATE + " }}"]
+        assert "classify" in needs_of(tx) and cond.startswith(CALLER_IF) and \
+            any(f"(needs.{g}.result == 'skipped' || (" in cond for g in gates), \
+            f"{wf}/{j}: needs {before}, which skip in the sprint/text lane, and would skip with them — then its " \
+            f"required checks `{j} / <job>` never report. Run it in the lane: " \
+            f"`if: {CALLER_IF}needs.<gated job>.result == 'skipped' || (<success of the others>)) }}}}`"
+        rest = [n for n in before if f"needs.{n}.result == 'skipped'" not in cond]
+        assert rest and all(f"needs.{n}.result == 'success'" in cond for n in rest), \
+            f"{wf}/{j}: outside the lane it must ask for `needs.<job>.result == 'success'` of {rest}"
+        assert SKIP_INPUT in [z.strip() for z in tx.splitlines()], \
+            f"{wf}/{j}: hands the lane on without `{SKIP_INPUT}` (never skipped for a tag)"
+        called = (ROOT / m_uses.group(1)).read_text(encoding="utf-8")
+        assert re.search(r"^      skip:\s*$", called.split("\njobs:\n", 1)[0], re.M), \
+            f"{m_uses.group(1)}: no input `skip`"
+        for inner, itx in jobs_of(called).items():
+            if not needs_of(itx):
+                assert "!inputs.skip" in if_of(itx), \
+                    f"{m_uses.group(1)}/{inner}: without `if: ${{{{ !inputs.skip }}}}` the check `{j} / {inner}` runs " \
+                    f"in the lane (or, skipped by the caller, never reports)"
+        print(f"  {wf}: call `{j}` runs in the lane and hands on `skip`; {m_uses.group(1)} skips by its own `if:`")
+assert _callers_seen, "no reusable call found in the required workflows — adjust guard (release.yml calls build-provenance.yml)"
+
 # ── The classify script, run against a pull request's merge commit ───────────────────────────────────────────────────
 classify_script, _ = step_script(classify_ci, "Classify")
 GIT = ["git", "-c", "user.name=probe", "-c", "user.email=probe@example.com", "-c", "commit.gpgsign=false",

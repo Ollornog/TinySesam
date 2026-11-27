@@ -109,6 +109,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   withdraws the mapped roles and the provider's admin flag: a missing claim is not an empty list (T-99). Only a claim
   that is there synchronises, an empty one included; a missing one leaves the roles and writes a warning to the
   security log. The periodic re-check already followed this rule; `allowed_groups` still refuses such a sign-in.
+- CI: a text-only pull request into main (and every sprint pull request) no longer stays blocked by the required
+  check `provenance / rebuild` that never reported. Since the sprint and text lane (T-131) `build` and `checksums`
+  skip there, and a skipped call of the reusable `build-provenance.yml` reports only the caller. The call now runs in
+  the lane, hands on `skip` (never for a tag) and `rebuild` skips by its own condition, so its check reports
+  "skipped". `tests/test_ci_aggregate.py` demands that form for every reusable call in a required workflow.
 
 ## [0.31.0] — 2026-11-26
 
