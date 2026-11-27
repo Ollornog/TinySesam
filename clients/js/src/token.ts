@@ -15,7 +15,16 @@ export const MAX_LIFETIME = 3600;
 const TOKEN_ALGORITHM = 'EdDSA';
 const TOKEN_TYPE = 'tinysesam-gate+jwt';
 const ALLOWED_HEADER_MEMBERS: ReadonlySet<string> = new Set(['alg', 'typ', 'kid']);
-const IDENTITY_CLAIMS = ['ts_user', 'ts_name', 'ts_email', 'ts_groups', 'ts_id', 'ts_auth', 'ts_kind'] as const;
+const IDENTITY_CLAIMS = [
+  'ts_user',
+  'ts_name',
+  'ts_email',
+  'ts_groups',
+  'ts_id',
+  'ts_auth',
+  'ts_kind',
+  'ts_perms',
+] as const;
 const SIGNATURE_BYTES = 64;
 const MAX_SAFE = 2n ** 53n - 1n;
 const INTEGER_TEXT = /^-?[0-9]+$/;
@@ -247,5 +256,6 @@ export function identityFromClaims(c: Claims): Identity {
     id: c.sub,
     auth: str('ts_auth'),
     accountKind: str('ts_kind'),
+    permissions: str('ts_perms'),
   });
 }

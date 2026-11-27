@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,8 +18,8 @@ import (
 const vectorDir = "../../spec/vectors"
 
 // Every file in spec/vectors/ must be run by one of these; a new file without a runner fails the suite.
-var vectorFiles = []string{"account.json", "approval.json", "headers.json", "jwks.json", "keys.json", "token.json",
-	"topbar.json"}
+var vectorFiles = []string{"account.json", "approval.json", "headers.json", "jwks.json", "keys.json",
+	"permissions.json", "token.json", "topbar.json"}
 
 // The format each file must declare: approval.json belongs to spec/approval-token.md (version 1), the others to
 // spec/gate-client.md (version 2).
@@ -112,8 +113,11 @@ func tokenGate(t testing.TB, jwks any, issuer, audience string, leeway, now int6
 func checkIdentity(t *testing.T, id string, got *Identity, expected map[string]any) {
 	t.Helper()
 	if want, ok := expected["identity"]; ok {
-		if !reflect.DeepEqual(normalize(t, got), want) {
-			t.Errorf("%s: identity %v, want %v", id, normalize(t, got), want)
+		// token.json and headers.json list the identity without permissions; permissions.json checks those.
+		have := normalize(t, got).(map[string]any)
+		delete(have, "permissions")
+		if !reflect.DeepEqual(have, want) {
+			t.Errorf("%s: identity %v, want %v", id, have, want)
 		}
 	}
 	if roles, ok := expected["has_role"].(map[string]any); ok {
@@ -455,4 +459,93 @@ func TestKeyVectors(t *testing.T) {
 			t.Errorf("%s: seed does not belong to the public key", name)
 		}
 	}
+}
+
+func checkPermissions(t *testing.T, id string, ident *Identity, err error, want map[string]any) {
+	t.Helper()
+	if want["ok"] != true {
+		if err == nil {
+			t.Errorf("%s: accepted, want %v", id, want["error"])
+		} else if got := ClassOf(err); string(got) != want["error"] {
+			t.Errorf("%s: class %q, want %q", id, got, want["error"])
+		}
+		return
+	}
+	if err != nil {
+		t.Errorf("%s: refused (%v), want ok", id, err)
+		return
+	}
+	if !reflect.DeepEqual(normalize(t, ident.Permissions), want["permissions"]) {
+		t.Errorf("%s: permissions %v, want %v", id, ident.Permissions, want["permissions"])
+	}
+	if checks, ok := want["has_permission"].(map[string]any); ok {
+		for p, w := range checks {
+			if ident.HasPermission(p) != w.(bool) {
+				t.Errorf("%s: HasPermission(%q) = %v, want %v", id, p, ident.HasPermission(p), w)
+			}
+		}
+	}
+}
+
+func TestPermissionVectors(t *testing.T) {
+	doc := loadVectors(t, "permissions.json")
+	count := 0
+	for _, raw := range doc["headers"].([]any) {
+		v := raw.(map[string]any)
+		h := http.Header{}
+		for name, val := range v["input"].(map[string]any)["headers"].(map[string]any) {
+			switch x := val.(type) {
+			case string:
+				h[name] = []string{latin1(t, x)}
+			case []any:
+				for _, item := range x {
+					h[name] = append(h[name], latin1(t, item.(string)))
+				}
+			}
+		}
+		ident, err := IdentityFromHeaders(h)
+		checkPermissions(t, "headers/"+v["id"].(string), ident, err, v["expected"].(map[string]any))
+		count++
+	}
+	for _, raw := range doc["tokens"].([]any) {
+		v := raw.(map[string]any)
+		in := v["input"].(map[string]any)
+		g := tokenGate(t, in["jwks"], in["issuer"].(string), in["audience"].(string), num(t, in["leeway"]),
+			num(t, in["now"]))
+		ident, _, err := g.Verify(context.Background(), in["jws"].(string))
+		checkPermissions(t, "tokens/"+v["id"].(string), ident, err, v["expected"].(map[string]any))
+		count++
+	}
+	for _, raw := range doc["register"].([]any) {
+		v := raw.(map[string]any)
+		id := "register/" + v["id"].(string)
+		in, want := v["input"].(map[string]any), v["expected"].(map[string]any)
+		list, isList := in["permissions"].([]any)
+		if !isList {
+			// A manifest that is no list cannot even be passed in Go: refused by the type.
+			if want["ok"] != false || want["error"] != "invalid" {
+				t.Errorf("%s: a manifest that is no list must be invalid", id)
+			}
+			count++
+			continue
+		}
+		req, err := RegisterRequest(in["base_url"].(string), in["app"].(string), list)
+		if want["ok"] != true {
+			if !errors.Is(err, ErrManifest) {
+				t.Errorf("%s: accepted (%v), want invalid", id, err)
+			}
+		} else if err != nil {
+			t.Errorf("%s: refused (%v), want ok", id, err)
+		} else {
+			got := map[string]any{"method": req.Method, "url": req.URL, "body": req.Body}
+			if !reflect.DeepEqual(normalize(t, got), normalize(t, want["request"])) {
+				t.Errorf("%s: request %v, want %v", id, got, want["request"])
+			}
+		}
+		count++
+	}
+	if count == 0 {
+		t.Fatal("no permission vectors")
+	}
+	t.Logf("%d permission vectors", count)
 }

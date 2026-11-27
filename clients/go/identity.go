@@ -38,6 +38,23 @@ type Identity struct {
 	Kind   Kind     `json:"kind"`   // KindSession only when Auth is exactly "session"
 	// AccountKind is AccountUser or AccountService, never empty: a request without it is refused (spec v2).
 	AccountKind AccountKind `json:"account_kind"`
+	// Permissions are the account's permissions for this application (spec section 3.4, Remote-Permissions or
+	// ts_perms); never nil, empty when TinySesam sends none — which means "holds none", never "unknown".
+	Permissions []string `json:"permissions"`
+}
+
+// HasPermission reports whether permission is one of the permissions, compared exactly (spec section 3.4): no case
+// folding, no wildcard, and neither "admin" nor a role implies one.
+func (i *Identity) HasPermission(permission string) bool {
+	if i == nil {
+		return false
+	}
+	for _, p := range i.Permissions {
+		if p == permission {
+			return true
+		}
+	}
+	return false
 }
 
 // HasRole reports whether role is one of the groups, compared exactly: no case folding, no normalization, and no
@@ -111,16 +128,17 @@ func ParseGroups(s string) []string {
 	return out
 }
 
-// HeaderNames are the seven headers of header mode. TinySesam's forward_headers can rename them; an empty field keeps
-// the default name.
+// HeaderNames are the eight headers of header mode. TinySesam's forward_headers can rename them; an empty field keeps
+// the default name. Permissions is optional on the wire: missing or empty means none (spec section 3.4).
 type HeaderNames struct {
-	User, Name, Email, Groups, ID, Auth, Kind string
+	User, Name, Email, Groups, ID, Auth, Kind, Permissions string
 }
 
 // DefaultHeaderNames are the names TinySesam sends unless forward_headers renames them.
 var DefaultHeaderNames = HeaderNames{
 	User: "Remote-User", Name: "Remote-Name", Email: "Remote-Email",
 	Groups: "Remote-Groups", ID: "Remote-Id", Auth: "Remote-Auth", Kind: "Remote-Kind",
+	Permissions: "Remote-Permissions",
 }
 
 func (n HeaderNames) withDefaults() HeaderNames {
@@ -134,12 +152,12 @@ func (n HeaderNames) withDefaults() HeaderNames {
 	return HeaderNames{
 		User: pick(n.User, d.User), Name: pick(n.Name, d.Name), Email: pick(n.Email, d.Email),
 		Groups: pick(n.Groups, d.Groups), ID: pick(n.ID, d.ID), Auth: pick(n.Auth, d.Auth),
-		Kind: pick(n.Kind, d.Kind),
+		Kind: pick(n.Kind, d.Kind), Permissions: pick(n.Permissions, d.Permissions),
 	}
 }
 
 func (n HeaderNames) list() []string {
-	return []string{n.User, n.Name, n.Email, n.Groups, n.ID, n.Auth, n.Kind}
+	return []string{n.User, n.Name, n.Email, n.Groups, n.ID, n.Auth, n.Kind, n.Permissions}
 }
 
 // IdentityFromHeaders reads the identity from the Remote-* headers with the default names (spec section 2.2). It
@@ -175,8 +193,8 @@ func identityFromHeaders(h http.Header, names HeaderNames) (*Identity, error) {
 		}
 		values[i] = v
 	}
-	user, name, email, groups, id, auth, kind := values[0], values[1], values[2], values[3], values[4], values[5],
-		values[6]
+	user, name, email, groups, id, auth, kind, perms := values[0], values[1], values[2], values[3], values[4],
+		values[5], values[6], values[7]
 	if user == "" {
 		return nil, refuse(ClassUnauthenticated, "no user header")
 	}
@@ -189,7 +207,7 @@ func identityFromHeaders(h http.Header, names HeaderNames) (*Identity, error) {
 	}
 	a, k := kindOf(auth)
 	return &Identity{User: user, Name: name, Email: email, Groups: ParseGroups(groups), ID: id, Auth: a, Kind: k,
-		AccountKind: ak}, nil
+		AccountKind: ak, Permissions: ParseGroups(perms)}, nil
 }
 
 func allASCIIDigits(s string) bool {

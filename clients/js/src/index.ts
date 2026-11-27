@@ -59,6 +59,13 @@ export {
 } from './identity.ts';
 export { FETCH_TIMEOUT_MS, type FetchFunction, MAX_JWKS_BYTES } from './jwks.ts';
 export { KeySet, keyId, MAX_JWKS_KEYS, parseGateKey, parseJwks } from './keys.ts';
+export {
+  MAX_PERMISSIONS,
+  type PermissionRequest,
+  RegistrationFailed,
+  registerPermissions,
+  registerRequest,
+} from './permissions.ts';
 export { type Claims, MAX_LEEWAY, MAX_LIFETIME, MAX_TOKEN_BYTES } from './token.ts';
 export {
   fetchTopbar,

@@ -3,10 +3,12 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { ConfigError } from '../src/errors.ts';
 import { parseGroups } from '../src/identity.ts';
 import { parseAddress, parsePrefix, prefixContains } from '../src/ip.ts';
 import { freshness, interpretFetch, MAX_JWKS_BYTES } from '../src/jwks.ts';
 import { parseGateKey } from '../src/keys.ts';
+import { RegistrationFailed, registerPermissions } from '../src/permissions.ts';
 import { decodeSegment, decodeStandardBase64, parseStrictJson, parseStrictJsonText } from '../src/strict.ts';
 import { isSafeHref } from '../src/topbar.ts';
 import { publicJwk, signKey } from './helpers.ts';
@@ -168,4 +170,34 @@ test('a fetch result: status other than 200, or a body above 64 KiB, is a failed
   assert.notEqual(await interpretFetch({ status: 200, body: big }), null, 'exactly 64 KiB');
   assert.equal(await interpretFetch({ status: 200, body: `${big} ` }), null, 'one byte more (text)');
   assert.equal(await interpretFetch({ status: 200, body: new TextEncoder().encode(`${big} `) }), null, '(bytes)');
+});
+
+test('registerPermissions sends the whole manifest once, with the key, and reports a refusal', async () => {
+  const calls: { url: string; init: RequestInit }[] = [];
+  let status = 200;
+  const fake = async (url: string, init: RequestInit): Promise<Response> => {
+    calls.push({ url, init });
+    return new Response(JSON.stringify({ added: ['docs.read'], updated: [], returned: [], orphaned: [] }), { status });
+  };
+  const manifest = [{ name: 'docs.read', label: { en: 'Read' } }];
+  const out = await registerPermissions('https://auth.example.com/', 'docs', manifest, 'tsk_probe', { fetch: fake });
+  assert.deepEqual(out.added, ['docs.read']);
+  assert.equal(calls[0]?.url, 'https://auth.example.com/auth/api/apps/docs/permissions');
+  assert.equal(calls[0]?.init.method, 'PUT');
+  assert.equal((calls[0]?.init.headers as Record<string, string> | undefined)?.['X-Api-Key'], 'tsk_probe');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { permissions: manifest });
+  status = 403;
+  await assert.rejects(
+    registerPermissions('https://auth.example.com', 'docs', manifest, 'tsk_probe', { fetch: fake }),
+    (e: unknown) => e instanceof RegistrationFailed && e.status === 403,
+  );
+  const before = calls.length;
+  for (const [app, list, key] of [
+    ['Docs', manifest, 'k'],
+    ['docs', [{ name: 'Docs' }], 'k'],
+    ['docs', manifest, ''],
+  ] as const) {
+    await assert.rejects(registerPermissions('https://auth.example.com', app, list, key, { fetch: fake }), ConfigError);
+  }
+  assert.equal(calls.length, before, 'a refused manifest was sent');
 });

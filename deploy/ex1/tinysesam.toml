@@ -26,9 +26,14 @@ name = "Ex1"
 
 # The application's account API (spec/provisioning-api.md): its service account svc-ex1 creates and manages the
 # people of ex1-member, nothing else.
+# T-101: the application is served on app.example.com, so forward auth sends the account's permissions for ex1 along
+# (Remote-Permissions); its service account registers the manifest at start (permissions:register). An administrator
+# assigns ex1.members.read and ex1.members.invite to roles in the panel (Accounts → Permissions).
 [apps.ex1]
 account = "svc-ex1"
 name = "Ex1"
+hosts = ["app.example.com"]
+permission_scopes = ["permissions:register"]
 
 [apps.ex1.provisioning]
 roles = ["ex1-member"]

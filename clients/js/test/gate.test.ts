@@ -373,7 +373,9 @@ test('every header vector through a real Node HTTP server and the middleware', a
         problems.push(`${v.id}: ${status} ${body}`);
       } else {
         try {
-          assert.deepStrictEqual(JSON.parse(body), v.expected.identity);
+          // headers.json lists the identity without permissions (permissions.json checks those).
+          const { permissions: _held, ...rest } = JSON.parse(body);
+          assert.deepStrictEqual(rest, v.expected.identity);
         } catch {
           problems.push(`${v.id}: ${body}`);
         }

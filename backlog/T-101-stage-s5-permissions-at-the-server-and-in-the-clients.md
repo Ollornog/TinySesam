@@ -19,7 +19,7 @@ Server and client side of [ADR-17](ADR-17-permission-layer-and-admin-levels.md).
 check), `Remote-Permissions` / `ts_perms` (default header set, every proxy template, a set above
 `PERMISSIONS_VALUE_MAX` refused with 403), `account.json.permissions` on an application's host, the permission API
 (`_permissions_api.py`), `tests/test_permissions_server.py`. Spec §3.4/§8a with `permissions.json` and the Python
-client done. Open: the Go, Rust, JavaScript and PHP clients, Ex1.
+client done; the Go and JavaScript clients and Ex1 done. Open: the Rust and PHP clients.
 
 ## Content
 - App identity, taken over from [T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md): `apps[id].hosts`

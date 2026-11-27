@@ -177,6 +177,12 @@ as a person is `token` + `user`. `headerNames.kind` follows a renamed `forward_h
 
 - Key your own records by `id`, never by `user`, `name` or `email`.
 - `identity.hasRole(role)` compares exactly: no case folding, no Unicode normalization; `admin` implies no other role.
+- `identity.hasPermission(name)` (spec §3.4): `identity.permissions` comes from `Remote-Permissions` or `ts_perms` —
+  the account's permissions for this application, compared exactly; a missing header means none. At start
+  `await registerPermissions('https://auth.example.com', 'docs', manifest, apiKey)` registers the manifest (the
+  automation key of the application's service account, scope `permissions:register`; it grants nothing);
+  `registerRequest` checks a manifest without sending it (`ConfigError`), a refusal by TinySesam rejects with
+  `RegistrationFailed`. `parseAccount` normalizes `permissions` (`app`, `names`).
 - The groups of a token request (`identity.isSession()` false) are incomplete on purpose — never revoke or sync away a
   role because a token request lacks it. `requireSession()` / `'session'` guards routes that need the full picture.
 - Names may contain bidi overrides and zero-width characters: escape them in HTML and isolate bidi text.

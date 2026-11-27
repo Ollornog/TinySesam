@@ -68,6 +68,8 @@ export interface SignedInAccount {
     readonly api_keys_active: number | null;
   };
   readonly approvals: { readonly pending: number } | null;
+  /** On an application's host the application and the account's permissions for it (spec section 8a); else null. */
+  readonly permissions: { readonly app: string | null; readonly names: readonly string[] } | null;
   readonly links: AccountLinks;
 }
 
@@ -79,6 +81,7 @@ export interface SignedOutAccount {
   readonly sessions: null;
   readonly programs: null;
   readonly approvals: null;
+  readonly permissions: null;
   readonly links: null;
 }
 
@@ -97,6 +100,7 @@ export function signedOutAccount(): SignedOutAccount {
     sessions: null,
     programs: null,
     approvals: null,
+    permissions: null,
     links: null,
   };
 }
@@ -215,7 +219,20 @@ export function parseAccount(body: string | Uint8Array): Account {
       api_keys_active: count(programs, 'api_keys_active'),
     },
     approvals: pending === null ? null : { pending },
+    permissions: permissionsView(own(data, 'permissions')),
     links: Object.fromEntries(LINKS.map((n) => [n, href(links, n)])) as unknown as AccountLinks,
+  };
+}
+
+/** §8a `permissions`: an object gives `{app, names}` (non-strings dropped, `names` no list → []), anything else null. */
+function permissionsView(value: unknown): { app: string | null; names: string[] } | null {
+  if (!isObject(value)) {
+    return null;
+  }
+  const names = own(value, 'names');
+  return {
+    app: text(value, 'app'),
+    names: Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string') : [],
   };
 }
 

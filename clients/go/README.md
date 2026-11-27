@@ -117,7 +117,15 @@ gate, err := tinysesam.New(tinysesam.Config{
 
 ## The identity
 
-`Identity` holds `User`, `Name`, `Email`, `Groups`, `ID`, `Auth`, `Kind` and `AccountKind`.
+`Identity` holds `User`, `Name`, `Email`, `Groups`, `ID`, `Auth`, `Kind`, `AccountKind` and `Permissions`.
+
+- `HasPermission(name)` (spec §3.4): the account's permissions for this application, from `Remote-Permissions` or
+  `ts_perms`, compared exactly — neither `admin` nor a role implies one, a missing header means none. At start
+  `RegisterPermissions(ctx, client, "https://auth.example.com", "docs", manifest, apiKey)` registers the manifest
+  (`PUT /auth/api/apps/docs/permissions`, the automation key of the application's service account, scope
+  `permissions:register`; it grants nothing); `RegisterRequest` checks a manifest without sending it (`ErrManifest`),
+  a refusal by TinySesam is a `*RegistrationError`. `ParseAccount` normalizes `Permissions` (`App`, `Names`). Example
+  Ex1 (`examples/ex1`) registers at start and guards its routes by permission.
 
 - Key your own records by `ID` — the only value that survives a rename.
 - `HasRole(role)` compares exactly: no case folding, no Unicode normalization, and `admin` implies no other role.

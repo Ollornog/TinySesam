@@ -9,6 +9,7 @@ import { Gate } from '../src/gate.ts';
 import { identityFromHeaders } from '../src/identity.ts';
 import { type FetchResult, JwksCache } from '../src/jwks.ts';
 import { keyId, parseGateKey, parseJwks } from '../src/keys.ts';
+import { registerRequest } from '../src/permissions.ts';
 import { parseTopbar } from '../src/topbar.ts';
 import {
   type Json,
@@ -31,6 +32,7 @@ const RUNNERS = [
   'headers.json',
   'jwks.json',
   'keys.json',
+  'permissions.json',
   'token.json',
   'topbar.json',
 ];
@@ -98,7 +100,9 @@ function identityProblems(id: string, identity: Json, expected: Json): string[] 
   const problems: string[] = [];
   if (expected.identity !== undefined) {
     try {
-      assert.deepStrictEqual(identity.toJSON(), expected.identity);
+      // token.json and headers.json list the identity without permissions; permissions.json checks those.
+      const { permissions: _held, ...rest } = identity.toJSON();
+      assert.deepStrictEqual(rest, expected.identity);
     } catch {
       problems.push(`${id}: identity ${JSON.stringify(identity)}, want ${JSON.stringify(expected.identity)}`);
     }
@@ -316,4 +320,69 @@ test('test keys: the public JWK matches the sign_key form, and the seed signs fo
 test('the vector suite carries a latin1 conversion for header values', () => {
   // A vector header value is one code point per octet; the client reads octets the same way.
   assert.equal(latin1(new TextEncoder().encode('ü')), 'Ã¼');
+});
+
+/** The permissions (and has_permission) of one identity against a vector of permissions.json. */
+function permissionProblems(id: string, got: string, identity: Json, expected: Json): string[] {
+  if (expected.ok !== true) {
+    return got === expected.error ? [] : [`${id}: ${got}, want ${expected.error}`];
+  }
+  if (got !== 'ok') {
+    return [`${id}: refused (${got}), want ok`];
+  }
+  const problems: string[] = [];
+  if (JSON.stringify([...identity.permissions]) !== JSON.stringify(expected.permissions)) {
+    problems.push(
+      `${id}: permissions ${JSON.stringify(identity.permissions)}, want ${JSON.stringify(expected.permissions)}`,
+    );
+  }
+  for (const [p, want] of Object.entries(expected.has_permission ?? {})) {
+    if (identity.hasPermission(p) !== want) {
+      problems.push(`${id}: hasPermission(${JSON.stringify(p)}) = ${identity.hasPermission(p)}, want ${want}`);
+    }
+  }
+  return problems;
+}
+
+test('permission vectors', async (t) => {
+  const doc = loadVectors('permissions.json');
+  const problems: string[] = [];
+  for (const v of doc.headers as Json[]) {
+    let identity: Json;
+    let got = 'ok';
+    try {
+      identity = identityFromHeaders(headerPairs(v.input.headers));
+    } catch (err) {
+      got = (err as { code?: string }).code ?? 'not a GateError';
+    }
+    problems.push(...permissionProblems(`headers/${v.id}`, got, identity, v.expected));
+  }
+  for (const v of doc.tokens as Json[]) {
+    const { input } = v;
+    const gate = await tokenGate(input.jwks, input.issuer, input.audience, input.leeway, input.now);
+    let identity: Json;
+    let got = 'ok';
+    try {
+      identity = (await gate.verify(input.jws)).identity;
+    } catch (err) {
+      got = (err as { code?: string }).code ?? 'not a GateError';
+    }
+    problems.push(...permissionProblems(`tokens/${v.id}`, got, identity, v.expected));
+  }
+  for (const v of doc.register as Json[]) {
+    const { expected } = v;
+    const { base_url: baseUrl, app: appId, permissions } = v.input;
+    let got: Json;
+    try {
+      const req = registerRequest(baseUrl, appId, permissions);
+      got = { ok: true, request: { method: req.method, url: req.url, body: req.body } };
+    } catch (err) {
+      got = (err as Error).name === 'ConfigError' ? { ok: false, error: 'invalid' } : { ok: false, error: String(err) };
+    }
+    if (JSON.stringify(got) !== JSON.stringify(expected)) {
+      problems.push(`register/${v.id}: ${JSON.stringify(got)}, want ${JSON.stringify(expected)}`);
+    }
+  }
+  assert.deepEqual(problems, []);
+  t.diagnostic(`${doc.headers.length + doc.tokens.length + doc.register.length} permission vectors`);
 });
