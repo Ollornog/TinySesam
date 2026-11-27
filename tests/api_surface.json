@@ -1768,6 +1768,10 @@
       "field": "str = 'SAML'",
       "tier": "A"
     },
+    "saml_reauth_check": {
+      "field": "bool = True",
+      "tier": "A"
+    },
     "saml_sp_entity_id": {
       "field": "str = ''",
       "tier": "A"
@@ -2621,7 +2625,8 @@
     },
     "GET /auth/saml/login": {
       "keys": [
-        "query:next"
+        "query:next",
+        "query:reauth"
       ],
       "tier": "B"
     },

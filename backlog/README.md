@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 5/18 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 6/18 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 90/97 erledigt
@@ -85,7 +85,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-67](T-67-orderly-shutdown-close.md)** Orderly shutdown: a public close() that drains the outboxes and refuses new jobs · M-5
 * ☐ **[T-68](T-68-dpop-for-service-tokens.md)** DPoP for service tokens — bind a service's access token to its key (RFC 9449) · M-5
 * ☑ **[T-69](T-69-attack-round-a-oauth-services-app-passwords-keys.md)** Attack round A (2026-11-21) — OAuth, services, app passwords, keys · M-5
-* ☐ **[T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md)** SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap) · M-2
+* ☑ **[T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md)** SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap) · M-2
 * ☑ **[T-71](T-71-session-handles-keyed-with-the-pepper.md)** Session handles keyed with the pepper instead of a plain sha256 · M-5
 * ☑ **[T-72](T-72-pepper-for-the-remaining-token-digests.md)** Pepper for the remaining token digests, then drop the session-handle rewrite · M-1
 * ☐ **[T-73](T-73-tenants-multiple-hostnames-each-with-its-own-sign-in-choice.md)** Tenants — multiple hostnames, each with its own sign-in choice · M-5

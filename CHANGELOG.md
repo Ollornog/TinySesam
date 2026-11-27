@@ -4,8 +4,31 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+**Breaking since 0.31.0** — read "Upgrading from 0.31.x" before you update (the same list in `docs/OPERATIONS.md`,
+"Updating"); whoever comes from 0.30.x works through "Upgrading from 0.30.x" (under 0.31.0) first.
+
+#### Upgrading from 0.31.x
+
+<!-- upgrade-list 0.31.x:start -->
+1. **SAML: a silent round through the provider no longer makes a session fresh** (T-70, `saml_reauth_check`, default
+   on). A new SAML session counts as confirmed from the assertion's `AuthnInstant`, and a SAML round on a full session
+   no longer refreshes it: people signed in through the provider's running session are asked to confirm before new
+   access (passkey, TOTP, API key, OAuth consent) and in the panel with `admin_require_mfa`. They confirm with their own
+   factors or the new "Confirm with <provider>" button, which sends `ForceAuthn`. Nothing to do for most installations;
+   an identity provider that ignores `ForceAuthn` makes the button fail with a message — then the account confirms
+   with its own factors or by signing in again. `saml_reauth_check = false` restores the behaviour up to 0.31.x.
+<!-- upgrade-list 0.31.x:end -->
+
 ### Added
 
+- SAML re-authentication (T-70, part of T-99; ASVS 5.0 6.8.4, SAML 2.0 Core §3.4.1, §2.7.2): `saml_reauth_check`
+  (default on). The confirmation page offers "Confirm with <provider>" to an account bound to a SAML identity
+  (`/auth/saml/login?reauth=1`, `ForceAuthn="true"`), which confirms only with an `AuthnInstant` from after the
+  request (60 s tolerance; otherwise a 401 page and audit `saml_reauth_stale`); any other SAML round on a full session
+  no longer refreshes it (`stepup_not_counted reason=no_fresh_authn_instant`), and a new session counts as confirmed
+  from the `AuthnInstant`. The `AuthnInstant` is read from the one assertion python3-saml checked. A pure SAML account
+  is now sent to the confirmation page instead of being told to sign in again. A SAML client set by hand gets
+  `force_authn` only on the provider button.
 - LDAP step-up by a fresh bind (T-99): an LDAP account without a local password is offered its directory password on
   the confirmation page (`stepup_options` names `password`), and `confirm_password` checks it with a bind through
   `_check_ldap` that must lead to this account — the group gate applies, an entry that leads to another account is

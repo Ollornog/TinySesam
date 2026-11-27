@@ -114,8 +114,13 @@ class SAMLClient:
             raise _missing_extra(e) from e
         return OneLogin_Saml2_Auth(req, old_settings=self.settings(base_url))
 
-    def login_url(self, req: dict, base_url: str, return_to: str = "/"):
+    def login_url(self, req: dict, base_url: str, return_to: str = "/", force_authn: bool = False):
         """(URL to the IdP, ID of the AuthnRequest).
+
+        `force_authn` (T-70): the confirmation page's provider button — `ForceAuthn="true"`, the identity provider
+        MUST authenticate the person directly instead of relying on its running session (SAML 2.0 Core §3.4.1). The
+        request remembers it and the moment it was sent (`asked`); `process` hands both back with the assertion's
+        `AuthnInstant`.
 
         The request ID is the anchor against planted responses: the caller puts it into
         a short-lived cookie and hands it back to `process()` at the ACS. It used to be
@@ -123,15 +128,20 @@ class SAMLClient:
         never requested (login CSRF: the attacker POSTs their own valid assertion
         into the victim's browser and signs the victim in under THEIR account).
         """
+        import time as _time
+
         auth = self._auth(req, base_url)
-        url = auth.login(return_to=return_to)
+        url = auth.login(return_to=return_to, force_authn=bool(force_authn))
         request_id = auth.get_last_request_id()
         if self.store is not None and request_id:
-            self.store.put_flow(REQUEST_FLOW + request_id, {}, ttl=REQUEST_TTL_SEC)
+            self.store.put_flow(REQUEST_FLOW + request_id, {"reauth": bool(force_authn), "asked": int(_time.time())},
+                                ttl=REQUEST_TTL_SEC)
         return url, request_id
 
     def process(self, req: dict, base_url: str, request_id: str = ""):
-        """Check the ACS response. Returns {nameid, attrs} or None (invalid/not authenticated).
+        """Check the ACS response. Returns {nameid, attrs, authn_instant, reauth, asked} or None (invalid/not
+        authenticated). `authn_instant`: the `AuthnInstant` of the checked assertion's `AuthnStatement` (Unix seconds,
+        at most now) or None; `reauth`/`asked`: what `login_url` remembered for this request (T-70).
 
         The **reason** for a rejection goes to the logger `tinysesam.security`, not to the
         browser: whoever sends the response should not learn why it failed (audience?
@@ -165,11 +175,16 @@ class SAMLClient:
                 "the browser does not send it on the IdP's cross-site POST.",
                 irt, "no ID supplied" if not request_id else "different ID")
             return None
-        if self.store is not None and not self._redeem_once(auth, str(request_id)):
-            return None
-        return {"nameid": auth.get_nameid(), "attrs": auth.get_attributes() or {}}
+        flow: dict = {}
+        if self.store is not None:
+            redeemed = self._redeem_once(auth, str(request_id))
+            if redeemed is None:
+                return None
+            flow = redeemed
+        return {"nameid": auth.get_nameid(), "attrs": auth.get_attributes() or {},
+                "authn_instant": authn_instant(auth), "reauth": bool(flow.get("reauth")), "asked": flow.get("asked")}
 
-    def _redeem_once(self, auth, request_id: str) -> bool:
+    def _redeem_once(self, auth, request_id: str) -> "dict | None":
         """Each AuthnRequest is answered once, each assertion is accepted once (H1, ASVS 6.8.3).
 
         Until H1 the request ID lived only in the browser's flow cookie. Whoever got hold of a `SAMLResponse`
@@ -185,15 +200,16 @@ class SAMLClient:
         import time as _time
 
         from . import security
-        if self.store.pop_flow(REQUEST_FLOW + request_id) is None:
+        flow = self.store.pop_flow(REQUEST_FLOW + request_id)
+        if flow is None:
             security.seclog.warning(
                 "SAML response rejected: the AuthnRequest %r was not sent by this server, has expired or has "
                 "already been answered (replay)", request_id)
-            return False
+            return None
         assertion_id = str(auth.get_last_assertion_id() or "")
         if not assertion_id:
             security.seclog.warning("SAML response rejected: assertion without an ID")
-            return False
+            return None
         try:
             from onelogin.saml2.constants import OneLogin_Saml2_Constants
             drift = int(OneLogin_Saml2_Constants.ALLOWED_CLOCK_DRIFT)
@@ -203,8 +219,8 @@ class SAMLClient:
         ttl = (int(not_after) - int(_time.time()) if not_after else REQUEST_TTL_SEC) + drift
         if not self.store.claim_flow(ASSERTION_FLOW + assertion_id, ttl):
             security.seclog.warning("SAML response rejected: assertion %r was already used (replay)", assertion_id)
-            return False
-        return True
+            return None
+        return flow if isinstance(flow, dict) else {}
 
     def metadata(self, base_url: str) -> str:
         try:
@@ -213,6 +229,35 @@ class SAMLClient:
             raise _missing_extra(e) from e
         st = OneLogin_Saml2_Settings(self.settings(base_url), sp_validation_only=True)
         return st.get_sp_metadata()
+
+
+def authn_instant(auth) -> "int | None":
+    """The `AuthnInstant` of the checked assertion (T-70) as Unix seconds, at most now — None when it is missing or
+    unreadable. python3-saml has no getter: read from the last response document (decrypted, if the assertion was
+    encrypted), from the ONE assertion whose ID the library checked (`get_last_assertion_id`; it refuses a response
+    with more than one), so a second, unsigned `AuthnStatement` elsewhere in the document is never read. Two
+    `AuthnStatement`s in that assertion: the oldest counts (fail-closed)."""
+    import time as _time
+
+    try:
+        from onelogin.saml2.utils import OneLogin_Saml2_Utils
+        from onelogin.saml2.xml_utils import OneLogin_Saml2_XML
+        doc = auth.get_last_response_xml()
+        aid = str(auth.get_last_assertion_id() or "")
+        if not doc or not aid:
+            return None
+        root = OneLogin_Saml2_XML.to_etree(doc)
+        ns = "urn:oasis:names:tc:SAML:2.0:assertion"
+        assertions = [a for a in root.iter(f"{{{ns}}}Assertion") if a.get("ID") == aid]
+        if len(assertions) != 1:
+            return None
+        found = [OneLogin_Saml2_Utils.parse_SAML_to_time(s.get("AuthnInstant"))
+                 for s in assertions[0].findall(f"{{{ns}}}AuthnStatement") if s.get("AuthnInstant")]
+    except Exception:  # noqa: BLE001 — unreadable is "missing": no fresh confirmation, never an error page
+        return None
+    if not found:
+        return None
+    return min(min(int(t) for t in found), int(_time.time()))
 
 
 def first(attrs: dict, name: str):

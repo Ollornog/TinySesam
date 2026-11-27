@@ -350,6 +350,7 @@ individual ones can be overridden via `**overrides`.
 | `saml_attr_username` | `str` | `""` | attribute with the username; empty = NameID |
 | `saml_attr_email` | `str` | `"email"` | SAML attribute with the email address |
 | `saml_email_trusted` | `bool` | `False` | Trust addresses from the assertion across the board? SAML has no proof. `False` (default): The address is not used directly — no account attribute, no `Remote-Email`, an account name with `@` yields to a substitute name (like H-3 for OIDC); with `federation_email_confirm` the owner confirms it by link, or `saml_attr_email_verified` names a proof. `True`: The IdP verifies every address (corporate IdP without self-registration). |
+| `saml_reauth_check` | `bool` | `True` | Re-authentication at the SAML provider is checked (T-70, ASVS 5.0 6.8.4, SAML 2.0 Core §3.4.1, §2.7.2): the confirmation page offers "Confirm with <provider>" to an account bound to it, which sends the AuthnRequest with `ForceAuthn="true"` and confirms only with an `AuthnInstant` from after the request (60 s clock tolerance); a round through a provider session that was already running no longer refreshes a full session, and a new session counts as confirmed from the assertion's `AuthnInstant`, not from the round. An identity provider that ignores `ForceAuthn` answers with an old `AuthnInstant` and is caught the same way. `False` = the behaviour up to 0.31.x: every SAML round counts as a fresh confirmation. |
 | `saml_attr_email_verified` | `str` | `""` | Attribute of the assertion whose true value proves the address (e.g. a Keycloak mapper for `emailVerified`). Empty = none. |
 | `federation_email_confirm` | `bool` | `True` | Have addresses from LDAP/SAML that are not trusted confirmed by link (PO decision 2026-09-25): After sign-in a confirmation link goes to the address from the source — at most one delivered per account and day (across all workers; if a link lives longer, `email_change_ttl_min`, that long), none while one is open; a throttle or a failed delivery is retried after `mail_per_address_window_sec`. An address already taken or reserved gets none, its rejection counts like a delivery. Only the click makes it the account's address, with proof. Needs mailer and `base_url`. |
 | `saml_attr_name` | `str` | `"displayName"` | SAML attribute with the display name |
@@ -389,4 +390,4 @@ individual ones can be overridden via `**overrides`.
 
 ---
 
-223 fields, generated from `tinysesam/config.py`.
+224 fields, generated from `tinysesam/config.py`.

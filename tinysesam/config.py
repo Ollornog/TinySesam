@@ -843,6 +843,14 @@ class TinySesamConfig:
     #: `federation_email_confirm` the owner confirms it by link, or `saml_attr_email_verified`
     #: names a proof. `True`: The IdP verifies every address (corporate IdP without self-registration).
     saml_email_trusted: bool = False
+    #: Re-authentication at the SAML provider is checked (T-70, ASVS 5.0 6.8.4, SAML 2.0 Core §3.4.1, §2.7.2): the
+    #: confirmation page offers "Confirm with <provider>" to an account bound to it, which sends the AuthnRequest with
+    #: `ForceAuthn="true"` and confirms only with an `AuthnInstant` from after the request (60 s clock tolerance); a
+    #: round through a provider session that was already running no longer refreshes a full session, and a new
+    #: session counts as confirmed from the assertion's `AuthnInstant`, not from the round. An identity provider that
+    #: ignores `ForceAuthn` answers with an old `AuthnInstant` and is caught the same way. `False` = the behaviour up to
+    #: 0.31.x: every SAML round counts as a fresh confirmation.
+    saml_reauth_check: bool = True
     #: Attribute of the assertion whose true value proves the address (e.g. a Keycloak mapper for
     #: `emailVerified`). Empty = none.
     saml_attr_email_verified: str = ""

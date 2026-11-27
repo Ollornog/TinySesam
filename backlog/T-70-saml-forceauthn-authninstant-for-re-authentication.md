@@ -2,7 +2,7 @@
 id: T-70
 type: Task
 title: 'SAML: ForceAuthn / AuthnInstant for re-authentication (the T-49 gap)'
-status: offen
+status: erledigt
 points: 5
 milestone: M-2
 blocked_by: [T-112]
@@ -10,6 +10,14 @@ tags: [security, saml, stepup]
 created: '2026-11-21'
 ---
 # T-70 — SAML: ForceAuthn / AuthnInstant for re-authentication
+
+**Done (2026-11-27):** `saml_reauth_check` (default on); `SAMLClient.login_url(force_authn=…)` remembers `reauth` and
+`asked` with the request, `process` hands back the `AuthnInstant` of the one checked assertion (`saml_.authn_instant`,
+parsed from the last response document, bound to `get_last_assertion_id`); the ACS applies the T-49 rule
+(`saml_reauth_stale`, `stepup_not_counted reason=no_fresh_authn_instant`, `backdate_confirmation`); the confirmation
+page shows "Confirm with <provider>" (`_confirms_at_saml`). The per-approval provider step-up stays OIDC-only. Tests
+with really signed responses in `tests/test_saml_reauth.py`; breaking, step in "Upgrading from 0.31.x"; mutations in the
+pull request.
 
 Source: follow-up of [T-49](T-49-oidc-max-age-auth-time-for-re-authentication.md) (sign-in hardening H4), review before
 0.26.0 — ASVS 5.0.0 6.8.4 (L2), NIST SP 800-63B-4 §5.2.
