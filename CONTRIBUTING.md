@@ -35,6 +35,11 @@ the better change.
 Work on a feature branch. CI does not run there — `ci-local` (or `./scripts/check.sh`) is your safety
 net. Open a pull request; CI runs on the PR and on `main`, and `main` merges only when it is green.
 
+A maintainer's sprint collects its pull requests in a branch `sprint/<name>`: a pull request into it runs only the
+fast checks (the job `classify` of each workflow answers for the shared kit's sprint lane, and the heavy jobs skip;
+so they do for a pull request that changes only text nobody reads). The full suite runs once, in the closing pull
+request into `main`. `tests/test_ci_aggregate.py` holds every workflow to it.
+
 ```bash
 git switch -c my-change
 python -m venv .venv && . .venv/bin/activate

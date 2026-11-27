@@ -30,7 +30,29 @@ permissions:
   contents: read
 
 jobs:
+  # Sprint lane and docs fast lane of the shared kit (T-131): see the job `classify` in ci.yml. A skipped job is a
+  # green check; the aggregate job counts a skipped one green only with the answer `nur_text=ja`.
+  classify:
+    name: Text or code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      nur_text: ${{ steps.classify.outputs.nur_text }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent: scripts/_nur_text.sh compares the two.
+          fetch-depth: 2
+      - name: Classify
+        id: classify
+        run: |
+          if reason="$(scripts/_nur_text.sh)"; then echo "nur_text=ja" >> "$GITHUB_OUTPUT"; fi
+          echo "$reason"
+
   audit:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

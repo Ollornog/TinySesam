@@ -1304,9 +1304,13 @@ assert "checksums" in _needs.get("release", set()), \
 assert "image-probe" in _needs.get("image", set()) and \
     "needs.image-probe.result == 'success'" in " ".join(_rel_jobs.get("image", [])), \
     "release.yml: `image` pushes without `image-probe` having started the image"
+# The one condition allowed on `image-probe` is the sprint lane's gate (T-131, tests/test_ci_aggregate.py): it skips only
+# in a pull request into sprint/<name> or one of text only; a tag, main and every Dependabot pull request run it.
+_lane_gate = "if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}"
 for _j in ("checksums", "image-probe"):
-    assert not any(z.strip().startswith("if:") for z in _rel_jobs.get(_j, []) if z.startswith("    if")), \
-        f"release.yml: `{_j}` hangs on a condition — it must run on every PR and every tag"
+    _ifs = [z.strip() for z in _rel_jobs.get(_j, []) if z.startswith("    if")]
+    assert _ifs in ([], [_lane_gate] if _j == "image-probe" else []), \
+        f"release.yml: `{_j}` hangs on a condition — it must run on every PR and every tag: {_ifs}"
 assert any("sha256sum -c SHA256SUMS" in k for k in _command_list(_rel_jobs.get("checksums", []))), \
     "release.yml: `checksums` does not check the checksums"
 assert any(k.startswith("scripts/_image_probe.sh") for k in _command_list(_rel_jobs.get("image-probe", []))), \

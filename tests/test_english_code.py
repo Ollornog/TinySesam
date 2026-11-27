@@ -305,10 +305,11 @@ GUARD_FILES = ("tests/test_english_code.py", "tests/_german_words.py", "tests/te
 #: Names that the shared test kit dictates and that stay as they are in a string: the worker-count variable, the
 #: workflow list of the auto-merge file, the kit scripts and their options (`--seit`; `$FOLGE` of the auto-merge
 #: template), the backlog status value of the kit
-#: convention (`status: offen`), and the German OUTPUT of the kit's report
+#: convention (`status: offen`), the output `nur_text` of a classifier job (`hygiene.pruefe_nur_text` reads it in the
+#: workflows, T-131), and the German OUTPUT of the kit's report
 #: (`FEHL <check>`, `<n> ok, <n> Fehler, <n> übersprungen` from `tests/_kit/report.py`, `uebersprungen: <reason>` from
 #: `tests/voraussetzung.py`), which `tests/run_all.py` reads and `tests/test_runner.py` imitates.
-KIT_NAMES = re.compile(r"CI_KERNE|PFLICHT_WORKFLOWS|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*"
+KIT_NAMES = re.compile(r"CI_KERNE|PFLICHT_WORKFLOWS|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*|\bnur_text\b"
                         r"|--seit\b|\$FOLGE\b|\bstatus: offen\b|\bFEHL\b|\b\d+ ok, \d+ Fehler\b|, \d+ übersprungen\b|\buebersprungen:")
 #: Patterns that must NOT appear in the English and the German docs (the German half is the point): exact strings.
 GERMAN_DOC_PATTERNS = frozenset({"within a few days|innerhalb weniger Tage"})
@@ -507,10 +508,10 @@ def filename_findings(paths: list) -> list:
 # ── outside Python: scripts, workflows, templates, lists, docs ────────────────────────────────────
 #: What no text of ours can name differently: URLs, hashes, addresses, finding IDs (`B6-4`, `NEU-1`), and the German names
 #: that the shared kit dictates — its scripts and their option (`_nur_text.sh`, `_residue_check.sh --seit`,
-#: `scripts/nur-text-verengung.txt`) and the worker-count variable `CI_KERNE`.
+#: `scripts/nur-text-verengung.txt`), the worker-count variable `CI_KERNE` and the output `nur_text` of a classifier job.
 _URLS_AND_HASHES = re.compile(
     r"https?://\S+|--hash=\S+|\b[0-9a-f]{12,}\b|\S+@\S+\.\w+|\b[A-Z]{1,6}-\d+[a-z]?\b"
-    r"|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*|--seit\b|\bCI_KERNE\b")
+    r"|[\w./-]*(?:_nur_text|_residue_check|nur-text-verengung)[\w./-]*|--seit\b|\bCI_KERNE\b|\bnur_text\b")
 
 
 def split_comment(line: str) -> tuple:

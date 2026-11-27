@@ -16,7 +16,29 @@ permissions:
   contents: read
 
 jobs:
+  # Sprint lane and docs fast lane of the shared kit (T-131): see the job `classify` in ci.yml. A skipped job is a
+  # green check; the aggregate job counts a skipped one green only with the answer `nur_text=ja`.
+  classify:
+    name: Text or code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      nur_text: ${{ steps.classify.outputs.nur_text }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent: scripts/_nur_text.sh compares the two.
+          fetch-depth: 2
+      - name: Classify
+        id: classify
+        run: |
+          if reason="$(scripts/_nur_text.sh)"; then echo "nur_text=ja" >> "$GITHUB_OUTPUT"; fi
+          echo "$reason"
+
   client-go:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     name: client-go (${{ matrix.go }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -114,19 +136,24 @@ jobs:
 
   # Aggregate for the branch protection (T-115): the Go client on every Go release.
   # A matrix leg added or dropped needs no change of the protection — it names this job only.
-  # `always()`: the job also runs when a leg failed or was cancelled — then it is red itself; a skipped leg is not green
-  # either. Not skipped itself, so a required check never hangs.
+  # `always()`: the job also runs when a leg failed or was cancelled — then it is red itself; a skipped leg is green
+  # only in the sprint or text lane (`classify`, T-131). Not skipped itself, so a required check never hangs.
   client-go-ok:
     name: client-go-ok
     if: ${{ always() }}
-    needs: [client-go]
+    needs: [classify, client-go]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Every job it needs succeeded
+      # `classify` itself does not count: a broken classifier leaves its answer empty, and then every job ran and decides.
+      # A skipped job is green only with the answer `nur_text=ja` (sprint lane, text only), never otherwise.
+      - name: Every job it needs succeeded (skipped only in the sprint or text lane)
         env:
           NEEDS: ${{ toJSON(needs) }}
+          LANE_ANSWER: ${{ needs.classify.outputs.nur_text }}
         run: |
           set -euo pipefail
           printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          printf '%s\n' "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
+          echo "classify: nur_text=${LANE_ANSWER:-<empty>}"
+          printf '%s\n' "$NEEDS" | jq -e --arg lane "$LANE_ANSWER" \
+            'del(.classify) | all(.[]; .result == "success" or ($lane == "ja" and .result == "skipped"))' > /dev/null

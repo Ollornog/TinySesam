@@ -11,7 +11,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 4/18 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 89/97 erledigt
+* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 90/97 erledigt
 * ☑ **[M-6](M-6-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -146,7 +146,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-128](T-128-drop-the-pre-0-65-branch-of-the-kit-check.md)** Drop the branch for test kits before 0.65 in the release-automation check · M-5
 * ☑ **[T-129](T-129-fleet-pin-of-a-breaking-release-opens-as-a-draft.md)** The fleet pin of a breaking release opens as a draft · M-2
 * ☑ **[T-130](T-130-server-path-for-the-mfa-enrollment-pass.md)** Server path for the MFA enrollment pass (grant and revoke) · M-2
-* ☐ **[T-131](T-131-sprint-lane-for-the-heavy-ci-jobs.md)** Sprint lane for the heavy CI jobs (classifier in the workflows) · M-5
+* ☑ **[T-131](T-131-sprint-lane-for-the-heavy-ci-jobs.md)** Sprint lane for the heavy CI jobs (classifier in the workflows) · M-5
 * ☐ **[T-132](T-132-upgrade-list-for-breaks-after-0-31-0.md)** Upgrade list for the breaks after 0.31.0 · M-2
 
 ## Fehler

@@ -20,6 +20,30 @@ permissions:
 # sdist and looks inside. Since Python 3.12 a fresh environment no longer ships setuptools,
 # and `pip install -e .` puts it only into its own build isolation, not into the environment.
 jobs:
+  # Sprint lane and docs fast lane of the shared kit (T-131): a pull request into `sprint/<name>`, or one that changes
+  # only text nobody reads, answers `nur_text=ja`, and the heavy jobs below skip. A skipped job is a green check;
+  # `suite-ok` counts a skipped leg green only with this answer. The decision lives only in scripts/_nur_text.sh; a
+  # broken classifier leaves the output empty and every job runs (`!cancelled() && … != 'ja'`, the form the kit's
+  # hygiene demands). `repeat` is not gated: its scripts/check.sh runs the fast checks in that lane. A pull request
+  # into main with code, the closing pull request of a sprint, schedules and manual runs always take the full suite.
+  classify:
+    name: Text or code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      nur_text: ${{ steps.classify.outputs.nur_text }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent: scripts/_nur_text.sh compares the two.
+          fetch-depth: 2
+      - name: Classify
+        id: classify
+        run: |
+          if reason="$(scripts/_nur_text.sh)"; then echo "nur_text=ja" >> "$GITHUB_OUTPUT"; fi
+          echo "$reason"
+
   # Full run with all extras over the managed matrix — the last THREE stable
   # minors (PO 2026-09-22). The versions do NOT live here: they are managed
   # in repokit (tests/_kit/python_matrix.json), and the same trio is carried by the
@@ -33,6 +57,8 @@ jobs:
   # does not block a push — and ONLY there: a gate leg does not belong in a job
   # that cannot turn red.
   full:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
     strategy:
@@ -69,6 +95,8 @@ jobs:
   # Minimal install without extras: covers the stdlib scrypt fallback + core path
   # (suites that strictly need extras are counted as skip by the runner).
   minimal:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
@@ -90,6 +118,8 @@ jobs:
   # The pages in a real browser: console errors, widths, language switch, dark mode, login.
   # Without this job a design regression is only noticed by the user.
   browser:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
@@ -132,6 +162,8 @@ jobs:
   # Since 2026-11-20 the same image also runs the quickstart stack (deploy/quickstart) together with the gateway image
   # of this commit — tests/test_quickstart.py, mandatory here with TINYSESAM_QUICKSTART_IMAGES.
   gate-caddy:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
@@ -280,19 +312,24 @@ jobs:
 
   # Aggregate for the branch protection (T-115): the Python suite on every version of the matrix.
   # A matrix leg added or dropped needs no change of the protection — it names this job only.
-  # `always()`: the job also runs when a leg failed or was cancelled — then it is red itself; a skipped leg is not green
-  # either. Not skipped itself, so a required check never hangs.
+  # `always()`: the job also runs when a leg failed or was cancelled — then it is red itself; a skipped leg is green
+  # only in the sprint or text lane (`classify`, T-131). Not skipped itself, so a required check never hangs.
   suite-ok:
     name: suite-ok
     if: ${{ always() }}
-    needs: [full]
+    needs: [classify, full]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Every job it needs succeeded
+      # `classify` itself does not count: a broken classifier leaves its answer empty, and then every job ran and decides.
+      # A skipped job is green only with the answer `nur_text=ja` (sprint lane, text only), never otherwise.
+      - name: Every job it needs succeeded (skipped only in the sprint or text lane)
         env:
           NEEDS: ${{ toJSON(needs) }}
+          LANE_ANSWER: ${{ needs.classify.outputs.nur_text }}
         run: |
           set -euo pipefail
           printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          printf '%s\n' "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
+          echo "classify: nur_text=${LANE_ANSWER:-<empty>}"
+          printf '%s\n' "$NEEDS" | jq -e --arg lane "$LANE_ANSWER" \
+            'del(.classify) | all(.[]; .result == "success" or ($lane == "ja" and .result == "skipped"))' > /dev/null

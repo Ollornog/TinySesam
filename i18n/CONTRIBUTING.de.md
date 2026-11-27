@@ -33,6 +33,11 @@ Auf einem Feature-Branch arbeiten. Dort läuft keine CI — `ci-local` (bzw. `./
 dein Sicherheitsnetz. Einen Pull Request öffnen; die CI läuft auf dem PR und auf `main`, und `main`
 merged nur, wenn sie grün ist.
 
+Ein Sprint der Maintainer sammelt seine Pull Requests in einem Zweig `sprint/<name>`: Ein Pull Request dorthin fährt
+nur die schnellen Prüfungen (der Job `classify` jedes Workflows antwortet für die Sprint-Spur des geteilten Kits, die
+schweren Jobs überspringen; ebenso bei einem Pull Request, der nur Text ändert, den kein Programm liest). Die volle
+Suite läuft einmal, im abschließenden Pull Request nach `main`. `tests/test_ci_aggregate.py` hält jeden Workflow daran.
+
 ```bash
 git switch -c meine-aenderung
 python -m venv .venv && . .venv/bin/activate
