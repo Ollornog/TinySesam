@@ -336,6 +336,40 @@ processes. Pin the side-car image like any other; for a compose service, `<c>` i
 `docker compose ps`. The image itself proves on every build that it has no shell or package manager
 (`deploy/gateway/image_setup.py`) and on every PR that the running container cannot start `sh` (`image-probe`).
 
+## A server image with SAML (your own)
+
+The published image has no SAML (T-97): python3-saml needs libxmlsec1, and the distroless runtime carries no more than
+the OIDC server needs. Whoever wants SAML at the server builds an own image from the recipe
+[`deploy/saml-server/Dockerfile`](../deploy/saml-server/Dockerfile) (T-134): `python:3.15-slim` by digest, a venv with
+`tinysesam[gateway,saml]` (libxmlsec1 and libxml2 come inside the `xmlsec` and `lxml` wheels, amd64 and arm64 —
+`--only-binary` keeps them matched), uid/gid 1000 and `/data` as in the published image, the same health check and
+entry point:
+
+```bash
+docker build -t my-tinysesam-saml --build-arg TINYSESAM="tinysesam[gateway,saml]==<version>" deploy/saml-server
+docker run -d -p 127.0.0.1:8000:8000 -v tinysesam-data:/data \
+    -v ./tinysesam.toml:/etc/tinysesam.toml:ro -e TINYSESAM_CONFIG=/etc/tinysesam.toml my-tinysesam-saml
+```
+
+The configuration is the server's TOML file (`TINYSESAM_CONFIG`, like the one of example Ex1 in [`deploy/ex1`](../deploy/ex1/)) with the SAML
+fields of `CONFIGURATION.md`:
+
+```toml
+db_path = "/data/tinysesam.db"
+base_url = "https://auth.example.com"
+saml_enabled = true
+saml_idp_sso_url = "https://idp.example.com/sso"
+saml_idp_entity_id = "https://idp.example.com/realms/example"   # when it differs from the SSO URL
+saml_idp_x509cert = "MIIC…"                                      # the IdP's signing certificate, PEM body
+```
+
+The build refuses to run without a pinned version (`--build-arg TINYSESAM=…==<version>`); the base is pinned by
+digest (Dependabot keeps the repository's copy current — keep yours current as well).
+**The image is yours:** nobody but you rebuilds it when Debian, Python, TinySesam, python3-saml, xmlsec or lxml ship a
+fix, and nobody scans it but you (the published image's SBOM, provenance and Grype scan do not cover it). The repository
+builds the recipe from its checkout on every PR into `main` and signs in through the suites' SAML test identity provider
+(`tests/test_saml_image.py`, CI job `gate-caddy`).
+
 ## First-admin one-time token
 
 If there is no admin (fresh instance, or the identity provider withdrew the last one),
