@@ -90,7 +90,8 @@ ok("2. the administrator assigns the permissions to the roles and the roles to t
 reader = signed_in("rita")
 page = reader.get("/")
 assert page.status_code == 200 and "Quarterly report" in page.text and "id=del-" not in page.text, page.text[:400]
-assert delete(reader, "d1").status_code == 403 and "d1" in app.state.docs
+r = delete(reader, "d1")
+assert r.status_code == 403 and "d1" in app.state.docs, r.status_code
 ok("3. the reader sees the list without a delete button, and the delete route refuses (403)")
 
 # 4 ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -100,12 +101,15 @@ assert "id=del-d1" in page.text and "id=del-d2" in page.text, page.text[:400]
 r = delete(editor, "d1")
 assert r.status_code == 303 and "d1" not in app.state.docs, r.status_code
 assert "Quarterly report" not in editor.get("/").text
-assert editor.post("/docs/d2/delete").status_code == 403 and "d2" in app.state.docs, "a delete without the CSRF token"
+r = editor.post("/docs/d2/delete")
+assert r.status_code == 403 and "d2" in app.state.docs, "a delete without the CSRF token"
 ok("4. the editor sees the button and deletes (with the CSRF token)")
 
 # 5 ──────────────────────────────────────────────────────────────────────────────────────────────────
 panel(admin, "/permissions/assign", {"app": "docs", "permission": "docs.delete", "role": "docs-editor", "granted": False})
-assert "id=del-" not in editor.get("/").text and delete(editor, "d2").status_code == 403 and "d2" in app.state.docs
+assert "id=del-" not in editor.get("/").text
+r = delete(editor, "d2")
+assert r.status_code == 403 and "d2" in app.state.docs, r.status_code
 ok("5. withdrawn in the panel: the button is gone at once and the route refuses")
 
 # 6 ──────────────────────────────────────────────────────────────────────────────────────────────────
