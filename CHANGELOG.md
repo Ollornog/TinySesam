@@ -41,6 +41,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   that resurfaced at moved lines — the 0640 security log and three negative tests — are dismissed with their reason
   and recorded in `.github/codeql/accepted.md`.
 
+### Fixed
+
+- An OIDC sign-in without the group claim (the scope `groups` not asked, a provider that leaves it out) no longer
+  withdraws the mapped roles and the provider's admin flag: a missing claim is not an empty list (T-99). Only a claim
+  that is there synchronises, an empty one included; a missing one leaves the roles and writes a warning to the
+  security log. The periodic re-check already followed this rule; `allowed_groups` still refuses such a sign-in.
+
 ## [0.31.0] — 2026-11-26
 
 **A breaking release: read "Upgrading from 0.30.x" under "Removed" before you update.** It is the one deliberate

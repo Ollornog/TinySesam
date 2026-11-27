@@ -2,7 +2,7 @@
 id: T-99
 type: Task
 title: "Stage S3 — every origin is equal: source, step-up, linking local and IdP"
-status: offen
+status: in-arbeit
 points: 8
 milestone: M-2
 blocked_by: [T-97]
@@ -21,6 +21,15 @@ Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-syn
 - Pre-create an OIDC account and bind it at the first sign-in by `sub` or a verified address (opt-in).
 - Link a local account and an IdP identity: by the person with a step-up on both sides, or by an administrator through a sign-in link with the binding — never silently by the same address.
 - Fix and pin the rule "a missing group claim is not an empty list" (today `oidc.py` and `manager.py` `apply_idp_groups` treat it as empty and withdraw mapped roles).
+
+## Progress
+
+- 2026-11-27: the rule "a missing group claim is not an empty list" is fixed and pinned for the OIDC sign-in
+  (`oidc.py`; the re-check `_oidc_swap` already had it): a missing claim leaves the mapped roles and the provider's
+  admin flag and logs a warning, an empty claim withdraws them, `allowed_groups` still refuses. Suite
+  `tests/test_idp_group_claim.py`. SAML and LDAP keep reading an absent attribute as "no groups" (a directory omits
+  an empty attribute). Open: `source` (panel, account API, `account.json` and the clients' spec), SAML/LDAP step-up,
+  pre-created OIDC accounts, linking.
 
 ## Acceptance
 - Same scenario (role, approval, admin action) once local, once OIDC, once SAML (test IdP) with the same result.
