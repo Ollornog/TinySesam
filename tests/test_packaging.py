@@ -235,6 +235,8 @@ try:
     # once-measured floor does not slip again.
     MEASURED_FLOOR = {          # as of 2026-09-22, authlib 2026-10-28; source OSV.dev
         "fastapi": (0, 133, 0),        # only from here on is starlette >= 1.3.1 allowed
+        # Host-header check, UNC paths in StaticFiles, method dispatch, form() limits; declared directly since 2026-11-27.
+        "starlette": (1, 3, 1),
         "python-multipart": (0, 0, 31),
         # 1.6.12: GHSA-5357-c2jx-v7qh et al. (algorithm confusion). 1.9.1: CVE-2026-96760,
         # CVE-2026-114614 to -114618 and -114620 (fixes in 1.8.0, 1.9.0 and 1.9.1).

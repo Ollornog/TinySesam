@@ -73,6 +73,13 @@
 #   comment, a link), EightPerDay and UnderDoc (a Go comment), paperlaiss (a link) ran the full suite for a pure README or
 #   CHANGELOG change. Named limit: a docstring is no comment, and a program that builds the URL to fetch the file reads it
 #   (it then names the file outside the URL as well, or the repo narrows).
+#   NOT A READ either (since kit 0.70.0): a mention in an ignore file (`.gitignore`, `.dockerignore`, any `.<name>ignore`)
+#   — it keeps the file out. Only a negation line (`!README.md`) takes it back in and still counts. Measured in a private PHP repo
+#   on 2026-11-27 (kit 0.69): a README.md change ran the full suite because of .dockerignore, CLAUDE.md because of .gitignore.
+#   A PATH NAMES ITS OWN FILE (since kit 0.72.0): for a file in the root, `<folder>/README.md` names another file and is no
+#   read of README.md (`grep -w` matched after the `/`; same repo, a JSON note naming database/rules/README.md). Still a
+#   read: `README.md`, `./README.md`, `../README.md`, a folder from a variable (`$ROOT/`, `${dir}/`, `{ROOT}/`) and a
+#   join with spaces (`ROOT / "README.md"`). A file in a subfolder keeps the folder rule above.
 #
 # VERENGEN, nie erweitern: scripts/nur-text-verengung.txt im Repo, je Zeile
 #     aus <ERE-Muster>   # Begründung      → eine passende Datei löst die volle Suite aus
@@ -286,9 +293,10 @@ done < <(git ls-files -s -z 2>/dev/null)
 
 # Does <file> name <name> on a line that reads it? 0 = yes, 1 = no, 2 = search failed. Extra arguments: `-e <part>` words
 # of which one must stand in the same line (folder rule). Not a read: a comment line, a mention only inside a URL.
-echte_nennung() {  # echte_nennung <file> <name> [-e <part>]…
-    local datei="$1" name="$2" zeilen rc z ohne
+echte_nennung() {  # echte_nennung <file> <name> [--wurzel] [-e <part>]…
+    local datei="$1" name="$2" zeilen rc z ohne wurzel=nein muster_name
     shift 2
+    if [[ "${1:-}" == --wurzel ]]; then wurzel=ja; shift; fi
     if [[ $# -gt 0 ]]; then
         zeilen="$(git -c core.quotePath=false grep -h -F -w -e "$name" --and \( "$@" \) -- ":(literal)$datei" 2>/dev/null)"
     else
@@ -297,9 +305,24 @@ echte_nennung() {  # echte_nennung <file> <name> [-e <part>]…
     rc=$?
     [[ $rc -gt 1 ]] && return 2
     [[ $rc -eq 0 ]] || return 1
+    # An ignore file (.gitignore, .dockerignore, .prettierignore …, any `.<name>ignore`) leaves a file OUT of git, a
+    # build context or a tool: that reads nothing (a private PHP repo 2026-11-27, kit 0.69: a README.md change ran the
+    # full suite because .dockerignore named README.md, a CLAUDE.md change because .gitignore did). Only a negation
+    # line (`!README.md`) takes the file back IN, so that line still counts.
+    local ignoriert=nein
+    [[ "${datei##*/}" =~ ^\.[A-Za-z0-9_-]*ignore$ ]] && ignoriert=ja
     while IFS= read -r z; do
         [[ "$z" =~ ^[[:space:]]*(#|//|/\*|\*/|\*[[:space:]]|\*$|<!--) ]] && continue
+        [[ "$ignoriert" == ja && ! "$z" =~ ^[[:space:]]*! ]] && continue
         ohne="$(sed -E 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]"'"'"'<>()]*##g' <<<"$z")"
+        # A file in the root (since kit 0.72.0): `database/rules/README.md` names ANOTHER file — `grep -w` matched
+        # README.md after the `/` (a private PHP repo, 2026-11-27). Dropped: the name behind a named folder
+        # (`<folder>/README.md`, `a/b/README.md`). Kept: `README.md`, `./README.md`, `../README.md`, a folder from a
+        # variable (`$ROOT/README.md`, `${dir}/README.md`) and a join with spaces (`ROOT / "README.md"`).
+        if [[ "$wurzel" == ja ]]; then
+            muster_name="$(sed -e 's/[][\.^$*+?(){}|/#]/\\&/g' <<<"$name")"
+            ohne="$(sed -E ':a; s#(^|[^A-Za-z0-9_$}{)%@./-])([A-Za-z0-9_-][A-Za-z0-9_.-]*/)+'"$muster_name"'([^A-Za-z0-9_]|$)#\1\3#; ta' <<<"$ohne")"
+        fi
         # The word test of `grep -w` again, on the line without its URLs.
         grep -q -F -w -e "$name" <<<"$ohne" && return 0
     done <<<"$zeilen"
@@ -363,7 +386,7 @@ genannt_von() {  # genannt_von <Name> <ja|nein> <eigener Pfad> [<Ordner> der Dat
             continue
         fi
         workflow_liest "$l" || continue
-        echte_nennung "$l" "$name"; rc=$?
+        if [[ -z "$ordner" ]]; then echte_nennung "$l" "$name" --wurzel; else echte_nennung "$l" "$name"; fi; rc=$?
         [[ $rc -gt 1 ]] && return 2
         [[ $rc -eq 0 ]] || continue
         echo "$l"; return 0
