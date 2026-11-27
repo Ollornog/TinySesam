@@ -258,7 +258,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   for SAML (`ForceAuthn`, a fresh `AuthnInstant`; a link flow never signs in or creates an account) and LDAP (a bind
   with the directory password, booked like a sign-in under the typed name, never the name of another local account).
   The person also unlinks with a fresh confirmation — never the last way in — and a released SAML or LDAP identity is
-  not bound back by the name at the next sign-in.
+  not bound back by the name at the next sign-in. An unlinked OIDC identity takes the re-check rows of every session
+  with it: the provider's answer about it no longer reaches the account.
 - **Your own sign-in, step-up or password-change page: build it on the building blocks.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the

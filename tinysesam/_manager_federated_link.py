@@ -68,12 +68,20 @@ def _unlink_identity(self, user, source: str, ip: Optional[str] = None) -> Optio
     if not self._other_way_in(uid, source):
         self.audit(f"{source}_unlink_refused", name, ip, "reason=last_way_in")
         return 409, "api.link_last"
+    detail = "by=holder"
     if source == "oidc":
-        self.store.unlink_oidc(uid)
+        # B-18: the re-check rows of every session go with the identity, in the same transaction — the sessions stay
+        # and run on through the way in that is left.
+        _released, dropped = self.store.unlink_oidc(uid)
+        detail += f" rechecks_dropped={dropped}"
+        if dropped:
+            security.seclog.info("OIDC identity unlinked by the holder — %d re-check row(s) of the running sessions "
+                                 "dropped, the provider is no longer asked. user=%s ip=%s", dropped,
+                                 security.for_log(name), security.for_log(ip))
     else:
         self.store.unlink_federated(source, uid)
         self.store.close_name_binding(source, uid)
-    self.audit(f"{source}_unlinked", name, ip, "by=holder")
+    self.audit(f"{source}_unlinked", name, ip, detail)
     return None
 
 

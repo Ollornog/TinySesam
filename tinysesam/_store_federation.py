@@ -190,9 +190,19 @@ def account_sources(self, user_ids=None) -> dict:
     return out
 
 
-def unlink_oidc(self, user_id: int) -> int:
-    """Release every OIDC identity of an account (T-99: the person unlinks it). Returns how many were released."""
-    return self._exec("DELETE FROM oidc_identity WHERE user_id=?", (int(user_id),)).rowcount
+def unlink_oidc(self, user_id: int) -> tuple:
+    """Release every OIDC identity of an account (T-99: the person unlinks it) and, in the same transaction, the
+    re-check rows (`oidc_session`) of every session of the account (B-18): the re-check would otherwise keep asking
+    the provider about an identity that no longer belongs to the account — and a no from there would still end the
+    session and count against it. The sessions themselves stay. Returns (identities released, re-check rows dropped)."""
+    uid = int(user_id)
+    with self._writing():
+        released = self.db.execute("DELETE FROM oidc_identity WHERE user_id=?", (uid,)).rowcount
+        dropped = self.db.execute("DELETE FROM oidc_session WHERE token_hash IN "
+                                  "(SELECT token_hash FROM session WHERE user_id=?)", (uid,)).rowcount
+        self.db.commit()
+        self._written = time.monotonic()
+    return released, dropped
 
 
 def close_name_binding(self, source: str, user_id: int) -> None:

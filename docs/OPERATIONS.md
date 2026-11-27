@@ -622,7 +622,10 @@ side and does not change:
     (`POST /auth/identities/unlink`, `source=oidc|saml|ldap`, CSRF, a fresh confirmation) — never the last way in: a
     password, a passkey, a PIN as first factor, or an identity at another switched-on provider must remain (409, audit
     `<source>_unlink_refused reason=last_way_in`; the page shows the reason instead of the button). Success:
-    `<source>_unlinked by=holder`. A released SAML or LDAP identity is never bound back by the name at a later sign-in
+    `<source>_unlinked by=holder`. Unlinking OIDC drops, in the same transaction, the re-check rows of every session
+    of the account (B-18): the sessions stay and run on through the way in that is left, the provider is no longer
+    asked about the released identity (audit `oidc_unlinked by=holder rechecks_dropped=<n>`, an INFO line in the
+    security log when rows went). A released SAML or LDAP identity is never bound back by the name at a later sign-in
     (`unlinked_by_holder` in `NAME_BINDING_REFUSALS`) until the person links again or the operator opens it with
     `auth.federation_unbind(source, user_id)`.
   - *By the operator, by `sub`:* `tinysesam oidc-link --db <file> <user> --issuer <issuer> --sub <sub>` pre-registers
