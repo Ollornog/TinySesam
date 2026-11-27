@@ -545,7 +545,9 @@ if _ilu21.find_spec("cryptography") and _ilu21.find_spec("lxml"):
 
     _c = TestClient(_app_r, base_url=_BASE)
     _rid = _c.get("/auth/saml/login?next=/", follow_redirects=False).cookies.get("tinysesam_saml_flow")
-    assert _rid and _auth_r.store.peek_flow("samlreq:" + _rid) == {}, "the AuthnRequest is not remembered"
+    _flow = _auth_r.store.peek_flow("samlreq:" + _rid)
+    assert _rid and isinstance(_flow, dict) and _flow.get("reauth") is False and _flow.get("asked"), \
+        f"the AuthnRequest is not remembered (with reauth=False and the moment it was sent): {_flow}"
     _resp = _signed_response(_K.RSA_SHA256, _K.SHA256, rid=_rid, aid="_a-h1-1")
     assert _acs(_c, _resp, _rid).status_code == 303, "precondition: the first, requested response signs in"
     _c2 = TestClient(_app_r, base_url=_BASE)         # the attacker: own browser, cookie set from InResponseTo

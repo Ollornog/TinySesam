@@ -855,7 +855,8 @@ def build_router(auth) -> APIRouter:
             none_text = "err.stepup_provider"
         return auth.render_page("reauth", request=request, next=auth.safe_next(next, request),
                                 error=error or ("" if methods else auth.t(none_text)),
-                                username=u["username"], methods=methods, reauth_oidc=via_provider)
+                                username=u["username"], methods=methods, reauth_oidc=auth._confirms_at_oidc(u),
+                                reauth_saml=auth._confirms_at_saml(u))
 
     @r.post("/auth/reauth")
     def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), pin: str = Form(""),
@@ -882,7 +883,8 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("reauth", request=request, status=erg.status, next=erg.next_url,
                                     username=u["username"] if u else "",
                                     methods=auth.stepup_options(u) if u else [], error=erg.message,
-                                    reauth_oidc=bool(u and auth._confirms_at_provider(u)))
+                                    reauth_oidc=bool(u and auth._confirms_at_oidc(u)),
+                                    reauth_saml=bool(u and auth._confirms_at_saml(u)))
         return erg.redirect()               # to next, with the renewed session cookie
 
     # ---------- Forgot / reset password (needs a mailer, NOT the magic link) ----------
@@ -1633,9 +1635,13 @@ def build_router(auth) -> APIRouter:
             return auth.require_public_base(request, _saml_base(request))
 
         @r.get("/auth/saml/login")
-        def saml_login(request: Request, next: str = ""):
+        def saml_login(request: Request, next: str = "", reauth: str = ""):
             base = _saml_base_url(request)
-            url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next, request))
+            # T-70: `reauth=1` (the confirmation page's provider button) sends `ForceAuthn="true"`; the request
+            # remembers it and when it was sent, the ACS confirms only with an `AuthnInstant` from after that.
+            # Passed only when asked: a client set by hand (`auth.saml = own_client`) without the argument keeps working.
+            force = {"force_authn": True} if reauth and cfg.saml_reauth_check else {}
+            url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next, request), **force)
             resp = RedirectResponse(url, 303)
             # `__Host-` in front where possible (A-1) — otherwise a neighbour subdomain sets the anchor.
             auth._set_flow_cookie(resp, _SAMLFLOW, rid or "", max_age=600,
@@ -1667,6 +1673,36 @@ def build_router(auth) -> APIRouter:
                 # `_check_saml` itself into the audit log — here only the answer to the browser.
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "", request)
+            # T-70 (ASVS 5.0 6.8.4, SAML 2.0 Core §2.7.2 `AuthnInstant`): when did the person really authenticate at
+            # the provider? A round through its running session is silent — up to 0.31.x it counted as a fresh
+            # confirmation: a step-up on a full session, a new session "signed in now". With `saml_reauth_check` the
+            # assertion's `AuthnInstant` decides — the same rule as `auth_time` for OIDC (T-49). Missing (a broken
+            # response: the attribute is mandatory) it never confirms a step-up; a new session then counts from this
+            # sign-in, as for OIDC without `auth_time`.
+            authenticated = data.get("authn_instant") if cfg.saml_reauth_check else None
+            asked = int(data.get("asked") or 0)
+            provider_fresh = authenticated is not None and asked > 0 and authenticated >= asked - 60
+            before = auth._session_from_request(request)
+            stepping_up = bool(before and before["user_id"] == u["id"] and before["mfa_ok"])
+            if cfg.saml_reauth_check and stepping_up and not provider_fresh:
+                age = "missing" if authenticated is None else (asked - authenticated if asked else "unknown")
+                if data.get("reauth"):
+                    # The confirmation page asked for a sign-in (`ForceAuthn`) and the provider did not do one: no
+                    # step-up — the page says so instead of a silent success.
+                    auth.audit("saml_reauth_stale", str(u["username"]), ip, f"authn_instant={age}")
+                    resp = auth.render_page("reauth", status=401, request=request, next=nxt,
+                                            username=str(u["username"]), methods=auth.stepup_options(u),
+                                            reauth_oidc=auth._confirms_at_oidc(u), reauth_saml=False,
+                                            error=auth.t("err.saml_reauth_stale"))
+                    auth._delete_flow_cookie(resp, _SAMLFLOW,
+                                             samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
+                    return resp
+                # Any other round on a full session: it runs on, but it does not refresh the confirmation.
+                auth.audit("stepup_not_counted", str(u["username"]), ip, "factor=saml reason=no_fresh_authn_instant")
+                resp = RedirectResponse(nxt, 303)
+                auth._delete_flow_cookie(resp, _SAMLFLOW,
+                                         samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
+                return resp
             # SAML has no `email_verified`: no standard attribute says that the IdP has
             # checked the address. Without `saml_email_trusted` (default) and without a vouching attribute
             # (`saml_attr_email_verified`) "no proof" therefore travels along here — an
@@ -1680,6 +1716,9 @@ def build_router(auth) -> APIRouter:
                                                       (cfg.saml_email_trusted or security.proof_attribute(cfg, "saml"))
                                                       and u.get("email")
                                                       and u.get("email_verified")))
+            if is_new and authenticated is not None and not (before and before["user_id"] == u["id"]):
+                # A NEW session: its confirmation dates from the provider's sign-in, not from this round (T-70).
+                auth.store.backdate_confirmation(token, authenticated)
             resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)

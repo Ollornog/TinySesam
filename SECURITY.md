@@ -242,9 +242,11 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   counts from TinySesam's own sign-in, as before — the provider is trusted to have authenticated at least with
   its weakest method; the provider button then never confirms, the account confirms with its own factors or by
   signing in again. Providers that ignore `prompt=login` are caught the same way. `oidc_reauth_check=False`
-  restores the behaviour up to 0.25.x. SAML has no such check yet (`ForceAuthn` is not sent, `AuthnInstant` is
-  not read; backlog T-70): a SAML round through the provider's running session still counts as a fresh
-  confirmation. **LDAP** (T-99): an account whose password lives in the directory confirms with it on the
+  restores the behaviour up to 0.25.x. **SAML** has the same check (T-70, `saml_reauth_check`, default on): the
+  provider button sends `ForceAuthn="true"` (SAML 2.0 Core §3.4.1) and confirms only with an `AuthnInstant` from after
+  the request, read from the one assertion python3-saml checked; any other round on a full session does not refresh
+  it, and a new session counts from the `AuthnInstant`. An identity provider that ignores `ForceAuthn` answers with an
+  old `AuthnInstant` and is caught the same way; `saml_reauth_check=False` restores the behaviour up to 0.31.x. **LDAP** (T-99): an account whose password lives in the directory confirms with it on the
   confirmation page — a fresh bind through the same directory check as the sign-in (group gate, one identifier one
   account), which must lead to this account; counted in the confirmation's own bucket, a directory outage is a 503
   and no failed attempt.
