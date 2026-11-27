@@ -21,10 +21,12 @@ type Account struct {
 	Links     *AccountLinks     `json:"links"`
 }
 
-// AccountName names the account.
+// AccountName names the account. Source says where it comes from: "local", "oidc", "saml", "ldap" (two or more =
+// a mixed account; an unknown text is for the application to ignore); nil when missing or no list.
 type AccountName struct {
-	Username    *string `json:"username"`
-	DisplayName *string `json:"display_name"`
+	Username    *string  `json:"username"`
+	DisplayName *string  `json:"display_name"`
+	Source      []string `json:"source"`
 }
 
 // AccountSignIn are the sign-in methods.
@@ -123,7 +125,8 @@ func ParseAccount(body []byte) Account {
 	sessions, programs, links := group(data["sessions"]), group(data["programs"]), group(data["links"])
 	out := Account{
 		SignedIn: true,
-		Account:  &AccountName{Username: text(account["username"]), DisplayName: text(account["display_name"])},
+		Account: &AccountName{Username: text(account["username"]), DisplayName: text(account["display_name"]),
+			Source: texts(account["source"])},
 		SignIn:   &AccountSignIn{Password: text(signIn["password"]), PIN: flag(signIn["pin"])},
 		Sessions: &AccountSessions{Count: count(sessions["count"]), Items: []AccountSession{}},
 		Programs: &AccountPrograms{OAuth: offeredUses(programs["oauth"]), Services: offeredUses(programs["services"]),
@@ -184,6 +187,21 @@ func text(v any) *string {
 		return &s
 	}
 	return nil
+}
+
+// texts keeps the string entries of a list, in order; anything that is no list is nil, an empty list stays empty.
+func texts(v any) []string {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := []string{}
+	for _, e := range list {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func flag(v any) *bool {

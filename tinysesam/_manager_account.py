@@ -348,7 +348,8 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     frame) adds `app=<host>` to them, so the account page opens framed. `request`: the person's request with its
     session cookie — only then does a session carry `current` (True/False); without it `current` is None.
 
-    Members: `account` (username, display name); `sign_in` — `password` ("set", "unset", "directory" or None when
+    Members: `account` (username, display name, `source`: where the account comes from — a list of `local`, `oidc`,
+    `saml`, `ldap`, two or more for a mixed account, T-99); `sign_in` — `password` ("set", "unset", "directory" or None when
     passwords are off), `totp` ({enabled, recovery_left, recovery_low} or None), `passkeys` ({count, items} or None),
     `pin` (bool or None); `sessions` ({count, items: created_at, last_seen, method, device, current}); `programs` —
     `oauth`, `services`, `app_passwords` (lists of {name, created_at, last_used}, None when the feature is off) and
@@ -419,7 +420,9 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     for key, anchor in self._ACCOUNT_ANCHORS.items():
         links[key] = f"{account}#{anchor}" if cfg.account_enabled and offered[key] else None
     links["approvals"] = f"{base}/auth/approvals{q}" if pending is not None else None
-    return {"account": {"username": row["username"], "display_name": row["display_name"] or row["username"]},
+    source = self.store.account_sources([uid]).get(uid, ["local"])
+    return {"account": {"username": row["username"], "display_name": row["display_name"] or row["username"],
+                        "source": source},
             "sign_in": {"password": password, "totp": totp, "passkeys": passkeys, "pin": pin},
             "sessions": {"count": len(sessions), "items": sessions},
             "programs": {"oauth": oauth, "services": services, "app_passwords": app_passwords,

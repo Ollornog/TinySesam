@@ -152,6 +152,44 @@ def has_foreign_identity(self, user_id: int) -> bool:
                           (user_id, user_id)))
 
 
+#: The origins an account can have, in the order they are shown (T-99, ADR-18).
+ACCOUNT_SOURCES = ("local", "oidc", "saml", "ldap")
+
+
+def account_sources(self, user_ids=None) -> dict:
+    """{account id: its origins} (T-99, ADR-18 "the origin is a visible attribute"), in the order of `ACCOUNT_SOURCES`.
+
+    `oidc`, `saml`, `ldap`: the account is bound to an identity of that provider (`oidc_identity`, `federated_identity`,
+    an origin placeholder included), or — without any binding — the provider created its name (`name_source`).
+    `local`: it has a way in of its own — a password, a passkey or a PIN — or no provider at all (a sign-in link then).
+    Two or more is a mixed account. One query for all accounts (`user_ids` None) or the given ones; no decision of
+    TinySesam reads it, it is shown only."""
+    where, args = "", ()  # type: tuple[str, tuple]
+    if user_ids is not None:
+        ids = [int(u) for u in user_ids]
+        if not ids:
+            return {}
+        where, args = f" WHERE u.id IN ({','.join('?' * len(ids))})", tuple(ids)
+    rows = self._all(
+        "SELECT u.id, u.name_source, "
+        "EXISTS (SELECT 1 FROM oidc_identity o WHERE o.user_id = u.id) AS oidc, "
+        "EXISTS (SELECT 1 FROM federated_identity f WHERE f.user_id = u.id AND f.source = 'saml') AS saml, "
+        "EXISTS (SELECT 1 FROM federated_identity f WHERE f.user_id = u.id AND f.source = 'ldap') AS ldap, "
+        "(EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) "
+        " OR EXISTS (SELECT 1 FROM webauthn_cred w WHERE w.user_id = u.id) "
+        " OR EXISTS (SELECT 1 FROM pin_cred n WHERE n.user_id = u.id)) AS own "
+        "FROM users u" + where, args)
+    out = {}
+    for r in rows:
+        found = {s for s in ("oidc", "saml", "ldap") if r[s]}
+        if not found and r["name_source"] in ("oidc", "saml", "ldap"):
+            found.add(r["name_source"])
+        if r["own"] or not found:
+            found.add("local")
+        out[int(r["id"])] = [s for s in ACCOUNT_SOURCES if s in found]
+    return out
+
+
 def unlink_federated(self, source: str, user_id: int) -> int:
     """Release the binding of an account for a source (operator path after a move)."""
     return self._exec("DELETE FROM federated_identity WHERE source=? AND user_id=?",

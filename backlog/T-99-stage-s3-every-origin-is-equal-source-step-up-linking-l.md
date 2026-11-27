@@ -28,8 +28,10 @@ Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-syn
   (`oidc.py`; the re-check `_oidc_swap` already had it): a missing claim leaves the mapped roles and the provider's
   admin flag and logs a warning, an empty claim withdraws them, `allowed_groups` still refuses. Suite
   `tests/test_idp_group_claim.py`. SAML and LDAP keep reading an absent attribute as "no groups" (a directory omits
-  an empty attribute). Open: `source` (panel, account API, `account.json` and the clients' spec), SAML/LDAP step-up,
-  pre-created OIDC accounts, linking.
+  an empty attribute).
+- 2026-11-27: `source` of an account (`Store.account_sources`: `local`, `oidc`, `saml`, `ldap`, mixed = two or more) in
+  the panel, the account API, `account.json` (spec §8a, two vectors) and the gate clients of all five languages; suite
+  `tests/test_account_source.py`. Open: SAML step-up (T-70), LDAP step-up, pre-created OIDC accounts, linking.
 
 ## Acceptance
 - Same scenario (role, approval, admin action) once local, once OIDC, once SAML (test IdP) with the same result.

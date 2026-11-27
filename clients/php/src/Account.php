@@ -69,7 +69,9 @@ final class Account
         return [
             'signed_in' => true,
             'account' => ['username' => self::text($account, 'username'),
-                'display_name' => self::text($account, 'display_name')],
+                'display_name' => self::text($account, 'display_name'),
+                // Where the account comes from: local, oidc, saml, ldap (two or more = mixed); null when no list.
+                'source' => self::texts($account, 'source')],
             'sign_in' => [
                 'password' => self::text($signIn, 'password'),
                 'totp' => $totp instanceof \stdClass ? ['enabled' => self::flag($totp, 'enabled'),
@@ -165,6 +167,18 @@ final class Account
         $v = Strict::member($m, $name);
 
         return \is_string($v) ? $v : null;
+    }
+
+    /**
+     * The string entries of a list, in order; null when it is no list.
+     *
+     * @return list<string>|null
+     */
+    private static function texts(\stdClass $m, string $name): ?array
+    {
+        $v = Strict::member($m, $name);
+
+        return \is_array($v) ? array_values(array_filter($v, static fn (mixed $e): bool => \is_string($e))) : null;
     }
 
     private static function flag(\stdClass $m, string $name): ?bool

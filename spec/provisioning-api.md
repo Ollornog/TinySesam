@@ -62,8 +62,12 @@ Language-neutral description of `/auth/api/users` for clients in any language. T
 ```json
 {"id": 42, "username": "lena", "display_name": "Lena M.", "email": "lena@example.org", "email_verified": false,
  "roles": ["example-member"], "other_roles": false, "state": "active",
- "created_at": 1767226200, "first_login_at": null, "last_login_at": null, "delete_after": null}
+ "created_at": 1767226200, "first_login_at": null, "last_login_at": null, "delete_after": null, "source": ["local"]}
 ```
+
+- `source`: where the account comes from — `local` (a password, passkey or PIN of its own, or no identity provider),
+  `oidc`, `saml`, `ldap` (bound to an identity of that provider); two or more for a mixed account. Shown only: no
+  decision of TinySesam reads it. Treat an unknown value as text to ignore (a later release may add one).
 
 - `roles`: only the roles of the application's allowlist. `other_roles: true` says the account also holds others
   (granted by the operator) — then `display_name`, disable/enable and the sign-in link answer `409 account_shared`.
