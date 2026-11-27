@@ -21,7 +21,9 @@ tracked Python file in about half a second, with a self-probe; it runs in the sp
 `repeat`) and in the pre-push hook, so the finding is red before the push. The rule is mirrored, not widened:
 `assert client.post(...).status_code == 403` is no CodeQL finding (`post` is not among its names) and no finding here —
 the acceptance below is met with the two real cases (`delete(...)`, S5; `write(...)`, S4). No finding in the
-inventory. Proved by mutation in the pull request and by a sprint pull request turned red with such an assert.
+inventory. Proved by mutation in the pull request (four mutations, all red) and by a push with such an assert in a
+test, which the pre-push hook refused before it reached a pull request; the sprint pull request's `repeat` log shows
+the check's line.
 
 The sprint lane ([T-131](T-131-sprint-lane-for-the-heavy-ci-jobs.md)) skips CodeQL, so findings first show in the
 closing PR to main and cost one full round (~45 min). It happened in two sprints in a row, both times
