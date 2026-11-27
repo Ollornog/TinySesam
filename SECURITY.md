@@ -244,7 +244,10 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   signing in again. Providers that ignore `prompt=login` are caught the same way. `oidc_reauth_check=False`
   restores the behaviour up to 0.25.x. SAML has no such check yet (`ForceAuthn` is not sent, `AuthnInstant` is
   not read; backlog T-70): a SAML round through the provider's running session still counts as a fresh
-  confirmation.
+  confirmation. **LDAP** (T-99): an account whose password lives in the directory confirms with it on the
+  confirmation page — a fresh bind through the same directory check as the sign-in (group gate, one identifier one
+  account), which must lead to this account; counted in the confirmation's own bucket, a directory outage is a 503
+  and no failed attempt.
 - **Your own sign-in, step-up or password-change page: build it on the building blocks.**
   `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
   and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the

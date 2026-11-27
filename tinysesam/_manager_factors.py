@@ -159,6 +159,28 @@ def _verify_user_password(self, user_id, password) -> bool:
     return True
 
 
+def _directory_password(self, user) -> bool:
+    """Does this account confirm its password at the directory (T-99, LDAP step-up)? An LDAP account without a local
+    password, on an installation with a directory: the confirmation is a fresh bind (`_verify_directory_password`)."""
+    uid = int(user["id"])
+    return bool(self.cfg.ldap_enabled and self.ldap is not None and not self.store.get_password_hash(uid)
+                and "ldap" in self.store.account_sources([uid]).get(uid, []))
+
+
+def _verify_directory_password(self, user, password) -> bool:
+    """A fresh bind as the account's directory entry (T-99): True only when the directory accepts the password AND the
+    entry leads to THIS account — through `_check_ldap`, the one directory check (group gate, binding, one identifier one
+    account). An entry that leads to another account is refused and logged. Raises `ldap_.DirectoryNotReachable` on an
+    outage — the caller takes the attempt back (F-23)."""
+    found = self._check_ldap(user["username"], password)
+    if not found:
+        return False
+    if int(found["id"]) != int(user["id"]):
+        self.audit("ldap_reauth_other_account", str(user["username"]), None, f"entry_account={int(found['id'])}")
+        return False
+    return True
+
+
 def _verify_user_pin(self, user_id, pin) -> bool:
     """Like `_verify_user_password`, only with the PIN."""
     h = self.store.get_pin_hash(user_id)
@@ -190,7 +212,7 @@ def stepup_options(self, user) -> list[str]:
         avail.append("totp")
     if cfg.pin_enabled and self.store.has_pin(user["id"]):
         avail.append("pin")
-    if cfg.password_enabled and self.store.get_password_hash(user["id"]):
+    if cfg.password_enabled and (self.store.get_password_hash(user["id"]) or self._directory_password(user)):
         avail.append("password")
     wanted = [m for m in (cfg.stepup_methods or []) if m in avail]
     if wanted:

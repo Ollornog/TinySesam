@@ -31,7 +31,10 @@ Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-syn
   an empty attribute).
 - 2026-11-27: `source` of an account (`Store.account_sources`: `local`, `oidc`, `saml`, `ldap`, mixed = two or more) in
   the panel, the account API, `account.json` (spec §8a, two vectors) and the gate clients of all five languages; suite
-  `tests/test_account_source.py`. Open: SAML step-up (T-70), LDAP step-up, pre-created OIDC accounts, linking.
+  `tests/test_account_source.py`.
+- 2026-11-27: LDAP step-up by a fresh bind (`_directory_password`, `_verify_directory_password` through `_check_ldap`;
+  the entry must lead to this account; outage 503 without a count); suite `tests/test_ldap_stepup.py`. Open: SAML
+  step-up (T-70), pre-created OIDC accounts, linking.
 
 ## Acceptance
 - Same scenario (role, approval, admin action) once local, once OIDC, once SAML (test IdP) with the same result.

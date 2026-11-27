@@ -666,9 +666,25 @@ def _stepup_secret(self, request: Request, u: dict, procedure: str, secret, nxt:
                if throttle_ok else None)
     if attempt is None:
         return self._sign_in_no("locked" if throttle_ok else "ratelimit", 429, "err.retry", nxt)
-    checker = {"totp": self._verify_totp, "pin": self._verify_user_pin,
-               "password": self._verify_user_password}[procedure]
-    correct = checker(u["id"], secret)
+    if procedure == "password" and self._directory_password(u):
+        # LDAP step-up (T-99): a fresh bind instead of a local hash. An outage is not a failed attempt (F-23, as at
+        # sign-in): taken back, 503, the same lines as the sign-in's outage.
+        from .ldap_ import DirectoryNotReachable
+        try:
+            correct = self._verify_directory_password(u, secret)
+        except DirectoryNotReachable as e:
+            self.audit("ldap_unavailable", u["username"], ip, security.for_log(str(e))[:300])
+            security.seclog.error("LDAP unreachable user=%s ip=%s reason=%s", security.for_log(u["username"]),
+                                  security.for_log(ip), security.for_log(str(e)))
+            self._revert_attempt(attempt)
+            return self._sign_in_no("directory_down", 503, "err.directory_down", nxt)
+        except BaseException:
+            self._attempt_failed(attempt)
+            raise
+    else:
+        checker = {"totp": self._verify_totp, "pin": self._verify_user_pin,
+                   "password": self._verify_user_password}[procedure]
+        correct = checker(u["id"], secret)
     self._record_login(u["username"], ip, correct, "reauth", attempt=attempt)
     if not correct:
         return self._sign_in_no("invalid", 401, "err.reauth", nxt)
@@ -720,7 +736,9 @@ def confirm_password(self, request: Request, password: str, *, next: str = "",
             return my_dialog(error=result.message, status=result.status)
         return result.redirect()     # to next, with the renewed session cookie
 
-    An empty password is `missing` (400) and does not count. Raises only what the route
+    An empty password is `missing` (400) and does not count. An LDAP account without a local password confirms with
+    its directory password: a fresh bind that must lead to this account (T-99); a directory outage is `directory_down`
+    (503) and does not count. Raises only what the route
     raises too: `HTTPException(403)` for a wrong CSRF token, plus the unexpected. Synchronous: call from
     a `def` route, in an `async def` route via `run_in_threadpool`."""
     return self._confirm(request, "password", password, next, csrf)

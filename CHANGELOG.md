@@ -6,6 +6,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- LDAP step-up by a fresh bind (T-99): an LDAP account without a local password is offered its directory password on
+  the confirmation page (`stepup_options` names `password`), and `confirm_password` checks it with a bind through
+  `_check_ldap` that must lead to this account — the group gate applies, an entry that leads to another account is
+  refused (audit `ldap_reauth_other_account`). Counted in the `reauth` bucket; a directory outage is a 503 without a
+  failed attempt (audit `ldap_unavailable`). Up to now such an account had nothing to confirm with and new access asked
+  for a new sign-in.
 - The origin of an account is visible (T-99, ADR-18): `source` — a list of `local`, `oidc`, `saml`, `ldap`, two or more
   for a mixed account — in the admin panel (the account's profile; every row of `<admin>/api/users`), in the account
   API's view of an account and in `account.json` (`account.source`, spec §8a). `local` means a password, passkey or PIN
