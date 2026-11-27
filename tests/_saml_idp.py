@@ -1,9 +1,9 @@
 """A SAML test identity provider for the suites: a fresh key pair and really signed responses, checked by the real
 python3-saml of the service provider (no mock of the check).
 
-Import it only after `braucht_modul("onelogin", extra="saml")` and friends: it needs `cryptography`, `lxml` and
-python3-saml. `IdP(acs, sp)` builds the key; `response(...)` signs a SAMLResponse to one AuthnRequest; `cert_b64` is
-the certificate as `saml_idp_x509cert` wants it; `start`/`acs` drive the two routes with a `TestClient`.
+It needs `cryptography`, `lxml` and python3-saml and says so itself (exit 77, skipped) when one is missing.
+`IdP(base)` builds the key; `response(...)` signs a SAMLResponse to one AuthnRequest; `cert_b64` is the certificate as
+`saml_idp_x509cert` wants it; `start`/`acs` drive the two routes with a `TestClient`.
 """
 from __future__ import annotations
 
@@ -13,13 +13,18 @@ import time
 import zlib
 from urllib.parse import parse_qs, urlsplit
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
-from lxml import etree
-from onelogin.saml2.constants import OneLogin_Saml2_Constants as K
-from onelogin.saml2.utils import OneLogin_Saml2_Utils as Utils
+from voraussetzung import braucht_modul
+braucht_modul("onelogin", extra="saml")
+braucht_modul("cryptography")
+braucht_modul("lxml")
+
+from cryptography import x509  # noqa: E402
+from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
+from cryptography.x509.oid import NameOID  # noqa: E402
+from lxml import etree  # noqa: E402
+from onelogin.saml2.constants import OneLogin_Saml2_Constants as K  # noqa: E402
+from onelogin.saml2.utils import OneLogin_Saml2_Utils as Utils  # noqa: E402
 
 #: The name of the browser cookie that carries the AuthnRequest ID to the ACS (`router.py`).
 FLOW = "tinysesam_saml_flow"
