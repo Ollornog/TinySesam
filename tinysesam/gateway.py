@@ -190,6 +190,57 @@ def _number(name: str) -> int:
         raise SystemExit(f"{name}={value!r}: expected a whole number")
 
 
+def _topbar_links(name: str = "TINYSESAM_TOPBAR_LINKS") -> list:
+    """TINYSESAM_TOPBAR_LINKS: links in the top bar of the gateway's pages, a JSON list of [title, target] pairs —
+    `[["Wiki", "/wiki"], ["Files", "https://files.example.com/"]]` —, each optionally with a visibility as third
+    element (T-76): `["Admin", "/admin", {"admin": true}]`, `["Team", "/team", {"role": "teamadmin"}]`. The same for
+    TINYSESAM_TOPBAR_MENU_LINKS (the links of the account menu). What a target and a visibility may be is checked by
+    `config_check` (own origin, `base_url` or a protected host; exactly one of admin/role); the shape is checked here,
+    so a broken value ends the start instead of leaving the bar silently empty."""
+    import json
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except ValueError as e:
+        raise SystemExit(f"{name} is not valid JSON: {e}")
+    if not isinstance(value, list) or not all(isinstance(z, list) and len(z) in (2, 3)
+                                              and all(isinstance(x, str) for x in z[:2])
+                                              and (len(z) == 2 or isinstance(z[2], dict)) for z in value):
+        raise SystemExit(f'{name} must be a list of [title, target] pairs, each optionally with a '
+                         'visibility: [["Wiki", "/wiki"], ["Admin", "/admin", {"admin": true}]]')
+    return [tuple(z) for z in value]
+
+
+def _json_object(name: str) -> dict:
+    """A JSON object from the environment, empty = {}. Broken JSON ends the start — silently
+    ignored, the default would apply to every application, and nobody would see why."""
+    import json
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except ValueError as e:
+        raise SystemExit(f"{name} is not valid JSON: {e}")
+    if not isinstance(value, dict):
+        raise SystemExit(f"{name} must be an object: {{\"app.example.com\": {{…}}}}")
+    return value
+
+
+def _switch(name: str) -> bool:
+    """An on/off from the environment. A value that is neither ends
+    the start: reading `TINYSESAM_GATE=ja` silently as "off" would mean a gate that keeps checking
+    every request, and nobody would know why it does not get faster."""
+    value = os.environ.get(name, "").strip().lower()
+    if value in ("", "0", "false", "no", "off"):
+        return False
+    if value in ("1", "true", "yes", "on"):
+        return True
+    raise SystemExit(f"{name}={value!r}: expected 1 or 0 (true/false, yes/no, on/off)")
+
+
 #: The gateway's environment variables and the field each one sets — the overlay over a configuration file (T-97).
 #: The same names and readers as `config_from_env` without a file; `tests/test_server_config.py` holds both paths to
 #: the same value per variable. `TINYSESAM_OIDC_CLIENTS` / `TINYSESAM_OIDC_CLIENT_<HOST>_*` (whole `oidc_clients`) and
@@ -200,8 +251,8 @@ ENVIRONMENT_FIELDS = (
     ("TINYSESAM_OIDC_CLIENT_SECRET", "oidc_client_secret", _text),
     ("TINYSESAM_BASE_URL", "base_url", _text),
     ("TINYSESAM_COOKIE_DOMAIN", "cookie_domain", _text),
-    ("TINYSESAM_PROTECTED_HOSTS", "trusted_redirect_hosts", lambda n: _split(n)),
-    ("TINYSESAM_ALLOWED_GROUPS", "oidc_allowed_groups", lambda n: _split(n)),
+    ("TINYSESAM_PROTECTED_HOSTS", "trusted_redirect_hosts", _split),
+    ("TINYSESAM_ALLOWED_GROUPS", "oidc_allowed_groups", _split),
     ("TINYSESAM_OIDC_SCOPES", "oidc_scopes", _text),
     ("TINYSESAM_OIDC_NAME", "oidc_name", _text),
     ("TINYSESAM_GATE_BRAND", "gate_brand", _text),
@@ -214,19 +265,19 @@ ENVIRONMENT_FIELDS = (
     ("TINYSESAM_DB", "db_path", _text),
     ("TINYSESAM_HTTPS_MODE", "https_mode", _text),
     ("TINYSESAM_SECURITY_LOG", "security_log", _text),
-    ("TINYSESAM_TRUSTED_PROXIES", "trusted_proxies", lambda n: _split(n)),
+    ("TINYSESAM_TRUSTED_PROXIES", "trusted_proxies", _split),
     ("TINYSESAM_OIDC_REVALIDATE_MINUTES", "oidc_revalidate_minutes", _number),
-    ("TINYSESAM_GATE", "gate_token_enabled", lambda n: _switch(n)),
-    ("TINYSESAM_GATE_LINK", "gate_link_enabled", lambda n: _switch(n)),
+    ("TINYSESAM_GATE", "gate_token_enabled", _switch),
+    ("TINYSESAM_GATE_LINK", "gate_link_enabled", _switch),
     ("TINYSESAM_LANG", "lang", lambda n: _language()),
     ("TINYSESAM_FORWARD_LOGIN", "forward_login", _text),
-    ("TINYSESAM_FORWARD_APPS", "forward_apps", lambda n: _json_object(n)),
+    ("TINYSESAM_FORWARD_APPS", "forward_apps", _json_object),
     ("TINYSESAM_FORWARD_LOGOUT", "forward_logout", _text),
     ("TINYSESAM_FORWARD_LOGGED_OUT_SEC", "forward_logged_out_sec", _number),
     ("TINYSESAM_GATE_TTL_SEC", "gate_token_ttl_sec", _number),
-    ("TINYSESAM_OAUTH_SERVICE_CLIENTS", "oauth_service_clients", lambda n: _switch(n)),
-    ("TINYSESAM_TOPBAR_LINKS", "topbar_links", lambda n: _topbar_links(n)),
-    ("TINYSESAM_TOPBAR_MENU_LINKS", "topbar_menu_links", lambda n: _topbar_links(n)),
+    ("TINYSESAM_OAUTH_SERVICE_CLIENTS", "oauth_service_clients", _switch),
+    ("TINYSESAM_TOPBAR_LINKS", "topbar_links", _topbar_links),
+    ("TINYSESAM_TOPBAR_MENU_LINKS", "topbar_menu_links", _topbar_links),
 )
 
 
@@ -302,57 +353,6 @@ def config_from_env() -> TinySesamConfig:
         topbar_links=_topbar_links(),
         topbar_menu_links=_topbar_links("TINYSESAM_TOPBAR_MENU_LINKS"),
     )
-
-
-def _topbar_links(name: str = "TINYSESAM_TOPBAR_LINKS") -> list:
-    """TINYSESAM_TOPBAR_LINKS: links in the top bar of the gateway's pages, a JSON list of [title, target] pairs —
-    `[["Wiki", "/wiki"], ["Files", "https://files.example.com/"]]` —, each optionally with a visibility as third
-    element (T-76): `["Admin", "/admin", {"admin": true}]`, `["Team", "/team", {"role": "teamadmin"}]`. The same for
-    TINYSESAM_TOPBAR_MENU_LINKS (the links of the account menu). What a target and a visibility may be is checked by
-    `config_check` (own origin, `base_url` or a protected host; exactly one of admin/role); the shape is checked here,
-    so a broken value ends the start instead of leaving the bar silently empty."""
-    import json
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except ValueError as e:
-        raise SystemExit(f"{name} is not valid JSON: {e}")
-    if not isinstance(value, list) or not all(isinstance(z, list) and len(z) in (2, 3)
-                                              and all(isinstance(x, str) for x in z[:2])
-                                              and (len(z) == 2 or isinstance(z[2], dict)) for z in value):
-        raise SystemExit(f'{name} must be a list of [title, target] pairs, each optionally with a '
-                         'visibility: [["Wiki", "/wiki"], ["Admin", "/admin", {"admin": true}]]')
-    return [tuple(z) for z in value]
-
-
-def _json_object(name: str) -> dict:
-    """A JSON object from the environment, empty = {}. Broken JSON ends the start — silently
-    ignored, the default would apply to every application, and nobody would see why."""
-    import json
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return {}
-    try:
-        value = json.loads(raw)
-    except ValueError as e:
-        raise SystemExit(f"{name} is not valid JSON: {e}")
-    if not isinstance(value, dict):
-        raise SystemExit(f"{name} must be an object: {{\"app.example.com\": {{…}}}}")
-    return value
-
-
-def _switch(name: str) -> bool:
-    """An on/off from the environment. A value that is neither ends
-    the start: reading `TINYSESAM_GATE=ja` silently as "off" would mean a gate that keeps checking
-    every request, and nobody would know why it does not get faster."""
-    value = os.environ.get(name, "").strip().lower()
-    if value in ("", "0", "false", "no", "off"):
-        return False
-    if value in ("1", "true", "yes", "on"):
-        return True
-    raise SystemExit(f"{name}={value!r}: expected 1 or 0 (true/false, yes/no, on/off)")
 
 
 HEALTH_PATH = "/healthz"
