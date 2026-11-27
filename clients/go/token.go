@@ -18,7 +18,7 @@ const (
 	tokenType      = "tinysesam-gate+jwt"
 )
 
-var identityClaims = []string{"ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth", "ts_kind"}
+var identityClaims = []string{"ts_user", "ts_name", "ts_email", "ts_groups", "ts_id", "ts_auth", "ts_kind", "ts_perms"}
 
 // Claims of a valid gate token. Raw holds every claim as decoded (numbers as json.Number); unknown claims are
 // ignored by the checks but kept there.
@@ -258,5 +258,6 @@ func identityFromClaims(c *Claims) *Identity {
 	}
 	a, k := kindOf(str("ts_auth"))
 	return &Identity{User: str("ts_user"), Name: str("ts_name"), Email: str("ts_email"),
-		Groups: ParseGroups(str("ts_groups")), ID: c.Subject, Auth: a, Kind: k, AccountKind: AccountKind(str("ts_kind"))}
+		Groups: ParseGroups(str("ts_groups")), ID: c.Subject, Auth: a, Kind: k, AccountKind: AccountKind(str("ts_kind")),
+		Permissions: ParseGroups(str("ts_perms"))}
 }

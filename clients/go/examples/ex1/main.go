@@ -13,6 +13,12 @@
 //
 // TS_API_KEY is an automation key of the service account `svc-ex1` (panel → the account → API keys). Without it the
 // account API part is switched off and the page says so.
+//
+// Permissions (T-101, ADR-17): at start the application registers what it can do (`manifest`, PUT
+// /auth/api/apps/ex1/permissions with the same key, scope permissions:register) — registering grants nothing. An
+// administrator assigns the permissions to roles in the panel (Accounts → Permissions); the proxy then sends the
+// account's permissions for this host as Remote-Permissions, and the application checks them with
+// Identity.HasPermission: reading the members needs ex1.members.read, inviting ex1.members.invite.
 package main
 
 import (
@@ -123,6 +129,33 @@ func (a *accountAPI) invite(ctx context.Context, actor, username string) (string
 	return created.SigninURL, nil
 }
 
+// manifest is what Ex1 can do: registered at start, assigned by an administrator, checked per request.
+var manifest = []any{
+	map[string]any{"name": "ex1.members.read", "label": map[string]any{"en": "See the members", "de": "Mitglieder sehen"}},
+	map[string]any{"name": "ex1.members.invite", "label": map[string]any{"en": "Invite members",
+		"de": "Mitglieder einladen"}, "danger": true},
+}
+
+// register sends the manifest to TinySesam; a failure is logged and the application starts anyway (it then holds
+// what was registered before, and a permission nobody registered is held by nobody).
+func register(ctx context.Context, logger *slog.Logger, api *accountAPI) {
+	out, err := tinysesam.RegisterPermissions(ctx, api.client, api.base, "ex1", manifest, api.key)
+	if err != nil {
+		logger.Warn("permissions not registered", "err", err)
+		return
+	}
+	logger.Info("permissions registered", "added", out["added"], "orphaned", out["orphaned"])
+}
+
+// forbidden answers 403 unless the identity holds the permission (compared exactly, spec section 3.4).
+func forbidden(w http.ResponseWriter, id *tinysesam.Identity, permission string) bool {
+	if id.HasPermission(permission) {
+		return false
+	}
+	http.Error(w, "this needs the permission "+permission, http.StatusForbidden)
+	return true
+}
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	authURL := strings.TrimRight(os.Getenv("TS_AUTH_URL"), "/")
@@ -147,8 +180,19 @@ func main() {
 			base = authURL
 		}
 		api = &accountAPI{base: base, key: key, client: &http.Client{Timeout: 10 * time.Second}}
+		register(context.Background(), logger, api)
 	}
+	addr := os.Getenv("TS_LISTEN")
+	if addr == "" {
+		addr = "127.0.0.1:9000"
+	}
+	srv := &http.Server{Addr: addr, Handler: gate.Middleware(newMux(logger, api, authURL)),
+		ReadHeaderTimeout: 10 * time.Second}
+	log.Fatal(srv.ListenAndServe())
+}
 
+// newMux builds the application's routes; the gate's middleware in front sets the identity.
+func newMux(logger *slog.Logger, api *accountAPI, authURL string) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", tinysesam.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := tinysesam.FromContext(r.Context())
@@ -159,15 +203,19 @@ func main() {
 			"<a href=\"/members\">Members (account API)</a></p>",
 			html.EscapeString(id.Name), html.EscapeString(id.ID), html.EscapeString(authURL), html.EscapeString(authURL))
 	})))
-	// The application's own accounts, through the account API. Changing them needs a browser session of a person
-	// with the role ex1-staff (a token never passes).
-	mux.Handle("/members", tinysesam.RequireRole("ex1-staff", tinysesam.RequireSession(http.HandlerFunc(
+	// The application's own accounts, through the account API: a browser session (a token never passes) holding
+	// ex1.members.read to see them and ex1.members.invite to invite.
+	mux.Handle("/members", tinysesam.RequireSession(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
+			id, _ := tinysesam.FromContext(r.Context())
+			if forbidden(w, id, "ex1.members.read") || (r.Method == http.MethodPost && forbidden(w, id,
+				"ex1.members.invite")) {
+				return
+			}
 			if api == nil {
 				http.Error(w, "TS_API_KEY is not set: the account API part of the example is off", http.StatusServiceUnavailable)
 				return
 			}
-			id, _ := tinysesam.FromContext(r.Context())
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if r.Method == http.MethodPost {
 				link, err := api.invite(r.Context(), id.ID, r.FormValue("username"))
@@ -199,14 +247,11 @@ func main() {
 					html.EscapeString(strings.Join(u.Source, " + ")))
 			}
 			// No CSRF token here: the form posts to the application itself; a real application adds its own.
-			b.WriteString("</ul><form method=post><input name=username required><button>Invite</button></form>")
+			b.WriteString("</ul>")
+			if id.HasPermission("ex1.members.invite") {
+				b.WriteString("<form method=post><input name=username required><button>Invite</button></form>")
+			}
 			_, _ = io.WriteString(w, b.String())
-		}))))
-
-	addr := os.Getenv("TS_LISTEN")
-	if addr == "" {
-		addr = "127.0.0.1:9000"
-	}
-	srv := &http.Server{Addr: addr, Handler: gate.Middleware(mux), ReadHeaderTimeout: 10 * time.Second}
-	log.Fatal(srv.ListenAndServe())
+		})))
+	return mux
 }

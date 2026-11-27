@@ -38,6 +38,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Permissions in the Go and JS gate clients and example Ex1 (T-101 part 3): `Identity.Permissions` /
+  `HasPermission` (`identity.permissions` / `hasPermission`), the `Remote-Permissions` header slot and the `ts_perms`
+  claim with the rules of §2.2/§4.4, `ParseAccount`/`parseAccount` with `permissions`, `RegisterPermissions` /
+  `RegisterRequest` (`registerPermissions` / `registerRequest`), all against `spec/vectors/permissions.json`. Ex1
+  registers its manifest at start with the service account's key (`apps.ex1.hosts`, `permission_scopes`) and guards
+  its member pages by `ex1.members.read` and `ex1.members.invite` instead of a role (`main_test.go`,
+  `tests/test_example_ex1.py`).
 - Permissions in the gate client specification and the Python client (T-101 part 2): spec §3.4 (the identity's
   `permissions` from `Remote-Permissions` / `ts_perms`, `has_permission`, `register_permissions`), §8a (`permissions`
   in `account.json`), §2.1/§2.2 (the proxy strips the header; the same reading rules), new vectors

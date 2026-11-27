@@ -57,6 +57,11 @@ export class Identity {
   readonly kind: Kind;
   /** `user` or `service`, never empty (spec version 2). */
   readonly accountKind: AccountKind;
+  /**
+   * The account's permissions for this application (spec section 3.4, Remote-Permissions or ts_perms); empty when
+   * TinySesam sends none — which means "holds none", never "unknown".
+   */
+  readonly permissions: readonly string[];
 
   constructor(fields: {
     user: string;
@@ -66,6 +71,7 @@ export class Identity {
     id: string;
     auth: string;
     accountKind: string;
+    permissions?: string;
   }) {
     const problem = accountKindProblem(fields.accountKind, fields.auth);
     if (problem !== null) {
@@ -81,7 +87,16 @@ export class Identity {
     this.auth = auth;
     this.kind = auth === 'session' ? 'session' : 'token';
     this.accountKind = fields.accountKind as AccountKind;
+    this.permissions = Object.freeze(parseGroups(fields.permissions ?? ''));
     Object.freeze(this);
+  }
+
+  /**
+   * Whether permission is one of the permissions, compared exactly (spec section 3.4): no case folding, no wildcard,
+   * and neither `admin` nor a role implies one.
+   */
+  hasPermission(permission: string): boolean {
+    return this.permissions.includes(permission);
   }
 
   /**
@@ -115,6 +130,7 @@ export class Identity {
     auth: Auth;
     kind: Kind;
     account_kind: AccountKind;
+    permissions: string[];
   } {
     return {
       user: this.user,
@@ -125,6 +141,7 @@ export class Identity {
       auth: this.auth,
       kind: this.kind,
       account_kind: this.accountKind,
+      permissions: [...this.permissions],
     };
   }
 }
@@ -157,7 +174,10 @@ function trimSpaces(s: string): string {
   return s.slice(start, end);
 }
 
-/** The seven headers of header mode. TinySesam's forward_headers can rename them. */
+/**
+ * The eight headers of header mode. TinySesam's forward_headers can rename them. `perms` (Remote-Permissions) is
+ * optional on the wire: missing or empty means none (spec section 3.4).
+ */
 export interface HeaderNames {
   user: string;
   name: string;
@@ -166,6 +186,7 @@ export interface HeaderNames {
   id: string;
   auth: string;
   kind: string;
+  perms: string;
 }
 
 /** The names TinySesam sends unless forward_headers renames them. */
@@ -177,9 +198,10 @@ export const DEFAULT_HEADER_NAMES: Readonly<HeaderNames> = Object.freeze({
   id: 'Remote-Id',
   auth: 'Remote-Auth',
   kind: 'Remote-Kind',
+  perms: 'Remote-Permissions',
 });
 
-const SLOTS = ['user', 'name', 'email', 'groups', 'id', 'auth', 'kind'] as const;
+const SLOTS = ['user', 'name', 'email', 'groups', 'id', 'auth', 'kind', 'perms'] as const;
 
 /** Fills missing names with the defaults and checks them; null when a name is invalid or two are equal. */
 export function resolveHeaderNames(names: Partial<HeaderNames> | undefined): Readonly<HeaderNames> | null {
@@ -230,7 +252,7 @@ export function identityFromHeaders(
   names: Readonly<HeaderNames> = DEFAULT_HEADER_NAMES,
 ): Identity {
   const pairs = [...headers];
-  const values = { user: '', name: '', email: '', groups: '', id: '', auth: '', kind: '' };
+  const values = { user: '', name: '', email: '', groups: '', id: '', auth: '', kind: '', perms: '' };
   for (const slot of SLOTS) {
     const found = headerValues(pairs, names[slot]);
     if (found.length === 0) {
@@ -259,5 +281,5 @@ export function identityFromHeaders(
   if (problem !== null) {
     throw new GateError('header', problem);
   }
-  return new Identity({ ...values, accountKind: values.kind });
+  return new Identity({ ...values, accountKind: values.kind, permissions: values.perms });
 }

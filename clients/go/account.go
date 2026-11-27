@@ -18,7 +18,17 @@ type Account struct {
 	Sessions  *AccountSessions  `json:"sessions"`
 	Programs  *AccountPrograms  `json:"programs"`
 	Approvals *AccountApprovals `json:"approvals"` // nil when approvals are off (or the count is unusable)
-	Links     *AccountLinks     `json:"links"`
+	// Permissions are the account's permissions for the application of the host (spec section 8a); nil on a host of
+	// no application.
+	Permissions *AccountPermissions `json:"permissions"`
+	Links       *AccountLinks       `json:"links"`
+}
+
+// AccountPermissions names the application (nil when missing or no text) and the account's permissions for it
+// (never nil; an entry that is no string is dropped).
+type AccountPermissions struct {
+	App   *string  `json:"app"`
+	Names []string `json:"names"`
 }
 
 // AccountName names the account. Source says where it comes from: "local", "oidc", "saml", "ldap" (two or more =
@@ -159,6 +169,17 @@ func ParseAccount(body []byte) Account {
 		if n := count(a["pending"]); n != nil {
 			out.Approvals = &AccountApprovals{Pending: *n}
 		}
+	}
+	if p, ok := data["permissions"].(map[string]any); ok {
+		names := []string{}
+		if list, ok := p["names"].([]any); ok {
+			for _, n := range list {
+				if s, ok := n.(string); ok {
+					names = append(names, s)
+				}
+			}
+		}
+		out.Permissions = &AccountPermissions{App: text(p["app"]), Names: names}
 	}
 	return out
 }

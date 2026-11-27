@@ -67,6 +67,26 @@ listed = c.get("/auth/api/users?limit=50", headers=api).json()["users"]
 assert [u["username"] for u in listed] == ["lena"] and listed[0]["source"] == ["local"], listed
 ok("account API with the service account's key: list, invite with a one-time link, the new person listed")
 
+# T-101: the Go program registers its manifest at start with the same key; an administrator assigns a permission; the
+# proxy's forward auth sends it for the application's host, where Ex1 checks it (clients/go/examples/ex1/main_test.go).
+MANIFEST = [{"name": "ex1.members.read", "label": {"en": "See the members", "de": "Mitglieder sehen"}},
+            {"name": "ex1.members.invite", "label": {"en": "Invite members", "de": "Mitglieder einladen"},
+             "danger": True}]
+main_go = (ROOT / "clients/go/examples/ex1/main.go").read_text(encoding="utf-8")
+assert all(f'"name": "{p["name"]}"' in main_go for p in MANIFEST), "the Go manifest and this test differ"
+r = c.put("/auth/api/apps/ex1/permissions", headers=api, json={"permissions": MANIFEST})
+assert r.status_code == 200 and sorted(r.json()["added"]) == ["ex1.members.invite", "ex1.members.read"], r.text[:300]
+assert not auth.has_permission(auth.get_user(staff), "ex1.members.read", app="ex1"), "registering granted something"
+auth.grant_permission("ex1-staff", "ex1.members.read", app="ex1", by="admin")
+tok, _ = auth.start_session(staff, "password")
+s = TestClient(app, base_url="https://auth.example.com")
+s.cookies.set(auth.session_cookie_name, tok)
+r = s.get("/auth/forward", headers={"X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/members",
+                                    "X-Forwarded-Proto": "https"}, follow_redirects=False)
+assert r.status_code == 200 and r.headers["Remote-Permissions"] == "ex1.members.read", (r.status_code, dict(r.headers))
+ok("permissions: the manifest registered with the key (granting nothing), assigned to ex1-staff, sent as "
+   "Remote-Permissions for app.example.com")
+
 # The pieces fit together: the compose file mounts this configuration, builds the Go program, and the application
 # trusts the network Caddy talks from.
 compose = (EX1 / "docker-compose.yml").read_text(encoding="utf-8")
