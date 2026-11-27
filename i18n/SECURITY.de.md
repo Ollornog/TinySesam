@@ -283,8 +283,10 @@ diese Regeln:
 - **Step-up je Freigabe, nie ein Zeitfenster.** Passwort, PIN oder TOTP (was `stepup_options()` anbietet, also durch
   `stepup_methods` eingeengt), ein Passkey, dessen WebAuthn-Challenge SHA-256(`"tinysesam-approval:"` ‖
   Server-Zufallswert ‖ ID ‖ Nutzlast-Hash) ist — einmalig und an genau diese Aktion gebunden, sodass ein Agent im
-  Browser keine Geste wiederholen kann —, oder eine frische Anmeldung beim Anbieter (`prompt=login`, `max_age=0`),
-  deren `auth_time` nach der Anfrage liegen muss (ohne `auth_time`: keine Freigabe, fail-closed). Eine frische Sitzung
+  Browser keine Geste wiederholen kann —, oder eine frische Anmeldung beim Anbieter (OIDC: `prompt=login`,
+  `max_age=0`, deren `auth_time` nach der Anfrage liegen muss; SAML, T-99: `ForceAuthn="true"`, deren `AuthnInstant`
+  danach liegen muss — ohne die Zeit: keine Freigabe, fail-closed). Die Runde beim Anbieter hinterlässt eine einmalige
+  Zusage nur für DIESE Freigabe und dieses Konto. Eine frische Sitzung
   zählt nicht, und eine Freigabe macht die Sitzung nicht frisch. Die Geheimnis-Prüfungen laufen durch Sperre, Zähler
   und fail2ban-Zeilen der Reauth-Seite.
 - **Es zählen die Rechte zur Bestätigungszeit (E4).** TinySesam führt mit dem Code des Admin-Panels aus

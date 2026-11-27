@@ -40,9 +40,13 @@ Make local, IdP and mixed accounts behave the same ([ADR-18](ADR-18-idp-role-syn
   `oidc_bind_precreated` (verified address, only an unused operator-created account); attack tests in
   `tests/test_oidc_link.py`. The administrator's path is a sign-in link plus the person's link (documented, no route
   of its own).
+- 2026-11-27: acceptance suite `tests/test_origin_equal.py` — the same scenario (role granted in the panel, admin
+  action from a stale session after the origin's own confirmation, approval confirmed with the origin's step-up) once
+  local, once OIDC, once SAML (test identity provider `tests/_saml_idp.py`) with the same result. It found the gap: a
+  pure SAML account could not confirm an approval at all — the per-approval provider step-up now exists for SAML too
+  (`/auth/saml/login?approval=<id>`, `ForceAuthn`, `AuthnInstant`, `stepup_amr` `["saml"]`).
 
-**Open (rest of T-99):** the acceptance test "same scenario (role, approval, admin action) once local, once OIDC, once
-SAML with the same result" as one suite; linking for SAML and LDAP identities (today OIDC only — SAML and LDAP bind by
+**Open (rest of T-99):** linking for SAML and LDAP identities (today OIDC only — SAML and LDAP bind by
 their stable identifier at sign-in, an operator unbinds with `federation_unbind`); unlinking by the person.
 
 ## Acceptance

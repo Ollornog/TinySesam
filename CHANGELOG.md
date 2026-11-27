@@ -21,6 +21,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Approvals confirmed through the SAML provider (T-99): an account bound to a SAML identity gets "Confirm with
+  <provider>" on the approval page (`/auth/saml/login?approval=<id>`, always `ForceAuthn`); an `AuthnInstant` from
+  after the request leaves a one-time grant for THAT approval and that account (`stepup_amr` `["saml"]`), a stale one
+  sends the person back to the page with the reason (`?stepup=stale-saml`, audit `saml_reauth_stale`). Acceptance
+  suite `tests/test_origin_equal.py`: the same scenario (role, admin action, approval) once with a local, an OIDC and a
+  SAML account gives the same result; the suites' SAML test identity provider lives in `tests/_saml_idp.py`.
 - Example Ex1 (T-97): a Go application behind the TinySesam server with local accounts — `clients/go/examples/ex1`
   (identity from the `Remote-*` headers, members through the account API with the service account's key) and the
   stack `deploy/ex1` (`tinysesam.toml` by `TINYSESAM_CONFIG`, Caddy with forward auth, both built from the checkout).

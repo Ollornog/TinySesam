@@ -87,7 +87,7 @@ A JWS in Compact Serialization (RFC 7515), signed with Ed25519, issued by TinySe
 | `exp` | integer | `nbf + approval_token_ttl_sec` (30–300 s, default 120) |
 | `jti` | string | the approval id (`apv_…`) — handed out once |
 | `auth_time` | integer | when the person stepped up for this approval |
-| `amr` | array of strings | how (RFC 8176: `pwd`, `otp`, `pin`, `hwk` + `user` for a passkey; `oidc` for a fresh sign-in at the provider) |
+| `amr` | array of strings | how (RFC 8176: `pwd`, `otp`, `pin`, `hwk` + `user` for a passkey; `oidc` or `saml` for a fresh sign-in at the provider) |
 | `act` | object | who asked: `{"sub": "app:<application id>"}` (RFC 8693 §4.1) |
 | `authorization_details` | array | **exactly one** object: `type` plus the fields, exactly as stored (RFC 9396 §2) |
 | `ts_payload_sha256` | string | SHA-256 over the canonical form (§6) of that one object, base64url without padding |

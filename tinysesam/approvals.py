@@ -117,8 +117,11 @@ STEPUP_TTL_SEC = 300
 #: Prefix of the passkey challenge: SHA-256("tinysesam-approval:" ‖ nonce ‖ id ‖ payload_hash).
 CHALLENGE_PREFIX = b"tinysesam-approval:"
 #: RFC 8176 `amr` per step-up method; the provider confirmation has no RFC value of its own (the provider decides how
-#: it signed the person in), so TinySesam records `oidc`.
-AMR = {"password": ["pwd"], "pin": ["pin"], "totp": ["otp"], "passkey": ["hwk", "user"], "oidc": ["oidc"]}
+#: it signed the person in), so TinySesam records `oidc` or `saml` (T-99).
+AMR = {"password": ["pwd"], "pin": ["pin"], "totp": ["otp"], "passkey": ["hwk", "user"], "oidc": ["oidc"],
+       "saml": ["saml"]}
+#: The provider step-ups of an approval: the method word and its one-time grant in the flow table.
+PROVIDERS = {"oidc": "apvoidc:", "saml": "apvsaml:"}
 
 
 class ApprovalError(Exception):
@@ -792,8 +795,10 @@ class Approvals:
         out = list(auth.stepup_options(u))
         if auth.webauthn is not None and auth.store.list_webauthn(u["id"]):
             out.append("passkey")
-        if auth._confirms_at_oidc(u):       # a per-approval provider step-up exists for OIDC only (T-70: not SAML)
+        if auth._confirms_at_oidc(u):       # a fresh sign-in at the provider for THIS approval (`max_age=0`)
             out.append("oidc")
+        if auth._confirms_at_saml(u):       # the same at the SAML provider (`ForceAuthn`, `AuthnInstant`; T-99)
+            out.append("saml")
         return out
 
     def view(self, row, viewer: dict) -> dict:
@@ -1001,10 +1006,11 @@ class Approvals:
         return approval_verify(self.auth, u, answer,
                                challenge(_unb64u(str(flow["nonce"])), row["id"], row["payload_hash"]))
 
-    def _provider_ok(self, u: dict, row) -> Optional[int]:
-        """The provider's `auth_time` of a fresh sign-in (`max_age=0`) started from THIS approval's page for this
-        account, consumed once — or None. Without `auth_time` from the provider there is none (fail-closed)."""
-        grant = self.store.pop_flow("apvoidc:" + row["id"])
+    def _provider_ok(self, u: dict, row, method: str = "oidc") -> Optional[int]:
+        """The provider's `auth_time` (OIDC) or `AuthnInstant` (SAML) of a fresh sign-in started from THIS approval's
+        page for this account, consumed once — or None. Without the time from the provider there is none
+        (fail-closed)."""
+        grant = self.store.pop_flow(PROVIDERS[method] + row["id"])
         if not grant or int(grant.get("user_id") or 0) != int(u["id"]):
             return None
         at = grant.get("auth_time")
@@ -1012,9 +1018,9 @@ class Approvals:
             return None
         return at
 
-    def provider_ready(self, u: dict, row) -> bool:
-        """Is a provider confirmation for this approval waiting (read only — the POST consumes it)?"""
-        r = self.store._one("SELECT data, expires_at FROM flow WHERE key=?", ("apvoidc:" + row["id"],))
+    def provider_ready(self, u: dict, row, method: str = "oidc") -> bool:
+        """Is a provider confirmation (`oidc`, `saml`) for this approval waiting (read only — the POST consumes it)?"""
+        r = self.store._one("SELECT data, expires_at FROM flow WHERE key=?", (PROVIDERS[method] + row["id"],))
         if not r or r["expires_at"] < _now():
             return False
         try:
@@ -1111,9 +1117,10 @@ class Approvals:
             if "passkey" in offered and self._passkey_ok(u, row, str(form["webauthn"])):
                 return (AMR["passkey"], _now()), None
             return None, None
-        if form.get("method") == "oidc":
-            at = self._provider_ok(u, row) if "oidc" in offered else None
-            return ((AMR["oidc"], at), None) if at is not None else (None, None)
+        if form.get("method") in PROVIDERS:
+            method = str(form["method"])
+            at = self._provider_ok(u, row, method) if method in offered else None
+            return ((AMR[method], at), None) if at is not None else (None, None)
         if form.get("code"):
             procedure, secret = "totp", form["code"]
         elif form.get("pin"):
@@ -1303,9 +1310,11 @@ def register_routes(r, auth) -> None:
         view = svc.view(row, u)
         if row["state"] != "pending":
             return _no_framing(auth.render_page("approval", request=request, outcome="closed", approval=view))
-        error_text = auth.t("err.oidc_reauth_stale") if stepup == "stale" else ""
+        error_text = {"stale": auth.t("err.oidc_reauth_stale"),
+                      "stale-saml": auth.t("err.saml_reauth_stale")}.get(stepup, "")
         return _no_framing(auth.render_page("approval", request=request, outcome="open", approval=view,
                                             methods=svc.methods(u), provider_ready=svc.provider_ready(u, row),
+                                            saml_ready=svc.provider_ready(u, row, "saml"),
                                             error=error_text), view.get("return_origin"))
 
     @r.post("/auth/approvals/{approval_id}")

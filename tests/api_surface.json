@@ -2629,6 +2629,7 @@
     },
     "GET /auth/saml/login": {
       "keys": [
+        "query:approval",
         "query:next",
         "query:reauth"
       ],
