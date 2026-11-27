@@ -1834,22 +1834,33 @@ for readme in ("README.md", "i18n/README.de.md"):
     assert "tests/test_repo.py" in body, f"{readme} does not explain the hygiene test"
 print("  both READMEs explain browser and hygiene tests; CHANGELOG maintained")
 
-# ---------- The upgrade list names every breaking commit since the last release with migrations (T-126) ----------
-# The breaking release after the schema baseline collects every break since v0.30.0 in ONE list ("Upgrading from
-# 0.30.x"), the same text in CHANGELOG.md and docs/OPERATIONS.md (between the markers). Every commit since the tag whose
-# subject is breaking (`type!:` / `type(scope)!:`) or whose body has a `BREAKING CHANGE:` footer must be named in it:
-# by its backlog id (`T-n`, `B-n`, `ADR-n`, `@<6 hex>` of a wiki todo), or by its short hash when it has none. The range
-# ends at the first release tag after v0.30.0 once there is one — later breaks belong to the next list. The history is
-# needed: CI checks out with `fetch-depth: 0`; a clone without the tag or with a cut history fails here, never skips.
+# ---------- One upgrade list per release series names every breaking commit of that series (T-126, T-132) ----------
+# Whoever updates from X.Y.z works through the list "Upgrading from X.Y.x" and every later one. The list of a series
+# names the breaking commits from its tag vX.Y.0 up to the first tag of a later series (vX.Y.0..vX.Z.0), or up to HEAD
+# for the series of the latest release: the breaks of the next release (T-132 — 0.31.0 is on PyPI, so the breaks of M-2
+# need a list from 0.31.x, not the one from 0.30.x). The first list is the one from 0.30.x (the schema baseline, T-111);
+# there is none before. The same text stands in CHANGELOG.md (the list of the open series in `[Unreleased]`) and in
+# docs/OPERATIONS.md ("Updating"), between the markers `<!-- upgrade-list X.Y.x:start -->` and `…:end -->`. A series
+# with a breaking commit needs its list; a series without one has none (an empty list in `[Unreleased]` would carry the
+# breaking mark, and the fleet's auto-merge would hold a harmless release, T-129). A commit is breaking when its subject
+# is (`type!:` / `type(scope)!:`) or its body has a `BREAKING CHANGE:` footer; the list names it by its backlog id (`T-n`,
+# `B-n`, `ADR-n`, `@<6 hex>` of a wiki todo), or by its short hash when it has none. The history is needed: CI checks
+# out with `fetch-depth: 0`; a clone without the tags or with a cut history fails here, never skips.
 UPGRADE_BASE = "v0.30.0"
-UPGRADE_MARKS = ("<!-- upgrade-list:start -->", "<!-- upgrade-list:end -->")
 _BREAKING_SUBJECT = re.compile(r"^[a-z]+(?:\([^)]*\))?!:")
 _ITEM_ID = re.compile(r"(?<![\w-])(?:T|B|ADR)-\d+\b|(?<![\w@])@[0-9a-f]{6}\b")
+_UPGRADE_MARK = re.compile(r"<!-- upgrade-list ([^ ]*):(start|end) -->")
 
 
-def upgrade_block(text: str) -> str:
-    """The text between the two markers, "" if they are missing, out of order or doubled."""
-    start, end = UPGRADE_MARKS
+def upgrade_marks(series: str) -> tuple:
+    return (f"<!-- upgrade-list {series}:start -->", f"<!-- upgrade-list {series}:end -->")
+
+
+def upgrade_block(text: str, series: str) -> str | None:
+    """The list of <series> between its two markers; None without markers, "" if they are doubled or out of order."""
+    start, end = upgrade_marks(series)
+    if text.count(start) == 0 and text.count(end) == 0:
+        return None
     if text.count(start) != 1 or text.count(end) != 1 or text.index(start) > text.index(end):
         return ""
     return text[text.index(start) + len(start):text.index(end)].strip()
@@ -1872,6 +1883,37 @@ def upgrade_gaps(block: str, commits: list) -> list:
     return gaps
 
 
+def release_series(tags: list) -> list:
+    """[(series "X.Y.x", base tag, end tag or "HEAD")] from UPGRADE_BASE on: one per vX.Y.0, sorted by version."""
+    firsts = [t for t in tags if re.fullmatch(r"v\d+\.\d+\.0", t)]
+    return [(f"{b[1:].rsplit('.', 1)[0]}.x", b, firsts[i + 1] if i + 1 < len(firsts) else "HEAD")
+            for i, b in enumerate(firsts)]
+
+
+def upgrade_findings(texts: dict, series: list) -> list:
+    """Findings for {file: text} and [(series, base, end, commits)]: a list missing, differing, not naming a break, or
+    markers of no known series."""
+    findings, known = [], {s for s, _, _, _ in series}
+    for name, text in texts.items():
+        for m in _UPGRADE_MARK.finditer(text):
+            if m.group(1) not in known:
+                findings.append(f"{name}: marker of an unknown series {m.group(1)!r} (known: {sorted(known)})")
+    for s, base, end, commits in series:
+        blocks = {name: upgrade_block(text, s) for name, text in texts.items()}
+        breaking = [c for c in commits if is_breaking(c[1], c[2])]
+        if not breaking and all(b is None for b in blocks.values()):
+            continue
+        broken = [n for n, b in blocks.items() if not b]
+        if broken:
+            findings.append(f"\"Upgrading from {s}\" ({len(breaking)} breaking commit(s) in {base}..{end}): the list "
+                            f"(markers {upgrade_marks(s)}) is missing, empty or doubled in {', '.join(broken)}")
+            continue
+        if len(set(blocks.values())) != 1:
+            findings.append(f"\"Upgrading from {s}\": the lists of {' and '.join(blocks)} differ — one list, copied")
+        findings += [f"\"Upgrading from {s}\" does not name {g}" for g in upgrade_gaps(next(iter(blocks.values())), commits)]
+    return findings
+
+
 # Self-probe: an id in the subject, a footer, a commit without an id, a non-breaking commit, a scope with a hyphen.
 _probe_block = "- one (T-72) — two (@344f94) — three (abc1234)"
 assert upgrade_gaps(_probe_block, [
@@ -1885,34 +1927,50 @@ assert upgrade_gaps(_probe_block, [("c" * 40, "fix: a footer (T-7)", "text\n\nBR
                                    ("a" * 40, "feat!: (T-720)", "")]) == [
     "ccccccc fix: a footer (T-7) (name T-7 in the list)", "bbbbbbb refactor!: no id (name bbbbbbb in the list)",
     "aaaaaaa feat!: (T-720) (name T-720 in the list)"], "the probe of the upgrade list check misses a gap"
-assert upgrade_block(f"x {UPGRADE_MARKS[1]} y {UPGRADE_MARKS[0]}") == "" and upgrade_block("x") == ""
-
-_lists = {name: upgrade_block(read(*name.split("/"))) for name in ("CHANGELOG.md", "docs/OPERATIONS.md")}
-assert all(_lists.values()), f"the upgrade list (markers {UPGRADE_MARKS}) is missing in: " + \
-    ", ".join(n for n, b in _lists.items() if not b)
-assert _lists["CHANGELOG.md"] == _lists["docs/OPERATIONS.md"], \
-    "the upgrade lists of CHANGELOG.md and docs/OPERATIONS.md differ — they are one list, copied"
+_m = upgrade_marks("0.30.x")
+assert upgrade_block(f"x {_m[1]} y {_m[0]}", "0.30.x") == "" and upgrade_block("x", "0.30.x") is None
+assert release_series(["v0.30.0", "v0.30.1", "v0.31.0", "v0.31.1"]) == [
+    ("0.30.x", "v0.30.0", "v0.31.0"), ("0.31.x", "v0.31.0", "HEAD")], "release_series: wrong ranges"
+# A break of the open series must land in ITS list — the one of 0.30.x does not count (T-132); without a break no list.
+_b30, _b31 = ("a" * 40, "feat!: old (T-1)", ""), ("b" * 40, "feat!: new (T-2)", "")
+_l30 = f"{_m[0]}\n- old (T-1)\n- new (T-2)\n{_m[1]}\n"
+_m31 = upgrade_marks("0.31.x")
+_l31 = f"{_m31[0]}\n- new (T-2)\n{_m31[1]}\n"
+_series = [("0.30.x", "v0.30.0", "v0.31.0", [_b30]), ("0.31.x", "v0.31.0", "HEAD", [_b31])]
+assert upgrade_findings({"C": _l30 + _l31, "O": _l30 + _l31}, _series) == []
+assert upgrade_findings({"C": _l30, "O": _l30}, _series) != [], "a break after 0.31.0 named only in the 0.30.x list"
+assert upgrade_findings({"C": _l30 + _l31, "O": _l30}, _series) != [], "the 0.31.x list missing in one file"
+assert upgrade_findings({"C": _l30, "O": _l30}, _series[:1] + [("0.31.x", "v0.31.0", "HEAD", [])]) == [], \
+    "a series without a break needs no list"
+assert upgrade_findings({"C": _l30 + _l31.replace("T-2", "T-3"), "O": _l30 + _l31.replace("T-2", "T-3")}, _series) \
+    and upgrade_findings({"C": _l30 + "<!-- upgrade-list 9.9.x:start -->", "O": _l30}, _series[:1]), \
+    "the probe misses a gap or an unknown marker"
 
 
 def _git(*args) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True, timeout=60)
 
 
+def _commits_in(rev_range: str) -> list:
+    log = _git("log", "--format=%H%x1f%s%x1f%b%x1e", rev_range)
+    assert log.returncode == 0, log.stderr
+    return [tuple(c.strip("\n").split("\x1f", 2)) for c in log.stdout.split("\x1e") if c.strip()]
+
+
 assert _git("rev-parse", "-q", "--verify", f"{UPGRADE_BASE}^{{commit}}").returncode == 0, \
     f"the tag {UPGRADE_BASE} is not in this clone: git fetch origin tag {UPGRADE_BASE} (CI: fetch-depth: 0)"
 assert _git("merge-base", "--is-ancestor", UPGRADE_BASE, "HEAD").returncode == 0, \
     f"the history from {UPGRADE_BASE} to HEAD is cut (a shallow clone?): git fetch --unshallow (CI: fetch-depth: 0)"
-_later = [t for t in _git("tag", "--merged", "HEAD", "--contains", UPGRADE_BASE, "--sort=v:refname", "v*"
-                          ).stdout.split() if t != UPGRADE_BASE]
-_end = _later[0] if _later else "HEAD"
-_log = _git("log", "--format=%H%x1f%s%x1f%b%x1e", f"{UPGRADE_BASE}..{_end}")
-assert _log.returncode == 0, _log.stderr
-_commits = [tuple(c.strip("\n").split("\x1f", 2)) for c in _log.stdout.split("\x1e") if c.strip()]
-_breaking = [c for c in _commits if is_breaking(c[1], c[2])]
-_gaps = upgrade_gaps(_lists["CHANGELOG.md"], _commits)
-assert not _gaps, "breaking commits the upgrade list (\"Upgrading from 0.30.x\") does not name:\n  " + "\n  ".join(_gaps)
-print(f"  upgrade list: the same in CHANGELOG and OPERATIONS, names all {len(_breaking)} breaking commit(s) of "
-      f"{len(_commits)} in {UPGRADE_BASE}..{_end}")
+_tags = _git("tag", "--merged", "HEAD", "--contains", UPGRADE_BASE, "--sort=v:refname", "v*").stdout.split()
+_later = [t for t in _tags if t != UPGRADE_BASE]
+_series = [(s, b, e, _commits_in(f"{b}..{e}")) for s, b, e in release_series(_tags)]
+assert _series and _series[0][1] == UPGRADE_BASE, f"no release series from {UPGRADE_BASE}: {_tags}"
+_findings = upgrade_findings({n: read(*n.split("/")) for n in ("CHANGELOG.md", "docs/OPERATIONS.md")}, _series)
+assert not _findings, "upgrade lists (CHANGELOG.md, docs/OPERATIONS.md \"Updating\"):\n  " + "\n  ".join(_findings)
+print("  upgrade lists: " + "; ".join(
+    f"from {s} names all {sum(1 for c in cs if is_breaking(c[1], c[2]))} breaking commit(s) of {len(cs)} in {b}..{e}"
+    if any(is_breaking(c[1], c[2]) for c in cs) else f"from {s}: no breaking commit in {b}..{e}, no list"
+    for s, b, e, cs in _series))
 
 # ---------- A breaking change since the last release is marked where the fleet's auto-merge reads it (T-129) ----------
 # The pin PR of a release opens in the maintainer's deployment repository; since kit 0.69 its auto-merge holds it as a

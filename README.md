@@ -1010,8 +1010,8 @@ systemctl start tinysesam
 > then take this version — the steps are in `docs/OPERATIONS.md`, "Updating". Take a backup before each
 > step (`tinysesam backup` leaves the source untouched); going back from this version to 0.30.0 needs
 > no SQL (same schema). **From 0.30.x** follow the list "Upgrading from 0.30.x" there (API keys, open
-> links and recovery codes end once); `tinysesam diagnose --db auth.db` names every point that blocks
-> the start, with its command.
+> links and recovery codes end once), then "Upgrading from 0.31.x" when it exists; **from 0.31.x** only the
+> latter. `tinysesam diagnose --db auth.db` names every point that blocks the start, with its command.
 
 Instead of `tinysesam backup` you can also stop the service and copy `auth.db` together with `auth.db-wal` and `auth.db-shm` (where they
 exist) into a separate directory; to go back, put all three back with the service stopped.
