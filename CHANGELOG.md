@@ -4,6 +4,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Added
+
+- An operator resets a lost authenticator app (T-98): the admin panel's account page shows "Authenticator app (TOTP)"
+  with a "Reset" button (`GET`/`POST <admin>/api/users/{uid}/totp[/reset]`, administrators only, owner model, a fresh
+  confirmation), and `tinysesam reset-totp --db <file> <user>` does the same without a running service. The TOTP goes
+  with its recovery codes, the TOTP share of the lockout ends (the password share stays), the audit log says who
+  (`totp_reset_by_admin` with the actor, `totp_disable` under the holder, `totp_reset_cli`), and the panel's reset tells
+  the holder (`totp_disabled`). The `recovery_codes_enabled=False` warning now fires only when the panel is off too, and
+  names the CLI.
+
 ### Changed
 
 - Shared test kit 0.69.0 (from 0.63.0): fast-forward auto-merge, the sprint lane (a pull request into `sprint/<name>`

@@ -8,6 +8,7 @@
     gc --db auth.db                  clear out what has expired (for cron/timer)
     audit --db auth.db [--user X]    look into the log (even if nobody gets in)
     unlock --db auth.db <user>       lift a brute-force lockout
+    reset-totp --db auth.db <user>   reset a lost authenticator app (TOTP and its recovery codes)
     owner --db auth.db <user>        make an account an owner (emergency route)
     rename --db auth.db <old> <new>  rename an account (resolve an identifier collision)
     delete --db auth.db <user>       delete an account (asks; --yes for scripts; not an owner)
@@ -371,6 +372,45 @@ def _unlock(argv) -> int:
                     f"failed_attempts={unclosed} in_a_row={series}"
                     + (f" identifier={a.username}" if norm_identifier(account["username"]) != bucket else ""))
     print(f"Lockout for '{a.username}' lifted ({unclosed} failed attempts discarded).")
+    return 0
+
+
+def _reset_totp(argv) -> int:
+    """`tinysesam reset-totp` (T-98): the panel's TOTP reset (`PanelActions.reset_totp`) for an operator without a
+    panel — a gateway, or no administrator who can still sign in."""
+    ap = argparse.ArgumentParser(
+        prog="tinysesam reset-totp",
+        description="Reset an account's authenticator app (TOTP) together with its recovery codes.",
+        epilog="For a lost phone without a recovery code left. The person sets up a new authenticator at the next "
+               "sign-in or on the account page; the failed TOTP attempts under every identifier of the account end "
+               "with it. Talks to no running service: the holder gets no notice from here (the panel's reset sends "
+               "one), the audit line says totp_reset_cli.")
+    ap.add_argument("username", help="username of the account")
+    ap.add_argument("--db", required=True, help="path to the TinySesam database")
+    a = ap.parse_args(argv)
+    store = _open(a.db)
+    if store is None:
+        return 1
+    from .security import line_fixed as _z
+    account = store.get_user_by_name(a.username)
+    if account is None:
+        print(f"No account '{_z(a.username)}' in {a.db}.", file=sys.stderr)
+        return 1
+    uid = int(account["id"])
+    if not store.has_confirmed_totp(uid):
+        print(f"'{_z(account['username'])}' has no authenticator app set up — nothing to reset.", file=sys.stderr)
+        return 1
+    codes = store.count_recovery_codes(uid)
+    store.delete_totp(uid)
+    store.delete_recovery_codes(uid)
+    # The TOTP share of the lockout, under every identifier the account was counted under (as `lift_lockout` with
+    # `methods=("totp",)`): a new authenticator starts without guesses someone else made.
+    for identifier in store.count_identifiers(uid) - {""}:
+        store.clear_fails(username=identifier, method="totp")
+        store.delete_failure_series(identifier, kinds=("totp",))
+    store.audit_log("totp_reset_cli", str(account["username"]), None, f"user={uid} recovery_codes_deleted={codes}")
+    print(f"Authenticator app of '{_z(account['username'])}' reset ({codes} recovery codes deleted). "
+          "A new one is set up at the next sign-in or on the account page.")
     return 0
 
 
@@ -835,6 +875,8 @@ def main(argv=None):
             sys.exit(_audit(argv[1:]))
         elif cmd == "unlock":
             sys.exit(_unlock(argv[1:]))
+        elif cmd == "reset-totp":
+            sys.exit(_reset_totp(argv[1:]))
         elif cmd == "owner":
             sys.exit(_owner(argv[1:]))
         elif cmd == "rename":
@@ -865,6 +907,7 @@ def main(argv=None):
                   "       python -m tinysesam gc     --db <file>\n"
                   "       python -m tinysesam audit  --db <file> [--user X]\n"
                   "       python -m tinysesam unlock --db <file> <user>\n"
+                  "       python -m tinysesam reset-totp --db <file> <user>\n"
                   "       python -m tinysesam owner  --db <file> <user>\n"
                   "       python -m tinysesam rename --db <file> <user> <new-name>\n"
                   "       python -m tinysesam delete --db <file> <user> [--yes]\n"

@@ -269,9 +269,10 @@ nach *Notiert — weiter* weiter. `/auth/totp/recovery` ersetzt sie später (mit
 Code-Liste nur stolpern würden. Die Einrichtung zeigt dann keine Code-Seite und erzeugt keine Codes,
 `/auth/totp/recovery` antwortet `404`, die Kontoseite bietet keine Code-Aktion an, und nirgends wird ein Code
 angenommen. Codes, die ein Konto schon hat, bleiben unangetastet in der Datenbank (wieder einschalten, und sie gelten
-wieder). Der Preis: Eine verlorene Authenticator-App braucht jemanden, der den Zugang zurücksetzt — `reset_access` einer
-Anwendung (Scope `users:reset`, unten) oder euer eigener Code (`totp_disable`, `grant_mfa_enrollment`, dann
-`create_signin_link`); das Admin-Panel entfernt kein TOTP. `config_check` warnt, wenn keine Anwendung `users:reset` hat.
+wieder). Der Preis: Eine verlorene Authenticator-App braucht jemanden, der sie zurücksetzt — das Admin-Panel (Kontoseite,
+„Authenticator-App (TOTP)" → „Zurücksetzen", mit Step-up), `tinysesam reset-totp` auf der Datenbank, `reset_access`
+einer Anwendung (Scope `users:reset`, unten) oder euer eigener Code (`totp_disable`, `grant_mfa_enrollment`, dann
+`create_signin_link`). `config_check` warnt, wenn das Panel aus ist und keine Anwendung `users:reset` hat.
 **`totp_app_hint`** setzt einen kurzen Hinweis je Sprache über den QR-Code — welche App man installiert:
 `{"en": "Install Example Authenticator.", "de": "Installiere Example Authenticator."}` (reiner Text, escaped, höchstens
 300 Zeichen, `lang` der Seite, sonst `en`, sonst der erste Eintrag).
@@ -1034,6 +1035,7 @@ Dienst.
 ```bash
 python -m tinysesam audit  --db auth.db --user alice    # ins Protokoll, von der Kommandozeile
 python -m tinysesam unlock --db auth.db alice           # eine Brute-Force-Sperre aufheben
+python -m tinysesam reset-totp --db auth.db alice       # Authenticator-App verloren: TOTP und Recovery-Codes fallen weg
 ```
 
 Das Audit-Log hält fest, *warum* eine Anmeldung scheiterte (`no_account`, `account_locked`,
@@ -3036,7 +3038,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**136 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**137 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
