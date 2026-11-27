@@ -110,6 +110,26 @@ permissions:
   contents: read         # keep base permissions minimal; each job takes what it needs
 
 jobs:
+  # Sprint lane and docs fast lane of the shared kit (T-131): see the job `classify` in ci.yml. A skipped job is a
+  # green check; the aggregate job counts a skipped one green only with the answer `nur_text=ja`.
+  classify:
+    name: Text or code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      nur_text: ${{ steps.classify.outputs.nur_text }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent: scripts/_nur_text.sh compares the two.
+          fetch-depth: 2
+      - name: Classify
+        id: classify
+        run: |
+          if reason="$(scripts/_nur_text.sh)"; then echo "nur_text=ja" >> "$GITHUB_OUTPUT"; fi
+          echo "$reason"
+
   # ── Split: whoever holds an identity does not run foreign code (B4-4 from T-13) ─────────────
   # Up to 0.19.0 everything ran in ONE job: `pip install -e ".[all]"`, the whole suite and
   # `python -m build` — with `id-token: write` and `contents: write` in the same job. Each of the roughly
@@ -123,6 +143,8 @@ jobs:
   # `tests/test_repo.py` pins that down: a job with `id-token: write` or `contents: write`
   # must neither check out the repo nor start pip, python or a build tool.
   verify:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
@@ -325,6 +347,8 @@ jobs:
   # write permission: the container runs here, i.e. foreign code; `image` holds `packages: write`.
   # Built for amd64 from the same commit and the same Dockerfile.
   image-probe:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
@@ -490,7 +514,8 @@ jobs:
   # The images of the throwaway targets come from tools/rehearsal/docker-compose.yml (Dependabot
   # keeps them up to date) — a `services:` image directly in the workflow would be invisible to Dependabot.
   rehearsal-targets:
-    if: github.ref_type != 'tag'
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' && (github.ref_type != 'tag') }}
     timeout-minutes: 5
     runs-on: ubuntu-latest
     outputs:

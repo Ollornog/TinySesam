@@ -30,6 +30,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- CI: a pull request into `sprint/<name>` runs only the fast checks in every workflow, not just in
+  `scripts/check.sh` (T-131). Each workflow with heavy jobs (`tests`, the four clients, `audit`, `release`) has a job
+  `classify` that asks the shared kit's `scripts/_nur_text.sh`; on `nur_text=ja` the heavy jobs skip, everything after
+  them with them, and the aggregate checks (`suite-ok`, `client-*-ok`) count a skipped job green only with that answer.
+  A pull request of text only skips them too; a pull request into `main` with code, the closing pull request of a
+  sprint, tags and schedules run everything. `tests/test_ci_aggregate.py` runs the classifier against a merge commit
+  and the aggregate's script against the results it must turn green or red.
 - Shared test kit 0.69.0 (from 0.63.0): fast-forward auto-merge, the sprint lane (a pull request into `sprint/<name>`
   runs only the fast checks, the full suite runs once in the closing pull request), and the Dependabot auto-merge holds
   a pin pull request of a breaking release as a draft. The hygiene test allows the hold — exactly the whole line
