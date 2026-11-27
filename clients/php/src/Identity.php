@@ -30,10 +30,16 @@ final readonly class Identity
     public Kind $kind;
     /** `user` or `service`, never empty (spec version 2). */
     public AccountKind $accountKind;
+    /**
+     * @var list<string> The account's permissions for this application (spec section 3.4, Remote-Permissions or
+     *     ts_perms); empty when TinySesam sends none — which means "holds none", never "unknown".
+     */
+    public array $permissions;
 
     /**
      * @param string $groups the raw Remote-Groups or ts_groups value
      * @param string $accountKind the raw Remote-Kind or ts_kind value
+     * @param string $permissions the raw Remote-Permissions or ts_perms value
      *
      * @throws GateError when the account kind is missing or invalid — an identity never exists without one
      */
@@ -45,6 +51,7 @@ final readonly class Identity
         string $id,
         string $auth,
         string $accountKind,
+        string $permissions = '',
     ) {
         $problem = AccountKind::problem($accountKind, $auth);
         if ($problem !== null) {
@@ -58,6 +65,16 @@ final readonly class Identity
         $this->auth = \in_array($auth, self::AUTH_VALUES, true) ? $auth : '';
         $this->kind = $this->auth === 'session' ? Kind::Session : Kind::Token;
         $this->accountKind = AccountKind::from($accountKind);
+        $this->permissions = self::parseGroups($permissions);
+    }
+
+    /**
+     * Whether $permission is one of the permissions, compared exactly (spec section 3.4): no case folding, no wildcard,
+     * and neither `admin` nor a role implies one.
+     */
+    public function hasPermission(string $permission): bool
+    {
+        return \in_array($permission, $this->permissions, true);
     }
 
     /**
@@ -96,6 +113,7 @@ final readonly class Identity
      *     auth: string,
      *     kind: string,
      *     account_kind: string,
+     *     permissions: list<string>,
      * }
      */
     public function toArray(): array
@@ -109,6 +127,7 @@ final readonly class Identity
             'auth' => $this->auth,
             'kind' => $this->kind->value,
             'account_kind' => $this->accountKind->value,
+            'permissions' => $this->permissions,
         ];
     }
 

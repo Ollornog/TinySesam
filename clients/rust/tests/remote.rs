@@ -691,3 +691,40 @@ async fn topbar_fetch_gives_up_after_the_deadline() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn register_permissions_puts_the_manifest_and_reports_a_refusal() {
+    use tinysesam_gate::{RegistrationFailed, register_permissions};
+    let ok = serve(|mut c| async move {
+        let body = br#"{"added":["docs.read"],"updated":[],"returned":[],"orphaned":[]}"#;
+        let head = format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            body.len()
+        );
+        let _ = c.write_all(&answer("200 OK", &head, body)).await;
+    })
+    .await;
+    let base = ok.trim_end_matches("/auth/gate/jwks.json").to_owned();
+    let client = reqwest::Client::new();
+    let manifest = serde_json::json!([{"name": "docs.read"}]);
+    let out = register_permissions(&client, &base, "docs", &manifest, "tsk_probe")
+        .await
+        .expect("a 200 answer is taken");
+    assert_eq!(out["added"], serde_json::json!(["docs.read"]));
+    let refused = serve(|mut c| async move {
+        let _ = c
+            .write_all(&answer("403 Forbidden", "Content-Length: 0\r\n", b""))
+            .await;
+    })
+    .await;
+    let base = refused.trim_end_matches("/auth/gate/jwks.json").to_owned();
+    assert_eq!(
+        register_permissions(&client, &base, "docs", &manifest, "tsk_probe").await,
+        Err(Err(RegistrationFailed { status: 403 }))
+    );
+    let bad = serde_json::json!([{"name": "Docs"}]);
+    assert!(matches!(
+        register_permissions(&client, &base, "docs", &bad, "tsk_probe").await,
+        Err(Ok(_))
+    ));
+}

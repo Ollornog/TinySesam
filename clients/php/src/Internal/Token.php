@@ -30,7 +30,7 @@ final class Token
     private const string TYPE = 'tinysesam-gate+jwt';
     private const array ALLOWED_HEADER_MEMBERS = ['alg', 'typ', 'kid'];
     private const array IDENTITY_CLAIMS = [
-        'ts_user', 'ts_name', 'ts_email', 'ts_groups', 'ts_id', 'ts_auth', 'ts_kind',
+        'ts_user', 'ts_name', 'ts_email', 'ts_groups', 'ts_id', 'ts_auth', 'ts_kind', 'ts_perms',
     ];
     public const int MAX_SAFE = 9007199254740991; // 2^53 - 1
 
@@ -232,6 +232,7 @@ final class Token
             $c->sub,
             $str('ts_auth'),
             $str('ts_kind'),
+            $str('ts_perms'),
         );
     }
 }

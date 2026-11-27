@@ -30,12 +30,12 @@ final class Account
      * The overview of a signed-out request (also the answer to anything doubtful).
      *
      * @return array{signed_in: false, account: null, sign_in: null, sessions: null, programs: null, approvals: null,
-     *     links: null}
+     *     permissions: null, links: null}
      */
     public static function signedOut(): array
     {
         return ['signed_in' => false, 'account' => null, 'sign_in' => null, 'sessions' => null, 'programs' => null,
-            'approvals' => null, 'links' => null];
+            'approvals' => null, 'permissions' => null, 'links' => null];
     }
 
     /**
@@ -105,7 +105,27 @@ final class Account
                 'api_keys_active' => self::count($programs, 'api_keys_active'),
             ],
             'approvals' => $pending === null ? null : ['pending' => $pending],
+            'permissions' => self::permissions(Strict::member($data, 'permissions')),
             'links' => $hrefs,
+        ];
+    }
+
+    /**
+     * Spec section 8a `permissions`: an object gives `app` (text or null) and `names` (the strings of a list, [] for no
+     * list); anything else null — the host belongs to no application.
+     *
+     * @return array{app: ?string, names: list<string>}|null
+     */
+    private static function permissions(mixed $value): ?array
+    {
+        if (!$value instanceof \stdClass) {
+            return null;
+        }
+        $names = Strict::member($value, 'names');
+
+        return [
+            'app' => self::text($value, 'app'),
+            'names' => \is_array($names) ? array_values(array_filter($names, 'is_string')) : [],
         ];
     }
 

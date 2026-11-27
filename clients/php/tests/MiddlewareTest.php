@@ -33,8 +33,14 @@ final class MiddlewareTest extends TestCase
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
                 $id = GateMiddleware::identityOf($request);
+                if ($id === null) {
+                    return new Response(200, [], 'null');
+                }
+                // The identity as headers.json lists it: without permissions (permissions.json checks those).
+                $plain = $id->toArray();
+                unset($plain['permissions']);
 
-                return new Response(200, [], $id === null ? 'null' : Vectors::encode($id->toArray()));
+                return new Response(200, [], Vectors::encode($plain));
             }
         };
     }
@@ -146,6 +152,9 @@ final class MiddlewareTest extends TestCase
                 [$status, $body] = $server->raw($head . "\r\n");
                 $answer = json_decode($body, false);
                 $identity = $status === 200 && $answer instanceof \stdClass ? ($answer->identity ?? null) : null;
+                if ($identity instanceof \stdClass) {
+                    unset($identity->permissions); // headers.json lists the identity without them
+                }
                 if ($v->expected->ok === true) {
                     $want = Vectors::normalize($v->expected->identity);
                     if ($identity === null || Vectors::normalize($identity) !== $want) {

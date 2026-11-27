@@ -38,6 +38,7 @@ mod guard;
 mod header;
 mod identity;
 mod keys;
+pub mod permissions;
 #[cfg(feature = "jwks")]
 mod remote;
 mod source;
@@ -59,6 +60,9 @@ pub use guard::{Decision, Requirement, authorize};
 pub use header::{HeaderMode, HeaderNames, REMOTE_HEADERS};
 pub use identity::{AccountKind, Auth, Identity, Kind, parse_groups};
 pub use keys::{JWKS_MAX_KEYS, KeySet, PublicKey, key_id};
+pub use permissions::{MAX_PERMISSIONS, PermissionRequest, register_request};
+#[cfg(feature = "jwks")]
+pub use permissions::{RegistrationFailed, register_permissions};
 #[cfg(feature = "jwks")]
 pub use remote::{
     ApprovalJwksVerifier, CacheClock, FETCH_DEADLINE, Fetch, HttpFetcher, JwksVerifier,

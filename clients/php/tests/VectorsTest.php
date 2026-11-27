@@ -6,6 +6,7 @@ namespace TinySesam\Gate\Tests;
 
 use PHPUnit\Framework\TestCase;
 use TinySesam\Gate\Account;
+use TinySesam\Gate\ConfigError;
 use TinySesam\Gate\ApprovalClaims;
 use TinySesam\Gate\ApprovalExpect;
 use TinySesam\Gate\ApprovalVerifier;
@@ -18,6 +19,7 @@ use TinySesam\Gate\Jwks\FetchResult;
 use TinySesam\Gate\Jwks\JwksCache;
 use TinySesam\Gate\Jwks\MemoryStore;
 use TinySesam\Gate\KeySet;
+use TinySesam\Gate\Permissions;
 use TinySesam\Gate\Topbar;
 use TinySesam\Gate\Tests\Support\Vectors;
 
@@ -26,7 +28,7 @@ final class VectorsTest extends TestCase
 {
     /** Every file in spec/vectors/ must be run by one of these tests; a new file without a runner fails the suite. */
     private const array RUNNERS = ['account.json', 'approval.json', 'headers.json', 'jwks.json', 'keys.json',
-        'token.json', 'topbar.json'];
+        'permissions.json', 'token.json', 'topbar.json'];
 
     public function testEveryVectorFileHasARunnerAndItsFormat(): void
     {
@@ -102,11 +104,14 @@ final class VectorsTest extends TestCase
     private static function identityProblems(string $id, Identity $identity, \stdClass $expected): array
     {
         $problems = [];
+        // token.json and headers.json list the identity without permissions; permissions.json checks those.
+        $plain = $identity->toArray();
+        unset($plain['permissions']);
         if (
             property_exists($expected, 'identity')
-            && Vectors::normalize($identity->toArray()) !== Vectors::normalize($expected->identity)
+            && Vectors::normalize($plain) !== Vectors::normalize($expected->identity)
         ) {
-            $problems[] = "{$id}: identity " . Vectors::encode($identity->toArray())
+            $problems[] = "{$id}: identity " . Vectors::encode($plain)
                 . ', want ' . Vectors::encode($expected->identity);
         }
         foreach (get_object_vars($expected->has_role ?? new \stdClass()) as $role => $want) {
@@ -327,5 +332,65 @@ final class VectorsTest extends TestCase
     {
         // A vector header value is one code point per octet; the client reads octets the same way.
         self::assertSame("\xC3\xBC", Vectors::latin1('Ã¼'));
+    }
+
+    /** @return list<string> the differences of one identity against a vector of permissions.json */
+    private static function permissionProblems(string $id, string $got, ?Identity $identity, \stdClass $expected): array
+    {
+        if ($expected->ok !== true) {
+            return $got === $expected->error ? [] : ["{$id}: {$got}, want {$expected->error}"];
+        }
+        if ($got !== 'ok' || $identity === null) {
+            return ["{$id}: refused ({$got}), want ok"];
+        }
+        $problems = [];
+        if ($identity->permissions !== $expected->permissions) {
+            $problems[] = "{$id}: permissions " . Vectors::encode($identity->permissions);
+        }
+        foreach (get_object_vars($expected->has_permission ?? new \stdClass()) as $p => $want) {
+            if ($identity->hasPermission((string) $p) !== $want) {
+                $problems[] = "{$id}: hasPermission({$p}) wrong";
+            }
+        }
+
+        return $problems;
+    }
+
+    public function testPermissionVectors(): void
+    {
+        $doc = Vectors::load('permissions.json');
+        $problems = [];
+        foreach ($doc->headers as $v) {
+            $fields = Vectors::headerFields($v->input->headers);
+            $identity = null;
+            $got = Vectors::outcome(static function () use ($fields, &$identity): void {
+                $identity = Headers::identity($fields);
+            });
+            array_push($problems, ...self::permissionProblems("headers/{$v->id}", $got, $identity, $v->expected));
+        }
+        foreach ($doc->tokens as $v) {
+            $in = $v->input;
+            $gate = Vectors::tokenGate($in->jwks, $in->issuer, $in->audience, $in->leeway, $in->now);
+            $identity = null;
+            $got = Vectors::outcome(static function () use ($gate, $in, &$identity): void {
+                $identity = $gate->verify($in->jws)->identity;
+            });
+            array_push($problems, ...self::permissionProblems("tokens/{$v->id}", $got, $identity, $v->expected));
+        }
+        foreach ($doc->register as $v) {
+            $in = $v->input;
+            try {
+                $req = Permissions::request($in->base_url, $in->app, $in->permissions);
+                $request = ['method' => $req->method, 'url' => $req->url, 'body' => $req->body];
+                $got = ['ok' => true, 'request' => $request];
+            } catch (ConfigError) {
+                $got = ['ok' => false, 'error' => 'invalid'];
+            }
+            if (Vectors::normalize($got) !== Vectors::normalize($v->expected)) {
+                $problems[] = "register/{$v->id}: " . Vectors::encode($got);
+            }
+        }
+        self::assertSame([], $problems);
+        self::assertGreaterThan(20, \count($doc->headers) + \count($doc->tokens) + \count($doc->register));
     }
 }

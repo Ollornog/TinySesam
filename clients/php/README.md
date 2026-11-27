@@ -186,6 +186,12 @@ came in, `accountKind` what the account is: a paired service acting as a person 
 - Key your own records by `id`, never by `user`, `name` or `email`.
 - `$identity->hasRole($role)` compares exactly: no case folding, no Unicode normalization; `admin` implies no other
   role.
+- `$identity->hasPermission($name)` (spec section 3.4): `$identity->permissions` comes from `Remote-Permissions` or
+  `ts_perms` — the account's permissions for this application, compared exactly; a missing header means none.
+  `Permissions::register($base, 'docs', $manifest, $apiKey)` registers the manifest at start (the automation key of the
+  application's service account, scope `permissions:register`; it grants nothing); `Permissions::request()` checks a
+  manifest without sending it (`ConfigError`), a refusal by TinySesam throws `RegistrationFailed`. `Account::parse`
+  carries `permissions`.
 - The groups of a token request (`$identity->isSession()` false) are incomplete on purpose — never revoke or sync away
   a role because a token request lacks it. `Requirement::session()` guards routes that need the full picture.
 - Names may contain bidi overrides and zero-width characters: escape them (`htmlspecialchars`) and isolate bidi text

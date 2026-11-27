@@ -28,8 +28,19 @@ pub struct Account {
     pub programs: Option<Programs>,
     /// The approvals waiting; `None` when approvals are off (or the count is unusable).
     pub approvals: Option<Approvals>,
+    /// On an application's host the application and the account's permissions for it (spec §8a); `None` elsewhere.
+    pub permissions: Option<Permissions>,
     /// The account page and its sections.
     pub links: Option<Links>,
+}
+
+/// The application of the host and the account's permissions for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Permissions {
+    /// The application id; `None` when missing or no text.
+    pub app: Option<String>,
+    /// The permission names; an entry that is no string is dropped.
+    pub names: Vec<String>,
 }
 
 /// The account's names.
@@ -301,6 +312,22 @@ pub fn normalize(data: &Value) -> Account {
             .and_then(Value::as_object)
             .and_then(|a| count(a, "pending"))
             .map(|pending| Approvals { pending }),
+        permissions: data
+            .get("permissions")
+            .and_then(Value::as_object)
+            .map(|p| Permissions {
+                app: text(p, "app"),
+                names: p
+                    .get("names")
+                    .and_then(Value::as_array)
+                    .map(|list| {
+                        list.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }),
         links: Some(Links {
             account: href("account"),
             sessions: href("sessions"),
@@ -375,7 +402,7 @@ mod tests {
         assert_eq!(
             out,
             serde_json::json!({"signed_in": false, "account": null, "sign_in": null, "sessions": null,
-                               "programs": null, "approvals": null, "links": null})
+                               "programs": null, "approvals": null, "permissions": null, "links": null})
         );
     }
 }

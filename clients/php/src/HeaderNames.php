@@ -7,7 +7,8 @@ namespace TinySesam\Gate;
 use TinySesam\Gate\Internal\Strict;
 
 /**
- * The seven headers of header mode. TinySesam's forward_headers can rename them; a slot left out keeps its default.
+ * The eight headers of header mode. TinySesam's forward_headers can rename them; a slot left out keeps its default.
+ * `perms` (Remote-Permissions) is optional on the wire: missing or empty means none (spec section 3.4).
  */
 final readonly class HeaderNames
 {
@@ -22,6 +23,7 @@ final readonly class HeaderNames
         public string $id = 'Remote-Id',
         public string $auth = 'Remote-Auth',
         public string $kind = 'Remote-Kind',
+        public string $perms = 'Remote-Permissions',
     ) {
         $seen = [];
         foreach ($this->slots() as $n) {
@@ -36,7 +38,8 @@ final readonly class HeaderNames
     /**
      * The names by slot, in the order of the specification.
      *
-     * @return array{user: string, name: string, email: string, groups: string, id: string, auth: string, kind: string}
+     * @return array{user: string, name: string, email: string, groups: string, id: string, auth: string, kind: string,
+     *     perms: string}
      */
     public function slots(): array
     {
@@ -48,6 +51,7 @@ final readonly class HeaderNames
             'id' => $this->id,
             'auth' => $this->auth,
             'kind' => $this->kind,
+            'perms' => $this->perms,
         ];
     }
 }

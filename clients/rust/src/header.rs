@@ -10,8 +10,9 @@ use http::HeaderMap;
 use http::header::HeaderName;
 use std::net::IpAddr;
 
-/// The seven identity headers under their default names (spec version 2 added `Remote-Kind`).
-pub const REMOTE_HEADERS: [&str; 7] = [
+/// The eight identity headers under their default names (spec version 2 added `Remote-Kind`, T-101
+/// `Remote-Permissions`, which is optional on the wire: missing or empty means none).
+pub const REMOTE_HEADERS: [&str; 8] = [
     "Remote-User",
     "Remote-Name",
     "Remote-Email",
@@ -19,6 +20,7 @@ pub const REMOTE_HEADERS: [&str; 7] = [
     "Remote-Id",
     "Remote-Auth",
     "Remote-Kind",
+    "Remote-Permissions",
 ];
 
 /// Names of the seven identity headers. TinySesam's `forward_headers` can rename them; the defaults are
@@ -39,11 +41,14 @@ pub struct HeaderNames {
     pub auth: String,
     /// What the account is, `user` or `service` (default `Remote-Kind`).
     pub kind: String,
+    /// The account's permissions for this application (default `Remote-Permissions`, spec §3.4).
+    pub permissions: String,
 }
 
 impl Default for HeaderNames {
     fn default() -> Self {
-        let [user, name, email, groups, id, auth, kind] = REMOTE_HEADERS.map(str::to_owned);
+        let [user, name, email, groups, id, auth, kind, permissions] =
+            REMOTE_HEADERS.map(str::to_owned);
         HeaderNames {
             user,
             name,
@@ -52,12 +57,13 @@ impl Default for HeaderNames {
             id,
             auth,
             kind,
+            permissions,
         }
     }
 }
 
 impl HeaderNames {
-    fn slots(&self) -> [&str; 7] {
+    fn slots(&self) -> [&str; 8] {
         [
             &self.user,
             &self.name,
@@ -66,6 +72,7 @@ impl HeaderNames {
             &self.id,
             &self.auth,
             &self.kind,
+            &self.permissions,
         ]
     }
 }
@@ -196,7 +203,7 @@ impl HeaderMode {
             }
         }
         let slots = self.names.slots();
-        let mut raw: [Option<&[u8]>; 7] = [None; 7];
+        let mut raw: [Option<&[u8]>; 8] = [None; 8];
         for (name, value) in fields {
             if let Some(i) = slots.iter().position(|s| s.eq_ignore_ascii_case(name)) {
                 if raw[i].is_some() {
@@ -206,7 +213,7 @@ impl HeaderMode {
                 raw[i] = Some(value);
             }
         }
-        let mut values: [String; 7] = Default::default();
+        let mut values: [String; 8] = Default::default();
         for (slot, value) in values.iter_mut().zip(raw) {
             if let Some(octets) = value {
                 let text = std::str::from_utf8(octets).map_err(|_| HeaderError::Header)?;
@@ -216,7 +223,7 @@ impl HeaderMode {
                 *slot = text.to_owned();
             }
         }
-        let [user, name, email, groups, id, auth, kind] = values;
+        let [user, name, email, groups, id, auth, kind, permissions] = values;
         if user.is_empty() {
             return Err(HeaderError::Unauthenticated);
         }
@@ -226,15 +233,10 @@ impl HeaderMode {
         // Spec v2, rules 6–8: missing, empty, not exactly user/service, or service with a session. A missing value
         // means TinySesam or the proxy template is older than spec v2 — refused, never taken as `user`.
         let account_kind = check_account_kind(&kind, &auth).ok_or(HeaderError::Header)?;
-        Ok(Identity::new(
-            user,
-            name,
-            email,
-            &groups,
-            id,
-            &auth,
-            account_kind,
-        ))
+        Ok(
+            Identity::new(user, name, email, &groups, id, &auth, account_kind)
+                .with_permissions(&permissions),
+        )
     }
 }
 
