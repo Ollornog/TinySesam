@@ -81,7 +81,7 @@ _CSS = """
 .tsmain .tile b{font-size:15px}
 .tsmain .tile span{font-size:13px;color:var(--ts-muted)}
 .tsmain .area-back{margin:18px 0 0}
-.tsmain .area-back .btn2{display:inline-block;width:auto;padding:10px 18px}
+.tsmain .area-back .btn2{display:inline-flex;align-items:center;width:auto;min-height:44px;padding:10px 18px}
 """
 
 

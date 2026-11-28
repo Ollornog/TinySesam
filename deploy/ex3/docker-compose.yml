@@ -1,0 +1,67 @@
+# Example Ex3 (T-102, T-104): a Node application behind the TinySesam server, surface "hybrid" — the application draws
+# its own navigation, its "Account" link leads to TinySesam's area; local and identity-provider accounts side by side.
+# Built from THIS checkout: `docker compose up --build` in deploy/ex3, after editing tinysesam.toml and .env (README).
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
+
+services:
+  tinysesam:
+    <<: *hardening
+    build: ../..
+    environment:
+      TINYSESAM_CONFIG: /etc/tinysesam.toml
+      TINYSESAM_PORT: "8000"
+      EX3_OIDC_CLIENT_SECRET: ${EX3_OIDC_CLIENT_SECRET:?the client secret of the provider, in .env}
+    volumes:
+      - ./tinysesam.toml:/etc/tinysesam.toml:ro
+      - tinysesam-data:/data
+    networks: [ex3]
+    restart: unless-stopped
+
+  caddy:
+    <<: *hardening
+    build: ../forward-auth/caddy-gate
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TS_TLS: ${TS_TLS:-internal}
+      TS_AUTH_HOST: ${TS_AUTH_HOST:-auth.example.com}
+      TS_APP_HOST: ${TS_APP_HOST:-app.example.com}
+      TS_APP_UPSTREAM: app:9003
+    volumes:
+      - ../quickstart/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - tinysesam
+    networks: [ex3]
+    restart: unless-stopped
+
+  # The Node application (clients/js/examples/ex3): reads the identity and Remote-Permissions from Caddy only.
+  app:
+    <<: *hardening
+    build:
+      context: ../../clients/js
+      dockerfile: examples/ex3/Dockerfile
+    environment:
+      TS_AUTH_URL: https://${TS_AUTH_HOST:-auth.example.com}
+      TS_LISTEN: "0.0.0.0:9003"
+      TS_TRUSTED_PROXY: "172.30.0.0/16"
+    networks: [ex3]
+    restart: unless-stopped
+
+networks:
+  ex3:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  tinysesam-data:
+  caddy-data:
+  caddy-config:

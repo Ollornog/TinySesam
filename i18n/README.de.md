@@ -1504,7 +1504,7 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 |---|---|---|---|
 | **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()`, Beispiel Ex1 |
 | **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | `layout="side"`, `shell_layout`, `apps[id].layout`, Beispiel Ex2 |
-| **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der TinySesam-Bereich `/auth/area?app=<id>` (T-104, unten) |
+| **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der TinySesam-Bereich `/auth/area?app=<id>` (T-104, unten), Beispiel Ex3 |
 | **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Kontoübersicht und die Konten-API, T-105 und T-106 bringen Aktionsseiten und die Leseseite |
 
 ### Der TinySesam-Bereich (hybrid)
@@ -1566,6 +1566,11 @@ Jedes `<script>` und `<style>` in den Teilen bekommt die CSP-Nonce der Seite; di
 Inline-Handler, kein `style=`-Attribut). Mit einem `header` zeichnet TinySesam keine eigene Leiste. Eine Funktion, die
 scheitert, wird protokolliert, und die Seite erscheint in TinySesams eigenem Layout. Der Server hat diesen Slot nicht:
 Er führt keinen Anwendungscode aus.
+
+Beispiel Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex3/README.md), ist die Oberfläche
+als Ganzes: eine Node-Anwendung hinter dem Server mit eigener Navigation und einem Link „Konto“ in den Bereich, lokale
+Konten und solche des Identity-Providers nebeneinander; `tests/test_hybrid_browser.py` fährt sie in Chrome bei 375 und
+1280 px, hell und dunkel.
 
 ### Die drei Herkünfte eines Kontos
 
@@ -2186,10 +2191,9 @@ wie bei jeder Rolle.
   Anmeldung ohne Gruppen-Claim und eine Liste über der Grenze (jeder Hinweis geht, sobald eine spätere Anmeldung ihn
   auflöst, ein ungelöster nach 30 Tagen). Auch die Berechtigungsmatrix markiert die Spalte einer importierten Rolle mit
   **⇄ vom IdP**.
-- **Eine vollständige Anwendung:** Beispiel Ex3,
-  [`examples/ex3/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex3/app.py) — die
-  Dokumenten-Anwendung aus Ex2 mit Anmeldung über einen OIDC-Provider und importierten `team-*`-Gruppen;
-  `tests/test_example_ex3.py` ist ihre Abnahme: Die Gruppe kommt an, der Administrator vergibt `docs.read` in der
+- **Eine vollständige Anwendung:** Beispiel Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex3/README.md) — eine
+  Node-Dokumenten-Anwendung hinter dem TinySesam-Server mit Anmeldung über einen OIDC-Provider (importierte
+  `team-*`-Gruppen) neben lokalen Konten; `tests/test_example_ex3.py` ist ihre Abnahme: Die Gruppe kommt an, der Administrator vergibt `docs.read` in der
   Matrix, der Provider entzieht die Gruppe, und nach der Nachprüfung der Sitzung ist die Berechtigung weg.
 - **Aufräumen:** Der Start nennt importierte Rollen, die 90 Tage keine Anmeldung geliefert hat, und die einer Quelle,
   deren Import aus ist; eine unbenutzte lässt sich auf der Rollenseite löschen (die nächste Anmeldung, die sie liefert,
@@ -3294,7 +3298,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**160 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**161 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

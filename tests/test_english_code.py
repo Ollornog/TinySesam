@@ -531,6 +531,10 @@ def split_comment(line: str) -> tuple:
     return line, ""
 
 
+#: `de = "…"` in a TOML line — the German translation of an interface text (a value without a quote inside).
+_TOML_DE_VALUE = re.compile(r'\bde\s*=\s*"[^"\n]*"')
+
+
 def nonpython_text_findings(path: str, text: str) -> list:
     """[(path:line, text, words)] — German words in a text that is not Python.
 
@@ -545,6 +549,10 @@ def nonpython_text_findings(path: str, text: str) -> list:
     only_comments = path.endswith(("requirements.txt", "go.mod", "go.sum"))
     for n, line in enumerate(text.split("\n"), 1):
         code, comment = split_comment(_URLS_AND_HASHES.sub(" ", line))
+        if path.endswith(".toml"):
+            # The German half of the interface, as under a `"de"` key in Python: `de = "…"` inside a TOML table of
+            # languages (an application's name or a permission's label in a server configuration, T-104).
+            code = _TOML_DE_VALUE.sub(" ", code)
         found = set(german_in_text(comment)) if comment else set()
         if not only_comments:
             found |= set(german_in_text(code, quoted=True))
@@ -849,6 +857,8 @@ NP_BAD = {
     "comment prose": ("probe.sh", "# das Passwort wird nicht gespeichert\n"),
     "umlaut in a text": ("probe.sh", 'echo "grün"\n'),
     "trailing comment": ("probe.sh", "x=1  # wird gesetzt\n"),
+    "German value under another TOML key": ("probe.toml", 'label = { en = "Read", fr = "Dokumente lesen" }\n'),
+    "German TOML key named like the language": ("probe.toml", 'lesen = "x"\n'),
 }
 NP_GOOD = {
     "English code and text": ("probe.sh", 'result=1\necho "▸ Build image: $IMAGE"\nfail() { :; }\n'),
@@ -859,12 +869,13 @@ NP_GOOD = {
     "homograph as an identifier": ("probe.sh", "art=1\n"),
     "package line of a hashed list": ("requirements.txt", "gunicorn==1.0 \\\n    --hash=sha256:0123456789abcdef0123456789abcdef\n"),
     "module line of go.sum": ("go.sum", "code.pfad.fr/check v1.1.0 h1:GWvjdzhSEgHvEHe2uJujDcpmZoySKuHQNrZMfzfO0=\n"),
+    "German interface text under a TOML de key": ("probe.toml", 'label = { en = "Read documents", de = "Dokumente lesen" }\n'),
 }
 bad_np = {k: bool(nonpython_text_findings(*v)) for k, v in NP_BAD.items()}
 good_np = {k: bool(nonpython_text_findings(*v)) for k, v in NP_GOOD.items()}
 r.check("self-test non-Python: a German shell variable, function, output text, job id, step name, compose anchor, Caddy "
         "response, comment and umlaut are found; English code, quoted old values, URLs/hashes/IDs, the kit's names, "
-        "a `#` that is no comment, a homograph, a package line and a go.sum line are not",
+        "a `#` that is no comment, a homograph, a package line, a go.sum line and a TOML `de = \"…\"` value are not",
         all(bad_np.values()) and not any(good_np.values()), f"{bad_np} {good_np}")
 r.check("self-test paths: a German directory (`.github/bau/`) and a German file name are found, English ones are not",
         bool(path_findings([".github/bau/tools.in"])) and bool(path_findings(["scripts/pruefe_alles.sh"]))

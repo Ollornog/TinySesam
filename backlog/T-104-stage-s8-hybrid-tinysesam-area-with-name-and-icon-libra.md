@@ -2,7 +2,7 @@
 id: T-104
 type: Task
 title: "Stage S8 — hybrid: TinySesam area with name and icon, library layout slot"
-status: in-arbeit
+status: erledigt
 points: 8
 milestone: M-2
 blocked_by: [T-103]
@@ -18,8 +18,14 @@ and way back already) · **Estimate:** 12–16 h · **Milestone:** [M-2](M-2-she
 with tiles, frame and way back, `?app=<id>` on every page (`tests/test_app_area.py`).
 
 **Part 2 (2026-11-28):** the library slot `page_layout`; sign-in and reset links carry the frame in the token (key
-`frame` — `app` already names the application of an account-API link) (`tests/test_page_layout.py`). Open: Ex3
-hybrid.
+`frame` — `app` already names the application of an account-API link) (`tests/test_page_layout.py`).
+
+**Part 3, done (2026-11-28):** Ex3 hybrid — a Node application (`clients/js/examples/ex3`, JS client only) behind the
+server of `deploy/ex3` with local and IdP accounts, its own navigation, one link "Account" to the area, the way back;
+the Python Ex3 of T-102 is gone, its acceptance runs against the server (`tests/test_example_ex3.py`). Browser test
+`tests/test_hybrid_browser.py` at 375 and 1280 px, light and dark (CI job `browser`, with Node). The icon in the
+shell's frame on the application's host (`topbar.json` `frame.icon`) is not part of it: the shell is the surface "on
+top", and the member would change spec §8d and the vectors of every client.
 
 The application draws its own navigation; everything of TinySesam sits in a delimited TinySesam area.
 
