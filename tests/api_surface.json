@@ -78,7 +78,7 @@
   "TinySesam": {
     "account_overview": {
       "server": "GET /auth/account.json",
-      "sig": "(user, *, base: 'Optional[str]' = None, app_host: 'Optional[str]' = None, request: 'Optional[Request]' = None) -> 'Optional[dict]'",
+      "sig": "(user, *, base: 'Optional[str]' = None, app_host: 'Optional[str]' = None, request: 'Optional[Request]' = None, app: 'Optional[str]' = None) -> 'Optional[dict]'",
       "tier": "B"
     },
     "add_messages": {
@@ -2607,7 +2607,9 @@
       "tier": "B"
     },
     "GET /auth/account.json": {
-      "keys": [],
+      "keys": [
+        "query:app"
+      ],
       "tier": "B"
     },
     "GET /auth/act/{name}": {

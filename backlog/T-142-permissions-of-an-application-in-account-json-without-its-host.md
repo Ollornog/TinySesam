@@ -2,7 +2,7 @@
 id: T-142
 type: Task
 title: "Permissions of an application in account.json without its host"
-status: offen
+status: erledigt
 points: 2
 milestone: M-2
 tags: [permissions, account]
@@ -21,3 +21,10 @@ application by a parameter. Open whether a front end needs it (account page, hea
 
 ## Acceptance
 - The decision is written down; if yes, a test that `?app=` never shows another person's permissions.
+
+## Done (S9)
+
+Decided yes (ADR-17 addendum 2026-11-28): `/auth/account.json?app=<id>` and `account_overview(user, app=<id>)` name the
+signed-in person's own permissions for that application on TinySesam's origin; on an application's host the host
+decides. `tests/test_permissions_server.py` (c): another account's permissions never, whatever the query says; an
+unknown id `null`.

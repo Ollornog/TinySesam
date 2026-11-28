@@ -6,7 +6,8 @@
       joined with `,`; empty for a host of no application and for another application's permissions; the gate token
       carries the same as `ts_perms`; a change counts at the next request (the proxy path after the token's TTL); a set
       above `PERMISSIONS_VALUE_MAX` is refused with 403 and a security-log line, never cut
-  (c) `account.json` on an application's host names its permissions; elsewhere `null`
+  (c) `account.json` on an application's host names its permissions; elsewhere `null` — unless `/auth/account.json?app=`
+      names one application of `apps` (T-142): the person's own permissions there, never another account's
   (d) the permission API: `PUT /auth/api/apps/{id}/permissions` registers (grants nothing), only with an automation key
       of THIS application's service account and the scope; `GET /auth/api/users/{id}/permissions?app=` reads; a locked,
       unknown or service account is 404; the read is throttled; the routes exist only with `permission_scopes`
@@ -157,6 +158,28 @@ assert c.get("/.tinysesam/account.json", headers={"X-Forwarded-Host": WIKI}).jso
     "app": "wiki", "names": ["wiki.edit"]}
 assert c.get("/auth/account.json").json()["permissions"] is None
 ok("(c) account.json on an application's host names its permissions; /auth/account.json says null")
+# T-142: `/auth/account.json?app=<id>` names the person's OWN permissions for that application — never another
+# account's (no parameter chooses one), nothing for an unknown id; on an application's host the host decides.
+ben = int(auth.create_user("ben", password=PW, roles=["wiki-editor"]))
+cb = session_client(auth, app, ben)
+mine = c.get("/auth/account.json?app=docs").json()["permissions"]
+assert mine == view["permissions"] == {"app": "docs", "names": ["docs.read"]}, mine
+assert cb.get("/auth/account.json?app=docs").json()["permissions"] == {"app": "docs", "names": []}
+assert cb.get("/auth/account.json?app=wiki").json()["permissions"] == {"app": "wiki", "names": ["wiki.edit"]}
+for q in (f"?app=docs&user={ben}", f"?app=docs&user_id={ben}&username=ben", "?app=docs&id=1"):
+    assert cb.get("/auth/account.json" + q).json()["permissions"]["names"] == [], q
+    assert c.get("/auth/account.json" + q).json()["permissions"]["names"] == ["docs.read"], q
+for q in ("?app=nosuch", "?app=DOCS", "?app=" + "d" * 300, "?app="):
+    assert c.get("/auth/account.json" + q).json()["permissions"] is None, q
+r = c.get("/.tinysesam/account.json?app=wiki", headers={"X-Forwarded-Host": DOCS}).json()
+assert r["permissions"]["app"] == "docs", "on an application's host the parameter names no other application"
+assert c.get("/.tinysesam/account.json?app=wiki", headers={"X-Forwarded-Host": OTHER}).json()["permissions"] is None, \
+    "not on a host of no application either"
+assert auth.account_overview(auth.get_user(ben), app="wiki")["permissions"] == {"app": "wiki", "names": ["wiki.edit"]}
+assert auth.account_overview(auth.get_user(ben), app_host=DOCS, app="wiki")["permissions"]["app"] == "docs"
+ok("(c) T-142: /auth/account.json?app=<id> names the own permissions for that application (another account's never, "
+   "whatever else the query says; an unknown id null); on an application's host the host decides; "
+   "account_overview(app=…) the same")
 
 # ── (d) ─────────────────────────────────────────────────────────────────────────────────────────────
 api = TestClient(app, base_url="http://testserver")

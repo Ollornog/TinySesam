@@ -436,7 +436,7 @@ Value: `('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_sessio
 
 ## B · Methods of `TinySesam`
 
-### `account_overview(user, *, base: 'Optional[str]' = None, app_host: 'Optional[str]' = None, request: 'Optional[Request]' = None) -> 'Optional[dict]'`
+### `account_overview(user, *, base: 'Optional[str]' = None, app_host: 'Optional[str]' = None, request: 'Optional[Request]' = None, app: 'Optional[str]' = None) -> 'Optional[dict]'`
 
 The own account's security state as data (T-91) — what the account page shows, for an application that draws its own settings page: the same answer `GET /auth/account.json` gives the session.
 
@@ -1216,7 +1216,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/.well-known/oauth-protected-resource` | `query:rest` |
 | GET | `/.well-known/oauth-protected-resource/{rest:path}` | `query:rest` |
 | GET | `/auth/account` | — |
-| GET | `/auth/account.json` | — |
+| GET | `/auth/account.json` | `query:app` |
 | POST | `/auth/account/email` | — |
 | POST | `/auth/account/username` | — |
 | GET | `/auth/act/{name}` | `query:app`, `query:return`, `query:state`, `query:target` |
