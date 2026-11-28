@@ -29,8 +29,8 @@
 # EXACTLY THE PUSHED COMMIT (kit 0.59.0): Up to 0.58 the hook checked the working tree — `git push origin other`
 # from another branch, or a push with uncommitted changes, checked something that was not pushed. Now every pushed
 # commit is checked as it is: in place if it is HEAD and the working tree is clean, otherwise in a temporary
-# worktree (`git worktree add --detach`, removed afterwards). Limit: a Python package installed editable from the
-# main working tree (.venv) still points there; tests that import it by name see the working tree's code.
+# worktree (`git worktree add --detach`, removed afterwards). A Python package installed editable from the main working
+# tree (.venv) no longer wins over the checked-out tree: the Python stages set PYTHONPATH to the tree and prove it (0.76.0).
 #
 # SPRINT LANE IN THE PR CI (kit 0.68.0, PO 2026-11-26): `PREPUSH_SPRINT_BASIS=<commit> .githooks/pre-push` (no stdin)
 # runs the same fast checks on HEAD in the working tree AS IT IS (the CI checkout, with its installed tools) against that
@@ -370,13 +370,13 @@ naechster_mit() {
     done
 }
 
-# python_waehlen — the interpreter for hygiene AND tests of the changed files (one choice, kit 0.61.0). Order: $PYTHON
+# python_wahl — the interpreter for hygiene AND tests of the changed files (one choice, kit 0.61.0). Order: $PYTHON
 # (binding), .venv of the checked-out tree, .venv of the tree the hook was started in, .venv of the repo's main working
 # tree (a fresh `git worktree add` has none), else system python3. Sets PY_WAHL and PY_ART (gesetzt|venv|system).
 # WHY: up to 0.60 the hygiene stage called a bare `python3`, only the tests of the changed files looked for .venv. A repo
 # whose hygiene imports a package (TinySesam: FastAPI, runs README code blocks) died with ModuleNotFoundError in every
 # fresh worktree, although the .venv was right there.
-python_waehlen() {
+python_wahl() {
     local c haupt
     PY_WAHL=""; PY_ART=venv
     if [[ -n "${PYTHON:-}" ]]; then PY_WAHL="$PYTHON"; PY_ART=gesetzt; return 0; fi
@@ -385,6 +385,70 @@ python_waehlen() {
         if [[ -x "$c" ]]; then PY_WAHL="$c"; return 0; fi
     done
     PY_WAHL=python3; PY_ART=system
+}
+
+# python_waehlen — the choice above PLUS the import path (kit 0.76.0). python_wahl is the choice; python_pfad makes the
+# interpreter import the CHECKED-OUT tree's own packages and proves it. Both Python stages call python_waehlen.
+python_waehlen() {
+    python_wahl
+    python_pfad
+}
+
+# python_pfad — the packages of the checked-out tree (cwd) win over any installed copy (kit 0.76.0). WHY: the .venv of the
+# main working tree is taken when a worktree has none, and the package there is installed editable from the MAIN tree:
+# `import <package>` ran the code of the other checkout, not the pushed code (TinySesam: false red; the mirror image is a
+# false GREEN — a fix counts as tested, its code never ran). Now: PYTHONPATH = the tree (flat layout: <pkg>/__init__.py
+# in the root) and/or <tree>/src (src layout), in front of a PYTHONPATH the user had; PYTHONPATH precedes site-packages
+# and .pth entries, and a meta-path finder of an editable install is asked after the path finder. Then a SELF-PROBE: the
+# chosen interpreter must find each package from there inside the tree, else the hook aborts before the tests — no silent
+# green (e.g. an interpreter wrapper that overrides PYTHONPATH). Packages = tracked <pkg>/__init__.py in the root and
+# src/<pkg>/__init__.py. Limit: other layouts (a package in a deeper folder, a single-file module) are not detected;
+# the repo says where it lives via PYTHONPATH in its environment, and the hook does not probe what it does not know.
+python_pfad() {
+    local f d n pfad="" aus rc=0
+    local -a namen=() verz=()
+    local -A gesehen=()
+    while IFS= read -r f; do
+        case "$f" in
+            src/*/__init__.py)
+                [[ -f src/__init__.py ]] && continue   # src is itself a package: these are its subpackages
+                d="$PWD/src"; n="${f#src/}"; n="${n%%/*}" ;;
+            */__init__.py) d="$PWD"; n="${f%%/*}" ;;
+            *) continue ;;
+        esac
+        [[ -n "${gesehen[$n]+x}" ]] && continue
+        gesehen[$n]=1; namen+=("$n")
+        [[ -n "${gesehen[dir:$d]+x}" ]] || { gesehen[dir:$d]=1; verz+=("$d"); }
+    done < <(git ls-files -- ':(glob)*/__init__.py' ':(glob)src/*/__init__.py')
+    [[ ${#namen[@]} -gt 0 ]] || return 0
+    # The user's own PYTHONPATH is kept (behind ours); the hook may run this twice, so the first value is remembered.
+    [[ -n "${PFAD_VORHER+x}" ]] || PFAD_VORHER="${PYTHONPATH:-}"
+    for d in "${verz[@]}"; do pfad+="${pfad:+:}$d"; done
+    export PYTHONPATH="$pfad${PFAD_VORHER:+:$PFAD_VORHER}"
+    # shellcheck disable=SC2016  # the single quotes hold Python code, nothing for the shell to expand
+    aus="$(PYTHONDONTWRITEBYTECODE=1 "$PY_WAHL" -c '
+import importlib.util, os, sys
+wurzel = os.path.realpath(sys.argv[1]); falsch = []
+# `-c` puts the cwd (the tree) first on sys.path as "". A test file run as `python tests/test_x.py` has its own folder
+# there. Without the "" the probe sees what such a test sees (the tree is on the path only through PYTHONPATH).
+sys.path[:] = [p for p in sys.path if p != ""]
+for n in sys.argv[2:]:
+    try:
+        s = importlib.util.find_spec(n)
+    except Exception as e:  # a broken package must not hide behind the probe
+        falsch.append("  %s: not importable (%s)" % (n, e)); continue
+    if s is None:
+        falsch.append("  %s: not importable" % n); continue
+    o = s.origin if s.origin not in (None, "namespace") else (list(s.submodule_search_locations or [""])[0])
+    o = os.path.realpath(o) if o else ""
+    if not (o == wurzel or o.startswith(wurzel + os.sep)):
+        falsch.append("  %s -> %s" % (n, o or "?"))
+if falsch:
+    print("\n".join(falsch)); sys.exit(3)
+' "$PWD" "${namen[@]}" 2>&1)" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        rot "the test interpreter ($PY_WAHL) does not import the package(s) of the checked-out tree ($PWD) from it, so the tests would run FOREIGN code (an editable install of another tree, or a PYTHONPATH that was overridden):"$'\n'"$aus"$'\n'"Use the interpreter of this tree (PYTHON=<.venv/bin/python here>, build it with scripts/check.sh or \`uv venv .venv && uv pip install -e .\`) or fix the PYTHONPATH, then push again."
+    fi
 }
 
 # hygiene — runs tests/test_repo.py with the chosen interpreter. A missing package with only the system python3 on offer
