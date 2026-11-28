@@ -6,6 +6,8 @@
      difference by design being "Sign out" (a link instead of a form).
   B. Server (Go): example Ex1 as surface "shell on top" — the Go program behind a forward-auth proxy, the component from
      `/.tinysesam/shell.js` on the application's host with the frame of `forward_apps` and the permission links.
+  C. The permission matrix of the panel (T-100): a dangerous permission asks for a step-up, an area administrator sees
+     only the own area.
 
 Skipped without Chrome or `websockets`; part B needs `go` (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
@@ -463,6 +465,115 @@ async def part_b(p: Page) -> None:
        "route refuses /staff to a member (403); Security opens TinySesam's account page in Ex1's frame")
 
 
+# ══ C. The permission matrix of the panel (T-100) ════════════════════════════════════════════════════════════════
+# Checked by screenshot only until now: a dangerous permission asks the administrator for a fresh confirmation (the
+# panel goes over the reauth page and back), an ordinary one does not; an area administrator sees only the
+# applications of the own area and only the roles it manages.
+from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
+
+MATRIX_APPS = {"docs": {"name": "Documents", "permissions": [
+                   {"name": "docs.read", "label": {"en": "Read documents"}},
+                   {"name": "docs.delete", "label": {"en": "Delete documents"}, "danger": True}]},
+               "wiki": {"name": "Wiki", "permissions": [{"name": "wiki.edit", "label": {"en": "Edit the wiki"}}]}}
+mx_auth = TinySesam(TinySesamConfig(
+    db_path=os.path.join(tempfile.mkdtemp(), "matrix.db"), lang="en", cookie_secure=False, passkey_enabled=False,
+    available_roles=["docs-reader", "docs-editor", "wiki-editor", "area-docs"],
+    admin_delegates={"area-docs": {"roles": ["docs-reader", "docs-editor"], "apps": ["docs"]}},
+    apps=MATRIX_APPS, admin_require_mfa=False, shell_layout="side"))
+from fastapi import FastAPI  # noqa: E402
+
+mx_app = FastAPI()
+mx_app.include_router(mx_auth.router())
+MX_PORT, mx_server = serve(mx_app)
+MX = f"http://127.0.0.1:{MX_PORT}"
+ADA = int(mx_auth.create_user("ada", password=PW, is_admin=True))
+LEA = int(mx_auth.create_user("lea", password=PW, roles=["area-docs"]))
+
+
+def _held(app: str, perm: str, role: str) -> bool:
+    return role in next(r for r in mx_auth.app_permissions(app) if r["name"] == perm)["roles"]
+
+
+async def _until_py(cond, why, tries=80):
+    for _ in range(tries):
+        if cond():
+            return
+        await asyncio.sleep(0.25)
+    raise AssertionError(why)
+
+
+async def part_c(p: Page) -> None:
+    console_before, failed_before = len(p.console), len(p.failed)
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+
+    async def matrix(uid: int, age: bool) -> None:
+        await p.cmd("Network.clearBrowserCookies")
+        token, _ = mx_auth.start_session(uid, "password")
+        if age:                                     # signed in long ago: no fresh confirmation any more
+            old = int(time.time()) - 100000
+            mx_auth.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE user_id=?", (old, old, uid))
+        await p.cmd("Network.setCookie", name=mx_auth.session_cookie_name, value=token, url=MX)
+        await p.go(MX + "/auth/account")           # a new document each time (a same-URL hash change reloads nothing)
+        await p.go(MX + "/auth/admin")
+        await p.js("location.hash='#perms';true")
+        await p.until("!!document.querySelector('table.permgrid')", "permission matrix not built")
+
+    def box(app: str, perm: str, role: str) -> str:
+        return f"document.querySelector('input[aria-label=\"{role} · {perm}\"]')"
+
+    # 1. The administrator: an ordinary permission is assigned at once, a dangerous one only after the step-up.
+    await matrix(ADA, age=True)
+    cards = await p.js("[...document.querySelectorAll('table.permgrid')].length")
+    assert cards == 2, f"the administrator sees {cards} applications"
+    danger = await p.js("document.querySelector('#perm-docs-docs\\\\.delete th').innerText")
+    assert "⚠" in danger and "dangerous" in danger.lower(), f"the danger is not said in words: {danger!r}"
+    await p.js(f"{box('docs', 'docs.read', 'docs-reader')}.click();true")
+    await _until_py(lambda: _held("docs", "docs.read", "docs-reader"), "an ordinary permission was not assigned")
+    assert await p.js("location.pathname") == "/auth/admin", "an ordinary permission asked for a step-up"
+    await p.js("window.__old=true;" + f"{box('docs', 'docs.delete', 'docs-editor')}.click();true")
+    await p.until("window.__old===undefined && location.pathname==='/auth/reauth' && document.readyState==='complete'"
+                  " && !!document.querySelector(\"form[action$='/auth/reauth'] [name=password]\")",
+                  "a dangerous permission did not ask for a fresh confirmation")
+    assert not _held("docs", "docs.delete", "docs-editor"), "assigned without the step-up"
+    refused = (403, MX + "/auth/admin/api/permissions/assign")      # the server's step-up answer, expected once
+    assert p.failed[failed_before:].count(refused) == 1, p.failed[failed_before:]
+    p.failed.remove(refused)
+    await clean(p, "the reauth page", console_before, failed_before)
+    await shot(p, "matrix-stepup-1280")
+    field = "document.querySelector(\"form[action$='/auth/reauth'] [name=password]\")"
+    await p.js(f"{field}.value={PW!r};window.__old=true;"
+               "document.querySelector(\"form[action$='/auth/reauth'] button\").click();true")
+    await p.until("window.__old===undefined && location.pathname==='/auth/admin' && document.readyState==='complete'",
+                  "the reauth page did not lead back to the panel")
+    await p.js("location.hash='#perms';true")
+    await p.until("!!document.querySelector('table.permgrid')", "permission matrix not built after the step-up")
+    await p.js(f"{box('docs', 'docs.delete', 'docs-editor')}.click();true")
+    await _until_py(lambda: _held("docs", "docs.delete", "docs-editor"), "not assigned after the step-up")
+    await clean(p, "the panel after the step-up", console_before, failed_before)
+    ok("C1 permission matrix, administrator: an ordinary permission is assigned at once; a dangerous one (⚠ and the "
+       "word) sends a signed-in-long-ago administrator over the reauth page and back, and only then is assigned")
+
+    # 2. The area administrator: only the own area, only the roles it manages.
+    await matrix(LEA, age=False)
+    names = await p.js("[...document.querySelectorAll('section.card h2')].map(h=>h.textContent)")
+    assert "Documents" in " ".join(names) and "Wiki" not in " ".join(names), f"the area administrator sees {names}"
+    heads = await p.js("[...document.querySelector('table.permgrid').querySelectorAll('thead th')]"
+                       ".slice(1).map(t=>t.innerText.split('\\n')[0])")
+    assert heads == ["docs-editor", "docs-reader"], f"the area administrator sees the roles {heads}"
+    await p.js(f"{box('docs', 'docs.read', 'docs-editor')}.click();true")
+    await _until_py(lambda: _held("docs", "docs.read", "docs-editor"), "the area administrator could not assign")
+    r = await p.js("fetch('/auth/admin/api/permissions/assign',{method:'POST',headers:{'Content-Type':"
+                   "'application/json','X-CSRF-Token':(document.cookie.match(/(?:^|; )"
+                   f"{mx_auth.csrf_cookie_name}=([^;]+)/)||[])[1]||''}},body:JSON.stringify({{app:'wiki',"
+                   "permission:'wiki.edit',role:'wiki-editor',granted:true})}).then(r=>r.status)")
+    assert r in (403, 404) and not _held("wiki", "wiki.edit", "wiki-editor"), f"outside the area: {r}"
+    p.failed = [f for f in p.failed if not f[1].endswith("/api/permissions/assign")]
+    await clean(p, "the area administrator's matrix", console_before, failed_before)
+    await shot(p, "matrix-area-1280")
+    ok("C2 permission matrix, area administrator: only the application of the own area and only the roles it "
+       "manages; assigning inside works, the server refuses an application outside")
+
+
 async def main() -> None:
     chrome = Chrome(CHROME, ("--host-resolver-rules=MAP *.example.test 127.0.0.1",))
     try:
@@ -476,6 +587,7 @@ async def main() -> None:
                     await part_b(p)
                 finally:
                     proxy.close()
+            await part_c(p)
     finally:
         chrome.close()
 
@@ -485,6 +597,7 @@ try:
     print("OK test_shell_browser")
 finally:
     ex2_server.should_exit = True
+    mx_server.should_exit = True
     if EX1:
         go_proc.terminate()
         go_proc.wait(timeout=10)
