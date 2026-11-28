@@ -17,6 +17,11 @@ The bar's links follow roles and permissions: *Editing guide* for the role `docs
 `demo password 4711`): `ada` (administrator), `rita` (role `docs-reader`) and `eddi` (role `docs-editor`); the demo
 assigns `docs.read` to both roles and `docs.delete` to `docs-editor`, as an administrator would in the panel. Nothing
 leaves the machine.
+
+With an identity provider (optional, T-162): set `EX2_OIDC_ISSUER`, `EX2_OIDC_CLIENT_ID` and `EX2_OIDC_CLIENT_SECRET`
+(the provider allows the redirect URI `http://127.0.0.1:8002/auth/oidc/callback` and sends the `groups` claim) and
+`--demo` adds the provider's sign-in beside the local accounts: a person of the provider's group `readers` gets the
+role `docs-reader` at every sign-in (`provider_from_env`).
 """
 from __future__ import annotations
 
@@ -113,9 +118,31 @@ def build(db_path: str, **overrides) -> "tuple[FastAPI, TinySesam]":
     return app, auth
 
 
+#: The demo's address, and with a provider the base of its redirect URI (`/auth/oidc/callback`).
+DEMO_URL = "http://127.0.0.1:8002"
+#: The variables of the optional provider (T-162); the secret only from the environment, never in the source.
+PROVIDER_VARIABLES = ("EX2_OIDC_ISSUER", "EX2_OIDC_CLIENT_ID", "EX2_OIDC_CLIENT_SECRET")
+
+
+def provider_from_env(env, base_url: str = DEMO_URL) -> dict:
+    """The overrides for `build` that add an OpenID Connect provider beside the local accounts (T-162) — empty when
+    none of `PROVIDER_VARIABLES` is set, all three or a start error otherwise. The provider's group `readers` becomes
+    the role `docs-reader` at every sign-in and goes when the group goes."""
+    values = {name: (env.get(name) or "").strip() for name in PROVIDER_VARIABLES}
+    if not any(values.values()):
+        return {}
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise SystemExit(f"Ex2 with an identity provider needs {', '.join(missing)} as well "
+                         f"(or none of {', '.join(PROVIDER_VARIABLES)} for local accounts only)")
+    return dict(base_url=base_url, oidc_enabled=True, oidc_issuer=values["EX2_OIDC_ISSUER"],
+                oidc_client_id=values["EX2_OIDC_CLIENT_ID"], oidc_client_secret=values["EX2_OIDC_CLIENT_SECRET"],
+                oidc_scopes="openid profile email groups", oidc_group_role_map={"readers": "docs-reader"})
+
+
 def demo() -> None:
     import uvicorn
-    app, auth = build(os.path.join(tempfile.mkdtemp(prefix="ex2-"), "ex2.db"))
+    app, auth = build(os.path.join(tempfile.mkdtemp(prefix="ex2-"), "ex2.db"), **provider_from_env(os.environ))
     password = "demo password 4711"
     auth.create_user("ada", password=password, is_admin=True)
     auth.create_user("rita", password=password, roles=["docs-reader"])

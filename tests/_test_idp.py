@@ -17,8 +17,10 @@ import base64
 import hashlib
 import html
 import json
+import re
 import secrets
 import time
+import tomllib
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -26,6 +28,29 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from _browser_stack import serve
+
+
+#: T-162: a line of the optional provider block of a deployment file (deploy/ex1, deploy/ex4): commented out as
+#: `#oidc_<field> = <value>`, the operator switches the block on by removing the `#` (the deployment's README).
+_PROVIDER_LINE = re.compile(r"^#(oidc_[a-z_]+ = .+)$", re.M)
+#: What the block must say: switched on, the provider, the client, its secret through the environment, the `groups`
+#: scope and the group that becomes the example's role.
+PROVIDER_KEYS = ("oidc_enabled", "oidc_issuer", "oidc_client_id", "oidc_client_secret", "oidc_scopes",
+                 "oidc_group_role_map")
+
+
+def deploy_provider(toml: str, where: str) -> tuple[str, dict]:
+    """The deployment file `where` with its optional provider block switched on — every `#oidc_… = …` line without its
+    `#`, as the README tells the operator — and the block's values. The suites build the example from exactly this, so
+    a block that is missing, incomplete or maps the group to another role turns its cell red."""
+    assert not re.search(r"^oidc_", toml, re.M), f"{where}: the provider block is optional — its lines start with #"
+    values = tomllib.loads("\n".join(_PROVIDER_LINE.findall(toml)))
+    missing = [k for k in PROVIDER_KEYS if k not in values]
+    assert not missing and values["oidc_enabled"] is True, \
+        f"{where}: the provider block lacks {missing or 'oidc_enabled = true'}"
+    assert values["oidc_client_secret"].startswith("env:"), f"{where}: the client secret only as env:NAME"
+    assert "groups" in values["oidc_scopes"].split(), f"{where}: oidc_scopes must ask for groups"
+    return _PROVIDER_LINE.sub(r"\1", toml), values
 
 
 def _b64u(raw: bytes) -> str:

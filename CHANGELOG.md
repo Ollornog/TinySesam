@@ -61,6 +61,15 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The example deployments Ex1 and Ex4 carry an optional identity provider (T-162): `deploy/ex1/tinysesam.toml` and
+  `deploy/ex4/tinysesam.toml` hold an OpenID Connect block, switched off (`#oidc_…` lines), the client secret only as
+  `env:EX1_OIDC_CLIENT_SECRET` / `env:EX4_OIDC_CLIENT_SECRET` (a commented line in each compose file passes it, no
+  start without it), and the provider's group `staff` → `ex1-staff` resp. `docs` → `docs-reader`. Their READMEs
+  ("With an identity provider") name the steps. Ex2's `--demo` adds a provider when `EX2_OIDC_ISSUER`,
+  `EX2_OIDC_CLIENT_ID` and `EX2_OIDC_CLIENT_SECRET` are set (`provider_from_env`, group `readers` → `docs-reader`).
+  The acceptance matrix builds its cells B5, A4 and X9 from exactly these settings instead of adding its own
+  (`tests/_test_idp.py` `deploy_provider`); `tests/test_server_config.py` builds Ex1 and Ex4 from the switched-on
+  block, `tests/test_example_ex2.py` checks the demo's variables.
 - The acceptance matrix of milestone M-2 in CI (T-107, README "The acceptance matrix"): every example — Ex1 shell on
   top (Go), Ex2 at the side (Python library), Ex3 hybrid and Ex4 headless (Node) — with a local account, a provider's
   account and both in one installation, in a real browser. The provider is a real OpenID provider on a loopback port
