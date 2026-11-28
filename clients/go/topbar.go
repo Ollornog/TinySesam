@@ -48,11 +48,11 @@ type TopbarFrame struct {
 
 // dataIconRE is frame.icon as a data: address: one of the image types apps[id].icon takes, then printable ASCII
 // without a quote, < > or a backslash.
-var dataIconRE = regexp.MustCompile(`^data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][!#-&(-;=?-\[\]-~]+$`)
+var dataIconRE = regexp.MustCompile(`^data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][\x21-\x7e]+$`)
 
 // frameIcon keeps an href of spec section 8 or a data:image/ address of the five types; anything else is nil.
 func frameIcon(v any) *string {
-	if s, ok := v.(string); ok && (safeHref(s) || dataIconRE.MatchString(s)) {
+	if s, ok := v.(string); ok && (safeHref(s) || dataIconRE.MatchString(s) && !strings.ContainsAny(s, `"'<>\`)) {
 		return &s
 	}
 	return nil

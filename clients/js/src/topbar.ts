@@ -69,7 +69,8 @@ export function signedOutTopbar(brand = '', frame: TopbarFrame = topbarFrame(und
 }
 
 /** `frame.icon` as a data: address: an image type of `apps[id].icon`, then printable ASCII without `"'<>\`. */
-const DATA_ICON = /^data:image\/(?:png|gif|jpeg|webp|svg\+xml)[;,][!#-&(-;=?-[\]-~]+$/;
+const DATA_ICON = /^data:image\/(?:png|gif|jpeg|webp|svg\+xml)[;,][\x21-\x7e]+$/;
+const ICON_REFUSED = /["'<>\\]/;
 
 /**
  * `frame` of spec section 8d: layout exactly `side` or else `top`, name text or null; home and links only signed in
@@ -85,7 +86,10 @@ function topbarFrame(raw: unknown, signedIn: boolean): TopbarFrame {
   return {
     layout: own(raw, 'layout') === 'side' ? 'side' : 'top',
     name: typeof name === 'string' ? name : null,
-    icon: typeof icon === 'string' && (isSafeHref(icon) || DATA_ICON.test(icon)) ? icon : null,
+    icon:
+      typeof icon === 'string' && (isSafeHref(icon) || (DATA_ICON.test(icon) && !ICON_REFUSED.test(icon)))
+        ? icon
+        : null,
     home: signedIn && typeof home === 'string' && isSafeHref(home) ? home : null,
     links: signedIn ? topbarLinks(own(raw, 'links')) : [],
   };

@@ -1299,14 +1299,16 @@ def _topbar_frame(raw: Any, *, signed_in: bool) -> TopbarFrame:
 
 #: `frame.icon` as a `data:` address (spec §8d): one of the image types `apps[id].icon` takes, then printable ASCII
 #: without a quote, `<`, `>` or a backslash.
-_DATA_ICON = re.compile(r"data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][!#-&(-;=?-\[\]-~]+")
+_DATA_ICON = re.compile(r"data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][\x21-\x7e]+")
+_ICON_REFUSED = frozenset("\"'<>\\")
 
 
 def _icon(value: Any) -> Optional[str]:
     """`frame.icon`: an href of §8, or a `data:image/…` address of the five types; anything else None."""
     if not isinstance(value, str):
         return None
-    return value if _safe_href(value) or _DATA_ICON.fullmatch(value) else None
+    data = _DATA_ICON.fullmatch(value) is not None and not _ICON_REFUSED.intersection(value)
+    return value if _safe_href(value) or data else None
 
 
 def _count(value: Any) -> Optional[int]:

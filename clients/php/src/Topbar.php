@@ -145,9 +145,9 @@ final readonly class Topbar
         // printable ASCII without a quote, < > or a backslash.
         $icon = Strict::member($raw, 'icon');
         $out['icon'] = \is_string($icon) && (self::isSafeHref($icon) || preg_match(
-            '~^data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][!#-&(-;=?-\[\]-\~]+$~D',
+            '~^data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][\x21-\x7e]+$~D',
             $icon,
-        ) === 1) ? $icon : null;
+        ) === 1 && strpbrk($icon, '"\'<>\\') === false) ? $icon : null;
         if ($signedIn) {
             $home = Strict::member($raw, 'home');
             $out['home'] = \is_string($home) && self::isSafeHref($home) ? $home : null;
