@@ -40,6 +40,8 @@ LANE = {
     "release.yml": {"automatik": "release automation, workflow_dispatch only"},
 }
 GATE = "${{ !cancelled() && needs.classify.outputs.nur_text != 'ja'"
+# The browser suites have a classifier of their own in ci.yml (scope `browser` of scripts/_client_scope.sh).
+BROWSER_GATE = "${{ !cancelled() && needs.classify-browser.outputs.nur_text != 'ja' }}"
 
 
 def jobs_of(text):
@@ -145,6 +147,11 @@ for wf, exempt in LANE.items():
         f"{wf}: job `classify` differs from the one in ci.yml"
     agg = WORKFLOWS.get(wf, (None,))[0]
     gated = {j for j, t in jobs.items() if GATE in if_of(t)}
+    browser_gated = {j for j, t in jobs.items() if if_of(t) == BROWSER_GATE}
+    if wf == "ci.yml":
+        assert browser_gated == {"browser"} and needs_of(jobs["browser"]) == ["classify-browser"], browser_gated
+    else:
+        assert not browser_gated and "classify-browser" not in jobs, f"{wf}: classify-browser belongs to ci.yml"
     for j in gated:
         cond = if_of(jobs[j])
         assert "classify" in needs_of(jobs[j]), f"{wf}/{j}: gated on classify without `needs: classify`"
@@ -156,7 +163,7 @@ for wf, exempt in LANE.items():
     while changed:
         changed = False
         for j, t in jobs.items():
-            if j in follows or j in ("classify", agg) or j in exempt:
+            if j in follows or j in ("classify", "classify-browser", agg) or j in exempt or j in browser_gated:
                 continue
             before = [n for n in needs_of(t) if n in follows]
             if not before:
@@ -167,7 +174,7 @@ for wf, exempt in LANE.items():
                     f"{wf}/{j}: its `if` runs it when {before} skipped — ask for `needs.<job>.result == 'success'`"
             follows.add(j)
             changed = True
-    rest = sorted(set(jobs) - follows - {"classify", agg} - set(exempt))
+    rest = sorted(set(jobs) - follows - {"classify", "classify-browser", agg} - set(exempt) - browser_gated)
     assert not rest, f"{wf}: {rest} run in the sprint lane — gate them on classify or name the reason in LANE"
     for j in exempt:
         assert j in jobs, f"{wf}: LANE names `{j}`, which is not a job"
@@ -327,6 +334,33 @@ for wf in CLIENTS:
             assert f"scripts/_client_scope.sh {wf};" in code and "grep" not in code, \
                 f"{wf}: the scope step must ask scripts/_client_scope.sh {wf}"
 assert scope_steps == 5, f"{scope_steps} scope steps in the client workflows, expected 5 (php has two jobs) — adjust guard"
+# The browser classifier is `classify` with the fixed scope `browser` (S8: #445 changed Ex4 and its browser suite in
+# the sprint lane, the browser job skipped, the closing PR was red). Its script is run like the other.
+cb = jobs_of(texts["ci.yml"])["classify-browser"]
+browser_script, _ = step_script(cb, "Classify")
+assert without_comments(browser_script) == without_comments(classify_script.replace('"$WORKFLOW"', "browser")), \
+    "classify-browser differs from classify (other than the fixed scope `browser`)"
+classify_script_saved = classify_script
+classify_script = browser_script
+for path in ("tests/test_headless_browser.py", "tinysesam/templates.py", "clients/js/examples/ex4/app.js",
+             "examples/showcase.py", "deploy/ex4/tinysesam.toml", ".github/workflows/ci.yml"):
+    answer, log = classify("sprint/2026-11-28-probe", {path: "x\n"})
+    assert answer == "" and "its tests run" in log, f"browser: a sprint PR changing {path} must run it: {answer!r} {log!r}"
+for path in ("scripts/probe.py", "clients/go/x.txt", "spec/vectors/x.json", "tests/test_core.py"):
+    answer, log = classify("sprint/2026-11-28-probe", {path: "x\n"})
+    assert answer == "nur_text=ja", f"browser: a sprint PR changing only {path} must skip it: {answer!r} {log!r}"
+answer, log = classify("main", {"README.md": "more text\n"})
+assert answer == "nur_text=ja", f"browser: text only into main skips: {answer!r}"
+classify_script = classify_script_saved
+# The browser job installs what the examples it drives switch on: Ex4 offers passkeys (T-149), and without the extra
+# [passkey] its server does not start (`MissingExtra` at the router) — the closing PR of S8 was red on exactly that.
+_ex4 = (ROOT / "deploy/ex4/tinysesam.toml").read_text(encoding="utf-8")
+_browser = without_comments(jobs_of(texts["ci.yml"])["browser"])
+if re.search(r"^passkey_enabled = true", _ex4, re.M):
+    assert re.search(r"pip install -e \"\.\[[a-z,]*passkey[a-z,]*\]\"", _browser), \
+        "ci.yml/browser: Ex4 switches passkeys on, the job must install the extra [passkey]"
+print("  classify-browser: a sprint PR touching the library, the examples or the browser suites runs the browser job; "
+      "it installs the extras Ex4 needs")
 print(f"  classify (T-150): a sprint PR changing a client, spec/ or the workflow runs that client's jobs "
       f"({len(CLIENTS)} clients), anything else skips")
 

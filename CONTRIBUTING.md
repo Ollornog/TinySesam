@@ -40,10 +40,12 @@ fast checks (the job `classify` of each workflow answers for the shared kit's sp
 they do for a pull request that changes only text nobody reads). The full suite runs once, in the closing pull request
 into `main`. A sprint pull request that changes a gate client, the specification `spec/` or a client's workflow runs
 that client's jobs all the same (`scripts/_client_scope.sh`; the Python client's vector and HTTP suites run in the
-fast checks, the repository's extra of the pre-push hook). `tests/test_ci_aggregate.py` holds every workflow to it.
-CodeQL runs in the sprint lane too, for Python and JavaScript, without uploading: the job `sprint` of `codeql.yml`
-compares its findings with `main`'s analyses (`scripts/_codeql_sprint.py`) and is red on a finding the sprint adds,
-never on one already on `main` (`tests/test_codeql_sprint.py`).
+fast checks, the repository's extra of the pre-push hook); a sprint pull request that changes the library, an example
+or a browser suite runs the browser job (its own classifier `classify-browser`, scope `browser`).
+`tests/test_ci_aggregate.py` holds every workflow to it. CodeQL runs in the sprint lane too, for Python and
+JavaScript, without uploading: the job `sprint` of `codeql.yml` compares its findings with `main`'s analyses
+(`scripts/_codeql_sprint.py`) and is red on a finding the sprint adds, never on one already on `main`
+(`tests/test_codeql_sprint.py`).
 
 ```bash
 git switch -c my-change

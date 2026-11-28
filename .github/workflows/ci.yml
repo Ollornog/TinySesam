@@ -126,9 +126,37 @@ jobs:
 
   # The pages in a real browser: console errors, widths, language switch, dark mode, login.
   # Without this job a design regression is only noticed by the user.
+  # The browser suites' own classifier: like `classify`, but in the sprint lane it answers `nur_text=ja` only when the
+  # pull request touches nothing of the browser scope (scripts/_client_scope.sh browser: the library, the examples,
+  # the suites) — a sprint PR that changes a page or an example runs the browser suites. (S8: #445 changed Ex4 and its
+  # suite in the sprint lane, the browser job skipped, the closing PR was red.)
+  classify-browser:
+    name: Text or code (browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      nur_text: ${{ steps.classify.outputs.nur_text }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # The pull request's merge commit and its first parent: scripts/_nur_text.sh compares the two.
+          fetch-depth: 2
+      - name: Classify
+        id: classify
+        run: |
+          if reason="$(scripts/_nur_text.sh)"; then
+            if [[ "$reason" == "SPRINT LANE"* ]] && scope="$(scripts/_client_scope.sh browser)"; then
+              reason="$reason. But $scope"
+            else
+              echo "nur_text=ja" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "$reason"
+
   browser:
-    needs: classify
-    if: ${{ !cancelled() && needs.classify.outputs.nur_text != 'ja' }}
+    needs: classify-browser
+    if: ${{ !cancelled() && needs.classify-browser.outputs.nur_text != 'ja' }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
@@ -161,7 +189,8 @@ jobs:
         with:
           node-version: lts/*
       - name: Dependencies
-        run: pip install -e ".[services]" uvicorn websockets httpx setuptools wheel   # [services]: T-60 section of the account page
+        # [services]: T-60 section of the account page; [passkey]: example Ex4 offers passkeys (T-149).
+        run: pip install -e ".[services,passkey]" uvicorn websockets httpx setuptools wheel
       - name: Build the website (must succeed)
         run: python -m web.build _site
       # B-13: the tests run THIS Chrome (`CHROME`), not the runner image's preinstalled google-chrome, whose files are

@@ -26,7 +26,7 @@ suite can show that no secret ever reached it.
      on another account from the application's own links — roles, authenticator reset, key, program, one session, a
      sign-in link shown once, lock, unlock — each confirmed with the password on TinySesam's page, back with done.
 
-Skipped without Chrome, `websockets` or `uvicorn`; needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
+Skipped without Chrome, `websockets`, `uvicorn` or the extra [passkey] (Ex4 offers passkeys); needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
 """
 from __future__ import annotations
@@ -49,6 +49,7 @@ from voraussetzung import braucht, braucht_modul, find_chrome, pflicht_werkzeug 
 
 braucht_modul("websockets")
 braucht_modul("uvicorn")
+braucht_modul("webauthn", extra="passkey")      # Ex4 offers passkeys (T-149): without the extra its server cannot start
 CHROME = find_chrome()
 braucht(CHROME, "no Chrome found")
 

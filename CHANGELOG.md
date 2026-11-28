@@ -331,6 +331,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   Python client's vector and HTTP suites on a change of `spec/`, its generators or `tinysesam/gate_client.py`. The
   closing pull request of sprint S7 was red at the clients' HTTP tests because every client job had skipped. The extra picks a
   Python that imports FastAPI (a linked worktree has no `.venv` of its own).
+- CI: the browser job installs the extra `[passkey]` — example Ex4 offers passkeys since T-149, and without the extra
+  its server does not start (`MissingExtra` when the router is built); `tests/test_headless_browser.py` now skips with
+  that reason instead of failing deep inside. The browser job has its own classifier `classify-browser`: in the sprint
+  lane it runs when a pull request touches the library, an example, its deployment or a browser suite
+  (`scripts/_client_scope.sh browser`). The closing pull request of S8 was red on both; `tests/test_ci_aggregate.py`
+  holds the scope and the extra.
   `tests/test_codeql_sprint.py` checks the comparison, the choice of analyses and the workflow.
 - `topbar.json` on an application's host with an app frame (T-103): `account.href` and `approvals.href` carry
   `app=<host>`, so TinySesam's pages open in the application's frame — as `account.json` already did.
