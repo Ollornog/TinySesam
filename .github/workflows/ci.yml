@@ -146,8 +146,8 @@ jobs:
         with:
           go-version: stable
           cache: false
-      # T-104: tests/test_hybrid_browser.py runs example Ex3 (Node >= 22.18, TypeScript without a build) behind the
-      # forward-auth proxy; without Node the suite is red, never skipped.
+      # T-104, T-105: tests/test_hybrid_browser.py and tests/test_headless_browser.py run examples Ex3 and Ex4 (Node >=
+      # 22.18, TypeScript without a build) behind the forward-auth proxy; without Node the suites are red, never skipped.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: lts/*
@@ -169,6 +169,11 @@ jobs:
       # T-104: surface "hybrid" — example Ex3 (Node behind a proxy) and TinySesam's area.
       - name: Browser test of the hybrid surface
         run: python tests/test_hybrid_browser.py
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      # T-105: surface "headless" — example Ex4 (a single-page app in Node behind a proxy) and the action pages.
+      - name: Browser test of the headless surface
+        run: python tests/test_headless_browser.py
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - name: Repo hygiene
@@ -320,8 +325,8 @@ jobs:
         with:
           go-version: stable
           cache: false
-      # T-104: tests/test_hybrid_browser.py runs example Ex3 (Node >= 22.18, TypeScript without a build) behind the
-      # forward-auth proxy; without Node the suite is red, never skipped.
+      # T-104, T-105: tests/test_hybrid_browser.py and tests/test_headless_browser.py run examples Ex3 and Ex4 (Node >=
+      # 22.18, TypeScript without a build) behind the forward-auth proxy; without Node the suites are red, never skipped.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: lts/*

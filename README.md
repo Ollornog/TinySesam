@@ -1470,7 +1470,7 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 | **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()`, example Ex1 |
 | **Shell at the side** | the same component as a side bar | as above | `layout="side"`, `shell_layout`, `apps[id].layout`, example Ex2 |
 | **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the TinySesam area `/auth/area?app=<id>` (T-104, below), example Ex3 |
-| **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the action pages `/auth/act/<name>` (T-105, below) and the account overview; T-106 adds the reading side |
+| **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the action pages `/auth/act/<name>` (T-105, below) and the account overview, example Ex4; T-106 adds the reading side |
 
 ### The TinySesam area (hybrid)
 
@@ -1571,6 +1571,12 @@ https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.ex
 The register of the actions is shared with the administration: every action carries a scope (`own`, later `admin`) and
 a step-up class (`window`: the window of a fresh confirmation; `each`: one confirmation per action, for the
 administrator's actions that follow).
+
+Example Ex4, [`deploy/ex4`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex4/README.md), is the surface as a
+whole: a Node application behind the server whose settings page is a single-page app — it reads `account.json` in the
+browser and changes the password, an API key, one session or a connected program only over the action pages and back;
+`tests/test_headless_browser.py` drives it in Chrome at 375 and 1280 px, light and dark, and shows that no secret
+reaches the application.
 
 ### The three origins of an account
 
@@ -3253,7 +3259,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**162 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**163 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

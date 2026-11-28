@@ -2,7 +2,7 @@
 id: T-105
 type: Task
 title: "Stage S9 — headless writing: action pages with a way back"
-status: in-arbeit
+status: erledigt
 points: 21
 milestone: M-2
 blocked_by: [T-98, T-104]
@@ -39,7 +39,8 @@ sign-in link instead of "set a password") 13. This stage carries the acceptance 
   `account_overview`/`account.json`, spec §8c.
 - Part 2: the session handle (schema 29: table `session_handle`, trigger, kept through a rotation), `POST
   /auth/sessions/end`, the action page `session_end`, `handle`/`end` per session in `account.json`.
-- Part 3: example Ex4 and its browser test.
+- Part 3: example Ex4 (`deploy/ex4`, `clients/js/examples/ex4`) and its browser test `tests/test_headless_browser.py`
+  — the acceptance.
 
 Proposed as follow-ups: the administrator's actions on action pages (scope `admin`, class `each`, sign-in link instead
 of "set a password"); the five clients normalizing `actions` and the session handle (spec §8a, vectors).
