@@ -780,8 +780,9 @@ Host einer Anwendung mit App-Rahmen (`forward_apps[host]` mit `home`/`links`) ze
 Links des Rahmens und *Sicherheit*, gerahmt. „Abmelden“ ist dort ein Link auf TinySesams Abmeldeseite (die Seite hält
 TinySesams CSRF-Token nicht). Der Teil `frame` der Antwort und die Einzelheiten: Spezifikation §8d in
 [`spec/gate-client.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/gate-client.md).
-[`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) (Python, Bibliothek) zeigt
-die Hülle an der Seite.
+[`deploy/ex1`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex1/README.md) (Go, Server, Hülle oben) und
+[`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) (Python, Bibliothek, Hülle
+an der Seite) zeigen beides.
 
 **Rezept: den Admin deiner App aus TinySesam verlinken — und zurück.** TinySesams Admin-Panel bekommt keine Reiter der
 Anwendung (T-77 wurde dafür verworfen); die beiden Verwaltungen verlinken einander.
@@ -1501,7 +1502,7 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 
 | Oberfläche | Wer die Navigation zeichnet | Wo TinySesams Seiten erscheinen | Heute |
 |---|---|---|---|
-| **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()` |
+| **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()`, Beispiel Ex1 |
 | **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | `layout="side"`, `shell_layout`, `apps[id].layout`, Beispiel Ex2 |
 | **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der App-Rahmen (T-91), T-104 bringt den Bereich |
 | **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Kontoübersicht und die Konten-API, T-105 und T-106 bringen Aktionsseiten und die Leseseite |

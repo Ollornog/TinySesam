@@ -19,11 +19,19 @@
 // administrator assigns the permissions to roles in the panel (Accounts → Permissions); the proxy then sends the
 // account's permissions for this host as Remote-Permissions, and the application checks them with
 // Identity.HasPermission: reading the members needs ex1.members.read, inviting ex1.members.invite.
+//
+// Surface "shell on top" (T-103): every page loads TinySesam's shell component from its own host
+// (/.tinysesam/shell.js, passed to TinySesam by the proxy) and puts <ts-shell> first in <body> — TinySesam's bar
+// with the application's name, its links (Members for holders of ex1.members.read, Staff for the role ex1-staff) and
+// the account menu, drawn from the frame of forward_apps and the layout of apps.ex1 in tinysesam.toml. The pages
+// carry a strict CSP: only the nonce on the script and the style.
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,22 +194,51 @@ func main() {
 	if addr == "" {
 		addr = "127.0.0.1:9000"
 	}
-	srv := &http.Server{Addr: addr, Handler: gate.Middleware(newMux(logger, api, authURL)),
+	srv := &http.Server{Addr: addr, Handler: gate.Middleware(newMux(logger, api)),
 		ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.ListenAndServe())
 }
 
+// pageStyle is the page's own CSS: colours only through TinySesam's --ts-* tokens, which shell.css brings.
+const pageStyle = "body{margin:0;background:var(--ts-bg)}main{max-width:760px;margin:0 auto;padding:24px 16px;" +
+	"font-family:var(--ts-font);color:var(--ts-ink)}main a{color:var(--ts-link)}main li{margin:6px 0}"
+
+// page writes one HTML page with TinySesam's shell on top and a strict CSP: a fresh nonce for the shell's script and
+// the page's style, nothing else may run. current is the path of the page (the shell marks its link). body is HTML
+// the caller escaped.
+func page(w http.ResponseWriter, title, current, body string) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		http.Error(w, "no randomness", http.StatusInternalServerError)
+		return
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(raw)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+
+		nonce+"'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
+	_, _ = fmt.Fprintf(w, "<!doctype html><html lang=en><head><meta charset=utf-8>"+
+		"<meta name=viewport content=\"width=device-width,initial-scale=1\"><title>%s</title><link rel=icon href=\"data:,\">"+
+		"<script src=\"/.tinysesam/shell.js\" nonce=\"%s\"></script><style nonce=\"%s\">%s</style></head><body>"+
+		"<ts-shell current=\"%s\"></ts-shell><main><h1>%s</h1>%s</main></body></html>",
+		html.EscapeString(title), nonce, nonce, pageStyle, html.EscapeString(current), html.EscapeString(title), body)
+}
+
 // newMux builds the application's routes; the gate's middleware in front sets the identity.
-func newMux(logger *slog.Logger, api *accountAPI, authURL string) http.Handler {
+func newMux(logger *slog.Logger, api *accountAPI) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", tinysesam.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
 		id, _ := tinysesam.FromContext(r.Context())
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// Names may hold any character but controls: escape them, and isolate them as bidi text.
-		_, _ = fmt.Fprintf(w, "<h1>Ex1</h1><p>Signed in as <bdi>%s</bdi> (account %s).</p>"+
-			"<p><a href=\"%s/auth/account\">Your account</a> · <a href=\"%s/auth/admin\">Admin panel</a> · "+
-			"<a href=\"/members\">Members (account API)</a></p>",
-			html.EscapeString(id.Name), html.EscapeString(id.ID), html.EscapeString(authURL), html.EscapeString(authURL))
+		page(w, "Ex1", "/", fmt.Sprintf("<p>Signed in as <bdi>%s</bdi> (account %s).</p>",
+			html.EscapeString(id.Name), html.EscapeString(id.ID)))
+	})))
+	// A page for a role (the shell shows its link to that role only; the route checks it again).
+	mux.Handle("/staff", tinysesam.RequireRole("ex1-staff", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page(w, "Staff", "/staff", "<p>Notes for the staff of Ex1.</p>")
 	})))
 	// The application's own accounts, through the account API: a browser session (a token never passes) holding
 	// ex1.members.read to see them and ex1.members.invite to invite.
@@ -216,7 +253,6 @@ func newMux(logger *slog.Logger, api *accountAPI, authURL string) http.Handler {
 				http.Error(w, "TS_API_KEY is not set: the account API part of the example is off", http.StatusServiceUnavailable)
 				return
 			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if r.Method == http.MethodPost {
 				link, err := api.invite(r.Context(), id.ID, r.FormValue("username"))
 				if err != nil {
@@ -225,7 +261,8 @@ func newMux(logger *slog.Logger, api *accountAPI, authURL string) http.Handler {
 					return
 				}
 				// Hand the link over by any channel; it works once and expires.
-				_, _ = fmt.Fprintf(w, "<p>Created. One-time sign-in link: <code>%s</code></p>", html.EscapeString(link))
+				page(w, "Members", "/members", fmt.Sprintf("<p>Created. One-time sign-in link: <code>%s</code></p>",
+					html.EscapeString(link)))
 				return
 			}
 			users, err := api.list(r.Context())
@@ -240,7 +277,7 @@ func newMux(logger *slog.Logger, api *accountAPI, authURL string) http.Handler {
 				return
 			}
 			var b strings.Builder
-			b.WriteString("<h1>Members</h1><ul>")
+			b.WriteString("<ul>")
 			for _, u := range users {
 				fmt.Fprintf(&b, "<li><bdi>%s</bdi> — %s, %s, origin %s</li>", html.EscapeString(u.Username),
 					html.EscapeString(u.State), html.EscapeString(strings.Join(u.Roles, ", ")),
@@ -251,7 +288,7 @@ func newMux(logger *slog.Logger, api *accountAPI, authURL string) http.Handler {
 			if id.HasPermission("ex1.members.invite") {
 				b.WriteString("<form method=post><input name=username required><button>Invite</button></form>")
 			}
-			_, _ = io.WriteString(w, b.String())
+			page(w, "Members", "/members", b.String())
 		})))
 	return mux
 }

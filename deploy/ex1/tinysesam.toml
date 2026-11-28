@@ -21,8 +21,15 @@ available_roles = ["ex1-member", "ex1-staff"]
 # Forward auth for the application's host: the proxy asks TinySesam on every request and passes Remote-* on.
 forward_auth_enabled = true
 
+# T-103, surface "shell on top": the application's pages load TinySesam's shell component (/.tinysesam/shell.js). The
+# app frame gives it the application's name, the way home and the links — Members for holders of ex1.members.read,
+# Staff for the role ex1-staff (visibility is a convenience: the Go program checks both itself).
 [forward_apps."app.example.com"]
 name = "Ex1"
+home = "/"
+links = [["Home", "/"],
+         ["Members", "/members", { permission = "ex1.members.read", app = "ex1" }],
+         ["Staff", "/staff", { role = "ex1-staff" }]]
 
 # The application's account API (spec/provisioning-api.md): its service account svc-ex1 creates and manages the
 # people of ex1-member, nothing else.
@@ -34,6 +41,7 @@ account = "svc-ex1"
 name = "Ex1"
 hosts = ["app.example.com"]
 permission_scopes = ["permissions:register"]
+layout = "top"                       # the shell on the application's hosts (T-103); "side" puts it at the left
 
 [apps.ex1.provisioning]
 roles = ["ex1-member"]

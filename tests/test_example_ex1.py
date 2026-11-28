@@ -87,6 +87,23 @@ assert r.status_code == 200 and r.headers["Remote-Permissions"] == "ex1.members.
 ok("permissions: the manifest registered with the key (granting nothing), assigned to ex1-staff, sent as "
    "Remote-Permissions for app.example.com")
 
+# T-103, surface "shell on top": on the application's host the shell gets its frame and the links by role and
+# permission (the browser part is tests/test_shell_browser.py, part B).
+member = int(auth.create_user("mia", password="a long probe password 4711", roles=["ex1-member"]))
+app_host = {"X-Forwarded-Host": "app.example.com", "X-Forwarded-Proto": "https"}
+on_app = TestClient(app, base_url="https://app.example.com")
+for uid, want in ((staff, ["Home", "Members", "Staff"]), (member, ["Home"])):
+    on_app.cookies.set(auth.session_cookie_name, auth.start_session(uid, "password")[0])
+    frame = on_app.get("/.tinysesam/topbar.json", headers=app_host).json()["frame"]
+    assert frame["layout"] == "top" and frame["name"] == "Ex1" and frame["home"] == "https://app.example.com/", frame
+    assert [x["title"] for x in frame["links"]] == want, (uid, frame["links"])
+r = on_app.get("/.tinysesam/shell.js", headers=app_host)
+assert r.status_code == 200 and "customElements.define('ts-shell'" in r.text
+main_go = (ROOT / "clients/go/examples/ex1/main.go").read_text(encoding="utf-8")
+assert '<script src=\\"/.tinysesam/shell.js\\"' in main_go and "<ts-shell current=" in main_go
+ok("shell on top: apps.ex1.layout = top, the frame of app.example.com with Members (permission) and Staff (role) for "
+   "the staff, Home only for a member; shell.js served on the application's host and loaded by every Go page")
+
 # The pieces fit together: the compose file mounts this configuration, builds the Go program, and the application
 # trusts the network Caddy talks from.
 compose = (EX1 / "docker-compose.yml").read_text(encoding="utf-8")

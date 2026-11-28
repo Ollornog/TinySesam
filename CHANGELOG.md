@@ -54,6 +54,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   assets; `tests/test_shell_browser.py` (CI job `browser`) drives Ex2 at 375 and 1280 px, light and dark, and proves
   that the component draws exactly the markup of `auth.topbar()`. The proxy templates already pass `/.tinysesam/*`
   through; their comments and the gate-Caddy suite name the two files.
+- Example Ex1 is the surface "shell on top" (T-103, part 2; Go, server): every page of `clients/go/examples/ex1` loads
+  the shell component from its own host under a strict CSP with a fresh nonce; `deploy/ex1/tinysesam.toml` gives the
+  frame (*Members* for holders of `ex1.members.read`, *Staff* for the role `ex1-staff`, a new Go page that checks the
+  role itself) and `apps.ex1.layout = "top"`. `tests/test_shell_browser.py` part B runs the whole stack — the server
+  from that file, the Go program, a forward-auth proxy doing what the Caddy template does — in Chrome at 375 and
+  1280 px, light and dark; the CI jobs `browser` and `repeat` install Go for it (without Go the suite is red, never
+  skipped).
 - Permissions in the Rust and PHP gate clients (T-101 part 4): `has_permission` / `hasPermission`, the
   `Remote-Permissions` slot and `ts_perms`, `account` normalization with `permissions`, `register_request` /
   `register_permissions` (Rust, sending with the feature `jwks`) and `Permissions::request` / `Permissions::register`

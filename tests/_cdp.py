@@ -25,13 +25,15 @@ CSP_PROBE = ("window.__csp=[];addEventListener('securitypolicyviolation',functio
 
 
 class Chrome:
-    def __init__(self, chrome: str):
+    def __init__(self, chrome: str, extra: tuple = ()):
+        """`extra`: further command-line switches, e.g. `--host-resolver-rules` for test host names."""
         self.profile = tempfile.mkdtemp(prefix="cdp-")
         prewarm_chrome(chrome)
         self.log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
         self.proc = subprocess.Popen(
             [chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
-             "--window-size=1280,900", f"--user-data-dir={self.profile}", "--remote-debugging-port=0", "about:blank"],
+             "--window-size=1280,900", f"--user-data-dir={self.profile}", "--remote-debugging-port=0", *extra,
+             "about:blank"],
             stdout=self.log, stderr=subprocess.STDOUT)
         self.port = self._port()
 
