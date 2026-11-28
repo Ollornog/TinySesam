@@ -2862,6 +2862,13 @@ Register `https://<TS_AUTH_HOST>/auth/oidc/callback` as redirect URL at the prov
 the sign-in the example application shows the `Remote-*` headers TinySesam set. Then put your own service in place of
 `app`.
 
+- **The configuration file** (T-133): the gateway reads
+  [deploy/quickstart/tinysesam.toml](https://github.com/Ollornog/TinySesam/blob/main/deploy/quickstart/tinysesam.toml)
+  (`TINYSESAM_CONFIG`, mounted read-only) — the switches of the OIDC gateway, the network, the database path, and the
+  place to grow it: an application with its permissions, the panel, local accounts beside the provider. `.env` keeps
+  what differs per host (provider, host names, TLS mode); its variables overlay the file, an empty one changes nothing.
+  The client secret stands in the file only as `env:TINYSESAM_OIDC_CLIENT_SECRET`. App passwords (the WebDAV profile)
+  need `account_enabled = true` there. The file needs the image of the release that closes milestone M-2 or later.
 - **TLS mode** `TS_TLS`: `acme` (public domain, Let's Encrypt), `dns` (a domain that resolves only at home, DNS-01 —
   needs a Caddy with your DNS provider's module: `docker build --build-arg
   CADDY_EXTRA_MODULES=github.com/caddy-dns/<provider> deploy/forward-auth/caddy-gate`), `internal` (domain names with
@@ -3306,7 +3313,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**166 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**167 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

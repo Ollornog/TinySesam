@@ -1046,6 +1046,12 @@ there.
    since T-151). Code that
    compares a whole normalized bar, or builds a Rust `topbar::TopBar` by a struct literal, takes the new member;
    everything else is unchanged.
+7. **The quickstart reads a configuration file** (T-133, deploy/quickstart/tinysesam.toml). `docker-compose.yml` mounts the file and sets
+   `TINYSESAM_CONFIG`; the network, the database path and the gateway's switches moved there, `.env` stays as it is
+   and overlays the file. Pull the new compose file together with the file. Whoever runs the WebDAV profile (app
+   passwords, `TS_FORWARD_APPS` with `"app_passwords": true`) sets `account_enabled = true` in that file: the
+   account page no longer switches itself on from the variable. An own copy of the old compose file keeps working
+   unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 **Schema 27** (T-100, permissions) is additive: this version adds the tables `app_permission` and `role_permission` at

@@ -10,7 +10,8 @@ Two of the four TLS modes run — the two that need no outside world:
                 path except the one `tls internal` line of the snippet. `acme` and `dns` need a reachable public name
                 or a DNS provider account; `caddy validate` covers their syntax in the CI job.
 
-Per mode: TLS chains to the exported root (without SNI for the IP), without sign-in a redirect to the sign-in at
+Per mode: the gateway runs from deploy/quickstart/tinysesam.toml with the variables over it (T-133), TLS chains to the
+exported root (without SNI for the IP), without sign-in a redirect to the sign-in at
 TS_AUTH_HOST, a self-sent Remote-User opens nothing, with a session the application sees TinySesam's Remote-* and not
 the client's forgery nor TinySesam's cookies, the OAuth resource metadata of the application come from the gateway and a
 Bearer request gets the 401 with its challenge instead of a redirect — then deploy/forward-auth/acceptance.sh against
@@ -59,6 +60,16 @@ def run(*args, check=True, timeout=300, env=None):
     if check and p.returncode:
         raise AssertionError(f"{' '.join(args)} → {p.returncode}\n{p.stdout[-3000:]}\n{p.stderr[-3000:]}")
     return p
+
+
+# What the gateway in the stack runs with (T-133): the file, the values only it holds, one value .env overlays.
+CONFIG_SCRIPT = """
+import json, os
+from tinysesam.gateway import config_from_env
+c = config_from_env()
+print(json.dumps({"config": os.environ.get("TINYSESAM_CONFIG"), "proxies": c.trusted_proxies, "db": c.db_path,
+                  "issuer": c.oidc_issuer, "admin": c.admin_enabled}))
+"""
 
 
 # Creates an account and a session in the gateway's database, as a sign-in at the provider would. The gateway knows
@@ -190,6 +201,12 @@ def accept(mode, auth_host, app_host, app_port):
         ok(f"{mode}: without sign-in {app_addr} redirects to the sign-in at {auth_host}, a self-sent Remote-User opens "
            "nothing; HSTS " + ("set (domain)" if domain else "absent (browsers ignore it from an IP address)"))
 
+        # T-133: the gateway in the stack reads deploy/quickstart/tinysesam.toml — the network and the database path stand
+        # only there (the compose file no longer passes them), the provider from .env overlays it.
+        seen = stack.compose("exec", "-T", "tinysesam", "python", "-c", CONFIG_SCRIPT).stdout.strip().splitlines()[-1]
+        assert json.loads(seen) == {"config": "/etc/tinysesam.toml", "proxies": ["172.29.0.0/16"],
+                                    "db": "/data/gateway.db", "issuer": "https://id.example.com", "admin": False}, seen
+        ok(f"{mode}: the gateway runs from tinysesam.toml (TINYSESAM_CONFIG) with .env's variables over it (T-133)")
         session = stack.compose("exec", "-T", "tinysesam", "python", "-c", SESSION_SCRIPT).stdout.strip().splitlines()[-1]
         assert re.match(r"^(__Host-|__Secure-)?tinysesam_session=\S+$", session), session
         # With a client credential along (A-3, attack round 2026-11-21): the session signs in, and neither

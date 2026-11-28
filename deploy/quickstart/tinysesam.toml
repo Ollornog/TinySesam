@@ -1,0 +1,51 @@
+# TinySesam quickstart: the gateway's configuration as a file (T-133, ADR-16). docker-compose.yml mounts it read-only
+# at /etc/tinysesam.toml and points TINYSESAM_CONFIG at it. Every key is a field of TinySesamConfig (CONFIGURATION.md).
+#
+# What lives where:
+#   * here — what belongs to the installation and goes through a review: the switches, the network, the applications;
+#   * deploy/quickstart/.env — what differs per host: the provider, the host names, the TLS mode. docker-compose.yml
+#     passes those as TINYSESAM_* variables, which overlay this file when they are set (an empty one changes nothing);
+#   * the panel and the database — runtime data (accounts, roles, permissions).
+# Secrets never stand here as a value: only as "env:NAME" (an environment variable of the container) or <field>_file.
+#
+# Needs the gateway image of the release that closes milestone M-2 or later; older images ignore TINYSESAM_CONFIG.
+
+db_path = "/data/gateway.db"
+https_mode = "warn"                   # TLS ends at Caddy in front
+trusted_proxies = ["172.29.0.0/16"]   # the compose network: the real client address behind Caddy
+
+# The OIDC forward-auth gateway (what TinySesamConfig.oidc_gateway sets): sign-in only at your provider, invisibly in
+# front of the applications, signing out ends the provider's session too; every other method and page stays off.
+oidc_enabled = true
+oidc_client_secret = "env:TINYSESAM_OIDC_CLIENT_SECRET"   # issuer, client id and secret come from .env
+oidc_scopes = "openid profile email"
+oidc_name = "SSO"
+oidc_group_claim = "groups"
+oidc_auto_create = true
+oidc_revalidate_minutes = 60          # a group taken away at the provider counts within an hour
+oidc_rp_logout = true
+forward_auth_enabled = true
+forward_login = "direct"
+session_ttl_hours = 168
+password_enabled = false
+passkey_enabled = false
+pin_enabled = false
+magiclink_enabled = false
+apikey_enabled = false
+totp_enabled = false
+allow_signup = false
+resource_locks_enabled = false
+admin_enabled = false
+# The account page. App passwords (TS_FORWARD_APPS with "app_passwords": true, the WebDAV profile) are created there:
+# set it to true for them.
+account_enabled = false
+
+# Grow the installation here instead of in more variables — an application with its permissions (README
+# "Permissions"), local accounts beside the provider, the panel. For example:
+#
+# admin_enabled = true
+# [apps.docs]
+# name = "Documents"
+# hosts = ["app.example.com"]
+# [[apps.docs.permissions]]
+# name = "docs.read"
