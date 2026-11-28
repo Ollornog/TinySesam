@@ -1469,7 +1469,7 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 |---|---|---|---|
 | **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()`, example Ex1 |
 | **Shell at the side** | the same component as a side bar | as above | `layout="side"`, `shell_layout`, `apps[id].layout`, example Ex2 |
-| **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the TinySesam area `/auth/area?app=<id>` (T-104, below) |
+| **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the TinySesam area `/auth/area?app=<id>` (T-104, below), example Ex3 |
 | **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the account overview and the account API, T-105 and T-106 add the action pages and the reading side |
 
 ### The TinySesam area (hybrid)
@@ -1529,6 +1529,11 @@ assert auth.cfg.page_layout is layout
 Every `<script>` and `<style>` in the parts gets the page's CSP nonce; the strict CSP stays as it is (no inline handler,
 no `style=` attribute). With a `header` TinySesam draws no bar of its own. A function that fails is logged and the page
 renders in TinySesam's own layout. The server has no such slot: it runs no application code.
+
+Example Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex3/README.md), is the surface as a
+whole: a Node application behind the server with its own navigation and one link "Account" to the area, local and
+identity-provider accounts side by side; `tests/test_hybrid_browser.py` drives it in Chrome at 375 and 1280 px, light
+and dark.
 
 ### The three origins of an account
 
@@ -2144,11 +2149,10 @@ permissions to it in the matrix, and the application asks `has_permission` as fo
   its display name; the card **Group import** lists every skipped group with its reason, a sign-in without the group
   claim and a list over the limit (each hint goes once a later sign-in resolves it, an unresolved one after 30 days).
   The permission matrix marks an imported role's column with **⇄ from IdP** as well.
-- **A complete application:** example Ex3,
-  [`examples/ex3/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex3/app.py) — the documents
-  application of Ex2 with sign-in through an OIDC provider and its `team-*` groups imported; `tests/test_example_ex3.py`
-  is its acceptance: the group arrives, the administrator assigns `docs.read` in the matrix, the provider withdraws the
-  group, and after the session's re-check the permission is gone.
+- **A complete application:** example Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex3/README.md) — a Node documents application behind
+  the TinySesam server with sign-in through an OIDC provider (its `team-*` groups imported) beside local accounts;
+  `tests/test_example_ex3.py` is its acceptance: the group arrives, the administrator assigns `docs.read` in the matrix,
+  the provider withdraws the group, and after the session's re-check the permission is gone.
 - **Housekeeping:** the start names imported roles no sign-in delivered for 90 days and those of a source whose import
   is off; an unused one can be deleted on the role page (the next sign-in that delivers it brings it back). Audit
   `idp_roles_synced source=… granted=… withdrawn=…`.
@@ -3212,7 +3216,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**160 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**161 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

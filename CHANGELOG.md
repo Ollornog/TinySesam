@@ -56,6 +56,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   (`send_password_reset(…, app=)`) asked for in an application's frame stores its host in the token (`frame`), and the
   page the mail opens stands in that frame. The framed sign-in page keeps the frame on its links to both.
   `tests/test_page_layout.py`.
+- Example Ex3 is the surface "hybrid" (T-104, part 3; Node, server, mixed accounts): `clients/js/examples/ex3` draws
+  its own navigation — Documents, About and one link "Account" to `/auth/area?app=docs` — and reads the identity and
+  `Remote-Permissions` from the proxy through the JS gate client; `deploy/ex3` (configuration, compose file, README)
+  puts it behind the server with local accounts beside the identity provider's (T-102's group import kept), the
+  application's icon and frame. `tests/test_example_ex3.py` runs T-102's story against the server built from that
+  file; `tests/test_hybrid_browser.py` (CI job `browser`, which now installs Node) drives the whole stack in Chrome at
+  375 and 1280 px, light and dark. T-104 is done. `tests/test_english_code.py` reads a `de = "…"` value in a TOML file
+  as the German half of the interface, like a value under a `"de"` key in Python (self-probe both ways).
 - Shell on top and at the side, one component (T-103, part 1). `shell_layout` (`"top"` | `"side"`, tier B) draws the
   bar of the built-in pages — the account page and the admin panel included — as a 248 px side bar on the left (below
   900 px it folds back into the top bar, the links into the menu); `auth.topbar(request, layout=…)` chooses per page,
@@ -229,6 +237,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- Example Ex3 is no longer a Python application (`examples/ex3/app.py` removed): M-2 asks each example to use only its
+  client; the IdP role sync story now runs against the server (T-104).
 - CI: CodeQL runs in the sprint lane (T-139). A pull request into `sprint/<name>` runs the Python and JavaScript
   analysis (job `sprint` of `codeql.yml`, read permission only) without uploading it, and `scripts/_codeql_sprint.py`
   compares its SARIF with `main`'s newest analysis of the same category and the one at the merge base, fetched through

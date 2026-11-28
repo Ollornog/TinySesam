@@ -66,7 +66,7 @@ CORES_VARIABLE = "CI_KERNE"
 JOBS_DEFAULT = 2
 
 #: The suites that drive Chrome — left out by `--no-browser` (the CI job `browser` runs each on its own).
-BROWSER_SUITES = ("test_browser.py", "test_shell_browser.py")
+BROWSER_SUITES = ("test_browser.py", "test_shell_browser.py", "test_hybrid_browser.py")
 
 #: These suites start FIRST in a parallel run — the slowest, measured 2026-09-27 (0.22.0).
 #: The list only determines WHEN a suite starts; result and order of the output stay
@@ -75,8 +75,8 @@ BROWSER_SUITES = ("test_browser.py", "test_shell_browser.py")
 #: whole run. With one job it does not apply — that is the serial run of old. A
 #: stale entry costs time, never a result; that every entry is still a suite is checked by
 #: `tests/test_runner.py`.
-LONG_FIRST = ("test_browser.py", "test_shell_browser.py", "test_ldap.py", "test_prebooking_pending.py",
-                "test_audit_round2.py", "test_t13_decisions.py", "test_repo.py",
+LONG_FIRST = ("test_browser.py", "test_shell_browser.py", "test_hybrid_browser.py", "test_ldap.py",
+                "test_prebooking_pending.py", "test_audit_round2.py", "test_t13_decisions.py", "test_repo.py",
                 "test_admin_account.py", "test_security_findings.py", "test_hardening2.py")
 
 

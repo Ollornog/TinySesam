@@ -1,0 +1,53 @@
+# Example Ex3 (T-102, T-104): the TinySesam server in front of a Node application (clients/js/examples/ex3), surface
+# "hybrid". Read by the gateway image through TINYSESAM_CONFIG (deploy/ex3/docker-compose.yml). Every key is a field
+# of TinySesamConfig (CONFIGURATION.md); secrets only as "env:NAME" or <field>_file. Hosts: replace auth.example.com,
+# app.example.com and idp.example.com with yours (the compose file passes the first two to Caddy too).
+db_path = "/data/ex3.db"
+base_url = "https://auth.example.com"
+trusted_redirect_hosts = ["app.example.com"]
+trusted_proxies = ["172.30.0.0/16"]
+https_mode = "warn"                 # TLS ends at Caddy in front
+lang = "en"
+
+# Mixed accounts: local ones (password, TOTP) beside the identity provider's, on the same sign-in page.
+password_enabled = true
+totp_enabled = true
+account_enabled = true
+admin_enabled = true
+available_roles = ["docs-local"]     # the role an administrator gives local readers
+
+# T-102: the people of the provider bring their groups; every `team-*` group becomes a role of the same name at
+# sign-in and is withdrawn at the next sign-in or at the session's re-check against the provider (every 5 minutes).
+oidc_enabled = true
+oidc_issuer = "https://idp.example.com"
+oidc_client_id = "ex3"
+oidc_client_secret = "env:EX3_OIDC_CLIENT_SECRET"
+oidc_scopes = "openid profile email groups"
+oidc_group_import = true
+oidc_group_import_filter = ["team-*"]
+oidc_session_refresh_minutes = 5
+
+# Forward auth for the application's host: the proxy asks TinySesam on every request and passes Remote-* on —
+# Remote-Permissions with the account's permissions for the application of this host (apps.docs.hosts).
+forward_auth_enabled = true
+
+# T-104, surface "hybrid": the application draws its own navigation and links "Account" to
+# https://auth.example.com/auth/area?app=docs. The area — and every TinySesam page it leads to — stands in this frame:
+# the application's name and icon, its links, "‹ Documents" back home.
+[forward_apps."app.example.com"]
+name = "Documents"
+home = "/"
+links = [["Documents", "/"], ["About", "/about"]]
+
+# The application: its name and icon (ADR-19: shown above "Sign in to Documents", in the frame and on the area), the
+# host it is served on, and its manifest. Declaring grants nothing: an administrator assigns docs.read to a role in the
+# panel (Accounts → Permissions) — to the imported group team-docs and to the local role docs-local.
+[apps.docs]
+name = { en = "Documents", de = "Dokumente" }
+hosts = ["app.example.com"]
+icon = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27%232563eb%27%2F%3E%3Cpath%20d%3D%27M10%207h9l5%205v13H10z%27%20fill%3D%27%23fff%27%2F%3E%3Cpath%20d%3D%27M13%2016h8M13%2020h8%27%20stroke%3D%27%232563eb%27%20stroke-width%3D%272%27%2F%3E%3C%2Fsvg%3E"
+
+[[apps.docs.permissions]]
+name = "docs.read"
+label = { en = "Read documents", de = "Dokumente lesen" }
+suggested_roles = ["team-docs", "docs-local"]
