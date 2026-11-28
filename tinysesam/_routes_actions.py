@@ -99,8 +99,8 @@ async def admin_post(auth, request: Request, name: str, ticket: str):
     if request.headers.get("authorization") or request.headers.get("x-api-key"):
         raise HTTPException(403, auth.t("apv.token_refused"))
     form = await request.form()
-    fields = {"roles": [str(v) for v in form.getlist("roles")]}
-    fields.update({k: v for k, v in form.items() if isinstance(v, str) and k != "roles"})
+    fields: dict = {k: v for k, v in form.items() if isinstance(v, str) and k != "roles"}
+    fields["roles"] = [str(v) for v in form.getlist("roles")]
     auth.require_csrf(request, fields.get("_csrf"))
     who = _adm.actor(auth, request)
     flow = auth.store.pop_flow(_adm.FLOW + ticket) if isinstance(ticket, str) and 0 < len(ticket) <= 64 else None
@@ -116,7 +116,7 @@ async def admin_post(auth, request: Request, name: str, ticket: str):
     args = {k: flow.get(k) or "" for k in ("app", "return", "state")}
     uid = int(flow["uid"])
     account = _adm.account_for(auth, me, scopes, name, uid)
-    if not _adm.offered(auth, me, scopes, name, account):
+    if account is None or not _adm.offered(auth, me, scopes, name, account):
         return _admin_render(auth, request, me, scopes, name, uid, account, args, status=409)
     methods = auth.stepup_options(me)
     procedure = ("totp" if fields.get("code") else "pin" if fields.get("pin") else "password")
