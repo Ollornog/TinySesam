@@ -54,7 +54,102 @@ def account_ctx(auth, request: Request, u, view: dict) -> dict:
         email_change=(cfg.self_service_email_change and auth.mail_configured()))
 
 
+# ---------- administration actions (T-147): the page and the confirmed POST; rules in `_admin_actions` ----------
+
+def _admin_render(auth, request, me, scopes, name, uid, account, args: dict, *, error: str = "", done: bool = False,
+                   link: str = "", status: int = 200):
+    """The page: in the frame `args["app"]`, with a new ticket while the action is open."""
+    from . import _admin_actions as _adm       # only with the panel on (T-147)
+    action = _actions.ACTIONS[name]
+    ctx = _area.context(auth, request, args.get("app") or "", "")
+    available = _adm.offered(auth, me, scopes, name, account) or done
+    ctx.update(action=action, account=account, available=available, done=done, link=link, error=error,
+               methods=auth.stepup_options(me) if available and not done else [],
+               items=_adm.items(auth, name, int(account["id"])) if account and name in _adm.ITEMS and not done else [],
+               roles=_adm.roles_offered(auth, me, scopes, account) if account and name == "admin_roles" else [],
+               held=[str(r) for r in auth.user_roles(account)] if account and name == "admin_roles" else [],
+               way_back=_actions.way_back(auth, request, ctx, name, args.get("return") or "", args.get("state") or ""))
+    if available and not done:
+        ctx["ticket"] = _adm.issue(auth, me, name, uid, args)
+    return _actions.no_framing(auth.render_page("action", status=status, request=request, user=me, **ctx))
+
+
+def admin_get(auth, request: Request, name: str, app: str, return_: str, state: str, target: str):
+    """`GET /auth/act/<admin action>` — changes nothing. Signed out: the sign-in page first, and back here."""
+    from . import _admin_actions as _adm       # only with the panel on (T-147)
+    cfg = auth.cfg
+    path = auth.browser_path(request, f"/auth/act/{name}")
+    query = list(request.query_params.multi_items())
+    here = path + (f"?{urlencode(query)}" if query else "")
+    me = auth.session_user(request)
+    if me is None:
+        return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={quote(here, safe='')}", 303)
+    # Neither an administrator nor a delegate (or by API key): "not offered", the same page as for an account out of
+    # reach — no oracle.
+    who = _adm.actor(auth, request)
+    scopes = who[1] if who else None
+    account = _adm.account_for(auth, me, scopes, name, target) if who else None
+    return _admin_render(auth, request, me, scopes, name, int(account["id"]) if account else 0, account,
+                   {"app": app, "return": return_, "state": state})
+
+
+async def admin_post(auth, request: Request, name: str, ticket: str):
+    """`POST /auth/act/<admin action>/<ticket>` — the confirmed action (see the module for the order)."""
+    from . import _admin_actions as _adm       # only with the panel on (T-147)
+    if request.headers.get("authorization") or request.headers.get("x-api-key"):
+        raise HTTPException(403, auth.t("apv.token_refused"))
+    form = await request.form()
+    fields = {"roles": [str(v) for v in form.getlist("roles")]}
+    fields.update({k: v for k, v in form.items() if isinstance(v, str) and k != "roles"})
+    auth.require_csrf(request, fields.get("_csrf"))
+    who = _adm.actor(auth, request)
+    flow = auth.store.pop_flow(_adm.FLOW + ticket) if isinstance(ticket, str) and 0 < len(ticket) <= 64 else None
+    if who is None:
+        raise HTTPException(403, auth.t("api.admin"))
+    me, scopes = who
+    if not flow or flow.get("actor") != int(me["id"]) or flow.get("name") != name:
+        # An old, used or foreign ticket: the page again, from the start (nothing was done).
+        account = _adm.account_for(auth, me, scopes, name, (flow or {}).get("uid"))
+        args = {k: (flow or {}).get(k) or "" for k in ("app", "return", "state")}
+        return _admin_render(auth, request, me, scopes, name, int(account["id"]) if account else 0, account, args,
+                       error=auth.t("act.admin_expired"), status=409)
+    args = {k: flow.get(k) or "" for k in ("app", "return", "state")}
+    uid = int(flow["uid"])
+    account = _adm.account_for(auth, me, scopes, name, uid)
+    if not _adm.offered(auth, me, scopes, name, account):
+        return _admin_render(auth, request, me, scopes, name, uid, account, args, status=409)
+    methods = auth.stepup_options(me)
+    procedure = ("totp" if fields.get("code") else "pin" if fields.get("pin") else "password")
+    secret = fields.get("code") or fields.get("pin") or fields.get("password") or ""
+    refused = auth._stepup_secret(request, me, procedure, secret, "/") if methods else None
+    if not methods or refused is not None:
+        auth.audit("admin_action_denied", me["username"], auth.client_ip(request),
+                   f"act={name} uid={uid} reason=stepup")
+        message = refused.message if refused is not None else auth.t("act.admin_no_method")
+        return _admin_render(auth, request, me, scopes, name, uid, account, args, error=message,
+                       status=refused.status if refused is not None else 403)
+    try:
+        _, link = _adm.execute(auth, request, me, scopes, name, account, fields)
+    except HTTPException as e:
+        return _admin_render(auth, request, me, scopes, name, uid, _adm.account_for(auth, me, scopes, name, uid), args,
+                       error=str(e.detail), status=e.status_code)
+    frame = _area.context(auth, request, args["app"], "").get("frame")
+    auth.audit("admin_action", me["username"], auth.client_ip(request),
+               f"act={name} uid={uid} amr={procedure}" + (f" app={frame['host']}" if frame else ""))
+    return _admin_render(auth, request, me, scopes, name, uid, _adm.account_for(auth, me, scopes, name, uid) or account, args,
+                   done=True, link=link or "")
+
+
 def add_routes(r, auth, cfg) -> None:
+    if cfg.admin_enabled:
+        # Administration actions on action pages (T-147, `_admin_actions`): with the account page AND the panel only.
+        @r.post("/auth/act/{name}/{ticket}", response_class=HTMLResponse)
+        async def admin_action_post(request: Request, name: str, ticket: str):
+            action = _actions.ACTIONS.get(name)
+            if action is None or action.scope != "admin":
+                raise HTTPException(404)
+            return await admin_post(auth, request, name, ticket)
+
     @r.get("/auth/act/{name}", response_class=HTMLResponse)
     def action_page(request: Request, name: str, app: str = "", return_: str = Query("", alias="return"),
                     state: str = "", target: str = ""):
@@ -63,8 +158,7 @@ def add_routes(r, auth, cfg) -> None:
         routes as the account page, each with its own CSRF and step-up checks."""
         action = _actions.ACTIONS.get(name)
         if action is not None and action.scope == "admin" and cfg.admin_enabled:
-            from . import _admin_actions
-            return _admin_actions.get_page(auth, request, name, app, return_, state, target)
+            return admin_get(auth, request, name, app, return_, state, target)
         if action is None or action.scope != "own":
             raise HTTPException(404)
         path = auth.browser_path(request, f"/auth/act/{name}")

@@ -211,8 +211,7 @@ def page(auth, ctx: dict) -> str:
     t = auth.t
     action: Action = ctx["action"]
     if action.scope == "admin":
-        from . import _admin_actions
-        return _admin_actions.page(auth, ctx)
+        return admin_page(auth, ctx)
     sections = _templates.account_sections(auth, ctx)
     body = [_area.heading(auth, ctx, t(f"act.{action.name}"))]
     if ctx.get("available"):
@@ -234,3 +233,70 @@ def page(auth, ctx: dict) -> str:
     head = f"<style>{_templates.ACCOUNT_CSS}{_area._CSS}{_CSS}</style>"
     return _templates._page(auth, t(f"act.{action.name}"), "".join(body), card=False, head=head, ctx=ctx,
                             current="account")
+
+
+# ---------- the page of an administration action (T-147, `_admin_actions`) ----------
+
+_ADMIN_CSS = """
+.tsmain .act-target{margin:0 0 10px}
+.tsmain .act-what{margin:0 0 14px}
+.tsmain .act-choice{display:flex;align-items:center;gap:10px;min-height:44px}
+.tsmain .act-choice input{width:auto;min-height:0}
+.tsmain .act-link{word-break:break-all;user-select:all}
+.tsmain #actform button[type=submit]{min-height:44px}
+"""
+
+
+def admin_page(auth, ctx: dict) -> str:
+    """An administration action page: the heading in the application's name, the account, what happens, the
+    choices, the confirmation of this action, the way back (template `action`, built here for scope `admin`)."""
+    from . import _area
+    from . import templates as _t
+    from ._admin_actions import ITEMS
+    t, e = auth.t, _t._e
+    action = ctx["action"]
+    account = ctx.get("account")
+    body = [_area.heading(auth, ctx, t(f"act.{action.name}"))]
+    hrefs = ctx["way_back"]["href"]
+    name = ctx.get("app_title") or ""
+    if account is not None and ctx.get("available"):
+        who = f"{account['display_name'] or account['username']} ({account['username']})"
+        body.append(f"<p class=act-target id=act_target>{e(t('act.admin_account'))}: <bdi>{e(who)}</bdi></p>")
+    msgs = [("error", ctx.get("error"))]
+    if ctx.get("done"):
+        msgs.append(("ok", t(f"act.{action.name}.done")))
+    elif not ctx.get("available"):
+        msgs.append(("info", t("act.unavailable")))
+    body.append(_t._messages(msgs))
+    if ctx.get("done") and ctx.get("link"):
+        body.append(f"<p>{e(t('act.admin_link_once'))}</p><p class=act-link id=act_link>{e(ctx['link'])}</p>")
+    if ctx.get("available") and not ctx.get("done"):
+        choices = ""
+        if action.name == "admin_roles":
+            held = set(ctx.get("held") or [])
+            choices = "".join(
+                f"<label class=act-choice><input type=checkbox name=roles value='{e(r)}'"
+                f"{' checked' if r in held else ''}><bdi>{e(r)}</bdi></label>" for r in ctx.get("roles") or [])
+        elif action.name in ITEMS:
+            choices = "".join(
+                f"<label class=act-choice><input type=radio name=item value='{e(v)}' required"
+                f"{' checked' if i == 0 else ''}><bdi>{e(label)}</bdi></label>"
+                for i, (v, label) in enumerate(ctx.get("items") or []))
+        methods = [m for m in ctx.get("methods") or [] if m in ("totp", "pin", "password")]
+        fields = f"<div class=or>{e(t('or'))}</div>".join(
+            _t._stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
+        if methods:
+            confirm = (f"<p class=hint>{e(t('act.admin_confirm_hint'))}</p>{fields}"
+                       f"<button type=submit id=act_confirm>{e(t(f'act.{action.name}.button'))}</button>")
+        else:
+            confirm = f"<div class=warnbar id=act_nomethod>{e(t('act.admin_no_method'))}</div>"
+        target = f"__TS_P__/auth/act/{e(action.name)}/{e(ctx.get('ticket') or '')}"
+        body.append(f"<p class=act-what id=act_what>{e(t(f'act.{action.name}.what'))}</p>"
+                    f"<form method=post id=actform action='{target}'>{_t._cf(ctx)}{choices}{confirm}</form>")
+    first = "done" if ctx.get("done") else ("cancelled" if ctx.get("available") else "unavailable")
+    label = (t("act.done", name=name) if name else t("act.done_plain")) if first == "done" else \
+        (t("act.back", name=name) if name else t("act.back_plain"))
+    body.append(f"<p class=act-back><a id=ts_back class=btn2 href='{e(hrefs[first])}' data-state='{first}'>"
+                f"{e(label)}</a></p>")
+    head = f"<style>{_area._CSS}{_CSS}{_ADMIN_CSS}</style>"
+    return _t._page(auth, t(f"act.{action.name}"), "".join(body), card=False, head=head, ctx=ctx, current="account")

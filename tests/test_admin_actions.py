@@ -203,8 +203,7 @@ foreign = auth.create_api_key(carl, "carl's")
 _, form = open_page(c, "admin_key_revoke", bert)
 r = confirm(auth, c, form, password=PW, item=f"key:{foreign['id']}")
 assert r.status_code == 409 and not any(k["revoked"] for k in auth.list_api_keys(carl)), "another account's key"
-r = run("admin_key_revoke", bert, lambda: all(k["revoked"] for k in auth.list_api_keys(bert)),
-        item=f"key:{key['id']}")
+run("admin_key_revoke", bert, lambda: all(k["revoked"] for k in auth.list_api_keys(bert)), item=f"key:{key['id']}")
 now = int(time.time())
 auth.store.oauth_add_client("probe-cli", "Probe CLI", ["http://127.0.0.1/cb"], now, "192.0.2.1")
 grant = auth.store.oauth_create_grant("probe-code", "probe-cli", bert, f"https://{APP_HOST}/mcp", "mcp", now,

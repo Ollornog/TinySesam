@@ -1880,10 +1880,6 @@ def build_router(auth) -> APIRouter:
         from ._routes_area import add_routes as _add_routes_area
         _add_routes_area(r, auth, cfg)
         _add_routes_actions(r, auth, cfg)
-        if cfg.admin_enabled:
-            # Administration actions on action pages (T-147): with the account page AND the panel only.
-            from ._admin_actions import add_routes as _add_routes_admin_actions
-            _add_routes_admin_actions(r, auth)
 
     # Forward auth and the gate (T-112: its own module, imported only when `cfg.forward_auth_enabled` is on).
     if cfg.forward_auth_enabled:

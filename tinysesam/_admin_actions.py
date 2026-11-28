@@ -15,8 +15,9 @@ account — `PanelActions.target`, the panel's rule); then the panel's code (`Pa
 audit) and one line `admin_action` with action, account, method and frame. The page then shows the result and the
 way back with `done`; a sign-in link is shown there once and never travels to the application.
 
-Registered with the account page and the admin panel (`account_enabled` and `admin_enabled`), never under
-`/.tinysesam/`. Not here: the admin flag, owner, deletion, the role catalog, new credentials other than a sign-in
+This module holds the rules and the execution; the routes live in `_routes_actions` (registered with the account page
+and the admin panel, `account_enabled` and `admin_enabled`, never under `/.tinysesam/`), the page in `_actions`
+(`admin_page`). It imports neither of them, nor the panel (`auth._panel_actions()`): no import cycle. Not here: the admin flag, owner, deletion, the role catalog, new credentials other than a sign-in
 link — they stay in the panel. A passkey or a provider as the confirmation of an action: not yet (a person with
 only those confirms in the panel).
 """
@@ -25,16 +26,12 @@ from __future__ import annotations
 import secrets
 import time
 from typing import Optional
-from urllib.parse import quote, urlencode
 
 from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-
-from . import _actions, _area
 
 #: How long a page's ticket stays valid: the time to read the page and confirm.
 TICKET_TTL = 600
-_FLOW = "actadm:"
+FLOW = "actadm:"
 #: action → the delegate action word (`admin_delegates[...]["can"]`) that lets a delegate do it; None = admins only.
 DELEGATE_WORD = {"admin_lock": "disable", "admin_unlock": "disable", "admin_roles": "roles",
                  "admin_signin_link": "signin_link"}
@@ -55,8 +52,7 @@ def actor(auth, request: Request):
 
 
 def _panel(auth):
-    from .admin import PanelActions
-    return PanelActions(auth)
+    return auth._panel_actions()       # the manager's factory: this module imports neither the panel nor the router
 
 
 def account_for(auth, me, scopes, name: str, uid) -> Optional[dict]:
@@ -189,163 +185,8 @@ def execute(auth, request: Request, me, scopes, name: str, account: dict, form: 
     return True, None
 
 
-def _issue(auth, me, name: str, uid: int, ctx_args: dict) -> str:
+def issue(auth, me, name: str, uid: int, ctx_args: dict) -> str:
     ticket = secrets.token_urlsafe(18)
-    auth.store.put_flow(_FLOW + ticket, {"actor": int(me["id"]), "name": name, "uid": int(uid), **ctx_args},
+    auth.store.put_flow(FLOW + ticket, {"actor": int(me["id"]), "name": name, "uid": int(uid), **ctx_args},
                         ttl=TICKET_TTL)
     return ticket
-
-
-def _render(auth, request, me, scopes, name, uid, account, args: dict, *, error: str = "", done: bool = False,
-            link: str = "", status: int = 200):
-    """The page: in the frame `args["app"]`, with a new ticket while the action is open."""
-    action = _actions.ACTIONS[name]
-    ctx = _area.context(auth, request, args.get("app") or "", "")
-    available = offered(auth, me, scopes, name, account) or done
-    ctx.update(action=action, account=account, available=available, done=done, link=link, error=error,
-               methods=auth.stepup_options(me) if available and not done else [],
-               items=items(auth, name, int(account["id"])) if account and name in ITEMS and not done else [],
-               roles=roles_offered(auth, me, scopes, account) if account and name == "admin_roles" else [],
-               held=[str(r) for r in auth.user_roles(account)] if account and name == "admin_roles" else [],
-               way_back=_actions.way_back(auth, request, ctx, name, args.get("return") or "", args.get("state") or ""))
-    if available and not done:
-        ctx["ticket"] = _issue(auth, me, name, uid, args)
-    return _actions.no_framing(auth.render_page("action", status=status, request=request, user=me, **ctx))
-
-
-def get_page(auth, request: Request, name: str, app: str, return_: str, state: str, target: str):
-    """`GET /auth/act/<admin action>` — changes nothing. Signed out: the sign-in page first, and back here."""
-    cfg = auth.cfg
-    path = auth.browser_path(request, f"/auth/act/{name}")
-    query = list(request.query_params.multi_items())
-    here = path + (f"?{urlencode(query)}" if query else "")
-    me = auth.session_user(request)
-    if me is None:
-        return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={quote(here, safe='')}", 303)
-    # Neither an administrator nor a delegate (or by API key): "not offered", the same page as for an account out of
-    # reach — no oracle.
-    who = actor(auth, request)
-    scopes = who[1] if who else None
-    account = account_for(auth, me, scopes, name, target) if who else None
-    return _render(auth, request, me, scopes, name, int(account["id"]) if account else 0, account,
-                   {"app": app, "return": return_, "state": state})
-
-
-async def post_action(auth, request: Request, name: str, ticket: str):
-    """`POST /auth/act/<admin action>/<ticket>` — the confirmed action (see the module for the order)."""
-    if request.headers.get("authorization") or request.headers.get("x-api-key"):
-        raise HTTPException(403, auth.t("apv.token_refused"))
-    form = await request.form()
-    fields = {"roles": [str(v) for v in form.getlist("roles")]}
-    fields.update({k: v for k, v in form.items() if isinstance(v, str) and k != "roles"})
-    auth.require_csrf(request, fields.get("_csrf"))
-    who = actor(auth, request)
-    flow = auth.store.pop_flow(_FLOW + ticket) if isinstance(ticket, str) and 0 < len(ticket) <= 64 else None
-    if who is None:
-        raise HTTPException(403, auth.t("api.admin"))
-    me, scopes = who
-    if not flow or flow.get("actor") != int(me["id"]) or flow.get("name") != name:
-        # An old, used or foreign ticket: the page again, from the start (nothing was done).
-        account = account_for(auth, me, scopes, name, (flow or {}).get("uid"))
-        args = {k: (flow or {}).get(k) or "" for k in ("app", "return", "state")}
-        return _render(auth, request, me, scopes, name, int(account["id"]) if account else 0, account, args,
-                       error=auth.t("act.admin_expired"), status=409)
-    args = {k: flow.get(k) or "" for k in ("app", "return", "state")}
-    uid = int(flow["uid"])
-    account = account_for(auth, me, scopes, name, uid)
-    if not offered(auth, me, scopes, name, account):
-        return _render(auth, request, me, scopes, name, uid, account, args, status=409)
-    methods = auth.stepup_options(me)
-    procedure = ("totp" if fields.get("code") else "pin" if fields.get("pin") else "password")
-    secret = fields.get("code") or fields.get("pin") or fields.get("password") or ""
-    refused = auth._stepup_secret(request, me, procedure, secret, "/") if methods else None
-    if not methods or refused is not None:
-        auth.audit("admin_action_denied", me["username"], auth.client_ip(request),
-                   f"act={name} uid={uid} reason=stepup")
-        message = refused.message if refused is not None else auth.t("act.admin_no_method")
-        return _render(auth, request, me, scopes, name, uid, account, args, error=message,
-                       status=refused.status if refused is not None else 403)
-    try:
-        _, link = execute(auth, request, me, scopes, name, account, fields)
-    except HTTPException as e:
-        return _render(auth, request, me, scopes, name, uid, account_for(auth, me, scopes, name, uid), args,
-                       error=str(e.detail), status=e.status_code)
-    frame = _area.context(auth, request, args["app"], "").get("frame")
-    auth.audit("admin_action", me["username"], auth.client_ip(request),
-               f"act={name} uid={uid} amr={procedure}" + (f" app={frame['host']}" if frame else ""))
-    return _render(auth, request, me, scopes, name, uid, account_for(auth, me, scopes, name, uid) or account, args,
-                   done=True, link=link or "")
-
-
-def add_routes(r, auth) -> None:
-    @r.post("/auth/act/{name}/{ticket}", response_class=HTMLResponse)
-    async def admin_action_post(request: Request, name: str, ticket: str):
-        action = _actions.ACTIONS.get(name)
-        if action is None or action.scope != "admin":
-            raise HTTPException(404)
-        return await post_action(auth, request, name, ticket)
-
-
-# ---------- the page ----------
-
-_CSS = """
-.tsmain .act-target{margin:0 0 10px}
-.tsmain .act-what{margin:0 0 14px}
-.tsmain .act-choice{display:flex;align-items:center;gap:10px;min-height:44px}
-.tsmain .act-choice input{width:auto;min-height:0}
-.tsmain .act-link{word-break:break-all;user-select:all}
-.tsmain #actform button[type=submit]{min-height:44px}
-"""
-
-
-def page(auth, ctx: dict) -> str:
-    """An administration action page: the heading in the application's name, the account, what happens, the
-    choices, the confirmation of this action, the way back (template `action`, built here for scope `admin`)."""
-    from . import templates as _t
-    t, e = auth.t, _t._e
-    action = ctx["action"]
-    account = ctx.get("account")
-    body = [_area.heading(auth, ctx, t(f"act.{action.name}"))]
-    hrefs = ctx["way_back"]["href"]
-    name = ctx.get("app_title") or ""
-    if account is not None and ctx.get("available"):
-        who = f"{account['display_name'] or account['username']} ({account['username']})"
-        body.append(f"<p class=act-target id=act_target>{e(t('act.admin_account'))}: <bdi>{e(who)}</bdi></p>")
-    msgs = [("error", ctx.get("error"))]
-    if ctx.get("done"):
-        msgs.append(("ok", t(f"act.{action.name}.done")))
-    elif not ctx.get("available"):
-        msgs.append(("info", t("act.unavailable")))
-    body.append(_t._messages(msgs))
-    if ctx.get("done") and ctx.get("link"):
-        body.append(f"<p>{e(t('act.admin_link_once'))}</p><p class=act-link id=act_link>{e(ctx['link'])}</p>")
-    if ctx.get("available") and not ctx.get("done"):
-        choices = ""
-        if action.name == "admin_roles":
-            held = set(ctx.get("held") or [])
-            choices = "".join(
-                f"<label class=act-choice><input type=checkbox name=roles value='{e(r)}'"
-                f"{' checked' if r in held else ''}><bdi>{e(r)}</bdi></label>" for r in ctx.get("roles") or [])
-        elif action.name in ITEMS:
-            choices = "".join(
-                f"<label class=act-choice><input type=radio name=item value='{e(v)}' required"
-                f"{' checked' if i == 0 else ''}><bdi>{e(label)}</bdi></label>"
-                for i, (v, label) in enumerate(ctx.get("items") or []))
-        methods = [m for m in ctx.get("methods") or [] if m in ("totp", "pin", "password")]
-        fields = f"<div class=or>{e(t('or'))}</div>".join(
-            _t._stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
-        if methods:
-            confirm = (f"<p class=hint>{e(t('act.admin_confirm_hint'))}</p>{fields}"
-                       f"<button type=submit id=act_confirm>{e(t(f'act.{action.name}.button'))}</button>")
-        else:
-            confirm = f"<div class=warnbar id=act_nomethod>{e(t('act.admin_no_method'))}</div>"
-        target = f"__TS_P__/auth/act/{e(action.name)}/{e(ctx.get('ticket') or '')}"
-        body.append(f"<p class=act-what id=act_what>{e(t(f'act.{action.name}.what'))}</p>"
-                    f"<form method=post id=actform action='{target}'>{_t._cf(ctx)}{choices}{confirm}</form>")
-    first = "done" if ctx.get("done") else ("cancelled" if ctx.get("available") else "unavailable")
-    label = (t("act.done", name=name) if name else t("act.done_plain")) if first == "done" else \
-        (t("act.back", name=name) if name else t("act.back_plain"))
-    body.append(f"<p class=act-back><a id=ts_back class=btn2 href='{e(hrefs[first])}' data-state='{first}'>"
-                f"{e(label)}</a></p>")
-    head = f"<style>{_area._CSS}{_actions._CSS}{_CSS}</style>"
-    return _t._page(auth, t(f"act.{action.name}"), "".join(body), card=False, head=head, ctx=ctx, current="account")
