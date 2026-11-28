@@ -771,8 +771,12 @@ Anwendung folgen ihm, und die Hüllen-Komponente dort auch.
 
 ```html
 <script src="/.tinysesam/shell.js" nonce="…"></script>   <!-- hinter dem Gate; Bibliothek: /auth/shell.js -->
-<ts-shell current="/docs"></ts-shell>                      <!-- layout="top" | "side", sonst apps[id].layout -->
+<ts-shell layout="top" current="/docs"></ts-shell>         <!-- layout="top" | "side", sonst apps[id].layout -->
 ```
+
+**`layout` setzen** (T-144): Ohne das Attribut erfährt das Element das Layout erst aus `topbar.json`, wenn die Daten
+ankommen, und eine Seite mit dem Layout `side` springt in diesem Moment zur Seite. Das Attribut legt den Platz vor dem
+ersten Zeichnen an; nur weglassen, wo der Betreiber das Layout in `apps[id].layout` oder `shell_layout` bestimmt.
 
 Das Skript setzt Hell/Dunkel vor dem ersten Zeichnen, hängt `shell.css` (die Tokens, den Platz für die Seitenleiste)
 mit seiner eigenen Nonce an und definiert `<ts-shell>`; das Element holt `topbar.json` daneben, gleicher Ursprung mit den

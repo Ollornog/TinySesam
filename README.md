@@ -754,8 +754,12 @@ element first thing in `<body>`:
 
 ```html
 <script src="/.tinysesam/shell.js" nonce="…"></script>   <!-- behind the gate; library: /auth/shell.js -->
-<ts-shell current="/docs"></ts-shell>                      <!-- layout="top" | "side", else apps[id].layout -->
+<ts-shell layout="top" current="/docs"></ts-shell>         <!-- layout="top" | "side", else apps[id].layout -->
 ```
+
+**Set `layout`** (T-144): without it the element learns the layout from `topbar.json` only once the data arrive, and a
+page whose layout is `side` jumps sideways at that moment. The attribute lays the room out before the first paint;
+leave it out only where the operator decides the layout in `apps[id].layout` or `shell_layout`.
 
 The script sets light/dark before the first paint, adds `shell.css` (the tokens, the room for the side bar) with its
 own nonce and defines `<ts-shell>`; the element fetches `topbar.json` beside it, same origin with the browser's cookies,

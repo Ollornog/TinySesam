@@ -619,7 +619,7 @@ browser does everything.
   <script src="/.tinysesam/shell.js" nonce="…"></script>   <!-- library: /auth/shell.js -->
 </head>
 <body>
-  <ts-shell current="/docs"></ts-shell>                      <!-- layout="top" | "side" optional -->
+  <ts-shell layout="top" current="/docs"></ts-shell>         <!-- layout="top" | "side" recommended -->
 ```
 
 - **Where.** `shell.js` and `shell.css` lie beside the data: `/.tinysesam/` on the application's host (the proxy passes
@@ -634,7 +634,9 @@ browser does everything.
   inline handler, no `style=` attribute and no system dialog. Only a logo (`brand_icon`) given as a path is an image
   on TinySesam's origin (`base_url`), so such a page's `img-src` names that origin; a `data:image/…` logo needs nothing.
 - **Attributes.** `layout`: `top` (the top bar) or `side` (a 248 px side bar on the left; the `<body>` gives way with
-  `padding-left`; below 900 px it folds back into the top bar). Without it the answer's `frame.layout` holds.
+  `padding-left`; below 900 px it folds back into the top bar). Without it the answer's `frame.layout` holds — but only
+  once the answer arrived, so a page in the side layout shifts sideways then; an application SHOULD set the attribute
+  (T-144) and leave it out only where the operator decides the layout (`apps[id].layout`, `shell_layout`).
   `current`: the path of the page shown; the link to it carries `aria-current="page"`.
 - **Differences to TinySesam's own pages, on purpose.** "Sign out" is a link to `logout.href` (TinySesam's sign-out
   page) — a form would need TinySesam's CSRF token, which the application's page does not hold —, and without an app
