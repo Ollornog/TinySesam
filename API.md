@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 234
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 420 · B 343 names.
+**Status:** A 420 · B 344 names.
 
 ## A · Methods of `TinySesam`
 
@@ -780,7 +780,7 @@ Value: `150`
 
 The pages that can be replaced — the same list that `render_page()` serves.
 
-Values: `account`, `account_setup`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
+Values: `account`, `account_setup`, `area`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `qr_approve`, `qr_login`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
 
 ### `PERMISSIONS_VALUE_MAX` — Constant
 
@@ -1212,6 +1212,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | GET | `/auth/app-passwords` | — |
 | POST | `/auth/app-passwords` | — |
 | POST | `/auth/app-passwords/{pw_id}/revoke` | — |
+| GET | `/auth/area` | `query:app`, `query:next` |
 | GET | `/auth/claim-admin` | `query:token` |
 | POST | `/auth/csp-report` | — |
 | GET | `/auth/email/{token}` | — |

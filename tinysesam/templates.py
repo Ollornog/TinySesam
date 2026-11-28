@@ -69,6 +69,7 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 .tsmain .card{width:340px;max-width:92vw;background:var(--ts-surface);border:1px solid var(--ts-line);
      border-radius:calc(var(--ts-radius) + 2px);padding:26px}
 .tsmain h1{font-size:20px;margin:0 0 18px;text-align:center}
+.tsmain .app-icon{display:block;margin:0 auto 12px;border-radius:10px;object-fit:contain}
 .tsmain label{display:block;font-size:12px;color:var(--ts-muted);margin:12px 0 4px}
 .tsmain input{width:100%;background:var(--ts-field-bg);color:var(--ts-ink);
      border:1px solid var(--ts-field-line);border-radius:8px;padding:10px 12px;font-size:15px}
@@ -441,9 +442,11 @@ def _login(auth, ctx) -> str:
     # In front of an application (forward_apps[host].name, T-21) the page says what you sign in for. With a brand
     # (gate_brand) the brand stands on top and the application as its own line below.
     brand = getattr(cfg, "gate_brand", "") or ""
-    # In an app frame (T-91) the page names that application even when only `?app=` chose it.
+    # In an app frame (T-91) the page names that application even when only `?app=` chose it — with its icon (T-104,
+    # ADR-19: "Sign in to <application>" and the application's icon, like a provider's hosted sign-in).
     if not ctx.get("app_name") and ctx.get("frame"):
-        ctx = {**ctx, "app_name": ctx["frame"]["name"]}
+        ctx = {**ctx, "app_name": ctx["frame"]["name"], "app_icon": ctx["frame"].get("icon")}
+    icon = _topbar.app_icon(ctx.get("app_icon"), 48, "app-icon") if ctx.get("app_name") else ""
     if brand:
         title = t("login.for_app", name=brand)
     else:
@@ -458,7 +461,7 @@ def _login(auth, ctx) -> str:
                   f"<input type=hidden name=next value='{_e(next_)}'>{gh}{_cf(ctx)}"
                   f"<button type=submit>{_e(t('gate.resume', name=ctx['resume_user']))}</button></form>"
                   + (_or if (pw or pin or others) else ""))
-    body = f"<h1>{_e(title)}</h1>{app_line}{further}{pw}{pin}{sep}{others}{signup}{js}"
+    body = f"{icon}<h1>{_e(title)}</h1>{app_line}{further}{pw}{pin}{sep}{others}{signup}{js}"
     page_title = t("login.brand_title", name=brand) if brand else t("login.submit")
     return _page(auth, page_title, body, top=_demobar(auth, ctx=ctx), below=messages, ctx=ctx)
 
@@ -1840,6 +1843,12 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
 """
 
 
+def _area(auth, ctx) -> str:
+    """The TinySesam area of an application (T-104) — built in `_area.py`."""
+    from . import _area as _area_page
+    return _area_page.page(auth, ctx)
+
+
 DEFAULTS = {
     "logout": _logout,
     "gate_logout": _gate_logout,
@@ -1851,6 +1860,7 @@ DEFAULTS = {
     "pin": _pin,
     "resource_unlock": _resource_unlock,
     "account": _account,
+    "area": _area,
     "register": _register,
     "magic_request": _magic_request,
     "magic_invalid": _magic_invalid,

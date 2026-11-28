@@ -34,7 +34,7 @@ import html
 from .theme import TOKENS, c22_css, c22_head, theme_head
 
 #: The built-in pages that show the account menu (for a signed-in viewer); every other page shows logo and name.
-MENU_PAGES = frozenset({"account", "account_setup", "approval", "approvals", "gateway_home", "oauth_consent",
+MENU_PAGES = frozenset({"account", "account_setup", "area", "approval", "approvals", "gateway_home", "oauth_consent",
                         "qr_approve", "reauth", "totp_setup"})
 
 #: Below this width the links move into the menu.
@@ -228,6 +228,16 @@ def logo(cfg) -> str:
         tip = f" title='{_e(title)}'" if title else ""
         return f"<img class=tsbar-logo src='{_e(icon)}' alt=''{tip} width=26 height=26>"
     return _MARK
+
+
+def app_icon(icon, size: int = 26, cls: str = "tsbar-logo") -> str:
+    """An application's icon (`apps[id].icon`, T-104, ADR-19) as an image on TinySesam's page — a path on TinySesam's
+    own origin or a `data:image/…` address (what `config_check` lets through and the strict CSP's img-src allows);
+    nothing for anything else. `alt` stays empty: the application's name stands next to it."""
+    if not isinstance(icon, str) or not ((icon.startswith("/") and not icon.startswith("//"))
+                                         or icon.startswith("data:image/")):
+        return ""
+    return f"<img class={cls} src='{_e(icon)}' alt='' width={size} height={size}>"
 
 
 def link_visible(auth, viewer, rule) -> bool:
@@ -437,7 +447,7 @@ def render_frame(auth, frame: dict, *, viewer=None, menu: bool = True, csrf: str
     host, name = frame["host"], frame["name"]
     gate = getattr(cfg, "gate_brand", "") or cfg.rp_name
     via = f"<span class=tsbar-via>{_e(t('bar.via', name=gate))}</span>" if gate and gate != name else ""
-    label = f"<span class=tsbar-app><span>{_e(name)}</span>{via}</span>"
+    label = f"{app_icon(frame.get('icon'))}<span class=tsbar-app><span>{_e(name)}</span>{via}</span>"
     if not (menu and viewer):
         return f"{_header(layout, 'tsframe')}<div class=tsbar-in><div class=tsbar-brand>{label}</div></div></header>"
     q = "?app=" + quote(host, safe="")

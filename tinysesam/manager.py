@@ -1359,7 +1359,7 @@ class TinySesam(metaclass=_BuildingBlocks):
     #: The docstring used to name 'magic_sent' and 'resource_pin', neither of which ever existed, and
     #: left out seven real ones. A typo thereby remained silently without consequence: the own page
     #: was registered and never called.
-    PAGES = ("account", "account_setup", "error", "forgot", "gate_logged_out", "gate_logout", "gateway_home", "login", "logout",
+    PAGES = ("account", "account_setup", "area", "error", "forgot", "gate_logged_out", "gate_logout", "gateway_home", "login", "logout",
              "magic_confirm", "magic_invalid",
               "magic_request", "pin", "qr_approve", "qr_login", "reauth", "register", "reset",
               "resource_unlock", "totp", "totp_setup")

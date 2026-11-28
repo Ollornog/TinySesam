@@ -1469,8 +1469,37 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 |---|---|---|---|
 | **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()`, example Ex1 |
 | **Shell at the side** | the same component as a side bar | as above | `layout="side"`, `shell_layout`, `apps[id].layout`, example Ex2 |
-| **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the app frame (T-91), T-104 adds the area |
+| **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the TinySesam area `/auth/area?app=<id>` (T-104, below) |
 | **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the account overview and the account API, T-105 and T-106 add the action pages and the reading side |
+
+### The TinySesam area (hybrid)
+
+The application draws its own navigation and links one entry — "Account" — to `/auth/area?app=<id>` on TinySesam
+(T-104). The area shows the tiles of the own account: account, security (password, authenticator, passkeys), sessions,
+programs (connected programs, services, app passwords) and approvals where TinySesam offers them, and the admin panel
+for an administrator or an area administrator of this application. It stands in the application's frame — its name,
+its icon, its links from `forward_apps[host]` of a host in `apps[id].hosts` — and leads back to the frame's `home`; for
+an application without hosts (a library) a `next` that `safe_next` accepts is the way back. Every tile opens
+TinySesam's account page in the same frame, and `?app=<id>` frames every other TinySesam page like `?app=<host>`.
+Signed out, the area sends the person through the framed sign-in page and back. An unknown id changes nothing: the
+tiles without a frame.
+
+```toml
+[apps.docs]
+name = { en = "Documents", de = "Dokumente" }
+hosts = ["docs.example.com"]
+icon = "/icons/docs.svg"          # or a data:image/… address; never a foreign one
+
+[forward_apps."docs.example.com"]
+name = "Documents"
+home = "/"
+links = [["Documents", "/"]]
+```
+
+`apps[id].icon` (ADR-19) is a path on TinySesam's own origin or a `data:image/…` address of at most 64 KiB. It stands
+above "Sign in to <application>" on the gate's sign-in page, beside the name in the frame and on the area. There is no
+look per application beyond name and icon. The area lives on TinySesam's origin, never on the application's behind a
+proxy: an XSS of the application could otherwise post TinySesam's forms.
 
 ### The three origins of an account
 
@@ -3154,7 +3183,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**158 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**159 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -1004,6 +1004,10 @@ _DE: dict[str, str] = {
      "— name the hosts or drop the layout"):
         ("apps[{app!r}].layout ohne hosts: Das Layout gilt auf den Hosts der Anwendung, also läse es nie etwas — die "
          "Hosts nennen oder das Layout weglassen"),
+    ("apps[{app!r}].icon: a path on TinySesam's own origin (\"/icons/docs.svg\") or a data:image/… address of at "
+     "most 64 KiB — no foreign address"):
+        ("apps[{app!r}].icon: ein Pfad auf TinySesams eigenem Ursprung (\"/icons/docs.svg\") oder eine "
+         "data:image/…-Adresse von höchstens 64 KiB — keine fremde Adresse"),
     "shell_layout={v!r} — \"top\" or \"side\"":
         "shell_layout={v!r} — \"top\" oder \"side\"",
     ("apps[{app!r}].hosts: a non-empty list of at most {max} host names in lower case, without scheme, port or "

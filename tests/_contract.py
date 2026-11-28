@@ -33,7 +33,8 @@ PACKAGE = S.PACKAGE
 #: Modules with routes and the prefix their paths get ("<admin>" = wherever the admin router is mounted,
 #: by default `cfg.admin_path`).
 ROUTE_MODULES = {"router.py": "", "_routes_forward.py": "", "oidc.py": "", "webauthn_.py": "", "admin.py": "<admin>",
-                 "gateway.py": "", "oauth.py": "", "_routes_link.py": "", "_admin_permissions.py": "<admin>"}
+                 "gateway.py": "", "oauth.py": "", "_routes_link.py": "", "_admin_permissions.py": "<admin>",
+                 "_routes_area.py": ""}
 #: Names a router or app has in those modules (`r = APIRouter(...)`, `ar = ...`, `@router.get`, `@app.get`).
 ROUTE_RECEIVERS = {"r", "router", "ar", "app"}
 HTTP_METHODS = {"get", "post", "put", "delete", "patch"}

@@ -119,7 +119,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-101](T-101-stage-s5-permissions-at-the-server-and-in-the-clients.md)** Stage S5 — permissions at the server and in the clients · M-2
 * ☑ **[T-102](T-102-stage-s6-idp-role-sync-stage-1-import-groups-at-sign-in.md)** Stage S6 — IdP role sync stage 1: import groups at sign-in · M-2
 * ☑ **[T-103](T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)** Stage S7 — shell on top and at the side: one component, layout top or side · M-2
-* ☐ **[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md)** Stage S8 — hybrid: TinySesam area with name and icon, library layout slot · M-2
+* ◐ **[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md)** Stage S8 — hybrid: TinySesam area with name and icon, library layout slot · M-2
 * ☐ **[T-105](T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md)** Stage S9 — headless writing: action pages with a way back · M-2
 * ☐ **[T-106](T-106-stage-s10-headless-reading-events-keys-admin-data-insid.md)** Stage S10 — headless reading: events, keys, admin data inside the application"s area · M-2
 * ☐ **[T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md)** Stage S11 — acceptance matrix in CI: examples x origins · M-2

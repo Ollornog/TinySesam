@@ -2,8 +2,8 @@
 id: T-104
 type: Task
 title: "Stage S8 — hybrid: TinySesam area with name and icon, library layout slot"
-status: offen
-points: 13
+status: in-arbeit
+points: 8
 milestone: M-2
 blocked_by: [T-103]
 tags: [hybrid, ui]
@@ -11,7 +11,12 @@ created: 2026-11-23
 ---
 # T-104 — Stage S8 — hybrid: TinySesam area with name and icon, library layout slot
 
-**Story points:** 13 · **Estimate:** 18–24 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 8 (re-estimated 2026-11-28 from 13: without the look per host, the frame of T-91 carries name, links
+and way back already) · **Estimate:** 12–16 h · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+
+**Part 1 (2026-11-28):** `apps[id].icon` with its readers (gate sign-in heading, frame, area), `/auth/area?app=<id>`
+with tiles, frame and way back, `?app=<id>` on every page (`tests/test_app_area.py`). Open: the library slot
+`page_layout`, mail links with `app=` in the token, Ex3 hybrid.
 
 The application draws its own navigation; everything of TinySesam sits in a delimited TinySesam area.
 

@@ -850,12 +850,24 @@ def _frame(self, request: Optional[Request] = None, ctx: Optional[dict] = None) 
 
 
 def _frame_of(self, host) -> Optional[dict]:
-    """The app frame of a host — `{"host", "name", "home", "links"}` from `forward_apps[host]` — or None when the
-    host has no entry with a frame (`home` or `links`) and a name. `home` is absolute on that host (a path in the
-    config means a path there); `links` stay as configured, the bar resolves and filters them."""
+    """The app frame of a host — `{"host", "name", "home", "links", "app", "icon"}` from `forward_apps[host]` — or None
+    when the host has no entry with a frame (`home` or `links`) and a name. `home` is absolute on that host (a path in
+    the config means a path there); `links` stay as configured, the bar resolves and filters them. `app` is the id of
+    the application whose `apps[id].hosts` name the host, `icon` its `apps[id].icon` (T-104, ADR-19), else None.
+
+    An application id of `apps` stands for the frame of the first of its `hosts` that has one (T-104:
+    `/auth/area?app=<id>`, and `?app=<id>` on every other page); an id is never a host name (it has no dot)."""
     if not isinstance(host, str) or not host or len(host) > 253:
         return None
     want = host.strip().lower().rstrip(".")
+    apps = self.cfg.apps if isinstance(getattr(self.cfg, "apps", None), dict) else {}
+    entry = apps.get(want) if "." not in want else None
+    if isinstance(entry, dict):
+        for h in entry.get("hosts") or []:
+            frame = self._frame_of(h) if isinstance(h, str) and "." in h else None
+            if frame:
+                return frame
+        return None
     for h, e in (self.cfg.forward_apps or {}).items():
         if str(h).strip().lower().rstrip(".") != want or not isinstance(e, dict):
             continue
@@ -864,8 +876,10 @@ def _frame_of(self, host) -> Optional[dict]:
             return None
         raw = e.get("home")
         home: str = raw if isinstance(raw, str) and raw else "/"
+        app = next((a for a, v in apps.items() if isinstance(v, dict) and want in (v.get("hosts") or [])), None)
+        icon = apps[app].get("icon") if app else None
         return {"host": want, "name": name, "home": _topbar.frame_href(want, home),
-                "links": list(e.get("links") or [])}
+                "links": list(e.get("links") or []), "app": app, "icon": icon if isinstance(icon, str) else None}
     return None
 
 

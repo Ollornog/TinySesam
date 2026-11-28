@@ -843,7 +843,7 @@
     "PAGES": {
       "server": "library: a Python constant; its value is the server's behaviour",
       "tier": "B",
-      "value": "('account', 'account_setup', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'qr_approve', 'qr_login', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
+      "value": "('account', 'account_setup', 'area', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'qr_approve', 'qr_login', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
     },
     "PERMISSIONS_VALUE_MAX": {
       "server": "library: a Python constant; its value is the server's behaviour",
@@ -2595,6 +2595,13 @@
     },
     "GET /auth/app-passwords": {
       "keys": [],
+      "tier": "B"
+    },
+    "GET /auth/area": {
+      "keys": [
+        "query:app",
+        "query:next"
+      ],
       "tier": "B"
     },
     "GET /auth/claim-admin": {
