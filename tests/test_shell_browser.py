@@ -25,7 +25,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent

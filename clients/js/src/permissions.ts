@@ -28,6 +28,13 @@ export class RegistrationFailed extends Error {
   }
 }
 
+/** The base URL without trailing slashes — a loop, not a regular expression, so its time stays linear. */
+function withoutTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end--;
+  return url.slice(0, end);
+}
+
 /**
  * Checks a manifest the way spec section 3.4 asks and builds the request, without sending it. Throws a
  * {@link ConfigError} for a base URL that is not https (plain http only to a loopback address), an application id
@@ -62,7 +69,7 @@ export function registerRequest(baseUrl: string, app: string, permissions: unkno
   }
   return {
     method: 'PUT',
-    url: `${baseUrl.replace(/\/+$/, '')}/auth/api/apps/${app}/permissions`,
+    url: `${withoutTrailingSlashes(baseUrl)}/auth/api/apps/${app}/permissions`,
     body: { permissions },
   };
 }

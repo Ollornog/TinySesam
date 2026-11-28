@@ -135,7 +135,7 @@ def bar_links(c, path="/"):
 titles, page = bar_links(editor)
 assert titles == ["Documents", "Editing guide", "Trash"], titles
 assert "nonce-" in page.headers["content-security-policy"] and "unsafe-inline" not in page.headers["content-security-policy"]
-assert all("nonce=" in tag for tag in re.findall(r"<(?:script|style)\b[^>]*>", page.text)), "a tag without the nonce"
+assert all("nonce=" in tag for tag in re.findall(r"<(?:script|style)\b[^>]*>", page.text, re.I)), "a tag without the nonce"
 assert bar_links(reader)[0] == ["Documents"]
 assert editor.get("/trash").status_code == 200 and reader.get("/trash").status_code == 403
 assert editor.get("/guide").status_code == 200 and reader.get("/guide").status_code == 403
