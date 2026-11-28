@@ -100,9 +100,12 @@ for uid, want in ((staff, ["Home", "Members", "Staff"]), (member, ["Home"])):
 r = on_app.get("/.tinysesam/shell.js", headers=app_host)
 assert r.status_code == 200 and "customElements.define('ts-shell'" in r.text
 main_go = (ROOT / "clients/go/examples/ex1/main.go").read_text(encoding="utf-8")
-assert '<script src=\\"/.tinysesam/shell.js\\"' in main_go and "<ts-shell current=" in main_go
+# T-144: the element names its layout itself — the same as apps.ex1.layout, so the page does not shift when the data
+# arrive.
+assert '<script src=\\"/.tinysesam/shell.js\\"' in main_go and '<ts-shell layout=\\"top\\" current=' in main_go
 ok("shell on top: apps.ex1.layout = top, the frame of app.example.com with Members (permission) and Staff (role) for "
-   "the staff, Home only for a member; shell.js served on the application's host and loaded by every Go page")
+   "the staff, Home only for a member; shell.js served on the application's host and loaded by every Go page, the "
+   "element with layout=\"top\" (T-144)")
 
 # The pieces fit together: the compose file mounts this configuration, builds the Go program, and the application
 # trusts the network Caddy talks from.
