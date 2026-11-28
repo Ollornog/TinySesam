@@ -35,7 +35,8 @@ const STYLE =
   'body{margin:0;background:var(--ts-bg);color:var(--ts-ink);font-family:var(--ts-font)}' +
   '.nav{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:center;padding:12px 16px;' +
   'border-bottom:1px solid var(--ts-line);background:var(--ts-surface)}' +
-  '.nav b{margin-right:auto}.nav a{color:var(--ts-link);text-decoration:none;padding:12px 0}' +
+  '.nav b{margin-right:auto}.nav a{display:inline-flex;align-items:center;min-height:44px;color:var(--ts-link);' +
+  'text-decoration:none}' +
   '.nav a[aria-current=page]{text-decoration:underline}' +
   'main{max-width:760px;margin:0 auto;padding:24px 16px}' +
   'section{border:1px solid var(--ts-line);border-radius:10px;background:var(--ts-surface);padding:12px 16px;' +

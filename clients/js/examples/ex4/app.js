@@ -62,8 +62,8 @@
       '',
     );
     remember([...issued(), state]);
-    const u = new URL(href, location.href);
-    u.searchParams.set('return', location.origin + location.pathname);
+    const u = new URL(href, location.origin);
+    u.searchParams.set('return', `${location.origin}/settings`);
     u.searchParams.set('state', state);
     return u.href;
   }
@@ -166,8 +166,10 @@
   /** Back from an action page: a message for a result this page asked for, and the address without the three. */
   function result() {
     const q = new URLSearchParams(location.search);
-    const action = q.get('ts_action');
-    if (!action) {
+    // Only names this page knows: a value from the address becomes a key of its own tables, never text of its own.
+    const action = Object.keys(TITLES).find((k) => k === q.get('ts_action'));
+    const outcome = Object.keys(RESULTS).find((k) => k === q.get('ts_result')) || 'unknown';
+    if (!q.has('ts_action')) {
       return;
     }
     const state = q.get('state') || '';
@@ -175,13 +177,13 @@
     const notice = document.getElementById('notice');
     if (list.includes(state)) {
       remember(list.filter((s) => s !== state));
-      notice.textContent = `${TITLES[action] || action}: ${RESULTS[q.get('ts_result')] || 'unknown result'}`;
-      notice.dataset.result = q.get('ts_result') || '';
+      notice.textContent = `${action ? TITLES[action] : 'Unknown action'}: ${RESULTS[outcome] || 'unknown result'}`;
+      notice.dataset.result = outcome;
     } else {
       notice.textContent = 'A result came back that this page did not ask for — ignored.';
       notice.dataset.result = 'foreign';
     }
-    notice.dataset.action = action;
+    notice.dataset.action = action || 'unknown';
     notice.hidden = false;
     history.replaceState(null, '', location.pathname);
   }
