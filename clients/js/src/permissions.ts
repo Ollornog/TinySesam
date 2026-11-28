@@ -69,7 +69,7 @@ export function registerRequest(baseUrl: string, app: string, permissions: unkno
   }
   return {
     method: 'PUT',
-    url: `${withoutTrailingSlashes(baseUrl)}/auth/api/apps/${app}/permissions`,
+    url: `${baseUrl.replace(/\/+$/, '')}/auth/api/apps/${app}/permissions`,
     body: { permissions },
   };
 }
@@ -116,7 +116,3 @@ export async function registerPermissions(
   return parsed.value as Record<string, unknown>;
 }
 
-/** PROBE (T-139, never merged): trims trailing slashes of a caller's base address with a polynomial regex. */
-export function probeTrimBase(base: string): string {
-  return base.replace(/\/+$/, '');
-}
