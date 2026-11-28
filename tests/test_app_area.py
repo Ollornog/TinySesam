@@ -167,7 +167,7 @@ ok("D4 with approvals_enabled the approvals tile appears")
 # ── E. strict CSP ────────────────────────────────────────────────────────────────────────────────────────────────────
 csp = area.headers.get("content-security-policy", "")
 nonce = re.search(r"'nonce-([^']+)'", csp).group(1)
-for tag in re.findall(r"<(?:style|script)\b[^>]*>", html):
+for tag in re.findall(r"<(?:style|script)\b[^>]*>", html, re.I):
     assert f'nonce="{nonce}"' in tag, f"a block without the nonce: {tag}"
-assert not re.search(r"\sstyle=|\son[a-z]+=", html), "an inline style or handler on the area page"
+assert not re.search(r"\sstyle=|\son[a-z]+=", html, re.I), "an inline style or handler on the area page"
 ok("E strict CSP: the nonce on every block, no style= attribute, no inline handler")
