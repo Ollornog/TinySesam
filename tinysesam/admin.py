@@ -918,8 +918,10 @@ def build_admin_router(auth) -> APIRouter:
             # Same check as on creation: the roles only land in the account on redemption —
             # a broken role would then fall at the invitee's feet, not the admin's.
             try:
+                # `app` (T-152): an application id or host whose frame the registration page stands in.
                 res = auth.create_invite(email or None, base, roles=roles_from(b),
-                                         is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
+                                         is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"),
+                                         app=b.get("app") if isinstance(b.get("app"), str) else None)
             except ConfigError:
                 raise                     # a setup error (base address) stays what it was, not an input error
             except ValueError as e:

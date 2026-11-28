@@ -103,7 +103,7 @@ def peek_magic(self, raw, purpose=None) -> Optional[dict]:
             "payload": read_payload(row["payload"])}
 
 
-def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=None) -> dict:
+def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=None, app=None) -> dict:
     """Create an invitation (+ optionally send it). Return {url, token}. The token carries the
     intended roles/admin rights; it is redeemed only at registration. `base_url`
     is checked (`ConfigError` for a foreign host, see `magic_url`).
@@ -114,6 +114,9 @@ def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=Non
     `ttl_min` defaults to `invite_ttl_min` (24 h) — an invitation waits in a mailbox for a person who did not ask
     for it, unlike the 10 minutes of a sign-in or reset link (`magiclink_ttl_min`). Allowed are 1 minute to
     `signin_link_max_ttl_min`, the bound of every hand-over link; anything else raises `ValueError`.
+
+    `app` (T-152): an app frame (a host or an application id) — the token carries its host as `frame`, so the
+    registration page the link opens stands in that frame; anything unknown is dropped.
     """
     base_url = self._checked_base(base_url)
     self._refuse_role_names(roles)      # the invitee would carry them into the account (T-85)
@@ -126,7 +129,8 @@ def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=Non
     if not 1 <= ttl <= int(self.cfg.signin_link_max_ttl_min):
         raise ValueError(self.t("api.signin_link_ttl", max=int(self.cfg.signin_link_max_ttl_min)))
     raw = self.create_magic_token("invite", email=email, ttl_min=ttl,
-                                  payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
+                                  payload={"roles": list(roles or []), "is_admin": bool(is_admin),
+                                           **({"frame": self._frame_host(app)} if self._frame_host(app) else {})})
     url = self.magic_url(raw, base_url, "invite")
     if email and self.mail_configured():
         # The mail names the lifetime: an invitation waits in a mailbox, and without it the person cannot tell
@@ -148,7 +152,7 @@ def _duration(self, minutes: int) -> str:
     return self.t("mail.minute") if minutes == 1 else self.t("mail.minutes", n=minutes)
 
 
-def send_verify_email(self, user_id, email, base_url) -> bool:
+def send_verify_email(self, user_id, email, base_url, app=None) -> bool:
     """Send the confirmation link for an address. False if there is no mailer.
     `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`).
     If sending fails, the token is invalidated (B6-12) and the error is passed on.
@@ -157,16 +161,17 @@ def send_verify_email(self, user_id, email, base_url) -> bool:
     the link comes into being only after this lock, e.g. because the call waits via
     `after_response` (H-18).
     When redeemed it sets the evidence for the address (`email_verified`), as long as it is still the
-    account's.
+    account's. `app` (T-152): the app frame of the request — the token carries its host as `frame` (see
+    `send_magic_link`).
     """
-    send = self._verify_mail(user_id, email, base_url)
+    send = self._verify_mail(user_id, email, base_url, app=app)
     if send is None:
         return False
     send()
     return True
 
 
-def _verify_mail(self, user_id, email, base_url):
+def _verify_mail(self, user_id, email, base_url, app=None):
     """Create the confirmation token NOW and return the sending as a function — or
     None if there is no mailer. `base_url` is checked as with `send_verify_email`.
 
@@ -177,7 +182,9 @@ def _verify_mail(self, user_id, email, base_url):
     base_url = self._checked_base(base_url)
     if not (email and self.mail_configured()):
         return None
-    raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
+    frame = self._frame_host(app)
+    raw = self.create_magic_token("verify_email", user_id=user_id, email=email,
+                                  payload={"frame": frame} if frame else None)
     url = self.magic_url(raw, base_url, "verify_email")
 
     def send():

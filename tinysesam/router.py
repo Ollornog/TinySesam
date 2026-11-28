@@ -739,11 +739,14 @@ def build_router(auth) -> APIRouter:
         @r.get("/auth/verify/{token}", response_class=HTMLResponse)
         def verify_confirm(request: Request, token: str):
             """Confirmation page instead of redeeming via GET — rationale at `/auth/magic/{token}` (R4-02)."""
-            if not auth.peek_magic(token, purpose="verify_email"):
+            peeked = auth.peek_magic(token, purpose="verify_email")
+            if not peeked:
                 auth._token_rejected("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
+            framed = auth._frame_of((peeked.get("payload") or {}).get("frame"))    # T-152: the frame of the request
             return auth.render_page("magic_confirm", request=request, purpose="verify_email",
-                                    action=auth.browser_path(request, f"/auth/verify/{_q(token)}"))
+                                    action=auth.browser_path(request, f"/auth/verify/{_q(token)}"),
+                                    **({"frame": framed} if framed else {}))
 
         @r.post("/auth/verify/{token}")
         def verify_email(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
@@ -783,10 +786,14 @@ def build_router(auth) -> APIRouter:
     if cfg.allow_signup:
         @r.get("/auth/invite/{token}")
         def invite_redeem(request: Request, token: str):
-            if not auth.peek_magic(token, purpose="invite"):
+            peeked = auth.peek_magic(token, purpose="invite")
+            if not peeked:
                 auth._token_rejected("invite", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
-            return RedirectResponse(f"{auth.browser_path(request, '/auth/register')}?invite={_q(token)}", 303)
+            # T-152: the registration page stands in the frame the invitation names (`frame` in the token).
+            framed = auth._frame_of((peeked.get("payload") or {}).get("frame"))
+            app_q = f"&app={_q(framed['host'])}" if framed else ""
+            return RedirectResponse(f"{auth.browser_path(request, '/auth/register')}?invite={_q(token)}{app_q}", 303)
 
     # ---------- First admin via one-time token (only as long as there is no admin) ----------
     @r.get("/auth/claim-admin", response_class=HTMLResponse)
@@ -1175,7 +1182,8 @@ def build_router(auth) -> APIRouter:
                 # login_identifier='email'), the taken branch writes only the audit line —
                 # this timing oracle existed before and is in the backlog (T-13).
                 try:
-                    send = auth._verify_mail(uid, email_final, verify_base)
+                    send = auth._verify_mail(uid, email_final, verify_base,
+                                             app=(auth._frame(request) or {}).get("host", ""))     # T-152
                 except Exception:
                     send = None
                 if send is None:
@@ -1305,7 +1313,9 @@ def build_router(auth) -> APIRouter:
             if not auth._rate_ok(auth.client_ip(request), login=False):
                 raise HTTPException(429, auth.t("api.too_many"))
             try:
-                send = auth.request_email_change(u["id"], b.get("email"), auth.public_base(request))
+                # T-152: the frame of the request (`?app=` of an action page) travels in the token.
+                send = auth.request_email_change(u["id"], b.get("email"), auth.public_base(request),
+                                                 app=(auth._frame(request) or {}).get("host", ""))
             except ConfigError:
                 # First: `ConfigError` IS a `ValueError` (CodeQL py/unreachable-except). In
                 # the reverse order the message about the base address went out as response text.
@@ -1323,11 +1333,14 @@ def build_router(auth) -> APIRouter:
         @r.get("/auth/email/{token}", response_class=HTMLResponse)
         def email_confirm_page(request: Request, token: str):
             """Confirmation page instead of redeeming via GET — link scanners redeem nothing (R4-02)."""
-            if not auth.peek_magic(token, purpose="email_change"):
+            peeked = auth.peek_magic(token, purpose="email_change")
+            if not peeked:
                 auth._token_rejected("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
+            framed = auth._frame_of((peeked.get("payload") or {}).get("frame"))    # T-152: the frame of the request
             return auth.render_page("magic_confirm", request=request, purpose="email_change",
-                                    action=auth.browser_path(request, f"/auth/email/{_q(token)}"))
+                                    action=auth.browser_path(request, f"/auth/email/{_q(token)}"),
+                                    **({"frame": framed} if framed else {}))
 
         @r.post("/auth/email/{token}")
         def email_confirm(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):

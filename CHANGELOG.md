@@ -38,6 +38,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The frame travels in the token of the address change, the e-mail confirmation and the invitation too (T-152; since
+  T-104 sign-in and reset links). `request_email_change(…, app=)`, `send_verify_email(…, app=)` and
+  `create_invite(…, app=)` (the panel's JSON `app`) store the frame's host as `frame`; the account page sends the
+  frame of its action page, registration that of its page. The confirmation pages stand in that frame, an invitation
+  leads to the framed registration; an unknown frame is dropped. New optional arguments, no break.
 - Administration actions on action pages, surface "headless" (T-147, scope `admin`, class `each`; with the admin panel
   on). `/auth/act/<name>?target=<account id>&app=<id>&return=<url>&state=<opaque>` for `admin_lock`, `admin_unlock`,
   `admin_roles`, `admin_totp_reset`, `admin_key_revoke`, `admin_program_revoke` (program, service or app password),

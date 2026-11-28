@@ -89,7 +89,7 @@ def change_username(self, user_id, new_username, ip: Optional[str] = None, *,
     return name
 
 
-def request_email_change(self, user_id, new_email, base_url):
+def request_email_change(self, user_id, new_email, base_url, app=None):
     """Request the change to a new address: confirmation link to the NEW one. Returns the
     sending function (for `after_response`) — even when the address is taken
     or reserved and no link goes out; `send()` says so with True/False. None only
@@ -114,11 +114,14 @@ def request_email_change(self, user_id, new_email, base_url):
     (nobody knows the plaintext, `open_token` and redeeming do not see it,
     `gc()` clears it; the pattern of R4-03 for registration) —, then always a sender
     that sends the notice to the own address in every case. The account page shows every
-    request as `email_change_requested` (`own_events`)."""
-    return self._request_change(user_id, new_email, base_url)
+    request as `email_change_requested` (`own_events`).
+
+    `app` (T-152): the app frame the request stood in (a host or an application id) — the token carries its host as
+    `frame`, so the confirmation page stands in the same frame; anything unknown is dropped."""
+    return self._request_change(user_id, new_email, base_url, app=app)
 
 
-def _request_change(self, user_id, new, base_url, source: str = ""):
+def _request_change(self, user_id, new, base_url, source: str = "", app=None):
     """`request_email_change`, with the source for the path via LDAP/SAML
     (`_address_proven_by_source`). With `quelle` the detail of the audit line begins with
     `account=<id> source=<quelle>` — the same for every result, free like taken. From that the
@@ -163,7 +166,8 @@ def _request_change(self, user_id, new, base_url, source: str = ""):
     # expired when it is created.
     raw = self.create_magic_token("email_change", user_id=user_id, email=mail,
                                   ttl_min=(-1 if no else int(self.cfg.email_change_ttl_min)),
-                                  payload={"old": account["email"] or ""})
+                                  payload={"old": account["email"] or "",
+                                           **({"frame": self._frame_host(app)} if self._frame_host(app) else {})})
     url = self.magic_url(raw, base_url, "email_change")
     origin = f"account={int(user_id)} source={source} " if source else ""
     self.audit(no or "email_change_requested", account["username"], detail=f"{origin}new={mail}")

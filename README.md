@@ -1499,8 +1499,9 @@ links = [["Documents", "/"]]
 `apps[id].icon` (ADR-19) is a path on TinySesam's own origin or a `data:image/…` address of at most 64 KiB. It stands
 above "Sign in to <application>" on the gate's sign-in page, beside the name in the frame and on the area. There is no
 look per application beyond name and icon. The area lives on TinySesam's origin, never on the application's behind a
-proxy: an XSS of the application could otherwise post TinySesam's forms. A sign-in link or a reset link asked for in an
-application's frame carries that frame in its token: the page the mail opens stands in the same frame.
+proxy: an XSS of the application could otherwise post TinySesam's forms. A sign-in link, a reset link, an address-change
+link, an e-mail confirmation (registration) or an invitation (`create_invite(…, app=)`, the panel's `app`) asked for in
+an application's frame carries that frame in its token: the page the mail opens stands in the same frame.
 
 As a library, the application puts its own layout around TinySesam's pages — the area included — with `page_layout`:
 
