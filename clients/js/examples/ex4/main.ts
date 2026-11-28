@@ -7,6 +7,8 @@
 // /.tinysesam/account.json on this host (the proxy passes /.tinysesam/* to TinySesam) and changes nothing itself —
 // every change is a link to one of TinySesam's action pages (spec section 8c), which leads back here with
 // ts_action, ts_result and state. No password, code or key ever passes through this program or its page.
+// Its administration section (T-106) reads TinySesam's administration data the same way, from
+// /.tinysesam/admin/accounts.json — the program keeps no list of accounts and serves no data of its own.
 // The identity comes from the Remote-* headers of the proxy only (spec section 2.1). Bind to loopback or the compose
 // network only: the proxy is the only way in.
 
@@ -24,10 +26,6 @@ if (process.env.TS_TRUSTED_PROXY) {
 const gate = await createGate({ mode: 'header', trustedProxies: proxies });
 const identify = gateMiddleware(gate);
 const SCRIPT = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
-/** The accounts this application has seen — forward auth names one on every request. Its administration lists
- * them (T-147); a real application keeps its own list or reads TinySesam's account API. Only id and names: the
- * link to an administration action page carries the account id, TinySesam decides who may act. */
-const known = new Map<string, { id: string; user: string; name: string }>();
 
 /** Text into HTML: every character that could leave the text. */
 function e(s: string): string {
@@ -66,7 +64,7 @@ function page(res: ServerResponse, status: number, title: string, current: strin
   res.statusCode = status;
   res.setHeader('content-type', 'text/html; charset=utf-8');
   res.setHeader('cache-control', 'no-store');
-  // connect-src 'self': the page reads /.tinysesam/account.json on its own host and nothing else.
+  // connect-src 'self': the page reads /.tinysesam/account.json (and admin/accounts.json) on its own host, nothing else.
   res.setHeader(
     'content-security-policy',
     `default-src 'self'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; img-src 'self' data:; ` +
@@ -88,9 +86,6 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   identify(req, res, () => {
     const id = identityOf(req);
     const path = (req.url ?? '/').split('?')[0];
-    if (id?.id) {
-      known.set(id.id, { id: id.id, user: id.user, name: id.name || id.user });
-    }
     if (!id) {
       // Behind the proxy this never happens: forward auth sends the browser to TinySesam's sign-in first.
       page(res, 401, 'Not signed in', '', '<p>Not signed in.</p>');
@@ -101,15 +96,6 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         return;
       }
       page(res, 200, 'Documents', '/', `${who}<ul><li id=doc-d1>Quarterly report</li></ul>`);
-    } else if (path === '/admin/accounts.json') {
-      // The application's own data for its administration section: the list only for holders of its permission
-      // docs.admin, null for everyone else (the page then draws no section).
-      res.setHeader('content-type', 'application/json');
-      res.setHeader('cache-control', 'no-store');
-      const accounts = id.hasPermission(`${APP}.admin`)
-        ? [...known.values()].sort((a, b) => a.user.localeCompare(b.user))
-        : null;
-      res.end(JSON.stringify({ accounts }));
     } else if (path === '/settings') {
       // The settings page is drawn in the browser from account.json (app.js); the server sends only the frame.
       const body = '<p id=notice role=status hidden></p><div id=settings aria-live=polite><p>Loading…</p></div>';

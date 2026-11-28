@@ -515,6 +515,28 @@ TinySesam's (the session ends), not the application's `forward_logout`.
   route under `/.tinysesam/`: there the application's host counts as an own origin (`_origin_ok`), and an XSS in the
   application could otherwise end sessions after a fresh step-up. Ending sessions, revoking programs and app passwords
   stay on the account page and its action pages, behind the existing audited and step-up-guarded routes.
+- **Fetch Metadata** (T-106): a request a browser marks as another site's (`Sec-Fetch-Site: cross-site` or
+  `same-site`) gets `403` `cross_site` before the session is looked at — a `<script>` or `<img>` of a foreign page
+  cannot even make the read happen. Every refusal names itself in `error`.
+- **Events and keys** (T-106): the own events carry time, event name and `by_admin`, never the address the account page
+  shows; the API keys carry name, kind and times, never the prefix.
+
+**Administration data** (`GET /.tinysesam/admin/accounts.json`, `auth.admin_overview`, T-106, spec §8b):
+
+- **Inside the application's area only.** Only on a host of `apps[id].hosts`, only with the panel on, only for a full
+  browser session of an administrator or of a delegate whose role names that application in `admin_delegates[role]
+  .apps` — read from the account row at the request, so a flag taken away counts at once. Anyone else signed in gets
+  the same `403` `forbidden`; an API key, an OAuth token, an app password or a half session `401`. There is no such
+  route on TinySesam's origin.
+- **The panel's list, no more:** a delegate sees only the accounts of its scopes (`PanelActions.visible`), an
+  administrator every account but service accounts. Never an email address, a hash, a secret, a key prefix, an address,
+  the admin or owner flag. Each account's `actions` are a convenience, not a right: the action page checks the rights
+  again and asks a confirmation for its one action. Hardening, configuration, the admin flag, deletion and the role
+  catalog are not reachable from an application at all.
+- **Reading asks no fresh confirmation** (the panel asks one at its door because it writes there); every write goes
+  over an action page that asks its own. Same CSRF and origin rules as `account.json` (GET only, no CORS, Fetch
+  Metadata, `no-store`); 60 reads per account and minute, a refusal writes `failed verification …
+  reason=ratelimit_admin_json`; reads are not audited.
 
 **Action pages** (`/auth/act/<name>`, T-105, spec §8c): an application on another origin changes an account only by
 sending the person there.

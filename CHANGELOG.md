@@ -49,6 +49,21 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- **Headless reading** (T-106, spec §8a, new §8b). `account.json` carries the account's own events (`events`: `at`,
+  `event`, `by_admin` — never an address), its API keys by name (`programs.api_keys`: name, kind, times — never the
+  prefix) and, for a person who administers accounts inside the application's area, `admin.accounts` (the path of the
+  administration data). Every refusal names itself in `error` (`signed_out`, `cross_site`, `not_found`,
+  `rate_limited`; the old members stay), and a request a browser marks as another site's (`Sec-Fetch-Site:
+  cross-site`/`same-site`) gets `403` before anything else (Fetch Metadata). New: the **administration data**
+  `GET /.tinysesam/admin/accounts.json` on an application's host (with the panel on) and `auth.admin_overview(user,
+  app_host)` (tier B) — the accounts an administrator or a delegate of the application's area (`admin_delegates[role]
+  .apps`) may administer, with id, names, source, roles, lock state, TOTP, the application's permissions and the
+  addresses of the administration action pages offered now. Hardening, configuration, the admin flag and the role
+  catalog stay instance-wide in the panel. The five clients do not normalise the new members yet (they drop them).
+  Example Ex4 draws its administration section from it — its own `/admin/accounts.json` and its permission
+  `docs.admin` are gone; the role `docs-admin` is now a delegate of the area — and shows the own events and keys;
+  `tests/test_headless_browser.py` X8 (a delegate, and neither panel nor full account page opened), new suite
+  `tests/test_headless_reading.py`.
 - `frame.icon` in `topbar.json` (T-151, spec §8d): the application's icon (`apps[id].icon`) in its app frame — a path
   as an absolute address on TinySesam's origin, a `data:image/…` address as it is, `null` without one. The shell
   component draws it before the application's name on the application's host (`tests/test_shell_browser.py` B4, Ex1);
@@ -309,6 +324,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- A confirmed address change asked for in an application's frame (an action page, the framed account page; T-152)
+  leads back to the frame's home instead of TinySesam's account page (T-106): a headless application never shows that
+  page. Without a frame nothing changes.
 - Example Ex3 is no longer a Python application (`examples/ex3/app.py` removed): M-2 asks each example to use only its
   client; the IdP role sync story now runs against the server (T-104).
 - CI: CodeQL runs in the sprint lane (T-139). A pull request into `sprint/<name>` runs the Python and JavaScript

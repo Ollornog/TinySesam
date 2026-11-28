@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 26/37 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 27/37 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/7 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 92/110 erledigt
@@ -121,7 +121,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-103](T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)** Stage S7 — shell on top and at the side: one component, layout top or side · M-2
 * ☑ **[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md)** Stage S8 — hybrid: TinySesam area with name and icon, library layout slot · M-2
 * ☑ **[T-105](T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md)** Stage S9 — headless writing: action pages with a way back · M-2
-* ☐ **[T-106](T-106-stage-s10-headless-reading-events-keys-admin-data-insid.md)** Stage S10 — headless reading: events, keys, admin data inside the application"s area · M-2
+* ☑ **[T-106](T-106-stage-s10-headless-reading-events-keys-admin-data-insid.md)** Stage S10 — headless reading: events, keys, admin data inside the application"s area · M-2
 * ☐ **[T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md)** Stage S11 — acceptance matrix in CI: examples x origins · M-2
 * ☐ **[T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md)** Stage S12 (optional) — fully headless library: register, reset password, setup status · M-2
 * ☐ **[T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md)** Stage S13 (optional) — SCIM stage 2 for IdP role sync · M-2

@@ -297,7 +297,7 @@ __all__ = ["TinySesam", "_now", "_wall_now", "_PREFIX_PLACEHOLDER", "_HSTS_RE", 
 #: is switched off never calls them and never loads its code. `tests/test_store_parts.py` pins index and modules.
 _PART_METHODS = {
     "account": (
-        "_allowlist_address", "_change_request_notice", "_checked_base",         "_csp_report_line", "_frame_app",         "_header_lines_error", "_own_session_rows",         "_request_change", "_send_signup_notice", "account_overview",         "change_username", "confirm_email_change", "public_base", "request_email_change", "require_public_base",
+        "_allowlist_address", "_change_request_notice", "_checked_base",         "_csp_report_line", "_frame_app",         "_header_lines_error", "_own_session_rows",         "_request_change", "_send_signup_notice", "account_overview", "admin_overview",         "change_username", "confirm_email_change", "public_base", "request_email_change", "require_public_base",
         "send_login_link",
     ),
     "apikeys": (

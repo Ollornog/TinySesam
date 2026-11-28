@@ -185,6 +185,74 @@ def execute(auth, request: Request, me, scopes, name: str, account: dict, form: 
     return True, None
 
 
+#: The administration actions in the order of the register — the members of `actions` per account in `overview`.
+NAMES = ("admin_totp_reset", "admin_lock", "admin_unlock", "admin_roles", "admin_key_revoke", "admin_program_revoke",
+         "admin_session_end", "admin_signin_link")
+
+
+def area_actor(auth, viewer, app: str):
+    """`(account, scopes)` of a person who administers accounts inside the area of application `app` (T-106) — scopes
+    None for an administrator, else only the delegate scopes whose role names `app` in `admin_delegates[role].apps`
+    (the area of `_routes_area._administers`) — or None. Only a full browser session (`_via == "session"`), read
+    from the account row at this moment."""
+    if not isinstance(viewer, dict) or viewer.get("_via") != "session" or not app:
+        return None
+    row = auth.store.get_user(viewer.get("id"))
+    if row is None or row["disabled"] or row["is_service"]:
+        return None
+    me = {**auth._as_dict(row), "_via": "session"}
+    if me["is_admin"]:
+        return me, None
+    delegates = getattr(auth.cfg, "admin_delegates", None) or {}
+    scopes = [s for s in (auth._delegate_scopes(me) or [])
+              if app in ((delegates.get(s[0]) or {}).get("apps") or [])]
+    return (me, scopes) if scopes else None
+
+
+def overview(auth, viewer, app_host: str, base: str) -> Optional[dict]:
+    """The administration data of the application whose `apps[id].hosts` name `app_host`, for `viewer` (T-106, spec
+    §8b) — None when the host belongs to no application or `viewer` administers nothing in its area (`area_actor`).
+
+    `accounts`: every account the person may administer — an administrator all but service accounts, a delegate the
+    accounts of its scopes (`PanelActions.visible`, the panel's list) — with `id` (text, the claim `ts_id`), `username`,
+    `display_name`, `source`, `roles`, `disabled`, `totp` (a confirmed authenticator app; None with TOTP off),
+    `permissions` (its permissions for this application) and `actions`: each administration action → the address of its
+    page (`/auth/act/<name>?app=<host>&target=<id>`), None where the person may not do it on this account now (the
+    page decides again on every request). `links.panel`: the panel, a link only. Reading only; the admin flag, the
+    owner, the role catalog, hardening and configuration are not part of it."""
+    from urllib.parse import quote
+    cfg = auth.cfg
+    app = auth._app_of_host(app_host)
+    if not app or not cfg.admin_enabled:
+        return None
+    who = area_actor(auth, viewer, app)
+    if who is None:
+        return None
+    me, scopes = who
+    pa = _panel(auth)
+    frame = auth._frame_of(app_host)
+    query = f"app={quote(frame['host'], safe='')}&" if frame else ""
+    sources = auth.store.account_sources()
+    accounts = []
+    for row in auth.store.list_users():
+        if row["is_service"] or (scopes is not None and not pa.visible(row, me, scopes)):
+            continue
+        uid = int(row["id"])
+        acts = {}
+        for name in NAMES:
+            account = account_for(auth, me, scopes, name, uid) if cfg.account_enabled else None
+            acts[name] = (f"{base}/auth/act/{name}?{query}target={uid}"
+                          if account is not None and offered(auth, me, scopes, name, account) else None)
+        accounts.append({"id": str(uid), "username": row["username"],
+                         "display_name": row["display_name"] or row["username"],
+                         "source": sources.get(uid, ["local"]), "roles": [str(r) for r in auth.user_roles(row)],
+                         "disabled": bool(row["disabled"]),
+                         "totp": bool(auth.store.has_confirmed_totp(uid)) if cfg.totp_enabled else None,
+                         "permissions": auth.permissions_of(row, app=app), "actions": acts})
+    panel = f"{base}{cfg.admin_path}" if cfg.admin_ui_enabled else None
+    return {"app": app, "accounts": accounts, "links": {"panel": panel}}
+
+
 def issue(auth, me, name: str, uid: int, ctx_args: dict) -> str:
     ticket = secrets.token_urlsafe(18)
     auth.store.put_flow(FLOW + ticket, {"actor": int(me["id"]), "name": name, "uid": int(uid), **ctx_args},

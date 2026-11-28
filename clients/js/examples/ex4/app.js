@@ -4,6 +4,9 @@
 // change is a link to one of TinySesam's action pages (section 8c) with `return` (this page) and `state` (a value
 // this page issued and keeps in sessionStorage). Back here, `ts_action`, `ts_result` and `state` say what happened —
 // a hint for a message, never a proof: the page reads account.json again. No password, code or key ever reaches it.
+// For a person who administers accounts in this application's area, account.json names TinySesam's administration
+// data (`admin.accounts`, spec section 8b, T-106): the page reads it the same way and draws its administration
+// section from it — every account with the links TinySesam offers for it.
 (() => {
   const TITLES = {
     username: 'User name',
@@ -28,8 +31,9 @@
     admin_session_end: 'End a session of an account',
     admin_signin_link: 'Sign-in link',
   };
-  // The administration actions (spec section 8c, scope admin): links to TinySesam's pages with the account id. The
-  // page asks for a confirmation of every single action; nothing of it passes through this page.
+  // The administration actions (spec section 8c, scope admin): links to TinySesam's pages, ready-made per account in
+  // the administration data. The page asks for a confirmation of every single action; nothing of it passes through
+  // this page.
   const ADMIN = [
     ['admin_lock', 'Lock'],
     ['admin_unlock', 'Unlock'],
@@ -170,6 +174,11 @@
     const keys = [];
     if (typeof progs.api_keys_active === 'number') {
       keys.push(row('api_keys', `API keys: ${progs.api_keys_active}`, a.api_keys, 'Manage'));
+      // T-106: the keys themselves — names and times only; the key is shown once on TinySesam's page, never here.
+      for (const [i, k] of (Array.isArray(progs.api_keys) ? progs.api_keys : []).entries()) {
+        const used = typeof k.last_used === 'number' ? `used ${when(k.last_used)}` : 'never used';
+        keys.push(row(`api_key-${i}`, `Key ${k.name || '—'} · ${k.kind} · ${used}`, null, ''));
+      }
     }
     if (Array.isArray(progs.app_passwords)) {
       keys.push(row('app_passwords', `App passwords: ${progs.app_passwords.length}`, a.app_passwords, 'Manage'));
@@ -181,28 +190,53 @@
       keys.push(row('services', `Services: ${progs.services.length}`, a.services, 'Manage'));
     }
     out.append(section('Programs and keys', keys));
+    // T-106: the account's own events — "was that me?" (TinySesam's event names, shown as text).
+    const events = Array.isArray(data.events) ? data.events : [];
+    const evs = events
+      .slice(0, 10)
+      .map(({ at, event, by_admin }, i) =>
+        row(`event-${i}`, `${when(at)} · ${event}${by_admin ? ' · by an administrator' : ''}`, null, ''),
+      );
+    if (!evs.length) {
+      evs.push(row('event-none', 'No events yet.', null, ''));
+    }
+    out.append(section('Recent activity', evs));
   }
 
-  /** The administration section: the accounts the application knows (its own data), each with the links to
-   * TinySesam's administration action pages — built from the address of an own action page (same origin, frame). */
-  function drawAdmin(data, accounts) {
-    const own = safe(data.actions?.sessions);
-    if (!own || !Array.isArray(accounts)) {
+  /** The administration section (T-106): TinySesam's administration data — every account this person may administer in
+   * this application's area, its state and the links of the administration action pages TinySesam offers for it
+   * (null: not offered now). Drawn only from that answer; the application keeps no list of its own. */
+  function drawAdmin(data) {
+    if (!Array.isArray(data?.accounts)) {
       return;
     }
     const rows = [];
-    for (const acc of accounts) {
+    for (const acc of data.accounts) {
+      if (!acc || typeof acc.id !== 'string' || typeof acc.username !== 'string') {
+        continue;
+      }
       const li = el('li', { id: `admin-${acc.id}` });
-      li.append(el('span', {}, `${acc.name} (${acc.user})`));
+      const roles = Array.isArray(acc.roles) && acc.roles.length ? acc.roles.join(', ') : 'no roles';
+      const state = acc.disabled === true ? ' · locked' : '';
+      li.append(
+        el(
+          'span',
+          { 'data-state': acc.disabled === true ? 'locked' : 'active' },
+          `${acc.display_name || acc.username} (${acc.username}) · ${roles}${state}`,
+        ),
+      );
+      const acts = acc.actions && typeof acc.actions === 'object' ? acc.actions : {};
       for (const [name, label] of ADMIN) {
-        const u = new URL(own, location.origin);
-        u.pathname = u.pathname.replace(/\/sessions$/, `/${name}`);
-        u.searchParams.set('target', acc.id);
-        li.append(el('a', { class: 'act', href: u.href, 'data-act': `${name}-${acc.user}` }, label));
+        const href = safe(acts[name]);
+        if (href) {
+          li.append(el('a', { class: 'act', href, 'data-act': `${name}-${acc.username}` }, label));
+        }
       }
       rows.push(li);
     }
-    document.getElementById('settings').append(section('Administration', rows));
+    const box = section('Administration', rows);
+    box.id = 'admin';
+    document.getElementById('settings').append(box);
   }
 
   /** Back from an action page: a message for a result this page asked for, and the address without the three. */
@@ -240,9 +274,13 @@
         return;
       }
       draw(data);
-      const adm = await fetch('/admin/accounts.json', { cache: 'no-store', credentials: 'same-origin' });
-      if (adm.ok) {
-        drawAdmin(data, (await adm.json()).accounts);
+      // Only for whom account.json names the administration data: nobody else asks (and gets a refusal).
+      const path = safe(data.admin?.accounts);
+      if (path?.startsWith('/.tinysesam/')) {
+        const adm = await fetch(path, { cache: 'no-store', credentials: 'same-origin' });
+        if (adm.ok) {
+          drawAdmin(await adm.json());
+        }
       }
       out.dataset.loaded = '1';
     } catch {

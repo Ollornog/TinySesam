@@ -129,11 +129,11 @@ for was, c, head in (("Bearer API key", anon, {"Authorization": f"Bearer {key}"}
     for path in ("/auth/account.json", "/.tinysesam/account.json"):
         r = c.get(path, headers={**head, "X-Forwarded-Host": APP})
         assert r.status_code == 401, (was, path, r.status_code, r.text[:200])
-        assert r.json() == {"authenticated": False, "signed_in": False}, (was, r.text)
+        assert r.json() == {"authenticated": False, "signed_in": False, "error": "signed_out"}, (was, r.text)
         assert r.headers["cache-control"] == "no-store", (was, dict(r.headers))
 assert anon.get("/auth/me", headers={"Authorization": f"Bearer {key}"}).status_code == 200, "probe: the key works"
 ok("A2: Bearer and X-Api-Key, OAuth access token, app password (Basic), half session, nothing → 401 "
-   "{authenticated: false, signed_in: false}, no-store — on both routes (probe: the key is valid for /auth/me)")
+   "{authenticated: false, signed_in: false, error: signed_out}, no-store — on both routes (probe: the key is valid for /auth/me)")
 
 # ══ A3: a locked account with a still valid cookie → 401; the function says None ═════════════════════════════
 locked = auth.create_user("lotte", password=PW)
@@ -209,7 +209,8 @@ auth_off, app_off = make(oauth_enabled=False, oauth_resources=[], totp_enabled=F
                          forward_apps={APP: {"name": "Example", "home": "/"}}, trusted_redirect_hosts=[APP])
 u = auth_off.create_user("otto", password=PW)
 j = client(auth_off, app_off, session(auth_off, u)).get("/auth/account.json").json()
-assert j["programs"] == {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None}, j
+assert j["programs"] == {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None,
+                         "api_keys": None}, j
 assert j["sign_in"]["totp"] is None and j["sign_in"]["passkeys"] is None and j["sign_in"]["pin"] is None, j
 assert j["approvals"] is None and j["links"]["devices"] is None and j["links"]["totp"] is None, j
 assert j["links"]["sessions"] == f"{BASE}/auth/account#sessions"
