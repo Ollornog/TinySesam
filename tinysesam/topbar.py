@@ -234,6 +234,21 @@ def logo(cfg, origin: str = "") -> str:
     return _MARK
 
 
+def icon_address(icon, base: str = "") -> str | None:
+    """`apps[id].icon` (T-104) as an address for a page on another origin (T-151, `topbar.json` `frame.icon`): a path
+    on TinySesam's origin with the origin of `base` in front (B-21: the shell draws on the application's page), a
+    `data:image/…` address unchanged, None for anything else. Without an origin in `base` the path stays a path."""
+    if not isinstance(icon, str):
+        return None
+    if icon.startswith("data:image/"):
+        return icon
+    if not icon.startswith("/") or icon.startswith("//"):
+        return None
+    from urllib.parse import urlsplit
+    parts = urlsplit(base or "")
+    return f"{parts.scheme}://{parts.netloc}{icon}" if parts.scheme and parts.netloc else icon
+
+
 def app_icon(icon, size: int = 26, cls: str = "tsbar-logo") -> str:
     """An application's icon (`apps[id].icon`, T-104, ADR-19) as an image on TinySesam's page — a path on TinySesam's
     own origin or a `data:image/…` address (what `config_check` lets through and the strict CSP's img-src allows);
@@ -295,9 +310,10 @@ def data(auth, viewer, *, base: str, host: str = "") -> dict:
     page on another host links back correctly. Without a viewer: no links, no menu links, no menu — like the bar.
 
     `frame` (T-103, always present): what the shell component needs on the application's `host` — `layout`
-    (`layout_for`), and for a host with an app frame (`forward_apps[host]`, T-91) its `name`, `home` and the `links`
-    `viewer` may see as addresses on that host (`home` and `links` only for a viewer, like `render_frame`); `name` and
-    `home` are None, `links` [] without one. In a frame `account` and `approvals` carry `app=<host>`, so TinySesam's
+    (`layout_for`), and for a host with an app frame (`forward_apps[host]`, T-91) its `name`, `icon` (T-151: the
+    application's `apps[id].icon`, a path as an address on the origin of `base`, a `data:image/…` address unchanged),
+    `home` and the `links` `viewer` may see as addresses on that host (`home` and `links` only for a viewer, like
+    `render_frame`); `name`, `icon` and `home` are None, `links` [] without one. In a frame `account` and `approvals` carry `app=<host>`, so TinySesam's
     pages open framed."""
     from urllib.parse import quote
     cfg = auth.cfg
@@ -305,8 +321,9 @@ def data(auth, viewer, *, base: str, host: str = "") -> dict:
     out: dict = {"brand": getattr(cfg, "gate_brand", "") or cfg.rp_name, "signed_in": bool(viewer), "name": None,
            "links": [], "menu_links": [], "account": {"shown": False, "href": None},
            "admin_panel": {"shown": False, "href": None}, "logout": None,
-           "frame": {"name": app_frame["name"] if app_frame else None, "home": None, "links": [],
-                     "layout": layout_for(auth, host)}}
+           "frame": {"name": app_frame["name"] if app_frame else None,
+                     "icon": icon_address(app_frame.get("icon"), base) if app_frame else None,
+                     "home": None, "links": [], "layout": layout_for(auth, host)}}
     if not viewer:
         return out
     q = "?app=" + quote(app_frame["host"], safe="") if app_frame else ""

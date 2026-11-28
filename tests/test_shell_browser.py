@@ -6,7 +6,8 @@
      difference by design being "Sign out" (a link instead of a form).
   B. Server (Go): example Ex1 as surface "shell on top" — the Go program behind a forward-auth proxy, the component from
      `/.tinysesam/shell.js` on the application's host with the frame of `forward_apps` and the permission links; on a
-     host without a frame the logo of a relative `brand_icon` loads from TinySesam's origin (B-21).
+     host without a frame the logo of a relative `brand_icon` loads from TinySesam's origin (B-21); in the frame the
+     application's icon (`frame.icon`, T-151) does too.
   C. The permission matrix of the panel (T-100): a dangerous permission asks for a step-up, an area administrator sees
      only the own area.
 
@@ -291,9 +292,12 @@ if GO:
                                             'cookie_domain = ".example.test"\nbrand_icon = "/brand/ex1.svg"')
             # B-21: a second host of the Go program without an app frame — there the shell draws the logo.
             .replace('trusted_redirect_hosts = ["app.example.test"]',
-                     'trusted_redirect_hosts = ["app.example.test", "plain.example.test"]'))
+                     'trusted_redirect_hosts = ["app.example.test", "plain.example.test"]')
+            # T-151: the application's icon in the frame — a path on TinySesam's origin, drawn by the shell.
+            .replace('[apps.ex1]\naccount = "svc-ex1"', '[apps.ex1]\nicon = "/brand/ex1.svg"\naccount = "svc-ex1"'))
     assert "example.com" not in toml and "cookie_domain" in toml and "plain.example.test" in toml, \
         "deploy/ex1/tinysesam.toml changed its shape"
+    assert 'icon = "/brand/ex1.svg"' in toml, "deploy/ex1/tinysesam.toml changed its shape ([apps.ex1])"
     with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
         fh.write(toml)
     _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
@@ -488,6 +492,17 @@ async def part_b(p: Page) -> None:
     await clean(p, "Ex1 on a host without a frame, with a relative brand_icon", console_before, failed_before)
     ok("B3 a relative brand_icon in the component's logo loads from TinySesam's origin; the Go page's CSP allows it, no "
        "broken request (B-21)")
+
+    # T-151: in the app frame the component draws the application's icon (`apps.ex1.icon`, `frame.icon` of
+    # topbar.json) before its name — a path on TinySesam's origin, loaded from there.
+    await p.go(EX1 + "/", drawn)
+    icon = f"{root}.querySelector('a.tsbar-back img.tsbar-logo')"
+    assert await p.js(f"{icon}.getAttribute('src')") == f"http://{AUTH_HOST}/brand/ex1.svg", \
+        await p.js(f"{root}.querySelector('header').innerHTML")
+    assert await p.js(f"{icon}.nextElementSibling.className") == "tsbar-app"
+    await p.until(f"{icon}.complete&&{icon}.naturalWidth>0", "the application's icon in the frame did not load")
+    await clean(p, "Ex1 in its frame with the application's icon", console_before, failed_before)
+    ok("B4 the application's icon in the frame (frame.icon): before the name, from TinySesam's origin, loaded (T-151)")
 
 
 # ══ C. The permission matrix of the panel (T-100) ════════════════════════════════════════════════════════════════

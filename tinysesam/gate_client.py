@@ -1210,10 +1210,12 @@ class TopbarApprovals:
 @dataclasses.dataclass(frozen=True, slots=True)
 class TopbarFrame:
     """The part `frame` of the top bar (spec §8d): what the shell draws on the application's host — `layout` (`"top"`
-    or `"side"`), the application's `name` in its app frame, `home` (the way back, only for a signed-in person) and the
-    frame's `links` the person may see. Without an app frame: the bar on top, nothing else."""
+    or `"side"`), the application's `name` and `icon` (an image address: http(s), a path or a `data:image/…`) in its
+    app frame, `home` (the way back, only for a signed-in person) and the frame's `links` the person may see. Without an
+    app frame: the bar on top, nothing else."""
     layout: str = "top"
     name: Optional[str] = None
+    icon: Optional[str] = None
     home: Optional[str] = None
     links: tuple[TopbarLink, ...] = ()
 
@@ -1242,7 +1244,8 @@ class Topbar:
                 "menu_links": [{"title": link.title, "href": link.href} for link in self.menu_links],
                 "account": self.account, "admin_panel": self.admin_panel, "logout": self.logout,
                 "approvals": approvals,
-                "frame": {"layout": self.frame.layout, "name": self.frame.name, "home": self.frame.home,
+                "frame": {"layout": self.frame.layout, "name": self.frame.name, "icon": self.frame.icon,
+                          "home": self.frame.home,
                           "links": [{"title": link.title, "href": link.href} for link in self.frame.links]}}
 
 
@@ -1287,10 +1290,25 @@ def _topbar_frame(raw: Any, *, signed_in: bool) -> TopbarFrame:
     if not isinstance(raw, dict):
         return TopbarFrame()
     layout = "side" if raw.get("layout") == "side" else "top"
+    name, icon = _text(raw.get("name")), _icon(raw.get("icon"))
     if not signed_in:
-        return TopbarFrame(layout=layout, name=_text(raw.get("name")))
-    return TopbarFrame(layout=layout, name=_text(raw.get("name")), home=_href(raw.get("home")),
+        return TopbarFrame(layout=layout, name=name, icon=icon)
+    return TopbarFrame(layout=layout, name=name, icon=icon, home=_href(raw.get("home")),
                        links=_topbar_links(raw.get("links")))
+
+
+#: `frame.icon` as a `data:` address (spec §8d): one of the image types `apps[id].icon` takes, then printable ASCII
+#: without a quote, `<`, `>` or a backslash.
+_DATA_ICON = re.compile(r"data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][\x21-\x7e]+")
+_ICON_REFUSED = frozenset("\"'<>\\")
+
+
+def _icon(value: Any) -> Optional[str]:
+    """`frame.icon`: an href of §8, or a `data:image/…` address of the five types; anything else None."""
+    if not isinstance(value, str):
+        return None
+    data = _DATA_ICON.fullmatch(value) is not None and not _ICON_REFUSED.intersection(value)
+    return value if _safe_href(value) or data else None
 
 
 def _count(value: Any) -> Optional[int]:

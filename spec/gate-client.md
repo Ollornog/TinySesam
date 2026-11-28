@@ -590,15 +590,20 @@ The member `frame` of the answer of §8 (always present; the clients normalize i
 |---|---|---|
 | `frame.layout` | `"top"` or `"side"` | `apps[id].layout` of the application whose `hosts` name this host, else `shell_layout` |
 | `frame.name` | string or null | the application's name in its app frame (`forward_apps[host]` with `home` or `links`), else `null` |
+| `frame.icon` | string or null | the application's icon in its app frame (`apps[id].icon`, T-151): a path as an absolute address on TinySesam's origin (the page that draws it lies on another), a `data:image/…` address as it is; `null` without an icon or an app frame |
 | `frame.home` | href or null | where "‹ name" leads back to — only for a signed-in person, like the bar of TinySesam's framed pages |
 | `frame.links` | list of `title`, `href` | the frame's links the person may see, as addresses on the application's host; `[]` signed out |
 
-The normalized `frame` is always an object `{"layout", "name", "home", "links"}`: `layout` is `"side"` when the
-answer says exactly `side`, otherwise `"top"`; `name` is text or `null`; `home` an `href` that passes the rule of §8 or
-`null`; `links` the `{title, href}` entries that pass the rule of the bar's links (anything that is no list counts as
-none). Signed out — the bar of §8 normalizes as signed out — `home` is `null` and `links` `[]` whatever the answer says;
-`layout` and `name` stay. A `frame` that is missing or no object reads as `{"layout": "top", "name": null, "home":
-null, "links": []}`, also for an answer that is no object.
+The normalized `frame` is always an object `{"layout", "name", "icon", "home", "links"}`: `layout` is `"side"` when the
+answer says exactly `side`, otherwise `"top"`; `name` is text or `null`; `icon` is kept when it passes the rule of §8
+or is a `data:image/` address of the type `png`, `gif`, `jpeg`, `webp` or `svg+xml` followed by `;` or `,` and at least
+one more character, all printable ASCII without `"`, `'`, `<`, `>` and `\` — anything else is `null`; `home` an `href`
+that passes the rule of §8 or `null`; `links` the `{title, href}` entries that pass the rule of the bar's links
+(anything that is no list counts as none). Signed out — the bar of §8 normalizes as signed out — `home` is `null` and
+`links` `[]` whatever the answer says; `layout`, `name` and `icon` stay. A `frame` that is missing or no object reads
+as `{"layout": "top", "name": null, "icon": null, "home": null, "links": []}`, also for an answer that is no object.
+Whoever draws the icon does so as an image (`<img src>`), never as markup; a page with a strict CSP names TinySesam's
+origin in its `img-src` for an icon given as a path (like the logo above).
 
 In an app frame `account.href` and `approvals.href` carry `app=<host>`, so TinySesam's pages open in that frame.
 `/auth/topbar.json?app=<host>` answers the same `frame` for a library; a host without an entry changes nothing in the

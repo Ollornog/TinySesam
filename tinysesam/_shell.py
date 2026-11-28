@@ -55,6 +55,10 @@ function t(k,v){var s=T[k]||k;for(var n in(v||{}))s=s.split('{'+n+'}').join(Stri
 // Spec §8: an absolute http(s) address or a path with exactly one leading slash, no white space or control character.
 function safe(h){return typeof h==='string'&&!/[\s\x00-\x1f\x7f]/.test(h)&&
   (/^https?:\/\/[^\/]/i.test(h)||(/^\/(?![\/\\])/.test(h)));}
+// T-151: the application's icon of the frame — an address of §8 or a data: image of the five types apps[id].icon takes.
+function img(h){return safe(h)||(typeof h==='string'&&/^data:image\/(png|gif|jpeg|webp|svg\+xml)[;,][\x21-\x7e]+$/.test(h)
+  &&!/["'<>\\]/.test(h))
+  ?'<img class="tsbar-logo" src="'+e(h)+'" alt="" width="26" height="26">':'';}
 function links(list){return(Array.isArray(list)?list:[]).filter(function(x){
   return x&&typeof x.title==='string'&&safe(x.href);});}
 function href(o){return o&&o.shown!==false&&safe(o.href)?o.href:'';}
@@ -68,7 +72,7 @@ function render(d,layout,current){
   var brand,navLinks,label;
   if(frame){
     var via=d.brand&&d.brand!==frame.name?'<span class="tsbar-via">'+e(t('bar.via',{name:d.brand}))+'</span>':'';
-    label='<span class="tsbar-app"><span>'+e(frame.name)+'</span>'+via+'</span>';
+    label=img(frame.icon)+'<span class="tsbar-app"><span>'+e(frame.name)+'</span>'+via+'</span>';
     if(d.signed_in!==true||!safe(frame.home))return head+'<div class="tsbar-brand">'+label+'</div></div></header>';
     brand='<a class="tsbar-brand tsbar-back" href="'+e(frame.home)+'" aria-label="'+e(t('bar.back',{name:frame.name}))+'">'
       +ICON.back+label+'</a>';

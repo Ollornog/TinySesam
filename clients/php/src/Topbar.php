@@ -37,12 +37,14 @@ final readonly class Topbar
         public ?array $approvals = null,
         /**
          * What the shell draws on the application's host (spec section 8d): `layout` ("top" or "side"), the
-         * application's `name` in its app frame, `home` (the way back) and the frame's `links` — the last two only
-         * signed in. Without an app frame: the bar on top, nothing else.
+         * application's `name` and `icon` (an image address: http(s), a path or a data:image/… — an image `src`,
+         * escaped) in its app frame, `home` (the way back) and the frame's `links` — the last two only signed in.
+         * Without an app frame: the bar on top, nothing else.
          *
-         * @var array{layout: string, name: ?string, home: ?string, links: list<array{title: string, href: string}>}
+         * @var array{layout: string, name: ?string, icon: ?string, home: ?string,
+         *     links: list<array{title: string, href: string}>}
          */
-        public array $frame = ['layout' => 'top', 'name' => null, 'home' => null, 'links' => []],
+        public array $frame = ['layout' => 'top', 'name' => null, 'icon' => null, 'home' => null, 'links' => []],
     ) {
     }
 
@@ -125,11 +127,12 @@ final readonly class Topbar
      * `frame` of spec section 8d: layout exactly "side" or else "top", name text or null; home and links only signed
      * in (a safe href, the safe {title, href} entries). Anything that is no object reads as no frame.
      *
-     * @return array{layout: string, name: ?string, home: ?string, links: list<array{title: string, href: string}>}
+     * @return array{layout: string, name: ?string, icon: ?string, home: ?string,
+     *     links: list<array{title: string, href: string}>}
      */
     private static function frame(mixed $raw, bool $signedIn): array
     {
-        $out = ['layout' => 'top', 'name' => null, 'home' => null, 'links' => []];
+        $out = ['layout' => 'top', 'name' => null, 'icon' => null, 'home' => null, 'links' => []];
         if (!$raw instanceof \stdClass) {
             return $out;
         }
@@ -138,6 +141,13 @@ final readonly class Topbar
         }
         $name = Strict::member($raw, 'name');
         $out['name'] = \is_string($name) ? $name : null;
+        // An href of spec section 8, or a data:image/ address of the five types apps[id].icon takes, followed by
+        // printable ASCII without a quote, < > or a backslash.
+        $icon = Strict::member($raw, 'icon');
+        $out['icon'] = \is_string($icon) && (self::isSafeHref($icon) || preg_match(
+            '~^data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][\x21-\x7e]+$~D',
+            $icon,
+        ) === 1 && strpbrk($icon, '"\'<>\\') === false) ? $icon : null;
         if ($signedIn) {
             $home = Strict::member($raw, 'home');
             $out['home'] = \is_string($home) && self::isSafeHref($home) ? $home : null;
@@ -220,7 +230,8 @@ final readonly class Topbar
      *     admin_panel: ?string,
      *     logout: ?string,
      *     approvals: ?array{pending: int, href: string},
-     *     frame: array{layout: string, name: ?string, home: ?string, links: list<array{title: string, href: string}>},
+     *     frame: array{layout: string, name: ?string, icon: ?string, home: ?string,
+     *         links: list<array{title: string, href: string}>},
      * }
      */
     public function toArray(): array
