@@ -49,6 +49,13 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   frame's home. `account_overview` and `account.json` gain the member `actions` (each own action → its page, or `null`
   where not offered). One register of the actions (`_actions.ACTIONS`) with scope and step-up class (`window`/`each`)
   for the administration to share. Spec §8c. `tests/test_action_pages.py`.
+- Example Ex4, surface "headless" (T-105, part 3, the acceptance): `deploy/ex4` and `clients/js/examples/ex4` — a
+  Node application behind the server whose settings page is a single-page app (`app.js`). It reads
+  `/.tinysesam/account.json` in the browser and changes nothing itself: every change is a link from `actions` (or
+  `sessions.items[].end`) with `return` and a `state` it issued and checks on the way back. Strict CSP with
+  `form-action 'none'`. `tests/test_headless_browser.py` runs the stack in Chrome at 375 and 1280 px, light and dark —
+  password, API key, one session and a connected program over their action pages and back, a forged `state` ignored,
+  and no secret in any request the application received, on its page or in its storage. CI runs it in the browser job.
 - The session handle (T-105, schema 29): every session carries an opaque random reference (table
   `session_handle`, given by a trigger, kept through a token rotation), worthless for signing in. `account_overview` and
   `account.json` name it per session (`sessions.items[].handle`) with `end`, the action page `session_end` that ends

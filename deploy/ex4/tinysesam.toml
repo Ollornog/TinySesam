@@ -1,0 +1,44 @@
+# Example Ex4 (T-105): the TinySesam server in front of a Node application (clients/js/examples/ex4), surface
+# "headless". Read by the gateway image through TINYSESAM_CONFIG (deploy/ex4/docker-compose.yml). Every key is a field
+# of TinySesamConfig (CONFIGURATION.md); secrets only as "env:NAME" or <field>_file. Hosts: replace auth.example.com and
+# app.example.com with yours (the compose file passes both to Caddy too).
+db_path = "/data/ex4.db"
+base_url = "https://auth.example.com"
+trusted_redirect_hosts = ["app.example.com"]
+trusted_proxies = ["172.31.0.0/16"]
+https_mode = "warn"                 # TLS ends at Caddy in front
+lang = "en"
+
+# Local accounts: password, authenticator app, API keys — every change on one of TinySesam's action pages.
+password_enabled = true
+totp_enabled = true
+apikey_enabled = true
+account_enabled = true
+admin_enabled = true
+available_roles = ["docs-reader"]
+
+# Connected programs (OAuth for an MCP client of the application): the settings page lists them, the action page
+# "programs" disconnects one.
+oauth_enabled = true
+oauth_resources = ["https://app.example.com/mcp"]
+
+# Forward auth for the application's host: the proxy asks TinySesam on every request, passes Remote-* on and
+# /.tinysesam/* (account.json, shell.css) to TinySesam.
+forward_auth_enabled = true
+
+# T-105, surface "headless": the application draws everything; TinySesam's action pages — and only they — stand in
+# this frame with the application's name and icon, and lead back to the address the application gives (`return`).
+[forward_apps."app.example.com"]
+name = "Documents"
+home = "/settings"
+links = [["Documents", "/"], ["Settings", "/settings"]]
+
+[apps.docs]
+name = { en = "Documents", de = "Dokumente" }
+hosts = ["app.example.com"]
+icon = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%2032%2032%27%3E%3Crect%20width%3D%2732%27%20height%3D%2732%27%20rx%3D%277%27%20fill%3D%27%232563eb%27%2F%3E%3Cpath%20d%3D%27M10%207h9l5%205v13H10z%27%20fill%3D%27%23fff%27%2F%3E%3Cpath%20d%3D%27M13%2016h8M13%2020h8%27%20stroke%3D%27%232563eb%27%20stroke-width%3D%272%27%2F%3E%3C%2Fsvg%3E"
+
+[[apps.docs.permissions]]
+name = "docs.read"
+label = { en = "Read documents", de = "Dokumente lesen" }
+suggested_roles = ["docs-reader"]

@@ -1505,7 +1505,7 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 | **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()`, Beispiel Ex1 |
 | **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | `layout="side"`, `shell_layout`, `apps[id].layout`, Beispiel Ex2 |
 | **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der TinySesam-Bereich `/auth/area?app=<id>` (T-104, unten), Beispiel Ex3 |
-| **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Aktionsseiten `/auth/act/<name>` (T-105, unten) und die Kontoübersicht; T-106 bringt die Leseseite |
+| **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Aktionsseiten `/auth/act/<name>` (T-105, unten) und die Kontoübersicht, Beispiel Ex4; T-106 bringt die Leseseite |
 
 ### Der TinySesam-Bereich (hybrid)
 
@@ -1610,6 +1610,12 @@ https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.ex
 Das Register der Aktionen teilt sich die Verwaltung: Jede Aktion trägt einen Bereich (`own`, später `admin`) und eine
 Step-up-Klasse (`window`: das Fenster einer frischen Bestätigung; `each`: eine Bestätigung je Aktion, für die folgenden
 Aktionen der Verwaltung).
+
+Beispiel Ex4, [`deploy/ex4`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex4/README.md), ist die Oberfläche
+im Ganzen: eine Node-Anwendung hinter dem Server, deren Einstellungsseite eine Single-Page-App ist — sie liest
+`account.json` im Browser und ändert Passwort, API-Key, eine Sitzung oder ein verbundenes Programm nur über die
+Aktionsseiten und zurück; `tests/test_headless_browser.py` fährt sie in Chrome bei 375 und 1280 px, hell und dunkel, und
+zeigt, dass kein Geheimnis die Anwendung erreicht.
 
 ### Die drei Herkünfte eines Kontos
 
@@ -3337,7 +3343,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**162 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**163 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
