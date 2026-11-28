@@ -434,8 +434,8 @@ the links lead to.
 A helper for it MUST:
 
 - treat anything but status `200` with a JSON object whose `signed_in` is `true` (the boolean) as signed out — in
-  particular `401` (`{"authenticated": false, "signed_in": false}`), `404` (a host the installation does not protect)
-  and `429` (60 reads per account and minute, with `Retry-After`);
+  particular `401` (`{"authenticated": false, "signed_in": false}`), `403` (another site's request, below), `404` (a
+  host the installation does not protect) and `429` (60 reads per account and minute, with `Retry-After`);
 - keep only `href`s that pass the rule of §8 (an absolute `http`/`https` URL or a path starting with exactly one `/`,
   without whitespace or control characters) and set every other one to `null`;
 - treat every name and string as text, never as markup — the answer carries no markup member;
@@ -457,7 +457,10 @@ The members (TinySesam's answer; `null` means "not offered by this installation"
 | `programs.services` | list or null | paired services: `name`, `created_at`, `last_used` |
 | `programs.app_passwords` | list or null | live app passwords: `name`, `created_at`, `last_used`, `expires_at` |
 | `programs.api_keys_active` | integer or null | number of active API keys |
+| `programs.api_keys` | list or null | the API keys `api_keys_active` counts (T-106; not revoked — an expired one shows by its `expires_at`): `name`, `kind` (`automation` or `human`), `created_at`, `last_used`, `expires_at` |
 | `approvals` | object or null | `pending` (integer) |
+| `admin` | object or null | on an application's host, for a person who administers accounts inside its area (§8b): `accounts` (the path of the administration data, `/.tinysesam/admin/accounts.json`); `null` for anyone else and on any other host |
+| `events` | list | the account's own events of the account page (T-106), newest first, at most 20: `at` (time), `event` (TinySesam's event name, text — an application shows it or its own word for it, and keeps an unknown one as text), `by_admin` (boolean: another person caused it) |
 | `permissions` | object or null | on an application's host (§3.4): `app` (string, the application id) and `names` (list of strings); `null` on any other host |
 | `links` | object | `account`, `sessions`, `totp`, `passkeys`, `devices`, `app_passwords`, `services`, `approvals`: each an `href` or `null` |
 | `actions` | object | the own action pages of §8c (T-105): `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — each an `href` or `null` (not offered to this account) |
@@ -466,6 +469,17 @@ Every entry of `sessions.items` also carries `handle` (the session handle: an op
 or its hash; text, an application must not read a format into it) and `end` (the action page that ends exactly that
 session, `null` for the session of the request). Both, and `actions`, are normalized since T-148; a client before it
 dropped them like members it does not know.
+
+`programs.api_keys`, `events` and `admin` (T-106) are members of TinySesam's answer; the normalized result of a helper does
+not carry them yet — a client drops them like members it does not know, and an application that shows them reads the
+answer itself (example Ex4 does so in the browser).
+
+**Refusals** (T-106). Every answer but a `200` carries `error`, a text for programs (the person sees the
+application's own words): `signed_out` (`401`, also with `authenticated` and `signed_in` `false`), `cross_site`
+(`403`), `not_found` (`404`), `rate_limited` (`429`, with `Retry-After`; `detail` stays). **Fetch Metadata**: a
+request a browser marks as another site's (`Sec-Fetch-Site: cross-site` or `same-site`) gets `403` `cross_site`
+before anything else is looked at — the page of the application's own host sends `same-origin`, a typed address
+`none`, a server-side fetch none of them. There is no CORS header either way.
 
 Times are Unix seconds (integer) or `null` (never used). `device` is a coarse "browser · system" taken from the
 User-Agent, or `null`; `current` is `true` for the session of this request, `false` for the others, `null` when the
@@ -496,6 +510,47 @@ The normalized result of a helper (`vectors/account.json` shows it):
   - `sign_in.password` is kept as text — a value besides the three of the table is for the application to ignore;
   - `account.source` is a list of texts or `null`: an entry that is no string is dropped, a value that is no list reads
     as `null`, an unknown text is kept for the application to ignore.
+
+## 8b. Administration data (optional)
+
+An application that draws its own administration page ([T-106](../backlog/T-106-stage-s10-headless-reading-events-keys-admin-data-insid.md))
+reads the accounts it may show from `/.tinysesam/admin/accounts.json` on its own host (the member `admin.accounts`
+of §8a names it exactly for the people who may read it, so a page asks only then) — like §8a, same-origin in the
+browser, with the browser's cookies; there is no route for it on TinySesam's origin — and links every change to an
+administration action page (§8c). Like §8a it is an optional helper and reading only. The panel stays as it is and
+stays a link; nothing is switched off.
+
+- **Where and for whom.** Only on a host of an application of `apps` (its `hosts`), only with the panel switched on
+  (`admin_enabled`), only for a full browser session of a person who administers accounts inside this application's
+  area: an administrator, or a delegate (`admin_delegates`) whose role names the application in `apps`. A delegate of
+  another area and any other signed-in person get `403` `forbidden` — one answer for all of them. The other refusals
+  are those of §8a (`401` `signed_out` — also for an API key, an OAuth token, an app password or a half session —,
+  `403` `cross_site`, `404` `not_found` on a host the installation does not protect, `429` `rate_limited`: 60 reads
+  per account and minute); `no-store` and `Vary: Cookie`. Reading asks no fresh confirmation: every action page asks
+  one for its action.
+- **What it answers.** `app` (the application id), `links.panel` (the panel, an `href` or `null` without its pages)
+  and `accounts`: every account the person may administer — an administrator every account but service accounts, a
+  delegate the accounts of its scopes, the list of the panel — each with:
+
+| Member | Type | Meaning |
+|---|---|---|
+| `id` | string | the account id: the claim `ts_id` and the header `Remote-Id` |
+| `username`, `display_name` | string | as in §8a |
+| `source` | list of strings | as `account.source` in §8a |
+| `roles` | list of strings | the account's roles |
+| `disabled` | boolean | the account is locked |
+| `totp` | boolean or null | a confirmed authenticator app; `null` with TOTP off |
+| `permissions` | list of strings | the account's permissions for this application (§3.4) |
+| `actions` | object | each administration action of §8c (`admin_totp_reset`, `admin_lock`, `admin_unlock`, `admin_roles`, `admin_key_revoke`, `admin_program_revoke`, `admin_session_end`, `admin_signin_link`) → the address of its page for this account (with `app=<host>` and `target=<id>`; the application adds `return` and `state`), or `null` where the person may not do it on this account now |
+
+- **Limits.** An `href` in `actions` is a convenience, not a right: the page checks the person's rights again on
+  every request and asks a confirmation for that one action. The admin flag, the owner, deletion, the role catalog,
+  hardening and the configuration are not part of the answer and never reachable from an application — they stay
+  instance-wide, in the panel. The answer never carries a hash, a secret, a key prefix, an address or an email
+  address.
+- **Clients.** The five clients do not normalize this answer yet; the application reads it like any JSON and keeps
+  the rules of §8a for it: only `href`s that pass the rule of §8, every string as text, unknown members ignored, a
+  member of the wrong type read as missing, no caching across sessions.
 
 ## 8c. Action pages (optional)
 
@@ -550,13 +605,14 @@ GET <actions.password>&return=<url>&state=<opaque>        (?return=… when the 
   THAT action on the page (password, TOTP code or PIN — a fresh confirmation window is not enough) and acts with the
   rights of the person at the moment of the confirmation; anything the person may not do, or that does not apply to
   the account, gives "not offered". A sign-in link is shown on the page only. The admin flag, owner, deletion and the
-  role catalog are not offered here.
+  role catalog are not offered here. Since T-106 the addresses come ready-made per account from `actions` of the
+  administration data (§8b).
 
 ## 8d. Shell component (optional)
 
 An application that shows TinySesam's bar instead of drawing its own loads the shell component
 ([T-103](../backlog/T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)) — no client code at all, the
-browser does everything. Section 8b is kept for the administrator's data of milestone M-2.
+browser does everything.
 
 ```html
 <head>

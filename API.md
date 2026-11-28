@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 235
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 420 · B 350 names.
+**Status:** A 421 · B 351 names.
 
 ## A · Methods of `TinySesam`
 
@@ -447,6 +447,10 @@ Path 2: one-time token. As long as no admin exists, there is a token that can be
 ### `admin_exists() -> 'bool'`
 
 Is there at least one admin? The two bootstrap paths apply only while there is not.
+
+### `admin_overview(user, app_host: 'str', *, base: 'Optional[str]' = None) -> 'Optional[dict]'`
+
+The administration data of an application for a person who administers accounts inside its area (T-106, spec §8b) — what `GET /.tinysesam/admin/accounts.json` answers on the application's host, for an application that draws its own administration page and links every change to an administration action page (T-147).
 
 ### `after_response(resp, task, on_overflow=None)`
 
@@ -1143,6 +1147,7 @@ What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the appli
 | Method | Path | Query / form parameters |
 |---|---|---|
 | GET | `/.tinysesam/account.json` | — |
+| GET | `/.tinysesam/admin/accounts.json` | — |
 | GET | `/.tinysesam/after-logout` | — |
 | GET | `/.tinysesam/callback` | `query:code` |
 | GET | `/.tinysesam/logout` | `query:next`, `query:scope` |
@@ -1373,4 +1378,4 @@ The shipped fail2ban filters in `deploy/fail2ban/` are held against exactly thes
 
 ---
 
-144 methods, 3 properties, 10 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.
+145 methods, 3 properties, 10 constants, 7 methods of `TinySesamConfig`, 11 exports, of which 6 error types, 18 names on the result types `LoginResult`, `PasswordChangeResult` — generated from the docstrings and `tests/api_surface.json`.

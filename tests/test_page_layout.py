@@ -190,6 +190,19 @@ assert "tsframe" not in address_change("").text, "an address-change link without
 assert "tsframe" not in address_change("?app=nosuchapp").text, "an unknown frame travelled in the token"
 
 
+def confirmed(query):
+    """T-106: where the confirmed address change leads — the frame's home when asked for in a frame."""
+    page = address_change(query)
+    form = re.search(r"<form method=post action='([^']+)'", page.text).group(1)
+    c = client(capp)
+    c.get("/auth/login")
+    return c.post(form, data={"_csrf": c.cookies.get(cauth.csrf_cookie_name)}).headers.get("location")
+
+
+assert confirmed("?app=docs") == f"https://{APP_HOST}/", "the framed confirmation does not lead back to the app"
+assert confirmed("") == "/auth/account", "an unframed confirmation leaves the account page"
+
+
 def registration(query):
     c = client(capp)
     c.get("/auth/register" + query)

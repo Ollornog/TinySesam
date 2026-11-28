@@ -22,7 +22,8 @@ one file, `tinysesam.toml` (`TINYSESAM_CONFIG`, T-97).
    names).
 2. `docker compose up --build -d`, then claim the first administrator with the one-time token the server wrote:
    `docker compose exec tinysesam cat /data/ex4.db.claim` and open `https://<auth host>/auth/claim-admin`.
-3. In the panel: create accounts with the role `docs-reader` and give that role `docs.read` (*Accounts → Permissions*).
+3. In the panel: create accounts with the role `docs-reader` and give that role `docs.read` (*Accounts → Permissions*);
+   a team lead who administers them inside the application gets the role `docs-admin`.
 4. Open `https://<app host>/settings`: TinySesam asks you to sign in, then the application shows your settings. Every
    *Change*, *Manage* or *End* opens TinySesam's action page in the application's frame; *Back to Documents* (or
    *Done — back to Documents*) returns to the settings, which say what happened and read the state again.
@@ -41,12 +42,17 @@ one file, `tinysesam.toml` (`TINYSESAM_CONFIG`, T-97).
 - **Every own action** (T-149): user name, address (offered once a mailer is configured, `smtp_host`), password, PIN,
   authenticator app with recovery codes, passkeys, API keys, app passwords for this host, services (pairing code),
   sessions and connected programs — each on its action page and back. `tests/test_headless_browser.py` drives every one.
-- **Administration** (T-147): a holder of the application's permission `docs.admin` (role `docs-admin`) sees an
-  *Administration* section — the accounts the application has seen through forward auth (its own list, served by
-  `/admin/accounts.json`), each with links to TinySesam's administration action pages: lock, unlock, roles, reset the
-  authenticator app, revoke a key, disconnect a program, end a session, a sign-in link. TinySesam names the account,
-  asks for the administrator's password (or code) for that one action, and decides who may act; the sign-in link is
-  shown on its page only. Give the role `docs-admin` the permission `docs.admin` and an administrator the role.
+- **Administration** (T-147, T-106): a person who administers accounts inside the application's area — an
+  administrator, or a holder of the delegate role `docs-admin` (`[admin_delegates.docs-admin]`: the accounts with
+  `docs-reader`, area `docs`) — sees an *Administration* section. `account.json` names TinySesam's administration data
+  for exactly these people (`admin.accounts`); the page reads `/.tinysesam/admin/accounts.json` in the browser, like
+  `account.json`, and draws every account with the links TinySesam offers for it: lock, unlock, roles, reset the
+  authenticator app, revoke a key, disconnect a program, end a session, a sign-in link (a delegate gets lock, unlock,
+  roles and the sign-in link). The application keeps no list of accounts and serves no data of its own. TinySesam
+  names the account, asks for the administrator's password (or code) for that one action, and decides who may act;
+  the sign-in link is shown on its page only. Give an administrator nothing more, a delegate the role `docs-admin`.
+- **Own events and keys** (T-106): the settings page lists the account's recent events ("was that me?") and its API
+  keys by name, from `account.json`.
 - The pages carry a strict CSP with a fresh nonce (`connect-src 'self'`, `form-action 'none'`: the application posts no
   form at all) and colour themselves only with TinySesam's `--ts-*` tokens (`/.tinysesam/shell.css`).
 

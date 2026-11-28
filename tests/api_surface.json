@@ -96,6 +96,11 @@
       "sig": "() -> 'bool'",
       "tier": "B"
     },
+    "admin_overview": {
+      "server": "GET /.tinysesam/admin/accounts.json",
+      "sig": "(user, app_host: 'str', *, base: 'Optional[str]' = None) -> 'Optional[dict]'",
+      "tier": "B"
+    },
     "admin_router": {
       "server": "library: mounting TinySesam into an application's FastAPI app; the server mounts itself",
       "sig": "()",
@@ -2534,6 +2539,10 @@
       "tier": "B"
     },
     "GET /.tinysesam/account.json": {
+      "keys": [],
+      "tier": "A"
+    },
+    "GET /.tinysesam/admin/accounts.json": {
       "keys": [],
       "tier": "A"
     },

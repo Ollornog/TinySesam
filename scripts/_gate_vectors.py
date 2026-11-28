@@ -1124,6 +1124,10 @@ class AccountProbe:
 ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
 SIGNED_OUT_ACCOUNT = {"signed_in": False, "account": None, "sign_in": None, "sessions": None, "programs": None,
                       "approvals": None, "permissions": None, "links": None, "actions": None}
+#: Members of the server's answer the normalized result does not carry (yet, T-106): a client drops them like members it
+#: does not know — `events` and `admin` at the top, `api_keys` inside `programs`.
+ACCOUNT_NOT_NORMALIZED = ("events", "admin")
+ACCOUNT_PROGRAMS_NOT_NORMALIZED = ("api_keys",)
 #: The own action pages of spec §8c, the members of `actions` (T-105, normalized since T-148): each an href or None.
 ACCOUNT_ACTIONS = ("username", "email", "password", "pin", "totp", "recovery_codes", "passkeys", "api_keys",
                    "app_passwords", "sessions", "programs", "services")
@@ -1137,9 +1141,17 @@ def account_vectors(ap: AccountProbe) -> list:
         out.append({"id": vid, "attack": attack, "reason": reason, "input": {"account": data},
                     "expected": {"ok": True, "account": want}})
 
-    full = ap.answer()
+    def normalized(answer: dict) -> dict:
+        """The answer without the members a client does not normalize (T-106)."""
+        out = {k: copy.deepcopy(v) for k, v in answer.items() if k not in ACCOUNT_NOT_NORMALIZED}
+        out["programs"] = {k: v for k, v in out["programs"].items() if k not in ACCOUNT_PROGRAMS_NOT_NORMALIZED}
+        return out
+
+    raw = ap.answer()
     # The server's answer has exactly the members this file knows: a new member needs a decision here (and in §8a).
-    assert sorted(full) == sorted(SIGNED_OUT_ACCOUNT), sorted(full)
+    assert sorted(raw) == sorted([*SIGNED_OUT_ACCOUNT, *ACCOUNT_NOT_NORMALIZED]), sorted(raw)
+    assert "api_keys" in raw["programs"] and isinstance(raw["events"], list) and raw["events"], raw
+    full = normalized(raw)
     assert sorted(full["actions"]) == sorted(ACCOUNT_ACTIONS), sorted(full["actions"])
     assert all(v is None or v.startswith(f"{ISSUER}/auth/act/") for v in full["actions"].values()), full["actions"]
     assert sorted(full["links"]) == sorted(ACCOUNT_LINKS), sorted(full["links"])
@@ -1150,16 +1162,19 @@ def account_vectors(ap: AccountProbe) -> list:
     assert all(e["handle"] and e["end"] == f"{ISSUER}/auth/act/session_end?target={e['handle']}" for e in s), s
     assert full["account"]["source"] == ["local"], full["account"]
     assert [p["name"] for p in full["programs"]["app_passwords"]] == ["Phone calendar"], full["programs"]
-    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type).
+    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type) — without the
+    # members no client normalizes yet (T-106: `events`, `admin`, `programs.api_keys`), which it drops.
     add("signed-in", "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API "
-        "key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included.",
-        copy.deepcopy(full), copy.deepcopy(full))
-    less = ap.answer(totp_enabled=False, pin_enabled=False, passkey_enabled=False, apikey_enabled=False,
-                     approvals_enabled=False, account_enabled=False)
+        "key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included; "
+        "`events`, `admin` and `programs.api_keys` (T-106) are dropped.",
+        copy.deepcopy(raw), copy.deepcopy(full))
+    less_raw = ap.answer(totp_enabled=False, pin_enabled=False, passkey_enabled=False, apikey_enabled=False,
+                         approvals_enabled=False, account_enabled=False)
+    less = normalized(less_raw)
     assert less["sign_in"]["totp"] is None and less["links"]["account"] is None, less
     assert set(less["actions"].values()) == {None} and {e["end"] for e in less["sessions"]["items"]} == {None}, less
     add("offered-less", "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` "
-        "means not offered here — every action page and every session's `end` included.", less, copy.deepcopy(less))
+        "means not offered here — every action page and every session's `end` included.", less_raw, copy.deepcopy(less))
     add("signed-out-401", "The body of the 401 answer: signed out.", {"authenticated": False, "signed_in": False},
         SIGNED_OUT_ACCOUNT)
     add("signed-in-string", "`signed_in` as a string is no `true`: signed out.", dict(full, signed_in="true"),

@@ -1505,7 +1505,7 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 | **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()`, Beispiel Ex1 |
 | **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | `layout="side"`, `shell_layout`, `apps[id].layout`, Beispiel Ex2 |
 | **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der TinySesam-Bereich `/auth/area?app=<id>` (T-104, unten), Beispiel Ex3 |
-| **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Aktionsseiten `/auth/act/<name>` (T-105, unten) und die Kontoübersicht, Beispiel Ex4; T-106 bringt die Leseseite |
+| **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Aktionsseiten `/auth/act/<name>` (T-105, unten), die Kontoübersicht und die Verwaltungsdaten (T-106, unten), Beispiel Ex4 |
 
 ### Der TinySesam-Bereich (hybrid)
 
@@ -1622,15 +1622,32 @@ des Panels mit den Rechten der Person in diesem Moment: ein Administrator (es gi
 delegierter Admin für `admin_lock`, `admin_unlock`, `admin_roles` und `admin_signin_link` an einem Konto in seinem
 Bereich. Alles andere ist „nicht angeboten“. Das Audit bekommt die Zeilen des Panels und dazu
 `admin_action act=<name> uid=<id> amr=<Methode> app=<Host>`; eine gescheiterte Bestätigung schreibt
-`admin_action_denied`. Die Anwendung kennt die Konto-Ids aus ihrer eigenen Liste (Claim `ts_id` oder Konten-API);
-TinySesam entscheidet, wer handeln darf. Nicht hier: Admin-Recht, Owner, Löschen, Rollenkatalog — sie bleiben im Panel;
-Passkey oder Provider als Bestätigung einer Aktion gibt es noch nicht.
+`admin_action_denied`. Die Adressen kommen fertig je Konto aus den Verwaltungsdaten unten; TinySesam entscheidet, wer
+handeln darf. Nicht hier: Admin-Recht, Owner, Löschen, Rollenkatalog — sie bleiben im Panel; Passkey oder Provider als
+Bestätigung einer Aktion gibt es noch nicht.
+
+**Lesen** (T-106, Spezifikation §8a/§8b). `account.json` trägt auch die eigenen Ereignisse des Kontos (`events`: Zeit,
+Ereignisname, `by_admin` — nie eine Adresse) und seine API-Keys mit Namen (`programs.api_keys`: Name, Art, Zeiten — nie
+das Präfix oder den Key). Jede Ablehnung nennt sich in `error` (`signed_out`, `cross_site`, `not_found`,
+`rate_limited`), und eine Anfrage, die der Browser als die einer anderen Site kennzeichnet (`Sec-Fetch-Site:
+cross-site` oder `same-site`), wird vor allem anderen mit `403` abgelehnt. Eine Person, die Konten im Bereich der
+Anwendung verwaltet — ein Administrator oder ein Delegierter, dessen Rolle die Anwendung in
+`admin_delegates[role].apps` nennt —, liest die **Verwaltungsdaten** unter `/.tinysesam/admin/accounts.json` auf dem
+Host der Anwendung (`account.json` nennt sie in `admin.accounts` genau für diese Personen; Bibliothek:
+`auth.admin_overview(user, app_host)`): jedes Konto, das die Person verwalten darf, mit Id, Namen, Herkunft, Rollen,
+Sperrstand, TOTP, den Berechtigungen der Anwendung und je Verwaltungsaktion der Adresse ihrer Seite oder `null`, wo sie
+gerade nicht angeboten wird. Nur auf dem Host einer Anwendung, nur mit eingeschaltetem Panel, nur für eine volle
+Browser-Sitzung, 60 Abrufe pro Minute; das Lesen verlangt keine frische Bestätigung (jede Aktionsseite verlangt ihre
+eigene). Härtung, Konfiguration, Admin-Recht und Rollenkatalog gehören nie dazu — sie bleiben instanzweit im Panel, das
+ein Link bleibt.
 
 Beispiel Ex4, [`deploy/ex4`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex4/README.md), ist die Oberfläche
 im Ganzen: eine Node-Anwendung hinter dem Server, deren Einstellungsseite eine Single-Page-App ist — sie liest
 `account.json` im Browser und ändert Passwort, API-Key, eine Sitzung oder ein verbundenes Programm nur über die
-Aktionsseiten und zurück; `tests/test_headless_browser.py` fährt sie in Chrome bei 375 und 1280 px, hell und dunkel, und
-zeigt, dass kein Geheimnis die Anwendung erreicht.
+Aktionsseiten und zurück; ihr Verwaltungsabschnitt entsteht aus den Verwaltungsdaten, für einen Administrator und für
+einen Delegierten des Bereichs der Anwendung (Rolle `docs-admin`); `tests/test_headless_browser.py` fährt sie in Chrome
+bei 375 und 1280 px, hell und dunkel, und zeigt, dass kein Geheimnis die Anwendung erreicht und weder das Panel noch die
+volle Kontoseite je geöffnet wird.
 
 ### Die drei Herkünfte eines Kontos
 
@@ -3283,6 +3300,9 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   [Look & Feel](#look--feel).
 - **Der Sicherheitsstand auf der eigenen Einstellungsseite:** `account_overview` (was die Kontoseite zeigt, als Daten;
   dieselbe Antwort wie `/auth/account.json`) — siehe [Zwei Einsatzarten von TinySesam](#zwei-einsatzarten-von-tinysesam).
+- **Die Verwaltungsdaten einer Anwendung:** `admin_overview` (die Konten, die eine Person im Bereich der Anwendung
+  verwalten darf, mit den Adressen der Verwaltungs-Aktionsseiten; dieselbe Antwort wie
+  `/.tinysesam/admin/accounts.json`) — siehe [Aktionsseiten (headless)](#aktionsseiten-headless).
 - **Der Gate-Client für Apps ohne FastAPI:** `tinysesam.gate_client` — jeder Name im eigenen Abschnitt,
   [Gate-Client für Flask, Django und andere Python-Apps](#gate-client-für-flask-django-und-andere-python-apps-t-86).
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
@@ -3364,7 +3384,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**164 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**165 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

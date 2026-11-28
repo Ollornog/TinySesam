@@ -36,6 +36,13 @@ oauth_service_clients = true
 # /.tinysesam/* (account.json, shell.css) to TinySesam.
 forward_auth_enabled = true
 
+# T-106: the administrators of the application's area — an administrator, or a holder of the delegate role docs-admin,
+# which manages the accounts holding docs-reader inside the area of the application docs. The application's own
+# administration page reads /.tinysesam/admin/accounts.json; the panel stays where it is, a link.
+[admin_delegates.docs-admin]
+roles = ["docs-reader"]
+apps = ["docs"]
+
 # T-105, surface "headless": the application draws everything; TinySesam's action pages — and only they — stand in
 # this frame with the application's name and icon, and lead back to the address the application gives (`return`).
 [forward_apps."app.example.com"]
@@ -54,8 +61,3 @@ icon = "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2F
 name = "docs.read"
 label = { en = "Read documents", de = "Dokumente lesen" }
 suggested_roles = ["docs-reader"]
-
-[[apps.docs.permissions]]
-name = "docs.admin"
-label = { en = "Administer accounts", de = "Konten verwalten" }
-suggested_roles = ["docs-admin"]

@@ -1470,7 +1470,7 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 | **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()`, example Ex1 |
 | **Shell at the side** | the same component as a side bar | as above | `layout="side"`, `shell_layout`, `apps[id].layout`, example Ex2 |
 | **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the TinySesam area `/auth/area?app=<id>` (T-104, below), example Ex3 |
-| **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the action pages `/auth/act/<name>` (T-105, below) and the account overview, example Ex4; T-106 adds the reading side |
+| **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the action pages `/auth/act/<name>` (T-105, below), the account overview and the administration data (T-106, below), example Ex4 |
 
 ### The TinySesam area (hybrid)
 
@@ -1582,15 +1582,30 @@ page; an open confirmation window is not enough (class `each`). Then the panel's
 rights at that moment: an administrator (the owner model applies), or a delegated admin for `admin_lock`,
 `admin_unlock`, `admin_roles` and `admin_signin_link` on an account in scope. Anything else is "not offered". The audit
 gets the panel's lines plus `admin_action act=<name> uid=<id> amr=<method> app=<host>`; a failed confirmation writes
-`admin_action_denied`. The application knows the account ids from its own list (the claim `ts_id`, or the account API);
-TinySesam decides who may act. Not here: the admin flag, owner, deletion, the role catalog — they stay in the panel; a
-passkey or provider as the confirmation of an action is not offered yet.
+`admin_action_denied`. The addresses come ready-made per account from the administration data below; TinySesam
+decides who may act. Not here: the admin flag, owner, deletion, the role catalog — they stay in the panel; a passkey or
+provider as the confirmation of an action is not offered yet.
+
+**Reading** (T-106, spec §8a/§8b). `account.json` also carries the account's own events (`events`: time, event name,
+`by_admin` — never an address) and its API keys by name (`programs.api_keys`: name, kind, times — never the prefix or
+the key). Every refusal names itself in `error` (`signed_out`, `cross_site`, `not_found`, `rate_limited`), and a
+request a browser marks as another site's (`Sec-Fetch-Site: cross-site` or `same-site`) is refused with `403` before
+anything else. A person who administers accounts inside the application's area — an administrator, or a delegate whose
+role names the application in `admin_delegates[role].apps` — reads the **administration data** at
+`/.tinysesam/admin/accounts.json` on the application's host (`account.json` names it in `admin.accounts` exactly for
+them; library: `auth.admin_overview(user, app_host)`): every account the person may administer, with id, names,
+source, roles, lock state, TOTP, the application's permissions and, per administration action, the address of its page
+or `null` where not offered now. Only on an application's host, only with the panel on, only for a full browser session,
+60 reads a minute; reading asks no fresh confirmation (every action page asks its own). Hardening, configuration, the
+admin flag and the role catalog are never part of it — they stay instance-wide in the panel, which stays a link.
 
 Example Ex4, [`deploy/ex4`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex4/README.md), is the surface as a
 whole: a Node application behind the server whose settings page is a single-page app — it reads `account.json` in the
 browser and changes the password, an API key, one session or a connected program only over the action pages and back;
-`tests/test_headless_browser.py` drives it in Chrome at 375 and 1280 px, light and dark, and shows that no secret
-reaches the application.
+its administration section is drawn from the administration data, for an administrator and for a delegate of the
+application's area (role `docs-admin`); `tests/test_headless_browser.py` drives it in Chrome at 375 and 1280 px, light
+and dark, shows that no secret reaches the application and that neither the panel nor the full account page is ever
+opened.
 
 ### The three origins of an account
 
@@ -3203,6 +3218,9 @@ Building blocks for pages you build yourself — signatures and descriptions in
   account, for an interface not drawn in Python) — see [Look & feel](#look--feel).
 - **The security state on your own settings page:** `account_overview` (what the account page shows, as data; the
   same answer as `/auth/account.json`) — see [Two ways to use TinySesam](#two-ways-to-use-tinysesam).
+- **The administration data of an application:** `admin_overview` (the accounts a person may administer inside the
+  application's area, with the addresses of the administration action pages; the same answer as
+  `/.tinysesam/admin/accounts.json`) — see [Action pages (headless)](#action-pages-headless).
 - **The gate client for apps without FastAPI:** `tinysesam.gate_client` — every name in its own section,
   [Gate client for Flask, Django and other Python apps](#gate-client-for-flask-django-and-other-python-apps-t-86).
 - **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
@@ -3280,7 +3298,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**164 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**165 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

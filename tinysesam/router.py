@@ -1344,12 +1344,19 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/email/{token}")
         def email_confirm(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
+            # T-106: the frame the change was asked for in (T-152) — read before the token is used up.
+            peeked = auth.peek_magic(token, purpose="email_change") or {}
+            framed = auth._frame_of((peeked.get("payload") or {}).get("frame"))
             result = auth.confirm_email_change(token, auth.client_ip(request))
             if result is None:
                 auth._token_rejected("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             if result == "taken":
                 return auth.render_page("magic_invalid", request=request, status=409)
+            # Asked for in an application's frame (an action page, the framed account page): back to the
+            # application's home, not to TinySesam's full account page — a headless application never shows it.
+            if framed and framed.get("home"):
+                return RedirectResponse(framed["home"], 303)
             destination = auth.browser_path(request, "/auth/account" if cfg.account_enabled else cfg.login_redirect)
             return RedirectResponse(destination, 303)
 
@@ -1547,29 +1554,9 @@ def build_router(auth) -> APIRouter:
     def shell_css(request: Request):
         return _shell.asset(auth, request, "css")
 
-    # ---------- The own account as data (T-91) ----------
-    def _account_json(viewer, request: Request, app_host: str = ""):
-        """The account page's state for the account of this request's FULL browser session — an API key, an OAuth
-        token, an app password or a half session is "not signed in" (401). No parameter chooses an account. Like the
-        bar: `no-store` + `Vary: Cookie`, no CORS header (another origin's page cannot read it), read only. 60 reads
-        per account and minute (`_ACCOUNT_JSON_PER_MINUTE`); a refusal is a `failed verification` line, never a
-        `failed login` (the fail2ban jail stays quiet). Reading is not audited — the own data, and every change goes
-        through the audited routes of the account page."""
-        headers = {"Cache-Control": "no-store", "Vary": "Cookie"}
-        if not viewer:
-            return JSONResponse({"authenticated": False, "signed_in": False}, 401, headers=headers)
-        if not auth.rl.allow(f"account_json:{int(viewer['id'])}", auth._ACCOUNT_JSON_PER_MINUTE, 60):
-            auth._rejected(viewer["username"], auth.client_ip(request), "ratelimit_account_json", login=False)
-            return JSONResponse({"detail": auth.t("api.too_many")}, 429, headers={**headers, "Retry-After": "60"})
-        base = (security.normalize_base(str(cfg.base_url or "").strip()) or "").rstrip("/") or auth._prefix(request)
-        view = auth.account_overview(viewer, base=base, app_host=app_host or None, request=request)
-        if view is None:
-            return JSONResponse({"authenticated": False, "signed_in": False}, 401, headers=headers)
-        return JSONResponse({"signed_in": True, **view}, headers=headers)
-
-    @r.get("/auth/account.json")
-    def account_json(request: Request):
-        return _account_json(auth.session_user(request), request)
+    # ---------- The own account and the administration data as JSON (T-91, T-106: `_routes_data`) ----------
+    from ._routes_data import add_routes as _add_routes_data
+    _account_json, _admin_json = _add_routes_data(r, auth, cfg)
 
     # ---------- OIDC (only if enabled) ----------
     if auth.oidc:
@@ -1897,7 +1884,7 @@ def build_router(auth) -> APIRouter:
     if cfg.forward_auth_enabled:
         from ._routes_forward import add_routes as _add_routes_forward
         _add_routes_forward(r, auth, cfg, _account_json=_account_json, _provider_logout_url=_provider_logout_url,
-                            _topbar_json=_topbar_json)
+                            _topbar_json=_topbar_json, _admin_json=_admin_json)
     return r
 
 

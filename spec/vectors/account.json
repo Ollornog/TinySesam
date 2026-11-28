@@ -12,7 +12,7 @@
     {
       "id": "signed-in",
       "attack": null,
-      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included.",
+      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included; `events`, `admin` and `programs.api_keys` (T-106) are dropped.",
       "input": {
         "account": {
           "signed_in": true,
@@ -76,12 +76,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -92,6 +108,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -259,10 +276,18 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": null
+            "api_keys_active": null,
+            "api_keys": null
           },
           "approvals": null,
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": null,
             "sessions": null,
@@ -273,6 +298,7 @@
             "services": null,
             "approvals": null
           },
+          "admin": null,
           "actions": {
             "username": null,
             "email": null,

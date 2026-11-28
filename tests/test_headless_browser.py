@@ -22,9 +22,15 @@ suite can show that no secret ever reached it.
      the address (the link in the mail confirms it), the PIN, the authenticator app (set up from the page and back to
      it), recovery codes, an app password, a service's pairing code (both shown once in TinySesam's dialog) and a
      passkey (a virtual authenticator).
-  X6 administration (T-147): an administrator with the application's permission docs.admin drives every admin action
-     on another account from the application's own links — roles, authenticator reset, key, program, one session, a
-     sign-in link shown once, lock, unlock — each confirmed with the password on TinySesam's page, back with done.
+  X6 administration (T-147, T-106): an administrator sees the application's administration section, drawn from
+     TinySesam's administration data (/.tinysesam/admin/accounts.json, named by account.json), and drives every admin
+     action on another account from its links — roles, authenticator reset, key, program, one session, a sign-in link
+     shown once, lock, unlock — each confirmed with the password on TinySesam's page, back with done.
+  X8 a delegate of the application's area (role docs-admin, T-106) sees only the accounts of its scope with only the
+     links TinySesam offers it (lock, unlock, roles, sign-in link), locks and unlocks one; the section reads the state
+     again. A reader sees no administration section and never asks for the data. Neither the panel nor the full
+     account page is ever opened (T-106 acceptance): the proxy saw no request for them.
+  X1/X3 also show the account's own events and its API keys by name, from account.json (T-106).
 
 Skipped without Chrome, `websockets`, `uvicorn` or the extra [passkey] (Ex4 offers passkeys); needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
@@ -72,8 +78,13 @@ class RecordingProxy(ForwardProxy):
     """The proxy of `_browser_stack`, keeping every request it hands to the application (target, headers, body)."""
 
     seen: list = []
+    auth_seen: list = []
 
     async def _upstream(self, port, method, target, headers, body):  # type: ignore[override]
+        if port == self.ts_port:
+            # The browser's kind of request: `navigate` for a page it opens, `cors`/`same-origin` for a script's fetch.
+            mode = next((v for k, v in headers if k.lower() == "sec-fetch-mode"), "")
+            self.auth_seen.append((mode, target))
         if port == self.app_port:
             self.seen.append(f"{method} {target}\n" + "\n".join(f"{k}: {v}" for k, v in headers) + "\n"
                              + body.decode("latin-1"))
@@ -218,9 +229,14 @@ async def part_own(p: Page) -> None:
         await p.js("window.__old=true;document.querySelector('form[method=post] button').click();true")
         await p.until("window.__old===undefined&&document.readyState==='complete'", "the confirmation did not load")
     assert auth.store.get_user(LOU)["email"] == "lou@example.test", "the new address is not confirmed"
+    # T-106: the confirmation leads back to the application — the frame's home, an https address on the application's
+    # host without this test's port, which the browser cannot reach here; the address it went to tells.
+    history = await p.cmd("Page.getNavigationHistory")
+    went = history["entries"][history["currentIndex"]]["url"]
+    assert went == "https://app.example.test/settings", f"the confirmation led to {went}"
     await p.go(EX4 + "/settings", SETTINGS)
     ok("X7 the address: requested on its action page and back with done; the link in the mail opens in the "
-       "application's frame (T-152) and confirms it")
+       "application's frame (T-152), confirms it and leads back to the application (T-106)")
 
     await own_action(p, "pin", "document.getElementById('pin_new').value='482913';"
                      "document.querySelector('[data-act=setpin]').click()",
@@ -303,9 +319,8 @@ async def admin_action(p: Page, name: str, *, roles: tuple = (), check=None) -> 
 
 
 async def part_admin(p: Page) -> None:
-    ada = int(auth.create_user("ada", password=PW, roles=["docs-admin"]))
+    ada = int(auth.create_user("ada", password=PW))
     auth.store.set_admin(ada, True)
-    auth.grant_permission("docs-admin", "docs.admin", app="docs", by="test")
     auth.store.set_totp(LOU, "JBSWY3DPEHPK3PXP", confirmed=True)
     now = int(time.time())
     auth.store.oauth_create_grant("probe-code-admin", "probe-cli", LOU, "https://app.example.test/mcp", "mcp", now,
@@ -320,6 +335,7 @@ async def part_admin(p: Page) -> None:
     await p.until("window.__old===undefined&&document.readyState==='complete'", "ada's sign-in did not finish")
     await on_settings(p)
     assert await p.js(f"!!document.getElementById('admin-{LOU}')"), "no administration row for lou"
+    assert await p.js(f"!!document.getElementById('admin-{ada}')"), "the administrator's list lacks an account"
     assert await p.js("document.querySelectorAll('input[type=password],form').length") == 0, "a form in the app"
     user = lambda: auth.store.get_user(LOU)  # noqa: E731
     await admin_action(p, "admin_roles", roles=("docs-admin",),
@@ -345,7 +361,53 @@ async def part_admin(p: Page) -> None:
                              "admin_session_end", "admin_signin_link", "admin_lock", "admin_unlock")]
     ok("X6 administration: an administrator drives every admin action on another account from the application's "
        "own links — roles, authenticator reset, key, program, one session, a sign-in link shown once, lock, unlock — "
-       "each confirmed with the password on TinySesam's page and back with done; audited in that order")
+       "each confirmed with the password on TinySesam's page and back with done; audited in that order; the section "
+       "drawn from TinySesam's administration data")
+
+
+async def part_delegate(p: Page) -> None:
+    """X8: a delegate of the application's area — only its scope, only the links TinySesam offers it."""
+    dora = int(auth.create_user("dora", password=PW, roles=["docs-admin"]))
+    max_ = int(auth.create_user("max", password=PW, roles=["docs-reader"]))
+    await p.go("about:blank")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.go(EX4 + "/settings", "!!document.querySelector('input[name=username]')")
+    await p.js("document.querySelector('input[name=username]').value='dora';"
+               f"document.querySelector('input[name=password]').value={json.dumps(PW)};"
+               "window.__old=true;document.querySelector('input[name=password]').form.requestSubmit();true")
+    await p.until("window.__old===undefined&&document.readyState==='complete'", "dora's sign-in did not finish")
+    await on_settings(p)
+    rows = json.loads(await p.js("JSON.stringify([...document.querySelectorAll('#admin li')].map(li=>li.id))"))
+    assert rows == [f"admin-{max_}"], f"the delegate's section lists {rows}"
+    links = json.loads(await p.js(f"JSON.stringify([...document.querySelectorAll('#admin-{max_} a.act')]"
+                                  ".map(a=>a.dataset.act))"))
+    assert links == ["admin_lock-max", "admin_roles-max", "admin_signin_link-max"], links
+    await to_action(p, "admin_lock-max", "/auth/act/admin_lock")
+    await p.js(f"document.querySelector('#actform input[name=password]').value={json.dumps(PW)};"
+               "window.__old=true;document.getElementById('act_confirm').click();true")
+    await p.until("window.__old===undefined&&document.readyState==='complete'&&!!document.getElementById('ts_back')"
+                  "&&document.getElementById('ts_back').dataset.state==='done'", "the delegate's lock was not done")
+    assert auth.store.get_user(max_)["disabled"] == 2
+    await back_with(p, "done", "admin_lock")
+    assert await p.js(f"document.querySelector('#admin-{max_} span').dataset.state") == "locked", "state not read again"
+    assert await p.js(f"!!document.querySelector('#admin-{max_} a[data-act=admin_unlock-max]')"), "no unlock link"
+    await admin_action_named(p, "admin_unlock", "max", check=lambda: not auth.store.get_user(max_)["disabled"])
+    assert await p.js(f"document.querySelector('#admin-{max_} span').dataset.state") == "active"
+    assert dora not in (int(x) for x in json.loads(await p.js(
+        "JSON.stringify([...document.querySelectorAll('#admin li')].map(li=>li.id.slice(6)))")))
+    ok("X8 a delegate of the application's area: only the account of its scope, only lock, roles and sign-in link "
+       "offered; locks it on TinySesam's page and back — the section reads the state again (locked, unlock offered) "
+       "— and unlocks it")
+
+
+async def admin_action_named(p: Page, name: str, who: str, *, check) -> None:
+    await to_action(p, f"{name}-{who}", f"/auth/act/{name}")
+    await p.js(f"document.querySelector('#actform input[name=password]').value={json.dumps(PW)};"
+               "window.__old=true;document.getElementById('act_confirm').click();true")
+    await p.until("window.__old===undefined&&document.readyState==='complete'&&!!document.getElementById('ts_back')"
+                  "&&document.getElementById('ts_back').dataset.state==='done'", f"{name} was not done")
+    assert check(), f"{name}: no effect"
+    await back_with(p, "done", name)
 
 
 async def part_x(p: Page) -> None:
@@ -363,6 +425,8 @@ async def part_x(p: Page) -> None:
     await on_settings(p)
     assert await p.js("document.querySelectorAll('input[type=password],form').length") == 0, "a form in the app"
     assert await p.js("document.querySelector('#row-username span').textContent") == "User name: lou"
+    assert await p.js("!document.getElementById('admin')"), "a reader sees an administration section"
+    assert "login" in await p.js("document.querySelector('#row-event-0 span').textContent"), "no own events"
     await clean(p, "Ex4 settings after the sign-in", console_before, failed_before)
     ok("X1 the local account signs in on TinySesam's page and lands on the application's settings page, drawn in the "
        "browser from account.json; no password field and no form in the application")
@@ -435,7 +499,11 @@ async def part_x(p: Page) -> None:
                   "the key dialog did not close")
     await back_with(p, "done", "api_keys")
     assert await p.js("document.querySelector('#row-api_keys span').textContent") == "API keys: 1"
-    ok("X3 an API key: created and shown once in TinySesam's dialog, back with done; the settings count it")
+    assert (await p.js("document.querySelector('#row-api_key-0 span').textContent")).startswith("Key ci · automation")
+    assert any(e["event"] == "apikey_create" for e in json.loads(await p.js(
+        "fetch('/.tinysesam/account.json').then(r=>r.json()).then(j=>JSON.stringify(j.events))"))), "no event"
+    ok("X3 an API key: created and shown once in TinySesam's dialog, back with done; the settings count it and name it "
+       "(T-106), the own events list its creation")
 
     auth.start_session(LOU, "password", ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0")
     await p.go(EX4 + "/settings", SETTINGS)
@@ -485,6 +553,20 @@ async def part_x(p: Page) -> None:
     # X6 ─ administration (T-147): an administrator drives every admin action on lou from the application and back.
     await part_admin(p)
     await clean(p, "Ex4 after the administration", console_before, failed_before)
+
+    # X8 ─ a delegate of the application's area (T-106).
+    await part_delegate(p)
+    await clean(p, "Ex4 after the delegate", console_before, failed_before)
+    # Opened = a page the browser navigated to. (A program's revocation on its action page is a script's POST whose
+    # redirect the fetch follows to /auth/account without showing it — no page is opened.)
+    opened = [t for m, t in proxy.auth_seen if m == "navigate" and (t.split("?")[0] == "/auth/account"
+                                                                   or t.startswith(("/auth/admin", "/auth/area")))]
+    assert not opened, f"the panel or the full account page was opened: {opened[:3]}"
+    assert sum(m == "navigate" for m, _ in proxy.auth_seen) > 20, "the proxy saw no page views (probe)"
+    assert any(t == "/.tinysesam/admin/accounts.json" for _, t in proxy.auth_seen), "the admin data was never read"
+    views = sum(m == "navigate" for m, _ in proxy.auth_seen)
+    ok(f"X8 headless: of the {views} page views on TinySesam's origin none opened the panel, the area or the full "
+       "account page; the administration section read /.tinysesam/admin/accounts.json")
 
     # X5 ─ no secret in the application.
     assert proxy.seen, "the proxy saw no request to the application"

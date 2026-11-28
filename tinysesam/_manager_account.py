@@ -365,8 +365,13 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     passwords are off), `totp` ({enabled, recovery_left, recovery_low} or None), `passkeys` ({count, items} or None),
     `pin` (bool or None); `sessions` ({count, items: created_at, last_seen, method, device, current, handle, end — the
     session handle and the action page that ends this session, T-105, None for the current one}); `programs` —
-    `oauth`, `services`, `app_passwords` (lists of {name, created_at, last_used}, None when the feature is off) and
-    `api_keys_active` (a number, None when keys are off); `approvals` ({pending} or None); `permissions` ({app, names}:
+    `oauth`, `services`, `app_passwords` (lists of {name, created_at, last_used}, None when the feature is off),
+    `api_keys_active` (a number, None when keys are off) and `api_keys` (T-106: the keys it counts — not revoked, an
+    expired one shows by `expires_at` — {name, kind, created_at, last_used, expires_at}, None when keys are off); `approvals` ({pending} or None); `events` (T-106: the
+    account page's own events, {at, event, by_admin}, newest first, at most 20); `admin` (T-106: {accounts: the path of
+    the administration data on the application's host} for a person who administers accounts inside the area of the
+    application of `app_host` — `user` from a browser session, `_via` "session" —, None for anyone else, without
+    `app_host` or without the panel); `permissions` ({app, names}:
     the account's permissions for the application whose `apps[id].hosts` name `app_host`, T-101 — None for any other
     host or without one); `links` (the account page
     and its sections, absolute); `actions` (T-105: each own action of the register — `username`, `email`, `password`,
@@ -432,6 +437,13 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
                           "expires_at": p["expires_at"]}
                          for p in self.list_app_passwords(uid) if not p["revoked"] and not p["expired"]]
     keys = self.store.count_active_api_keys(uid) if cfg.apikey_enabled else None
+    # T-106: the keys behind `api_keys_active` (not revoked; an expired one shows by its `expires_at`) — name, kind and
+    # times, never the prefix, the hash or the key.
+    api_keys = None
+    if cfg.apikey_enabled:
+        api_keys = [{"name": k["name"], "kind": k["kind"], "created_at": k["created_at"], "last_used": k["last_used"],
+                     "expires_at": k["expires_at"]}
+                    for k in self.list_api_keys(uid) if not k["revoked"]]
     pending = self._approvals_pending(row)
     account = f"{base}/auth/account{q}"
     links = {"account": account if cfg.account_enabled else None}
@@ -451,14 +463,48 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
             "sign_in": {"password": password, "totp": totp, "passkeys": passkeys, "pin": pin},
             "sessions": {"count": len(sessions), "items": sessions},
             "programs": {"oauth": oauth, "services": services, "app_passwords": app_passwords,
-                         "api_keys_active": keys},
+                         "api_keys_active": keys, "api_keys": api_keys},
             "approvals": {"pending": pending} if pending is not None else None,
             "permissions": permissions,
+            # T-106: the own events of the account page (H-7) — time, event and whether another person caused it;
+            # never the address the page shows (the answer carries none).
+            "events": [{"at": e["ts"], "event": e["event"], "by_admin": bool(e["by_admin"])}
+                       for e in self.own_events(uid)],
             "links": links}
+    # T-106: where the application's own administration page reads its data — only for a person who administers
+    # accounts inside this application's area (an administrator, or a delegate of it), by browser session.
+    admin = None
+    if app and cfg.admin_enabled:
+        from . import _admin_actions
+        if _admin_actions.area_actor(self, user, app) is not None:
+            admin = {"accounts": "/.tinysesam/admin/accounts.json"}
+    view["admin"] = admin
     # T-105: the action pages, where an application sends a person to change something.
     from . import _actions
     view["actions"] = _actions.links(self, view, base, q)
     return view
+
+
+def admin_overview(self, user, app_host: str, *, base: Optional[str] = None) -> Optional[dict]:
+    """The administration data of an application for a person who administers accounts inside its area (T-106, spec
+    §8b) — what `GET /.tinysesam/admin/accounts.json` answers on the application's host, for an application that
+    draws its own administration page and links every change to an administration action page (T-147).
+
+    `user`: the person's account dict from a FULL browser session (`_via == "session"`; `session_user`); `app_host`:
+    a host of `apps[id].hosts`. None — the route answers 403 — when the host belongs to no application, the panel is
+    off (`admin_enabled`), or the person is neither an administrator nor a delegate whose role names this application
+    in `admin_delegates[role].apps`. `base` goes in front of the links (default: `base_url`).
+
+    Members: `app` (the application id), `accounts` (each account the person may administer — an administrator every
+    account but service accounts, a delegate those of its scopes, as in the panel's list — with `id` (text, the claim
+    `ts_id`), `username`, `display_name`, `source`, `roles`, `disabled`, `totp` (bool, None with TOTP off),
+    `permissions` (for this application) and `actions` (each administration action → the address of its page, None
+    where not offered now)), `links.panel` (the panel, None without its UI). Reading only: the admin flag, the owner,
+    the role catalog, hardening and configuration are never part of it and never set by a link."""
+    if base is None:
+        base = (security.normalize_base(str(self.cfg.base_url or "").strip()) or "").rstrip("/")
+    from . import _admin_actions
+    return _admin_actions.overview(self, user, app_host, base)
 
 
 def _header_lines_error(self, exc) -> None:

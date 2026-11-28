@@ -20,7 +20,7 @@ def _q(s: str) -> str:
     return quote(s or "/", safe="/")
 
 
-def add_routes(r, auth, cfg, *, _account_json, _provider_logout_url, _topbar_json) -> None:
+def add_routes(r, auth, cfg, *, _account_json, _provider_logout_url, _topbar_json, _admin_json) -> None:
     """The routes of this building block on the router `r`."""
     from fastapi.responses import Response
 
@@ -356,9 +356,29 @@ def add_routes(r, auth, cfg, *, _account_json, _provider_logout_url, _topbar_jso
         same-origin by the application's page, the session via the own cookie or this host's connection (T-26).
         The links carry `app=<host>` when the host has an app frame. Read only — no writing route under
         `/.tinysesam/`, where the application's host counts as an own origin."""
-        host = _gate_host_or_404(request)
+        host = auth._gate_host(request)
+        if not host:
+            return _not_protected()
         s = auth._gate_session(request, host)
         return _account_json(auth._account_of_session(s) if s else None, request, host)
+
+    def _not_protected():
+        """The data routes on a host the installation does not protect: 404 with `error` (spec §8a)."""
+        return JSONResponse({"detail": auth.t("api.not_found"), "error": "not_found"}, 404,
+                            headers={"Cache-Control": "no-store"})
+
+    if cfg.admin_enabled:
+        @r.get("/.tinysesam/admin/accounts.json")
+        def gate_admin_accounts_json(request: Request):
+            """The administration data of the application on THIS host (T-106, spec §8b): the accounts a person who
+            administers inside the application's area may administer, each with the addresses of the
+            administration action pages (T-147). Only on an application's host, only for its administrators and the
+            delegates of its area; read only, like `account.json`."""
+            host = auth._gate_host(request)
+            if not host:
+                return _not_protected()
+            s = auth._gate_session(request, host)
+            return _admin_json(auth._account_of_session(s) if s else None, request, host)
 
     @r.get("/.tinysesam/after-logout", response_class=HTMLResponse)
     def gate_after_logout(request: Request):
