@@ -245,8 +245,8 @@ GIT = ["git", "-c", "user.name=probe", "-c", "user.email=probe@example.com", "-c
        "-c", "init.defaultBranch=main"]
 
 
-def classify(base_ref, changed):
-    """Answer of `classify` for a pull request into <base_ref> that writes <changed> (path → text)."""
+def classify(base_ref, changed, workflow="tests"):
+    """Answer of `classify` in <workflow> for a pull request into <base_ref> that writes <changed> (path → text)."""
     with tempfile.TemporaryDirectory() as d:
         env = {"PATH": os.environ["PATH"], "HOME": d, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
                "LC_ALL": "C"}
@@ -256,11 +256,12 @@ def classify(base_ref, changed):
 
         git("init", "-q")
         os.makedirs(os.path.join(d, "scripts"))
-        shutil.copy(ROOT / "scripts/_nur_text.sh", os.path.join(d, "scripts/_nur_text.sh"))
-        with open(os.path.join(d, "README.md"), "w", encoding="utf-8") as f:
-            f.write("# probe\n")
-        with open(os.path.join(d, "app.py"), "w", encoding="utf-8") as f:
-            f.write("print(1)\n")
+        for script in ("_nur_text.sh", "_client_scope.sh"):
+            shutil.copy(ROOT / "scripts" / script, os.path.join(d, "scripts", script))
+        for path in ("README.md", "app.py", *changed):
+            os.makedirs(os.path.dirname(os.path.join(d, path)), exist_ok=True)
+            with open(os.path.join(d, path), "w", encoding="utf-8") as f:
+                f.write("# probe\n")
         git("add", "-A")
         git("commit", "-q", "-m", "base")
         git("switch", "-q", "-c", "feature")
@@ -275,7 +276,7 @@ def classify(base_ref, changed):
         run = subprocess.run(["bash", "-c", classify_script], cwd=d, capture_output=True, text=True, timeout=60,
                              env=env | {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request",
                                         "GITHUB_BASE_REF": base_ref, "GITHUB_SHA": git("rev-parse", "HEAD"),
-                                        "GITHUB_OUTPUT": out})
+                                        "GITHUB_OUTPUT": out, "WORKFLOW": workflow})
         assert run.returncode == 0, f"classify failed: {run.stdout}{run.stderr}"
         with open(out, encoding="utf-8") as f:
             return f.read().strip(), run.stdout
@@ -290,5 +291,43 @@ assert answer == "nur_text=ja", f"PR into main with text only: {answer!r} {log!r
 answer, log = classify("sprint/a/b", {"app.py": "print(2)\n"})
 assert answer == "", f"not a sprint branch (two slashes) must run the full suite: {answer!r} {log!r}"
 print("  classify: sprint PR → fast lane, PR into main with code → full suite, text only → fast lane")
+
+# Sprint lane, T-150: a sprint PR that changes a gate client or spec/ runs that client's jobs (the closing PR of S7 was
+# red at the clients' HTTP tests because every client job had skipped). The workflow's name reaches the script through
+# the step's env `WORKFLOW: ${{ github.workflow }}`. (Mutation probes: `classify` without the scope check, a client
+# dropped from scripts/_client_scope.sh, spec/ dropped from a pattern → each red.)
+assert "WORKFLOW: ${{ github.workflow }}" in classify_ci, "classify: the workflow's name must reach _client_scope.sh"
+CLIENTS = ["client-go", "client-js", "client-php", "client-rust"]
+for wf in CLIENTS:
+    name = re.search(r"^name: (\S+)\s*$", texts[wf + ".yml"], re.M).group(1)
+    assert name == wf, f"{wf}.yml: `name: {name}` — scripts/_client_scope.sh knows the client by the workflow's name"
+    folder = wf.removeprefix("client-")
+    for path in (f"clients/{folder}/probe.txt", "spec/vectors/probe.json", f".github/workflows/{wf}.yml"):
+        answer, log = classify("sprint/2026-11-28-probe", {path: "x\n"}, wf)
+        assert answer == "" and "SPRINT LANE" in log and "tests run" in log, \
+            f"{wf}: a sprint PR changing {path} must run the client's jobs: {answer!r} {log!r}"
+    for other in CLIENTS:
+        if other != wf:
+            answer, log = classify("sprint/2026-11-28-probe", {f"clients/{other.removeprefix('client-')}/x.txt": "x\n"}, wf)
+            assert answer == "nur_text=ja", f"{wf}: a sprint PR changing only {other} must skip: {answer!r} {log!r}"
+    answer, log = classify("sprint/2026-11-28-probe", {"app.py": "print(2)\n"}, wf)
+    assert answer == "nur_text=ja", f"{wf}: a sprint PR without a client change must skip: {answer!r} {log!r}"
+for wf in ("tests", "audit", "release"):
+    answer, log = classify("sprint/2026-11-28-probe", {"spec/vectors/probe.json": "x\n"}, wf)
+    assert answer == "nur_text=ja", f"{wf}: no gate client — the sprint lane stays fast: {answer!r} {log!r}"
+answer, log = classify("sprint/2026-11-28-probe", {"clients/go/go.mod": "x\n"}, "")
+assert answer == "nur_text=ja", f"an empty workflow name names no client: {answer!r} {log!r}"
+# Every scope step of a client job asks the same script with its own name (no second copy of the pattern).
+scope_steps = 0
+for wf in CLIENTS:
+    for step in re.split(r"\n      - ", texts[wf + ".yml"]):
+        if "id: scope" in step:
+            scope_steps += 1
+            code = without_comments(step)
+            assert f"scripts/_client_scope.sh {wf};" in code and "grep" not in code, \
+                f"{wf}: the scope step must ask scripts/_client_scope.sh {wf}"
+assert scope_steps == 5, f"{scope_steps} scope steps in the client workflows, expected 5 (php has two jobs) — adjust guard"
+print(f"  classify (T-150): a sprint PR changing a client, spec/ or the workflow runs that client's jobs "
+      f"({len(CLIENTS)} clients), anything else skips")
 
 print("OK test_ci_aggregate")

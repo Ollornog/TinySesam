@@ -46,8 +46,17 @@ jobs:
           fetch-depth: 2
       - name: Classify
         id: classify
+        env:
+          WORKFLOW: ${{ github.workflow }}
         run: |
-          if reason="$(scripts/_nur_text.sh)"; then echo "nur_text=ja" >> "$GITHUB_OUTPUT"; fi
+          if reason="$(scripts/_nur_text.sh)"; then
+            # Sprint lane, T-150: a sprint pull request that changes this workflow's gate client or spec/ runs its jobs.
+            if [[ "$reason" == "SPRINT LANE"* ]] && scope="$(scripts/_client_scope.sh "$WORKFLOW")"; then
+              reason="$reason. But $scope"
+            else
+              echo "nur_text=ja" >> "$GITHUB_OUTPUT"
+            fi
+          fi
           echo "$reason"
 
   audit:
