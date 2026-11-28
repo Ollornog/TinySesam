@@ -79,6 +79,7 @@ FIELDS: dict[str, Any] = {
     "brand_header": REDACT,
     "brand_footer": REDACT,
     "topbar_enabled": SHOW,
+    "shell_layout": _one_of("top", "side"),
     "topbar_links": REDACT,
     "topbar_menu_links": REDACT,
     "admin_implies_roles": SHOW,
