@@ -13,6 +13,12 @@ lang = "en"
 password_enabled = true
 totp_enabled = true
 apikey_enabled = true
+pin_enabled = true
+# Passkeys (needs the extra [passkey], which the gateway image carries): rp_id is the host of base_url.
+passkey_enabled = true
+rp_id = "auth.example.com"
+origin = "https://auth.example.com"
+rp_name = "Documents"
 account_enabled = true
 admin_enabled = true
 available_roles = ["docs-reader", "docs-admin"]
@@ -23,6 +29,8 @@ magiclink_enabled = true
 # "programs" disconnects one.
 oauth_enabled = true
 oauth_resources = ["https://app.example.com/mcp"]
+# Services (client credentials): the action page "services" issues a pairing code for one.
+oauth_service_clients = true
 
 # Forward auth for the application's host: the proxy asks TinySesam on every request, passes Remote-* on and
 # /.tinysesam/* (account.json, shell.css) to TinySesam.
@@ -34,6 +42,8 @@ forward_auth_enabled = true
 name = "Documents"
 home = "/settings"
 links = [["Documents", "/"], ["Settings", "/settings"]]
+# App passwords for this host (a client that cannot do a browser sign-in): the action page "app_passwords".
+app_passwords = true
 
 [apps.docs]
 name = { en = "Documents", de = "Dokumente" }

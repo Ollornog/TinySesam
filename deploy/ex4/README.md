@@ -38,6 +38,9 @@ one file, `tinysesam.toml` (`TINYSESAM_CONFIG`, T-97).
 - **Ending one session**: every other session of the account has an *End* link to the action page `session_end` with
   that session's handle; the page asks for confirmation (and, when the last one is too old, for a fresh sign-in
   confirmation first).
+- **Every own action** (T-149): user name, address (offered once a mailer is configured, `smtp_host`), password, PIN,
+  authenticator app with recovery codes, passkeys, API keys, app passwords for this host, services (pairing code),
+  sessions and connected programs — each on its action page and back. `tests/test_headless_browser.py` drives every one.
 - **Administration** (T-147): a holder of the application's permission `docs.admin` (role `docs-admin`) sees an
   *Administration* section — the accounts the application has seen through forward auth (its own list, served by
   `/admin/accounts.json`), each with links to TinySesam's administration action pages: lock, unlock, roles, reset the

@@ -15,8 +15,13 @@ suite can show that no secret ever reached it.
      signs in), an API key (shown once in TinySesam's dialog), one other session ended by its handle (with the
      confirmation dialog), a connected program disconnected (the form sent by script, the page reloads as done).
   X4 a result the settings page did not ask for (a forged `state`) is ignored.
-  X5 no secret in the application: the password, the new password, the API key and the sign-in link are in no
-     request the application received and nowhere on its pages or in their storage.
+  X5 no secret in the application: the passwords, the API key, the TOTP secret, the recovery codes, the app password,
+     the pairing code and the links of the mail and the sign-in link are in no request the application received and
+     nowhere on its pages or in their storage.
+  X7 the remaining own action pages (T-149), each from the settings page and back with done: the user name (and back),
+     the address (the link in the mail confirms it), the PIN, the authenticator app (set up from the page and back to
+     it), recovery codes, an app password, a service's pairing code (both shown once in TinySesam's dialog) and a
+     passkey (a virtual authenticator).
   X6 administration (T-147): an administrator with the application's permission docs.admin drives every admin action
      on another account from the application's own links — roles, authenticator reset, key, program, one session, a
      sign-in link shown once, lock, unlock — each confirmed with the password on TinySesam's page, back with done.
@@ -154,6 +159,127 @@ async def back_with(p: Page, result: str, action: str) -> None:
     notice = json.loads(await p.js("JSON.stringify({...document.getElementById('notice').dataset,"
                                    "hidden:document.getElementById('notice').hidden,search:location.search})"))
     assert notice == {"result": result, "action": action, "hidden": False, "search": ""}, notice
+
+
+async def secret_dialog(p: Page) -> str:
+    """The value TinySesam shows once in its dialog (tsSecret), then the dialog closed with OK."""
+    await p.until("!!document.querySelector('dialog.tsdlg[open] textarea')", "no dialog with the secret")
+    value = await p.js("document.querySelector('dialog.tsdlg[open] textarea').value")
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    await p.until("!document.querySelector('dialog.tsdlg[open]')", "the dialog did not close")
+    return value
+
+
+async def own_action(p: Page, act: str, script: str, *, check, secret: bool = False, offer: bool = False) -> None:
+    """One own action from the settings page: TinySesam's action page, `script` does it there, the page marks the way
+    back as done (a reload of the page keeps it), back with done — and its effect in the database. `offer`: a new
+    factor offers to end the other sessions (TinySesam's dialog) — declined here."""
+    await to_action(p, act, f"/auth/act/{act}")
+    await p.js(script + ";true")
+    if offer:
+        await p.until("!!document.querySelector('dialog.tsdlg[open] .tsdlg-cancel')", "no offer to end the others")
+        await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-cancel').click();true")
+    if secret:
+        SECRETS.append(await secret_dialog(p))
+    try:
+        await p.until("document.readyState==='complete'&&!!document.getElementById('ts_back')"
+                      "&&document.getElementById('ts_back').dataset.state==='done'", f"{act} was not done")
+    except AssertionError:
+        print("   page says:", await p.js("[...document.querySelectorAll('.msg')].map(e=>e.textContent).join(' | ')"))
+        raise
+    assert check(), f"{act}: no effect"
+    await back_with(p, "done", act)
+
+
+async def part_own(p: Page) -> None:
+    """T-149: the remaining own action pages, each driven from the settings page and back with done."""
+    mails: list = []
+    auth.set_mailer(lambda to, subject, text, html=None: mails.append((to, text)))
+    await p.go(EX4 + "/settings", SETTINGS)
+    await own_action(p, "username", "document.getElementById('un_new').value='lou2';"
+                     "document.querySelector('[data-act=setname]').click()",
+                     check=lambda: auth.store.get_user(LOU)["username"] == "lou2")
+    await own_action(p, "username", "document.getElementById('un_new').value='lou';"
+                     "document.querySelector('[data-act=setname]').click()",
+                     check=lambda: auth.store.get_user(LOU)["username"] == "lou")
+    ok("X7 the user name: changed on its action page and back (twice, to lou2 and back to lou)")
+
+    await own_action(p, "email", "document.getElementById('mail_new').value='lou@example.test';"
+                     "document.querySelector('[data-act=setmail]').click()",
+                     check=lambda: any(to == "lou@example.test" for to, _ in mails))
+    import re
+    link = re.search(r"https?://\S+/auth/email/\S+", next(text for to, text in mails if to == "lou@example.test")).group(0)
+    SECRETS.append(link.rsplit("/", 1)[1])
+    await p.go(link, "document.readyState==='complete'")
+    if await p.js("!!document.querySelector('form[method=post] button')"):
+        await p.js("window.__old=true;document.querySelector('form[method=post] button').click();true")
+        await p.until("window.__old===undefined&&document.readyState==='complete'", "the confirmation did not load")
+    assert auth.store.get_user(LOU)["email"] == "lou@example.test", "the new address is not confirmed"
+    await p.go(EX4 + "/settings", SETTINGS)
+    ok("X7 the address: requested on its action page and back with done; the link in the mail confirms it")
+
+    await own_action(p, "pin", "document.getElementById('pin_new').value='482913';"
+                     "document.querySelector('[data-act=setpin]').click()",
+                     check=lambda: auth.store.has_pin(LOU), offer=True)
+    ok("X7 the PIN: set on its action page (the page reloads as done) and back")
+
+    await to_action(p, "totp", "/auth/act/totp")
+    await p.js("window.__old=true;document.querySelector(\"a.btnlink[href*='/auth/totp/setup']\").click();true")
+    await p.until("window.__old===undefined&&!!document.querySelector(\"form[action*='/auth/totp/setup/start'] button\")",
+                  "no TOTP start page")
+    await p.js("window.__old=true;document.querySelector(\"form[action*='/auth/totp/setup/start'] button\").click();true")
+    await p.until("window.__old===undefined&&document.readyState==='complete'&&!!document.getElementById('tstotp')",
+                  "no TOTP setup form")
+    import pyotp
+    secret = await p.js("document.querySelector('.mono').textContent")
+    SECRETS.append(secret)
+    await p.js(f"document.querySelector('#tstotp [name=code]').value={pyotp.TOTP(secret).now()!r};"
+               "document.querySelector('#tstotp button').click();true")
+    shown = "!!document.getElementById('rcbox')&&!document.getElementById('rcbox').hidden"
+    await p.until(f"({shown})||!!document.querySelector('dialog.tsdlg[open] .tsdlg-cancel')", "no recovery codes")
+    if await p.js("!!document.querySelector('dialog.tsdlg[open] .tsdlg-cancel')"):    # end the others? — no
+        await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-cancel').click();true")
+    await p.until(shown, "no recovery codes")
+    SECRETS.extend((await p.js("document.getElementById('rccodes').textContent")).split("\n"))
+    await p.js("window.__old=true;document.getElementById('rcdone').click();true")
+    await p.until(f"window.__old===undefined&&document.readyState==='complete'&&location.pathname==='/auth/act/totp'"
+                  "&&document.getElementById('ts_back').dataset.state==='done'", "not back on the action page as done")
+    assert auth.store.has_confirmed_totp(LOU)
+    await back_with(p, "done", "totp")
+    ok("X7 the authenticator app: set up from its action page (codes shown once), back on it as done, then back")
+
+    before = auth.recovery_codes_remaining(LOU)
+    auth.store.delete_recovery_codes(LOU)
+    await p.go(EX4 + "/settings", SETTINGS)
+    await to_action(p, "recovery_codes", "/auth/act/recovery_codes")
+    await p.js("document.querySelector('[data-act=recovery]').click();true")
+    await p.until("!!document.querySelector('dialog.tsdlg[open]')", "no confirmation dialog")
+    await p.js("document.querySelector('dialog.tsdlg[open] .tsdlg-ok').click();true")
+    SECRETS.extend((await secret_dialog(p)).split("\n"))
+    await p.until("document.getElementById('ts_back').dataset.state==='done'", "recovery codes not done")
+    assert auth.recovery_codes_remaining(LOU) == before
+    await back_with(p, "done", "recovery_codes")
+    ok("X7 recovery codes: new ones on their action page, shown once in TinySesam's dialog, back with done")
+
+    await own_action(p, "app_passwords", "document.getElementById('ap_name').value='calendar';"
+                     "document.querySelector('input[name=ap_host]').checked=true;"
+                     "document.querySelector('[data-act=mkap]').click()", secret=True,
+                     check=lambda: any(not x["revoked"] for x in auth.list_app_passwords(LOU)))
+    ok("X7 an app password: created on its action page, shown once in TinySesam's dialog, back with done")
+
+    await own_action(p, "services", "document.getElementById('sv_name').value='backup';"
+                     "document.querySelector('input[name=sv_res]').checked=true;"
+                     "document.querySelector('[data-act=mksv]').click()", secret=True,
+                     check=lambda: any(e["event"] == "oauth_pairing_issued" for e in auth.store.recent_audit(30)))
+    ok("X7 a service: a pairing code on its action page, shown once in TinySesam's dialog, back with done")
+
+    await p.cmd("WebAuthn.enable")
+    await p.cmd("WebAuthn.addVirtualAuthenticator", options={
+        "protocol": "ctap2", "transport": "internal", "hasResidentKey": True, "hasUserVerification": True,
+        "isUserVerified": True, "automaticPresenceSimulation": True})
+    await own_action(p, "passkeys", "document.querySelector('[data-act=addpk]').click()",
+                     check=lambda: bool(auth.store.list_webauthn(LOU)))
+    ok("X7 a passkey: registered on its action page (a virtual authenticator), back with done")
 
 
 async def admin_action(p: Page, name: str, *, roles: tuple = (), check=None) -> None:
@@ -342,6 +468,10 @@ async def part_x(p: Page) -> None:
     ok("X3 a connected program: disconnected on the action page (the form sent by script, the page reloads as done), "
        "back with done; the settings count none")
 
+    # X7 ─ the remaining own action pages (T-149).
+    await part_own(p)
+    await clean(p, "Ex4 after the own action pages", console_before, failed_before)
+
     # X4 ─ a result the page did not ask for.
     await p.go(EX4 + "/settings?ts_action=password&ts_result=done&state=forged0000000000000000", SETTINGS)
     assert await p.js("document.getElementById('notice').dataset.result") == "foreign"
@@ -360,12 +490,15 @@ async def part_x(p: Page) -> None:
                            "+JSON.stringify(Object.assign({},localStorage))")
     assert not any(s in page_text for s in SECRETS), "a secret on the application's page or in its storage"
     assert not any("tinysesam_session" in req for req in proxy.seen), "TinySesam's session cookie reached the app"
-    ok(f"X5 no secret in the application: the passwords, the API key and the sign-in link are in none of the "
+    ok(f"X5 no secret in the application: {len(SECRETS)} secrets (passwords, API key, TOTP secret, recovery codes, "
+       f"app password, pairing code, mail and sign-in links) are in none of the "
        f"{len(proxy.seen)} requests the application received, nor on its page or in its storage; nor the session cookie")
 
 
 async def main() -> None:
-    chrome = Chrome(CHROME, ("--host-resolver-rules=MAP *.example.test 127.0.0.1",))
+    # WebAuthn wants a secure context: TinySesam's origin of this test is plain http on a test name.
+    chrome = Chrome(CHROME, ("--host-resolver-rules=MAP *.example.test 127.0.0.1",
+                             f"--unsafely-treat-insecure-origin-as-secure={AUTH}"))
     try:
         async with websockets.connect(chrome.new_tab(), max_size=30_000_000) as ws:
             p = Page(ws)
