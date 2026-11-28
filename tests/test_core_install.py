@@ -145,6 +145,68 @@ r.check("passkey without the extra reports itself understandably instead of with
 r.check("...and names the extra machine-readably", getattr(error, "extra", None) == "passkey",
         f"extra={getattr(error, 'extra', None)!r}")
 
+# T-160: the start warning of a missing extra says what really follows. Passkeys stop the router build (above), so
+# their warning must say so; OIDC, SAML, LDAP and services keep the router building, so theirs must not. Measured per
+# switch against the behaviour, not against a copied text.
+import logging  # noqa: E402
+
+from tinysesam import security as _security  # noqa: E402
+
+_FULL = {
+    "passkey_enabled": ("webauthn", dict(passkey_enabled=True)),
+    "oidc_enabled": ("authlib", dict(oidc_enabled=True, oidc_issuer="https://idp.example.com", oidc_client_id="ts",
+                                     oidc_client_secret="probe", base_url="https://auth.example.com")),
+    "saml_enabled": ("onelogin", dict(saml_enabled=True, saml_idp_sso_url="https://idp.example.com/sso",
+                                      saml_idp_entity_id="https://idp.example.com", saml_idp_x509cert="MIIB" + "A" * 40,
+                                      base_url="https://auth.example.com")),
+    "ldap_enabled": ("ldap3", dict(ldap_enabled=True, ldap_url="ldaps://ldap.example.com",
+                                   ldap_user_dn_template="uid={username},dc=example,dc=com")),
+    "oauth_service_clients": ("joserfc", dict(oauth_enabled=True, oauth_service_clients=True,
+                                              oauth_resources=["https://app.example.com/mcp"], forward_auth_enabled=True,
+                                              trusted_redirect_hosts=["app.example.com"],
+                                              base_url="https://auth.example.com")),
+}
+r.check("T-160: every switch of the extras table is measured",
+        set(SWITCH_REQUIRES_EXTRA) <= set(_FULL), f"{sorted(set(SWITCH_REQUIRES_EXTRA) - set(_FULL))}")
+
+
+class _Lines(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.lines = []
+
+    def emit(self, record):
+        self.lines.append(record.getMessage())
+
+
+def _start(values):
+    """(warning about the extra, the router build's error or None) for one configuration without its module."""
+    lines = _Lines()
+    _security.seclog.addHandler(lines)
+    try:
+        auth = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False,
+                                         **values))
+    finally:
+        _security.seclog.removeHandler(lines)
+    try:
+        auth.router()
+        stopped = None
+    except MissingExtra as e:
+        stopped = e
+    return " ".join(line for line in lines.lines if "is not installed" in line), stopped
+
+
+for _switch, (_module, _values) in _FULL.items():
+    _warning, _stopped = _without(_module, lambda v=_values: _start(v))
+    r.check(f"T-160 {_switch}: a start warning names the missing extra", f"{_switch}=True" in _warning,
+            f"no warning: {_warning[:90]!r}")
+    _says_stop = "router" in _warning and "stops with MissingExtra" in _warning
+    r.check(f"T-160 {_switch}: the warning says the router build stops exactly when it does",
+            _says_stop == (_stopped is not None),
+            f"router build {'stopped' if _stopped else 'went through'}, warning: {_warning[-110:]!r}")
+    r.check(f"T-160 {_switch}: the warning names what fails instead",
+            _stopped is not None or "will fail" in _warning or "server_error" in _warning, f"{_warning[-110:]!r}")
+
 # And the runner must no longer guess "skipped".
 runner = (ROOT / "tests" / "run_all.py").read_text(encoding="utf-8")
 r.check("run_all counts only the agreed exit code as skipped",

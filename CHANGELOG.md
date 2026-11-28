@@ -480,6 +480,12 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- The start warning of a missing extra says what really follows (T-160): with `passkey_enabled` and without the extra
+  `[passkey]` it said "sign-in via this method will fail", and `docs/OPERATIONS.md` "the start itself remains
+  possible" — but building the router stops with `MissingExtra` (intended, the server does not start). The passkey
+  warning now says so, the services warning (`oauth_service_clients` without `[services]`) names its `server_error`;
+  OIDC, SAML and LDAP keep theirs (the router builds, a client can be set). OPERATIONS has a row each for `[passkey]`
+  and `[services]`. `tests/test_core_install.py` holds every switch's warning against what the router build does.
 - A role removed and re-added at runtime (without a start in between) no longer keeps its permission assignments
   (B-20, rest of B-19): the role set is remembered, and a role that left it has its assignments suspended at once —
   audited `permissions_suspended reason=role_removed` and named in the security log —, not only at the next start.
