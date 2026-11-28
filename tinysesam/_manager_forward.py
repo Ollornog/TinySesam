@@ -326,7 +326,8 @@ def _forwarded_conflict(self, request: Request) -> bool:
 
 
 def _forward_app(self, url_or_host: str) -> dict:
-    """The gate's settings for an application (T-21): `name`, `login`, `logout` and `app_passwords` (T-66), from
+    """The gate's settings for an application (T-21): `name`, `login`, `logout`, `app_passwords` (T-66) and `icon`
+    (`apps[id].icon` of the application whose `hosts` name the host, T-104; None without one), from
     `forward_apps[host]` with `forward_login`/`forward_logout` as fallback. The host without port, lowercase."""
     from urllib.parse import urlsplit
     raw = str(url_or_host or "")
@@ -337,16 +338,17 @@ def _forward_app(self, url_or_host: str) -> dict:
             e = dict(values or {})
             break
     name: object = e.get("name")
+    owner = self._app_of_host(host)
+    icon = (self.cfg.apps or {}).get(owner, {}).get("icon") if owner else None
     if not name:
         # T-101: a host of `apps[id].hosts` without its own name in `forward_apps` takes the application's.
-        owner = self._app_of_host(host)
         label = (self.cfg.apps or {}).get(owner, {}).get("name") if owner else None
         name = (label.get(self.cfg.lang) or label.get("en") or next(iter(label.values()), "")
                 if isinstance(label, dict) else label)
     return {"name": str(name or ""), "login": str(e.get("login") or self.cfg.forward_login),
             "logout": str(e.get("logout") or self.cfg.forward_logout),
             # T-66: only the literal True switches Basic auth on (config_check refuses anything else).
-            "app_passwords": e.get("app_passwords") is True}
+            "app_passwords": e.get("app_passwords") is True, "icon": icon if isinstance(icon, str) else None}
 
 
 def _gate_host(self, request) -> str:

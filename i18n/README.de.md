@@ -1504,8 +1504,37 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 |---|---|---|---|
 | **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()`, Beispiel Ex1 |
 | **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | `layout="side"`, `shell_layout`, `apps[id].layout`, Beispiel Ex2 |
-| **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der App-Rahmen (T-91), T-104 bringt den Bereich |
+| **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der TinySesam-Bereich `/auth/area?app=<id>` (T-104, unten) |
 | **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Kontoübersicht und die Konten-API, T-105 und T-106 bringen Aktionsseiten und die Leseseite |
+
+### Der TinySesam-Bereich (hybrid)
+
+Die Anwendung zeichnet ihre eigene Navigation und verlinkt einen Eintrag — „Konto“ — auf `/auth/area?app=<id>` bei
+TinySesam (T-104). Der Bereich zeigt die Kacheln des eigenen Kontos: Konto, Sicherheit (Passwort, Authenticator,
+Passkeys), Sitzungen, Programme (verbundene Programme, Dienste, App-Passwörter) und Freigaben, wo TinySesam sie
+anbietet, und das Admin-Panel für Administratoren und Bereichsadministratoren dieser Anwendung. Er steht im Rahmen der
+Anwendung — ihr Name, ihr Icon, ihre Links aus `forward_apps[host]` eines Hosts in `apps[id].hosts` — und führt zurück
+zum `home` des Rahmens; bei einer Anwendung ohne Hosts (Bibliothek) ist ein `next`, das `safe_next` annimmt, der
+Rückweg. Jede Kachel öffnet TinySesams Kontoseite im selben Rahmen, und `?app=<id>` rahmt jede andere TinySesam-Seite
+wie `?app=<host>`. Abgemeldet führt der Bereich über die gerahmte Anmeldeseite und zurück. Eine unbekannte Id ändert
+nichts: die Kacheln ohne Rahmen.
+
+```toml
+[apps.docs]
+name = { en = "Documents", de = "Dokumente" }
+hosts = ["docs.example.com"]
+icon = "/icons/docs.svg"          # oder eine data:image/…-Adresse; nie eine fremde
+
+[forward_apps."docs.example.com"]
+name = "Documents"
+home = "/"
+links = [["Documents", "/"]]
+```
+
+`apps[id].icon` (ADR-19) ist ein Pfad auf TinySesams eigenem Ursprung oder eine `data:image/…`-Adresse von höchstens
+64 KiB. Es steht über „Anmelden bei <Anwendung>“ auf der Anmeldeseite des Gates, neben dem Namen im Rahmen und im
+Bereich. Ein Aussehen je Anwendung über Name und Icon hinaus gibt es nicht. Der Bereich liegt auf TinySesams Ursprung,
+nie auf dem der Anwendung hinter einem Proxy: Ein XSS der Anwendung könnte sonst TinySesams Formulare absenden.
 
 ### Die drei Herkünfte eines Kontos
 
@@ -3234,7 +3263,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**158 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**159 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

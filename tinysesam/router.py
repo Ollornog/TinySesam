@@ -103,8 +103,9 @@ def build_router(auth) -> APIRouter:
             # instead of sending back (that would be a loop with forward auth).
             if session and destination_host and auth.store.gate_is_signed_out(auth.store.session_hash(session), destination_host):
                 u = auth.session_user(request)
+                gate_app = auth._forward_app(nxt)
                 return auth.render_page("login", request=request, next=nxt, error=error, app=app,
-                                        app_name=auth._forward_app(nxt)["name"],
+                                        app_name=gate_app["name"], app_icon=gate_app["icon"],
                                         resume_user=(u["display_name"] or u["username"]) if u else "")
             # B-2: signed in, but without a (valid) approval for THIS application, the page sent
             # back to `next` — forward auth sent here again, a loop without end.
@@ -114,9 +115,9 @@ def build_router(auth) -> APIRouter:
                 return RedirectResponse(f"{auth.browser_path(request, '/auth/oidc/start')}"
                                         f"?next={_q(nxt)}&app={_q(app)}", 303)
             return RedirectResponse(nxt, 303)
+        gate_app = auth._forward_app(nxt if "://" in nxt else gh) if ("://" in nxt or gh) else {}
         return auth.render_page("login", request=request, next=nxt, error=error, app=app,
-                                app_name=auth._forward_app(nxt)["name"] if "://" in nxt
-                                else (auth._forward_app(gh)["name"] if gh else ""),
+                                app_name=gate_app.get("name", ""), app_icon=gate_app.get("icon"),
                                 info=auth.t("login.logged_out") if signed_out == "1" else "")
 
     @r.post("/auth/login")
@@ -1889,6 +1890,11 @@ def build_router(auth) -> APIRouter:
     # ---------- Admin panel — at config.admin_path; mountable elsewhere via auth.admin_router() ----------
     if cfg.admin_enabled:
         r.include_router(auth.admin_router(), prefix=cfg.admin_path)
+
+    # The TinySesam area of an application (T-104, surface "hybrid"): beside the account page it leads to.
+    if cfg.account_enabled:
+        from ._routes_area import add_routes as _add_routes_area
+        _add_routes_area(r, auth, cfg)
 
     # Forward auth and the gate (T-112: its own module, imported only when `cfg.forward_auth_enabled` is on).
     if cfg.forward_auth_enabled:

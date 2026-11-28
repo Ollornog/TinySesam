@@ -304,9 +304,14 @@ def _approvals(config, error: list) -> None:
 APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 #: The members of one `apps` entry: the account API (`provisioning`), the approvals of the application's own
 #: actions (`approvals`, stage B), its permissions (`permissions`, T-100), the hosts it is served on (`hosts`) and what
-#: its service account may do with the permission API (`permission_scopes`, T-101) and the shell layout on its hosts
-#: (`layout`, T-103).
-APP_KEYS = ("account", "name", "provisioning", "approvals", "permissions", "hosts", "permission_scopes", "layout")
+#: its service account may do with the permission API (`permission_scopes`, T-101), the shell layout on its hosts
+#: (`layout`, T-103) and its icon (`icon`, T-104, ADR-19).
+APP_KEYS = ("account", "name", "provisioning", "approvals", "permissions", "hosts", "permission_scopes", "layout",
+            "icon")
+#: `apps[id].icon` (T-104): a path on TinySesam's own origin or a `data:image/…` address — never a foreign URL (every
+#: visitor of the sign-in page would report to that third party), no quote, space or backslash (it stands in an
+#: attribute), at most 64 KiB.
+APP_ICON = re.compile(r"^(?:/(?!/)[^\s'\"<>\\]{0,511}|data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][^\s'\"<>\\]{1,65536})$")
 #: The layouts of the shell (T-103): `shell_layout`, `apps[id].layout`, `auth.topbar(layout=…)`.
 SHELL_LAYOUTS = ("top", "side")
 #: The scopes of the permission API (T-101): register the manifest (`PUT /auth/api/apps/{id}/permissions`), read the
@@ -409,6 +414,10 @@ def _apps(config, error: list, warnings: list) -> None:
                 error.append(_t(config, "apps[{app!r}].layout without hosts: the layout holds on the application's "
                                         "hosts, so nothing would ever read it — name the hosts or drop the layout",
                                 app=app_id))
+        icon = entry.get("icon")
+        if icon is not None and not (isinstance(icon, str) and APP_ICON.match(icon)):
+            error.append(_t(config, "apps[{app!r}].icon: a path on TinySesam's own origin (\"/icons/docs.svg\") or a "
+                                    "data:image/… address of at most 64 KiB — no foreign address", app=app_id))
         scopes_api = entry.get("permission_scopes")
         if scopes_api is not None:
             permission_api = True

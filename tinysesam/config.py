@@ -634,6 +634,12 @@ class TinySesamConfig:
     # `layout` (T-103, `"top"` | `"side"`) is the shell layout on the application's `hosts` — the `frame` part of
     # `/.tinysesam/topbar.json`, read by the shell component `<ts-shell>` without a `layout` attribute, and the layout
     # of TinySesam's own pages in the application's frame; without it `shell_layout` holds. It needs `hosts`.
+    # `icon` (T-104, ADR-19) is the application's icon: a path on TinySesam's own origin (`"/icons/docs.svg"`) or a
+    # `data:image/…` address of at most 64 KiB, never a foreign address. It stands above "Sign in to <application>" on
+    # the gate's sign-in page, in the application's frame and on its TinySesam area `/auth/area?app=<id>` — the tiles
+    # of the own account (account, security, sessions, programs, approvals, the panel for the application's
+    # administrators) framed with the application's name and links, with a way back; `?app=<id>` frames every
+    # TinySesam page like `?app=<host>`.
     apps: dict = field(default_factory=dict)
 
     # --- Sessions (server-side, revocable) ---

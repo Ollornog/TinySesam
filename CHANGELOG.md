@@ -38,6 +38,16 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The TinySesam area of an application, surface "hybrid" (T-104, part 1). `/auth/area?app=<id>` shows the tiles of
+  the own account — account, security, sessions, programs, approvals where offered, the admin panel for an
+  administrator or an area administrator of this application — in the application's frame (name, icon, links of
+  `forward_apps[host]` for a host of `apps[id].hosts`) with a way back to the frame's `home` (for an application
+  without hosts: a `next` that `safe_next` accepts). Signed out it goes through the framed sign-in page and back; an
+  unknown id shows the tiles without a frame. `?app=<id>` now frames every TinySesam page like `?app=<host>`. The
+  page is the template `area` (`auth.set_template`), a strict-CSP page like the others. `apps[id].icon` (ADR-19) gets
+  its reader: a path on TinySesam's own origin or a `data:image/…` address of at most 64 KiB (anything else is a
+  `ConfigError`), shown above "Sign in to <application>" on the gate's sign-in page, beside the name in the frame and
+  on the area. `tests/test_app_area.py`.
 - Shell on top and at the side, one component (T-103, part 1). `shell_layout` (`"top"` | `"side"`, tier B) draws the
   bar of the built-in pages — the account page and the admin panel included — as a 248 px side bar on the left (below
   900 px it folds back into the top bar, the links into the menu); `auth.topbar(request, layout=…)` chooses per page,
