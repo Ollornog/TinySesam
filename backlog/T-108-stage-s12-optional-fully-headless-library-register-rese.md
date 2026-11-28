@@ -4,14 +4,14 @@ type: Task
 title: "Stage S12 (optional) — fully headless library: register, reset password, setup status"
 status: offen
 points: 5
-milestone: M-2
+milestone: M-5
 blocked_by: [T-96, T-112]
 tags: [library, headless, optional]
 created: 2026-11-23
 ---
 # T-108 — Stage S12 (optional) — fully headless library: register, reset password, setup status
 
-**Story points:** 5 · **Estimate:** 8–10 h (from the concept, not measured) · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
+**Story points:** 5 · **Estimate:** 8–10 h (from the concept, not measured) · **Milestone:** [M-5](M-5-after-1-0.md) (moved from M-2 on 2026-11-28: optional, not a condition of the release that closes M-2)
 
 Building blocks `register`, `reset_password`, `setup_status`; JSON for TOTP start, magic-link request, QR start. Only for the library (one trust boundary); a server application never types a secret itself.
 
