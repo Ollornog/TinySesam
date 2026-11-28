@@ -2593,6 +2593,14 @@
       "keys": [],
       "tier": "B"
     },
+    "GET /auth/act/{name}": {
+      "keys": [
+        "query:app",
+        "query:return",
+        "query:state"
+      ],
+      "tier": "B"
+    },
     "GET /auth/apikeys": {
       "keys": [],
       "tier": "B"

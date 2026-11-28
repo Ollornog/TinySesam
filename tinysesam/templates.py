@@ -490,25 +490,68 @@ def _totp(auth, ctx) -> str:
     return _page(auth, t("totp.title"), body, below=messages, ctx=ctx)
 
 
-def _account(auth, ctx) -> str:
-    """ctx: user, methods, has_totp, has_pin, password_initial, password_directory, is_admin, admin_panel, admin_path, events. Self-service + logout.
-    Fully replaceable via auth.set_template('account', fn)."""
+#: The order of the account page's sections (`account_sections`); `recovery_codes` is no section of its own there —
+#: the TOTP section carries the button — only of the action page `recovery_codes` (T-105).
+ACCOUNT_ORDER = ("username", "email", "password", "pin", "totp", "identities", "passkeys", "api_keys",
+                 "app_passwords", "sessions", "programs", "pairing", "services", "events")
+
+
+def _totp_section(auth, ctx, codes_only: bool = False) -> str:
+    """The TOTP section; `codes_only` (the action page `recovery_codes`, T-105): only the codes, for an active TOTP."""
+    t = auth.t
+    # T-94: with `recovery_codes_enabled=False` no code action (the route answers 404 anyway).
+    with_codes = getattr(auth.cfg, "recovery_codes_enabled", True)
+    notice = ""
+    if ctx.get("has_totp"):
+        # How many one-time codes remain, the page says on its own (B2-7): a
+        # used code was not tracked anywhere until T-13, and whoever used up the last one
+        # only learned of it when they needed it.
+        # B-9b: its own line below the buttons — inline it wrapped across two lines at 1280 px
+        # and ran into the button row. "None" is told apart from "only n left" (B-9a).
+        rest = ctx.get("recovery_left")
+        if rest is not None:
+            tight = rest <= ctx.get("recovery_warn", 3)
+            key = "acc.recovery_none" if rest == 0 else ("acc.recovery_low" if tight else "acc.recovery_left")
+            notice = (f"<div id=rc_left class='rcleft {'err' if tight else 'ok'}'>"
+                      f"{_e(t(key, n=rest))}</div>")
+        codes = f" <button data-act=recovery>{_e(t('acc.recovery'))}</button>" if with_codes else ""
+        if codes_only:
+            return (f"<div class=sec><h2 id=recovery>{_e(t('acc.recovery'))}</h2>{codes.strip()}"
+                    f"<span id=totp_msg class=msg></span>{notice}</div>") if with_codes else ""
+        totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
+                f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button>{codes}")
+    else:
+        if codes_only:
+            return ""
+        # On an action page the setup leads back to it (`totp_next`), marked as done.
+        nxt = ctx.get("totp_next")
+        query = _app_q(ctx) + (f"{'&' if _app_q(ctx) else '?'}next={_quote(nxt, safe='')}" if nxt else "")
+        totp = (f"<a class=btnlink href='__TS_P__/auth/totp/setup{_e(query)}'>"
+                f"{_e(t('acc.totp_setup'))}</a>")
+    return (f"<div class=sec><h2 id=totp>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
+            f"{notice}</div>")
+
+
+def account_sections(auth, ctx) -> dict:
+    """The account page's sections by name (`ACCOUNT_ORDER`), each an HTML block or "" when the page has none.
+
+    One source for the account page and its action pages (T-105): an action page shows one or two of these blocks with
+    the same script, so what a person can do there is exactly what the account page does."""
     u = ctx["user"]
     t = auth.t
     methods = ctx.get("methods", [])
-    name = _e(u["display_name"] or u["username"])
-    sections = []
+    out = dict.fromkeys(ACCOUNT_ORDER, "")
 
     # Change username and address yourself (PO decision 2026-09-25) — fresh step-up; the
     # address only counts after the confirmation link sent to it.
     if ctx.get("username_change"):
-        sections.append(
+        out["username"] = (
             f"<div class=sec><h2>{_e(t('acc.username'))}</h2>"
             f"<input id=un_new autocomplete=username value='{_e(u['username'])}'>"
             f"<button data-act=setname>{_e(t('acc.username_change'))}</button><span id=un_msg class=msg></span></div>")
     if ctx.get("email_change"):
         current = u.get("email") or ""
-        sections.append(
+        out["email"] = (
             f"<div class=sec><h2>{_e(t('acc.email'))}</h2>"
             + (f"<div class=msg>{_e(current)}</div>" if current else "")
             + f"<input id=mail_new type=email autocomplete=email placeholder='{_e(t('acc.email_new'))}'>"
@@ -517,19 +560,19 @@ def _account(auth, ctx) -> str:
     # Set password (B-10): an account without one has no current password to type — the
     # server asks for a fresh sign-in or step-up instead (`set_initial_password`).
     if "password" in methods and ctx.get("password_initial"):
-        sections.append(
+        out["password"] = (
             f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.pw_none'))}</p>"
             f"<input id=pw_new type=password autocomplete=new-password placeholder='{_e(t('acc.pw_new'))}'>"
             f"<button data-act=setpw>{_e(t('acc.pw_set'))}</button><span id=pw_msg class=msg></span></div>")
     # The password lives in the directory (LDAP account without a local one): nothing to change here.
     elif "password" in methods and ctx.get("password_directory"):
-        sections.append(
+        out["password"] = (
             f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.pw_directory'))}</p></div>")
     # Change password
     elif "password" in methods:
-        sections.append(
+        out["password"] = (
             f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
             f"<input id=pw_cur type=password placeholder='{_e(t('acc.pw_cur'))}'>"
             f"<input id=pw_new type=password placeholder='{_e(t('acc.pw_new'))}'>"
@@ -538,7 +581,7 @@ def _account(auth, ctx) -> str:
     # PIN
     if "pin" in methods:
         state = t("acc.pin_set_state") if ctx.get("has_pin") else t("acc.pin_unset_state")
-        sections.append(
+        out["pin"] = (
             f"<div class=sec><h2>{_e(t('acc.pin'))} <small>({_e(state)})</small></h2>"
             f"<input id=pin_new type=password inputmode=numeric placeholder='{_e(t('acc.pin_new'))}'>"
             f"<button data-act=setpin>{_e(t('acc.pin_set'))}</button> "
@@ -546,67 +589,47 @@ def _account(auth, ctx) -> str:
 
     # TOTP / 2FA
     if auth.cfg.totp_enabled:
-        if ctx.get("has_totp"):
-            # How many one-time codes remain, the page says on its own (B2-7): a
-            # used code was not tracked anywhere until T-13, and whoever used up the last one
-            # only learned of it when they needed it.
-            # B-9b: its own line below the buttons — inline it wrapped across two lines at 1280 px
-            # and ran into the button row. "None" is told apart from "only n left" (B-9a).
-            rest = ctx.get("recovery_left")
-            notice = ""
-            if rest is not None:
-                tight = rest <= ctx.get("recovery_warn", 3)
-                key = "acc.recovery_none" if rest == 0 else ("acc.recovery_low" if tight else "acc.recovery_left")
-                notice = (f"<div id=rc_left class='rcleft {'err' if tight else 'ok'}'>"
-                          f"{_e(t(key, n=rest))}</div>")
-            # T-94: with `recovery_codes_enabled=False` no code action (the route answers 404 anyway).
-            codes = (f" <button data-act=recovery>{_e(t('acc.recovery'))}</button>"
-                     if getattr(auth.cfg, "recovery_codes_enabled", True) else "")
-            totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
-                    f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button>{codes}")
-        else:
-            notice = ""
-            totp = (f"<a class=btnlink href='__TS_P__/auth/totp/setup{_e(_app_q(ctx))}'>"
-                    f"{_e(t('acc.totp_setup'))}</a>")
-        sections.append(f"<div class=sec><h2 id=totp>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
-                        f"{notice}</div>")
+        out["totp"] = _totp_section(auth, ctx)
+        out["recovery_codes"] = _totp_section(auth, ctx, codes_only=True)
 
     # T-99: link with the OIDC provider — a plain POST with the CSRF token (never a GET or a script call), a fresh
     # confirmation here and an active sign-in there; the identity belongs to this account afterwards.
+    identities = []
     if ctx.get("oidc_link"):
-        sections.append(
+        identities.append(
             f"<div class=sec><h2 id=link>{_e(t('acc.oidc_link_title', name=auth.cfg.oidc_name))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.oidc_link_hint', name=auth.cfg.oidc_name))}</p>"
             f"<form method=post action='__TS_P__/auth/oidc/link'>{_cf(ctx)}"
             f"<button type=submit>{_e(t('acc.oidc_link', name=auth.cfg.oidc_name))}</button></form></div>")
-    sections.extend(_identity_sections(auth, ctx))
+    identities.extend(_identity_sections(auth, ctx))
+    out["identities"] = "".join(identities)
 
     # Passkeys
     if "passkey" in methods:
-        sections.append(
+        out["passkeys"] = (
             f"<div class=sec><h2 id=passkeys>{_e(t('acc.passkeys'))}</h2><ul id=pklist></ul>"
             f"<button data-act=addpk>{_e(t('acc.passkey_add'))}</button><span id=pk_msg class=msg></span></div>")
 
     # API keys
     if auth.cfg.apikey_enabled:
-        sections.append(
+        out["api_keys"] = (
             f"<div class=sec><h2>{_e(t('acc.keys'))}</h2><ul id=keylist></ul>"
             f"<input id=key_name placeholder='{_e(t('acc.key_name'))}'>"
             f"<button data-act=mkkey>{_e(t('acc.key_create'))}</button><span id=key_msg class=msg></span></div>")
 
     # App passwords (T-66): for clients without a browser at the gate — only when an application takes them.
-    sections.append(_app_passwords_section(auth, ctx, u))
+    out["app_passwords"] = _app_passwords_section(auth, ctx, u)
 
     # Active sessions (always)
-    sections.append(
+    out["sessions"] = (
         f"<div class=sec><h2 id=sessions>{_e(t('acc.sessions'))}</h2><ul id=sesslist></ul>"
         f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
 
     # Connected programs (OAuth, T-36) and services (T-60)
-    sections.append(_devices_section(auth, ctx))
-    sections.append(_pairing_section(auth, ctx))
-    sections.append(_services_section(auth, ctx))
+    out["programs"] = _devices_section(auth, ctx)
+    out["pairing"] = _pairing_section(auth, ctx)
+    out["services"] = _services_section(auth, ctx)
 
     # Own events (H-7): whoever sees that a sign-in happened at 3 a.m. from a foreign address
     # speaks up — the log so far lay only with the operator. Rendered
@@ -622,15 +645,15 @@ def _account(auth, ctx) -> str:
             f" UTC</code> {_e(ev['event'])} <small>"
             f"{_e(t('acc.events_by_admin') if ev.get('by_admin') else (ev.get('ip') or ''))}</small></li>"
             for ev in events) or f"<li>{_e(t('acc.events_none'))}</li>"
-        sections.append(
+        out["events"] = (
             f"<div class=sec><h2>{_e(t('acc.events'))}</h2>"
             f"<p class='msg evhint'>{_e(t('acc.events_hint'))}</p>"
             f"<ul id=eventlist>{lines}</ul></div>")
+    return out
 
-    admin_link = (f"<a href='{_e('__TS_P__' + ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
-                  if ctx.get("admin_panel", ctx.get("is_admin")) else "")
 
-    css = """
+#: The account page's CSS — the action pages (T-105) use it too.
+ACCOUNT_CSS = """
     .tsmain{max-width:640px;margin:0 auto;padding:24px;display:block}
     .tsmain header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
     .tsmain header h1{font-size:20px;margin:0}
@@ -661,21 +684,39 @@ def _account(auth, ctx) -> str:
     .tsmain label.apdays select{width:auto;min-height:44px;background:var(--ts-field-bg);color:var(--ts-ink);
          border:1px solid var(--ts-field-line);border-radius:8px;padding:8px 10px;font-size:14px}
     """
-    # `static=True`: only show the page, fetch nothing (preview/screenshot).
-    static = bool(ctx.get("static"))
-    pkjs = "" if static else (_PASSKEY_REGISTER_JS if "passkey" in methods else "")
+
+
+def account_script(auth, ctx, back: str) -> str:
+    """The account page's script — dialogs, the write calls, the offer to end the other sessions — for the account
+    page and its action pages (T-105). `back`: the JS expression of the page to return to after a reauth that ends the
+    other sessions. Empty with `ctx["static"]` (preview/screenshot: show only, fetch nothing)."""
+    if ctx.get("static"):
+        return ""
+    pkjs = _PASSKEY_REGISTER_JS if "passkey" in ctx.get("methods", []) else ""
+    return (_dialog.assets(auth) + _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name))
+            .replace("__TXT__", _account_texts(auth))
+            + _revoke_js(auth, back) + _ACCOUNT_RETURN_JS
+            .replace("__CONFIRM__", json.dumps(auth.t("acc.sessions_confirm"))) + pkjs)
+
+
+def _account(auth, ctx) -> str:
+    """ctx: user, methods, has_totp, has_pin, password_initial, password_directory, is_admin, admin_panel, admin_path, events. Self-service + logout.
+    Fully replaceable via auth.set_template('account', fn)."""
+    u = ctx["user"]
+    t = auth.t
+    name = _e(u["display_name"] or u["username"])
+    sections = account_sections(auth, ctx)
+    admin_link = (f"<a href='{_e('__TS_P__' + ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
+                  if ctx.get("admin_panel", ctx.get("is_admin")) else "")
     # Admin panel and sign-out live in the top bar's account menu (T-64); only without the bar
     # (`topbar_enabled=False`) the page carries the two links itself.
     own_links = ("" if getattr(auth.cfg, "topbar_enabled", True) else
                  f"<div>{admin_link} <a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div>")
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>{own_links}</header>"
-            + "".join(sections)
-            + ("" if static else _dialog.assets(auth) + _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name)).replace("__TXT__", _account_texts(auth))
-               + _revoke_js(auth, "location.pathname+'?revoke_others=1" + _app_q(ctx, "&") + "'") + _ACCOUNT_RETURN_JS
-               .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
-            + pkjs)
+            + "".join(sections[k] for k in ACCOUNT_ORDER)
+            + account_script(auth, ctx, "location.pathname+'?revoke_others=1" + _app_q(ctx, "&") + "'"))
     # Account uses full width (no card) + account CSS + branding
-    return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False, ctx=ctx, current="account")
+    return _page(auth, t("acc.title"), f"<style>{ACCOUNT_CSS}</style>{body}", card=False, ctx=ctx, current="account")
 
 
 #: Texts of the account page's JavaScript (no keys in `messages.py` yet — they are chosen by
@@ -749,7 +790,9 @@ async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Typ
   const re=r.headers.get('X-TinySesam-Reauth');
   if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname+location.search);return r}
   return r}
-const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
+// An action page (T-105) marks its way back as done after the first change that worked.
+function done(){if(typeof tsActionDone==='function')tsActionDone()}
+const say=(id,t,good)=>{if(good)done();const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function setname(){const r=await J('__TS_P__/auth/account/username',{username:un_new.value});
   const j=await r.json().catch(()=>({}));say('un_msg',r.ok?'✓':(j.detail||TXT.error),r.ok)}
 async function setmail(){const r=await J('__TS_P__/auth/account/email',{email:mail_new.value});
@@ -770,10 +813,10 @@ async function delpin(){const r=await J('__TS_P__/auth/pin/disable');await offer
   if(r.ok)setTimeout(()=>location.reload(),600)}
 async function deltotp(){if(!await tsConfirm(TXT.confirm_2fa_off,{danger:true}))return;
   const r=await J('__TS_P__/auth/totp/disable');await offer(r);
-  if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||TXT.error,false)}
+  if(r.ok){done();location.reload()}else say('totp_msg',(await r.json().catch(()=>({}))).detail||TXT.error,false)}
 async function recovery(){if(!await tsConfirm(TXT.confirm_recovery))return;
   const r=await (await J('__TS_P__/auth/totp/recovery')).json();
-  if(r.codes){
+  if(r.codes){done();
     // B-9b: the remainder line still said the old number.
     const b=document.getElementById('rc_left'),n=r.codes.length,low=n<=TXT.rc_warn;
     if(b){b.textContent=(low?TXT.rc_low:TXT.rc_left).replace('__N__',n);b.className='rcleft '+(low?'err':'ok')}
@@ -786,9 +829,9 @@ async function loadkeys(){const el=document.getElementById('keylist');if(!el)ret
   el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.revoked?'<span class=bad>'+TXT.revoked+'</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">${TXT.revoke}</button>`}</li>`).join('')||'<li>'+TXT.none+'</li>'}
 async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_name.value})).json().catch(()=>({}));
   loadkeys();
-  if(r.key){key_name.value='';await tsSecret(TXT.key_title,r.key,TXT.key_note)}
+  if(r.key){done();key_name.value='';await tsSecret(TXT.key_title,r.key,TXT.key_note)}
   else say('key_msg',r.detail||TXT.error,false)}
-async function revk(id){await J('__TS_P__/auth/apikeys/'+id+'/revoke');loadkeys()}
+async function revk(id){if((await J('__TS_P__/auth/apikeys/'+id+'/revoke')).ok)done();loadkeys()}
 // App passwords (T-66): created once, shown once in the dialog with its copy button, then only by name.
 const dt0=t=>new Date(t*1000).toLocaleString(TXT.locale);
 async function loadap(){const el=document.getElementById('aplist');if(!el)return;
@@ -803,7 +846,7 @@ async function mkap(){const hosts=[...document.querySelectorAll('input[name=ap_h
     await tsSecret(TXT.ap_title,j.secret,TXT.ap_note.replace('__USER__',document.getElementById('apsec').dataset.user))}
   else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('ap_msg',j.detail||TXT.error,false)}
 async function revap(id){if(!await tsConfirm(TXT.ap_confirm,{danger:true}))return;
-  await J('__TS_P__/auth/app-passwords/'+id+'/revoke');loadap()}
+  if((await J('__TS_P__/auth/app-passwords/'+id+'/revoke')).ok)done();loadap()}
 // Services (T-60): a pairing code is shown once; the service redeems it and keeps its key itself.
 async function loadsv(){const el=document.getElementById('svlist');if(!el)return;
   const ss=await (await fetch('__TS_P__/auth/oauth/services')).json().catch(()=>[]);
@@ -823,11 +866,11 @@ async function mkpc(){const sel=document.getElementById('pc_res');
     document.getElementById('pcsec').dataset.minutes))}
   else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say('pc_msg',j.detail||TXT.error,false)}
 async function revsv(id){if(!await tsConfirm(TXT.sv_confirm,{danger:true}))return;
-  await J('__TS_P__/auth/oauth/services/'+encodeURIComponent(id)+'/revoke');loadsv()}
+  if((await J('__TS_P__/auth/oauth/services/'+encodeURIComponent(id)+'/revoke')).ok)done();loadsv()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('__TS_P__/auth/passkey/list')).json();
   el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">${TXT.delete}</button></li>`).join('')||'<li>'+TXT.none+'</li>'}
-async function delpk(id){await offer(await J('__TS_P__/auth/passkey/delete',{id}));loadpk()}
+async function delpk(id){const r=await J('__TS_P__/auth/passkey/delete',{id});if(r.ok)done();await offer(r);loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
   const ss=await (await fetch('__TS_P__/auth/sessions')).json().catch(()=>[]);
   if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
@@ -1783,13 +1826,15 @@ def _devices_section(auth, ctx) -> str:
 
     def when(ts):
         return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M") + " UTC" if ts else "—"
+    # Where the revocation leads back to: this page — the account page in its frame, an action page (T-105).
+    back = f"<input type=hidden name=next value='{_e(ctx['revoke_next'])}'>" if ctx.get("revoke_next") else ""
     lines = "".join(
         f"<li><b>{_e(d['client_name'])}</b> <small><code>{_e(d['client_id'])}</code></small><br>"
         f"<small class=msg>{_e(t('acc.device_created'))} {_e(when(d['created_at']))} · "
         f"{_e(t('acc.device_last'))} {_e(when(d['last_used']))} · {_e(d['last_ip'] or '?')} · {_e(d['resource'])}"
         + (f" · <span class=devvia>{_e(t('acc.device_via_pairing'))}</span>" if d.get("via") == "pairing" else "")
         + "</small>"
-        f"<form method=post class=devrevoke action='__TS_P__/auth/oauth/devices/{int(d['id'])}/revoke'>{_cf(ctx)}"
+        f"<form method=post class=devrevoke action='__TS_P__/auth/oauth/devices/{int(d['id'])}/revoke'>{_cf(ctx)}{back}"
         f"<button type=submit class=warn>{_e(t('acc.device_revoke'))}</button></form></li>"
         for d in devices) or f"<li>{_e(t('acc.devices_none'))}</li>"
     return (f"<div class=sec><h2 id=devices>{_e(t('acc.devices'))}</h2>"
@@ -1859,6 +1904,12 @@ def _area(auth, ctx) -> str:
     return _area_page.page(auth, ctx)
 
 
+def _action(auth, ctx) -> str:
+    """An action page (T-105) — built in `_actions.py`."""
+    from . import _actions
+    return _actions.page(auth, ctx)
+
+
 DEFAULTS = {
     "logout": _logout,
     "gate_logout": _gate_logout,
@@ -1871,6 +1922,7 @@ DEFAULTS = {
     "resource_unlock": _resource_unlock,
     "account": _account,
     "area": _area,
+    "action": _action,
     "register": _register,
     "magic_request": _magic_request,
     "magic_invalid": _magic_invalid,

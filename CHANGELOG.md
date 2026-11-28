@@ -38,6 +38,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Action pages, surface "headless" (T-105, part 1). `/auth/act/<name>?app=<id>&return=<url>&state=<opaque>` is one
+  action of the own account — `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`,
+  `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — on TinySesam's origin, in the application's frame
+  with its name and icon, never framed itself (`frame-ancestors 'none'`, `X-Frame-Options: DENY`). The page is the
+  account page's section for that action with the same script and routes behind it (template `action`); a GET changes
+  nothing; actions that create new access ask the step-up as they open; signed out, the sign-in page leads back. The
+  way back goes to `return` with `ts_action`, `ts_result` (`done`, `cancelled`, `unavailable` — a hint, not a proof)
+  and `state`; a `return` that `link_next_ok` refuses or that leaves the frame's host is replaced in silence by the
+  frame's home. `account_overview` and `account.json` gain the member `actions` (each own action → its page, or `null`
+  where not offered). One register of the actions (`_actions.ACTIONS`) with scope and step-up class (`window`/`each`)
+  for the administration to share. Spec §8c. `tests/test_action_pages.py`.
+- A revoked connected program leads back to the page the form stood on — the account page keeps its app frame, an
+  action page comes back marked as done (T-105); only a path of TinySesam, anything else goes to the account page.
 - The TinySesam area of an application, surface "hybrid" (T-104, part 1). `/auth/area?app=<id>` shows the tiles of
   the own account — account, security, sessions, programs, approvals where offered, the admin panel for an
   administrator or an area administrator of this application — in the application's frame (name, icon, links of

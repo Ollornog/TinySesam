@@ -12,7 +12,7 @@
     {
       "id": "signed-in",
       "attack": null,
-      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting.",
+      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting; its `actions` (spec §8c) are not normalized and dropped.",
       "input": {
         "account": {
           "signed_in": true,
@@ -87,6 +87,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },

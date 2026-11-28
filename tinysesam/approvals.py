@@ -64,7 +64,7 @@ from typing import Any, Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
-from . import config_check, security
+from . import _actions, config_check, security
 
 #: The class (a) types of stage A and their fields (`str_id` = a positive decimal id as a string, `roles` = a list of
 #: role names). `tinysesam.` is reserved for these; application types (class b) come with stage B.
@@ -1207,22 +1207,8 @@ def _origin(url: str) -> Optional[str]:
     return f"{p.scheme}://{p.netloc}" if p.scheme in ("http", "https") and p.netloc else None
 
 
-def _no_framing(resp: Response, form_origin: Optional[str] = None) -> Response:
-    """The approval pages are never framed (clickjacking) — `frame-ancestors 'none'` and `X-Frame-Options: DENY`
-    whatever `csp` says: with `csp="off"` (the proxy sets the policy) and with an own policy as well.
-
-    `form_origin`: the origin of a registered return address (browser entry). The decision is a form POST that
-    redirects there, and Chrome checks that redirect against the page's `form-action` — so exactly that origin is
-    added to an existing `form-action`, nothing else."""
-    policy = resp.headers.get("content-security-policy", "")
-    parts = [d.strip() for d in policy.split(";") if d.strip()]
-    out = [d for d in parts if d.split(None, 1)[0].lower() != "frame-ancestors"]
-    if form_origin:
-        out = [f"{d} {form_origin}" if d.split(None, 1)[0].lower() == "form-action" else d for d in out]
-    out.append("frame-ancestors 'none'")
-    resp.headers["Content-Security-Policy"] = "; ".join(out)
-    resp.headers["X-Frame-Options"] = "DENY"
-    return resp
+#: The approval pages are never framed — the one helper the action pages (T-105) share.
+_no_framing = _actions.no_framing
 
 
 def register_routes(r, auth) -> None:

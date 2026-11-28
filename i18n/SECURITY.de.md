@@ -515,8 +515,8 @@ Sitzung endet), nicht das `forward_logout` der Anwendung.
   CORS-Header, eine Seite eines fremden Ursprungs kann es also nicht lesen; `no-store` und `Vary: Cookie` halten es aus
   geteilten Caches. Unter `/.tinysesam/` gibt es keine schreibende Route: Dort gilt der Host der Anwendung als eigener
   Ursprung (`_origin_ok`), und ein XSS in der Anwendung könnte sonst nach frischem Step-up Sitzungen beenden. Sitzungen
-  beenden, Programme und App-Passwörter widerrufen bleibt auf der Kontoseite, hinter den vorhandenen, auditierten und
-  per Step-up geschützten Routen.
+  beenden, Programme und App-Passwörter widerrufen bleibt auf der Kontoseite und ihren Aktionsseiten, hinter den
+  vorhandenen, auditierten und per Step-up geschützten Routen.
 - **Rate und Log:** 60 Abrufe je Konto und Minute; eine Ablehnung (429, `Retry-After`) schreibt eine Zeile
   `failed verification … reason=ratelimit_account_json`, nie `failed login` (das fail2ban-Jail bleibt still).
   Lesen wird nicht auditiert (eigene Daten; jede Änderung schon).
@@ -524,6 +524,22 @@ Sitzung endet), nicht das `forward_logout` der Anwendung.
   Pflichten des Rezepts der Wrapper: nur für ein geprüftes `Remote-Kind: user` mit `Remote-Auth: session`, nur für die
   `Remote-Id` dieser Anfrage, mit `no-store` beantwortet. TinySesam kann sie auf diesem Weg nicht erzwingen; der Abruf
   von `/.tinysesam/account.json` durch den Gate-Client (Spec §8a) lässt die Prüfung bei TinySesam.
+
+**Aktionsseiten** (`/auth/act/<name>`, T-105, Spec §8c): Eine Anwendung auf einem anderen Ursprung ändert ein Konto nur,
+indem sie die Person dorthin schickt.
+
+- **Nur auf TinySesams Ursprung**, nie unter `/.tinysesam/`; nie gerahmt (`frame-ancestors 'none'`, `X-Frame-Options:
+  DENY`), damit sich keine Seite der Anwendung über die Knöpfe legen kann. Ein GET ändert nichts; die Knöpfe rufen die
+  Routen der Kontoseite mit deren eigenen CSRF-, Sitzungs- (nie ein API-Key) und Step-up-Prüfungen — die Aktionsseite
+  bringt keine schreibende Route mit. Aktionen, die einen neuen Zugang schaffen, fragen die frische Bestätigung schon
+  beim Öffnen ab.
+- **Der Rückweg** ist ein Link, nie eine Weiterleitung nach einem Schreibvorgang: `return` muss `link_next_ok` bestehen
+  und im Rahmen einer Anwendung genau auf deren Host liegen; alles andere wird still zur Startseite des Rahmens. `state`
+  ist druckbares ASCII von höchstens 128 Zeichen und wird ungelesen durchgereicht. `ts_result` ist ein Hinweis, den
+  jeder tippen kann, nie ein Beweis — die Anwendung liest `account.json` neu, und eine bindende Bestätigung ist eine
+  Freigabe.
+- **Kein Geheimnis verlässt TinySesams Ursprung**: Passwort, Code, API-Key, App-Passwort oder Kopplungscode werden nur
+  auf der Aktionsseite eingegeben oder gezeigt, und der Rückweg trägt keines.
 
 ## Rollennamen und der Rollenkatalog
 

@@ -34,7 +34,7 @@ import html
 from .theme import TOKENS, c22_css, c22_head, theme_head
 
 #: The built-in pages that show the account menu (for a signed-in viewer); every other page shows logo and name.
-MENU_PAGES = frozenset({"account", "account_setup", "area", "approval", "approvals", "gateway_home", "oauth_consent",
+MENU_PAGES = frozenset({"account", "account_setup", "action", "area", "approval", "approvals", "gateway_home", "oauth_consent",
                         "qr_approve", "reauth", "totp_setup"})
 
 #: Below this width the links move into the menu.

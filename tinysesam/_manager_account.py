@@ -362,12 +362,15 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     `api_keys_active` (a number, None when keys are off); `approvals` ({pending} or None); `permissions` ({app, names}:
     the account's permissions for the application whose `apps[id].hosts` name `app_host`, T-101 — None for any other
     host or without one); `links` (the account page
-    and its sections, absolute). None means "not offered here", `[]` "offered, empty". Never a hash, a secret, a key
+    and its sections, absolute); `actions` (T-105: each own action of the register — `username`, `email`, `password`,
+    `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — → the
+    address of its action page `/auth/act/<name>`, None where not offered). None means "not offered here", `[]` "offered, empty". Never a hash, a secret, a key
     prefix, an address or an id of another object.
 
     Hand it to the application only for a person signed in by a browser session — in a wrapper in front of an app
     in another language: only for a checked `Remote-Kind: user` with `Remote-Auth: session`, for the account of
-    `Remote-Id`, answered with `Cache-Control: no-store`. Changes happen on the account page only."""
+    `Remote-Id`, answered with `Cache-Control: no-store`. Changes happen on the account page and its action pages
+    only."""
     cfg = self.cfg
     uid = user.get("id") if isinstance(user, dict) else _topbar._field(user, "id")
     row = self.store.get_user(uid) if uid is not None else None
@@ -432,7 +435,7 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     # T-101: on an application's host (`apps[id].hosts`) the account's permissions for that application.
     app = self._app_of_host(app_host) if app_host else None
     permissions = {"app": app, "names": self.permissions_of(row, app=app)} if app else None
-    return {"account": {"username": row["username"], "display_name": row["display_name"] or row["username"],
+    view = {"account": {"username": row["username"], "display_name": row["display_name"] or row["username"],
                         "source": source},
             "sign_in": {"password": password, "totp": totp, "passkeys": passkeys, "pin": pin},
             "sessions": {"count": len(sessions), "items": sessions},
@@ -441,6 +444,10 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
             "approvals": {"pending": pending} if pending is not None else None,
             "permissions": permissions,
             "links": links}
+    # T-105: the action pages, where an application sends a person to change something.
+    from . import _actions
+    view["actions"] = _actions.links(self, view, base, q)
+    return view
 
 
 def _header_lines_error(self, exc) -> None:

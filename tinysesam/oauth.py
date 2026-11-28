@@ -1268,5 +1268,10 @@ def add_routes(auth, r) -> None:
         g = auth.store.oauth_grant(grant_id)
         if g is not None and int(g["user_id"]) == int(user["id"]):
             srv.revoke_grant(int(grant_id), "user", auth.client_ip(request))
-        return RedirectResponse(auth.browser_path(request, "/auth/account"), 303)
+        # Back to the page the form stood on (the account page in its frame, an action page, T-105) — a path of
+        # TinySesam only: `safe_next` would let a trusted host through, and that is no page of this form.
+        nxt = str(form.get("next") or "")
+        back = (nxt if nxt.startswith("/") and auth.safe_next(nxt, request) == nxt
+                else auth.browser_path(request, "/auth/account"))
+        return RedirectResponse(back, 303)
 
