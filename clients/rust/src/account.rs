@@ -32,6 +32,8 @@ pub struct Account {
     pub permissions: Option<Permissions>,
     /// The account page and its sections.
     pub links: Option<Links>,
+    /// The own action pages (spec §8c); build the address to send the person to with [`action_url`].
+    pub actions: Option<Actions>,
 }
 
 /// The application of the host and the account's permissions for it.
@@ -134,6 +136,11 @@ pub struct Session {
     pub device: Option<String>,
     /// True for the session of this request, false for the others, `None` when the answer does not know.
     pub current: Option<bool>,
+    /// The session handle: opaque text, never the token.
+    pub handle: Option<String>,
+    /// The action page that ends exactly this session (`None` for the session of the request):
+    /// `action_url(end, return_to, state)` is the address to send the person to.
+    pub end: Option<String>,
 }
 
 /// The connected programs: `None` means "not offered here", an empty list "offered, none".
@@ -175,6 +182,35 @@ pub struct Links {
     pub services: Option<String>,
     /// The approvals.
     pub approvals: Option<String>,
+}
+
+/// The own action pages of spec §8c; `None` when not offered to this account (or not a safe link).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Actions {
+    /// Change the sign-in name.
+    pub username: Option<String>,
+    /// Change the e-mail address.
+    pub email: Option<String>,
+    /// Set or change the password.
+    pub password: Option<String>,
+    /// Set or change the PIN.
+    pub pin: Option<String>,
+    /// The authenticator app.
+    pub totp: Option<String>,
+    /// New recovery codes.
+    pub recovery_codes: Option<String>,
+    /// The passkeys.
+    pub passkeys: Option<String>,
+    /// The API keys.
+    pub api_keys: Option<String>,
+    /// The app passwords.
+    pub app_passwords: Option<String>,
+    /// The sessions.
+    pub sessions: Option<String>,
+    /// The connected programs.
+    pub programs: Option<String>,
+    /// The paired services.
+    pub services: Option<String>,
 }
 
 /// Normalizes the body of a `200` answer (strict JSON); anything unreadable is signed out.
@@ -250,7 +286,9 @@ pub fn normalize(data: &Value) -> Account {
     let sessions = group(data, "sessions");
     let programs = group(data, "programs");
     let links = group(data, "links");
+    let actions = group(data, "actions");
     let href = |name: &str| safe_href(links.get(name));
+    let action = |name: &str| safe_href(actions.get(name));
     Account {
         signed_in: true,
         account: Some(Names {
@@ -286,6 +324,8 @@ pub fn normalize(data: &Value) -> Account {
                     method: text(e, "method"),
                     device: text(e, "device"),
                     current: flag(e, "current"),
+                    handle: text(e, "handle"),
+                    end: safe_href(e.get("end")),
                 })
                 .collect(),
         }),
@@ -338,7 +378,83 @@ pub fn normalize(data: &Value) -> Account {
             services: href("services"),
             approvals: href("approvals"),
         }),
+        actions: Some(Actions {
+            username: action("username"),
+            email: action("email"),
+            password: action("password"),
+            pin: action("pin"),
+            totp: action("totp"),
+            recovery_codes: action("recovery_codes"),
+            passkeys: action("passkeys"),
+            api_keys: action("api_keys"),
+            app_passwords: action("app_passwords"),
+            sessions: action("sessions"),
+            programs: action("programs"),
+            services: action("services"),
+        }),
     }
+}
+
+/// The longest `state` an action page carries back (spec §8c).
+pub const ACTION_STATE_MAX: usize = 128;
+
+fn printable_ascii(text: &str) -> bool {
+    text.bytes().all(|b| (0x21..=0x7e).contains(&b))
+}
+
+/// Every byte but `A-Z a-z 0-9 - . _ ~` as `%XX` with upper-case hex digits.
+fn query_escape(text: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(text.len());
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(b));
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
+    }
+    out
+}
+
+/// The address of an action page with the way back (spec §8c): `href` is a member of [`Account::actions`] or a
+/// session's `end` (ending exactly that session), `return_to` the absolute `http(s)` URL on the application's own host
+/// to come back to, `state` an optional value of the application (`None` or empty for none; printable ASCII, at most
+/// [`ACTION_STATE_MAX`] characters). Send the person there by navigation; the page leads back with `ts_action`,
+/// `ts_result` and `state`. Refuses (a [`crate::ConfigError`]) an href that fails the rule of spec §8 or carries a
+/// fragment, a `return_to` that is no absolute `http(s)` URL of printable ASCII, and a `state` outside the rule.
+pub fn action_url(
+    href: &str,
+    return_to: &str,
+    state: Option<&str>,
+) -> Result<String, crate::ConfigError> {
+    if safe_href(Some(&Value::from(href))).is_none() || href.contains('#') {
+        return Err(crate::ConfigError::new(
+            "action_url: the href is no action page address",
+        ));
+    }
+    let scheme_ok = ["https://", "http://"].iter().any(|prefix| {
+        return_to
+            .get(..prefix.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(prefix))
+    });
+    if !scheme_ok || !printable_ascii(return_to) {
+        return Err(crate::ConfigError::new(
+            "action_url: return_to must be an absolute http(s) URL in printable ASCII",
+        ));
+    }
+    let state = state.unwrap_or_default();
+    if state.len() > ACTION_STATE_MAX || !printable_ascii(state) {
+        return Err(crate::ConfigError::new(
+            "action_url: state is printable ASCII of at most 128 characters",
+        ));
+    }
+    let sep = if href.contains('?') { '&' } else { '?' };
+    let mut out = format!("{href}{sep}return={}", query_escape(return_to));
+    if !state.is_empty() {
+        out.push_str("&state=");
+        out.push_str(&query_escape(state));
+    }
+    Ok(out)
 }
 
 /// Only TinySesam's cookies of a `Cookie` header (`tinysesam_*`, `__Host-tinysesam_*`) — what a server-side fetch of
@@ -402,7 +518,8 @@ mod tests {
         assert_eq!(
             out,
             serde_json::json!({"signed_in": false, "account": null, "sign_in": null, "sessions": null,
-                               "programs": null, "approvals": null, "permissions": null, "links": null})
+                               "programs": null, "approvals": null, "permissions": null, "links": null,
+                               "actions": null})
         );
     }
 }

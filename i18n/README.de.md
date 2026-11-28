@@ -3044,7 +3044,11 @@ except gate_client.UntrustedPeer:
   `/.tinysesam/account.json` auf dem Host der Anwendung) serverseitig nur mit TinySesams Cookies;
   `parse_account(data)` normalisiert eine Antwort zu einem einfachen dict — `SIGNED_OUT_ACCOUNT` für alles außer
   `signed_in: true`, unsichere Links und Mitglieder falschen Typs `None`; `permissions` nennt auf dem Host einer
-  Anwendung die Anwendung und die Berechtigungen des Kontos dort.
+  Anwendung die Anwendung und die Berechtigungen des Kontos dort. `actions` enthält die Adressen der Aktionsseiten
+  (Spec §8c), jede Sitzung ihr `handle` und die Seite `end`, die genau sie beendet. `action_url(href, return_to, state)`
+  baut die Adresse, zu der die Person geschickt wird — `action_url(session["end"], "https://app.example.com/settings",
+  state)` beendet diese eine Sitzung; die Seite führt mit `ts_action`, `ts_result` und `state` zurück (ein unsicheres
+  href, ein `return_to`, das keine absolute `http(s)`-URL ist, oder ein ungültiger `state` ist ein `ConfigError`).
 - **Berechtigungen** (Spec §3.4, T-101): `identity.permissions` kommt aus `Remote-Permissions` oder `ts_perms` — die
   Berechtigungen des Kontos für diese Anwendung; `identity.has_permission("docs.delete")` vergleicht exakt (weder
   `admin` noch eine Rolle schließt eine ein; ein fehlender Header heißt „keine"). Beim Start meldet

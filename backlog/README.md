@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 23/36 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 24/36 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 92/106 erledigt
@@ -163,7 +163,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-145](T-145-panel-browser-tests-account-switch-race-and-cdp-helper.md)** Panel browser tests: account-switch race and the shared CDP helper · M-5
 * ☐ **[T-146](T-146-triage-the-open-scorecard-alerts.md)** Triage the open Scorecard alerts · M-5
 * ☑ **[T-147](T-147-administration-actions-on-action-pages-area-admin.md)** Administration actions on action pages: area admin, class each · M-2
-* ☐ **[T-148](T-148-the-five-clients-normalise-actions-and-the-session.md)** The five clients normalise actions and the session handle · M-2
+* ☑ **[T-148](T-148-the-five-clients-normalise-actions-and-the-session.md)** The five clients normalise actions and the session handle · M-2
 * ☑ **[T-149](T-149-browser-coverage-of-the-remaining-action-pages-in.md)** Browser coverage of the remaining action pages in Ex4 · M-2
 * ☑ **[T-150](T-150-sprint-lane-runs-a-client-s-tests-when-spec-or-tha.md)** Sprint lane runs a client's tests when spec/ or that client changes · M-2
 * ☐ **[T-151](T-151-frame-icon-in-topbar-json-so-the-shell-shows-the-a.md)** frame.icon in topbar.json, so the shell shows the application's icon in the frame · M-2

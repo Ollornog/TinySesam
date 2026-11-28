@@ -2,7 +2,10 @@ package tinysesam
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 )
 
 // Account is the person's own security state as TinySesam's account page shows it, reduced to what an application
@@ -22,6 +25,9 @@ type Account struct {
 	// no application.
 	Permissions *AccountPermissions `json:"permissions"`
 	Links       *AccountLinks       `json:"links"`
+	// Actions are the addresses of the own action pages (spec section 8c); build the address to send the person to
+	// with ActionURL.
+	Actions *AccountActions `json:"actions"`
 }
 
 // AccountPermissions names the application (nil when missing or no text) and the account's permissions for it
@@ -82,13 +88,17 @@ type AccountSessions struct {
 }
 
 // AccountSession is one session. Device is a coarse "browser · system" or nil; Current is true for the session of
-// this request, false for the others, nil when the answer does not know.
+// this request, false for the others, nil when the answer does not know. Handle is the session handle (opaque text,
+// never the token); End is the action page that ends exactly this session (nil for the session of the request):
+// ActionURL(*s.End, returnTo, state) is the address to send the person to.
 type AccountSession struct {
 	CreatedAt *int64  `json:"created_at"`
 	LastSeen  *int64  `json:"last_seen"`
 	Method    *string `json:"method"`
 	Device    *string `json:"device"`
 	Current   *bool   `json:"current"`
+	Handle    *string `json:"handle"`
+	End       *string `json:"end"`
 }
 
 // AccountPrograms are the connected programs. A nil list means "not offered here", an empty one "offered, none".
@@ -116,6 +126,23 @@ type AccountLinks struct {
 	Approvals    *string `json:"approvals"`
 }
 
+// AccountActions are the own action pages of spec section 8c; nil when not offered to this account (or not a safe
+// link).
+type AccountActions struct {
+	Username      *string `json:"username"`
+	Email         *string `json:"email"`
+	Password      *string `json:"password"`
+	PIN           *string `json:"pin"`
+	TOTP          *string `json:"totp"`
+	RecoveryCodes *string `json:"recovery_codes"`
+	Passkeys      *string `json:"passkeys"`
+	APIKeys       *string `json:"api_keys"`
+	AppPasswords  *string `json:"app_passwords"`
+	Sessions      *string `json:"sessions"`
+	Programs      *string `json:"programs"`
+	Services      *string `json:"services"`
+}
+
 // ParseAccount normalizes the body of a 200 answer of /.tinysesam/account.json or /auth/account.json (spec section
 // 8a). Anything but a JSON object with signed_in true (the boolean) counts as signed out; a member of the wrong type
 // reads as missing, an unsafe href as nil, unknown members are dropped.
@@ -133,6 +160,7 @@ func ParseAccount(body []byte) Account {
 	}
 	account, signIn := group(data["account"]), group(data["sign_in"])
 	sessions, programs, links := group(data["sessions"]), group(data["programs"]), group(data["links"])
+	actions := group(data["actions"])
 	out := Account{
 		SignedIn: true,
 		Account: &AccountName{Username: text(account["username"]), DisplayName: text(account["display_name"]),
@@ -145,6 +173,12 @@ func ParseAccount(body []byte) Account {
 			TOTP: href(links["totp"]), Passkeys: href(links["passkeys"]), Devices: href(links["devices"]),
 			AppPasswords: href(links["app_passwords"]), Services: href(links["services"]),
 			Approvals: href(links["approvals"])},
+		Actions: &AccountActions{Username: href(actions["username"]), Email: href(actions["email"]),
+			Password: href(actions["password"]), PIN: href(actions["pin"]), TOTP: href(actions["totp"]),
+			RecoveryCodes: href(actions["recovery_codes"]), Passkeys: href(actions["passkeys"]),
+			APIKeys: href(actions["api_keys"]), AppPasswords: href(actions["app_passwords"]),
+			Sessions: href(actions["sessions"]), Programs: href(actions["programs"]),
+			Services: href(actions["services"])},
 	}
 	if t, ok := signIn["totp"].(map[string]any); ok {
 		out.SignIn.TOTP = &AccountTOTP{Enabled: flag(t["enabled"]), RecoveryLeft: count(t["recovery_left"]),
@@ -156,7 +190,7 @@ func ParseAccount(body []byte) Account {
 	for _, e := range objects(sessions["items"]) {
 		out.Sessions.Items = append(out.Sessions.Items, AccountSession{CreatedAt: count(e["created_at"]),
 			LastSeen: count(e["last_seen"]), Method: text(e["method"]), Device: text(e["device"]),
-			Current: flag(e["current"])})
+			Current: flag(e["current"]), Handle: text(e["handle"]), End: href(e["end"])})
 	}
 	if list, ok := programs["app_passwords"].([]any); ok {
 		out.Programs.AppPasswords = []AccountAppPassword{}
@@ -275,4 +309,69 @@ func offeredUses(v any) []AccountUse {
 		return nil
 	}
 	return uses(v)
+}
+
+// ErrActionURL wraps every refusal of ActionURL.
+var ErrActionURL = errors.New("tinysesam: action page address refused")
+
+// ActionStateMax is the longest state an action page carries back (spec section 8c).
+const ActionStateMax = 128
+
+// ActionURL builds the address of an action page with the way back (spec section 8c): href is a member of
+// Account.Actions or a session's End (ending exactly that session), returnTo the absolute http(s) URL on the
+// application's own host to come back to, state an optional value of the application ("" for none; printable ASCII,
+// at most ActionStateMax characters). Send the person there by navigation; the page leads back with ts_action,
+// ts_result and state. It refuses (an error wrapping ErrActionURL) an href that fails the rule of spec section 8 or
+// carries a fragment, a returnTo that is no absolute http(s) URL of printable ASCII, and a state outside the rule.
+func ActionURL(href, returnTo, state string) (string, error) {
+	refuse := func(why string) (string, error) {
+		return "", fmt.Errorf("%w: %s", ErrActionURL, why)
+	}
+	if !safeHref(href) || strings.Contains(href, "#") {
+		return refuse("the href is no action page address")
+	}
+	lower := strings.ToLower(returnTo)
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") || !printableASCII(returnTo) {
+		return refuse("returnTo must be an absolute http(s) URL in printable ASCII")
+	}
+	if len(state) > ActionStateMax || !printableASCII(state) {
+		return refuse(fmt.Sprintf("state is printable ASCII of at most %d characters", ActionStateMax))
+	}
+	sep := "?"
+	if strings.Contains(href, "?") {
+		sep = "&"
+	}
+	out := href + sep + "return=" + queryEscape(returnTo)
+	if state != "" {
+		out += "&state=" + queryEscape(state)
+	}
+	return out, nil
+}
+
+// printableASCII is true when every byte lies in 0x21-0x7e (true for "").
+func printableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x21 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// queryEscape writes every byte but A-Z a-z 0-9 - . _ ~ as %XX with upper-case hex digits.
+func queryEscape(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '.' || c == '_' ||
+			c == '~' {
+			b.WriteByte(c)
+		} else {
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&15])
+		}
+	}
+	return b.String()
 }

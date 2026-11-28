@@ -2239,7 +2239,7 @@
       "tier": "B"
     },
     "SIGNED_OUT_ACCOUNT": {
-      "sig": "{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None}",
+      "sig": "{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None, 'actions': None}",
       "tier": "B"
     },
     "SignatureError": {
@@ -2288,6 +2288,10 @@
     },
     "WSGIMiddleware": {
       "sig": "class (app: 'Callable[..., Any]', gate: 'GateClient')",
+      "tier": "B"
+    },
+    "action_url": {
+      "sig": "(href: 'str', return_to: 'str', state: 'Optional[str]' = None) -> 'str'",
       "tier": "B"
     },
     "current_identity": {

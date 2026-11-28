@@ -242,7 +242,12 @@ otherwise `null`; show the number with a word, never a coloured dot alone.
 settings page of your own — only TinySesam's cookies, ext-curl, 5 seconds, 64 KiB, no redirects; anything but a `200`
 with `signed_in: true` is `Account::signedOut()`. `Account::parse($body)` normalizes a body into a plain array: every
 href safe or `null`, a member of the wrong type `null`, unknown members dropped. Escape every string. Changes happen on
-TinySesam's account page, which `links` lead to.
+TinySesam's account page, which `links` lead to, or on its action pages (spec §8c): `actions` holds their addresses,
+and every session its `handle` and `end`, the page that ends exactly that session. `Account::actionUrl($href,
+$returnTo, $state)` builds the address to send the person to, with the way back to `$returnTo` (an absolute `http(s)`
+URL of your host) and your `$state` — `Account::actionUrl($session['end'], 'https://app.example.com/settings',
+'s-81f2')` ends one session; the page comes back with `ts_action`, `ts_result` and `state`. An unsafe href, another
+`$returnTo` or a bad state throws a `ConfigError`.
 
 ## Approval confirmations
 

@@ -347,6 +347,23 @@ fn account() {
         }
     }
     report("account.json", vectors.len(), 5, failures);
+    let urls = doc["action_urls"].as_array().unwrap();
+    let mut failures = Vec::new();
+    for v in urls {
+        let (id, input, expected) = (str_of(v, "id"), &v["input"], &v["expected"]);
+        let got = match account::action_url(
+            str_of(input, "href"),
+            str_of(input, "return"),
+            input["state"].as_str(),
+        ) {
+            Ok(url) => serde_json::json!({"ok": true, "url": url}),
+            Err(_) => serde_json::json!({"ok": false, "error": "invalid"}),
+        };
+        if &got != expected {
+            failures.push(format!("action_urls/{id}: {got} ≠ {expected}"));
+        }
+    }
+    report("account.json action_urls", urls.len(), 10, failures);
 }
 
 #[test]

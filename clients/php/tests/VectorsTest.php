@@ -48,6 +48,17 @@ final class VectorsTest extends TestCase
             $got = Account::parse(Vectors::encode($v->input->account));
             self::assertSame(Vectors::normalize($v->expected->account), Vectors::normalize($got), $v->id);
         }
+        $urls = Vectors::load('account.json')->action_urls;
+        self::assertNotEmpty($urls, 'no action address vectors');
+        foreach ($urls as $v) {
+            $in = $v->input;
+            try {
+                $got = ['ok' => true, 'url' => Account::actionUrl($in->href, $in->return, $in->state)];
+            } catch (ConfigError) {
+                $got = ['ok' => false, 'error' => 'invalid'];
+            }
+            self::assertSame(Vectors::normalize($v->expected), Vectors::normalize($got), "action_urls/{$v->id}");
+        }
     }
 
     public function testApprovalVectors(): void

@@ -270,6 +270,19 @@ assert "This is not offered here." in r.text and "data-act=endsess" not in r.tex
 r = me.get(f"/auth/act/session_end?app=docs&target={other['handle']}&return=https%3A%2F%2F{APP_HOST}%2F")
 assert f"data-act=endsess data-id='{other['handle']}'" in r.text and "<span>Documents</span></div><h1>End a session" \
     in r.text, r.text[-2500:]
+# The client's call (T-148): the gate client's `action_url` on the normalized `end` reaches the same page in the
+# application's frame, and its way back carries the application's `return` and `state` unchanged.
+from tinysesam import gate_client  # noqa: E402
+
+framed = gate_client.parse_account(dict(view, signed_in=True))
+end = next(i["end"] for i in framed["sessions"]["items"] if i["handle"] == other["handle"])
+odd_state = "s/1+2=3&4"
+url = gate_client.action_url(end, f"https://{APP_HOST}/settings?tab=sessions", odd_state)
+r = me.get(url.removeprefix(BASE))
+assert f"data-act=endsess data-id='{other['handle']}'" in r.text and "<span>Documents</span>" in r.text, url
+href, _, done = back(r.text)
+assert query(href) == {"tab": "sessions", "ts_action": "session_end", "ts_result": "cancelled",
+                       "state": odd_state}, href
 for bad in (mine_["handle"], "", "nope"):
     assert "This is not offered here." in me.get(f"/auth/act/session_end?target={bad}").text, bad
 before = len([a for a in auth.store.recent_audit(500) if a["event"] == "session_end"])

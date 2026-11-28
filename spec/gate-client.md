@@ -459,13 +459,12 @@ The members (TinySesam's answer; `null` means "not offered by this installation"
 | `approvals` | object or null | `pending` (integer) |
 | `permissions` | object or null | on an application's host (§3.4): `app` (string, the application id) and `names` (list of strings); `null` on any other host |
 | `links` | object | `account`, `sessions`, `totp`, `passkeys`, `devices`, `app_passwords`, `services`, `approvals`: each an `href` or `null` |
+| `actions` | object | the own action pages of §8c (T-105): `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — each an `href` or `null` (not offered to this account) |
 
-Besides these, the answer carries `actions` (T-105): the action pages of §8c — `username`, `email`, `password`, `pin`,
-`totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — each an `href`
-or `null` (not offered to this account). A helper does not normalize it and drops it like any member it does not know
-(the vector `signed-in` carries it); the application's page reads it in the browser and follows the addresses. In the
-same way every entry of `sessions.items` carries `handle` (the session handle: an opaque random reference, never the
-token or its hash) and `end` (the action page that ends exactly that session, `null` for the session of the request).
+Every entry of `sessions.items` also carries `handle` (the session handle: an opaque random reference, never the token
+or its hash; text, an application must not read a format into it) and `end` (the action page that ends exactly that
+session, `null` for the session of the request). Both, and `actions`, are normalized since T-148; a client before it
+dropped them like members it does not know.
 
 Times are Unix seconds (integer) or `null` (never used). `device` is a coarse "browser · system" taken from the
 User-Agent, or `null`; `current` is `true` for the session of this request, `false` for the others, `null` when the
@@ -477,12 +476,12 @@ stable.
 The normalized result of a helper (`vectors/account.json` shows it):
 
 - **Signed out** — any answer but a `200` with a JSON object whose `signed_in` is `true`: `{"signed_in": false}` with
-  `account`, `sign_in`, `sessions`, `programs`, `approvals`, `permissions` and `links` all `null`.
+  `account`, `sign_in`, `sessions`, `programs`, `approvals`, `permissions`, `links` and `actions` all `null`.
 - **Signed in** — every member of the table is present, unknown ones are dropped:
   - a text, a flag or a count of the wrong type reads as `null`; a count or a time is a JSON integer from 0 to
     2^53 − 1 (a negative number, a fraction, a boolean or a string is none);
-  - `account`, `sign_in`, `sessions`, `programs` and `links` are always objects: an answer without them, or with
-    another type, gives the object with every member `null`;
+  - `account`, `sign_in`, `sessions`, `programs`, `links` and `actions` are always objects: an answer without them,
+    or with another type, gives the object with every member `null`;
   - `sign_in.totp` and `sign_in.passkeys` are an object or `null` (not offered); `programs.oauth`, `programs.services`
     and `programs.app_passwords` a list or `null`; `sessions.items` and `sign_in.passkeys.items` always a list (`[]`
     when the answer has none or no list); an entry of a list that is no object is dropped, the members of an entry
@@ -490,7 +489,9 @@ The normalized result of a helper (`vectors/account.json` shows it):
   - `approvals` is `{"pending": <count>}` when `pending` is a count, otherwise `null`;
   - `permissions` is `{"app": <text or null>, "names": [<texts>]}` when the answer's member is an object (an entry of
     `names` that is no string is dropped; `names` that is no list reads as `[]`), otherwise `null` — also signed out;
-  - every member of `links` is an `href` that passes the rule of §8, or `null`;
+  - every member of `links` and of `actions`, and every session's `end`, is an `href` that passes the rule of §8, or
+    `null`; an action name besides the twelve of the table is dropped (the administration's actions of §8c are no
+    members); a session's `handle` is text or `null`;
   - `sign_in.password` is kept as text — a value besides the three of the table is for the application to ignore;
   - `account.source` is a list of texts or `null`: an entry that is no string is dropped, a value that is no list reads
     as `null`, an unknown text is kept for the application to ignore.
@@ -529,6 +530,16 @@ GET <actions.password>&return=<url>&state=<opaque>        (?return=… when the 
   uses the approvals ([`approval-token.md`](approval-token.md)).
 - An application MUST treat `state` as its own opaque value (TinySesam neither reads nor stores it) and SHOULD check
   that a `state` it gets back is one it issued, so a link from elsewhere cannot fake its message.
+- **The client's call** (T-148, optional like §8a). A client with the account helper offers one function that builds
+  the address of the request above from an `href` (a member of `actions`, or a session's `end` — so ending one session
+  by its handle is `action_url(session.end, return, state)`), `return` and an optional `state`. It MUST refuse (the
+  configuration error of the language, vector error `invalid`) an `href` that fails the rule of §8 or carries a
+  fragment (`#`), a `return` that is not an absolute `http://`/`https://` URL (case-insensitive scheme) of printable
+  ASCII (`0x21`–`0x7e`), and a `state` that is not printable ASCII of at most 128 characters; an empty or absent
+  `state` is none. The result is the `href`, then `&` when it carries a `?` and `?` otherwise, then
+  `return=<return>` and, with a state, `&state=<state>`, both escaped octet by octet — every character but
+  `A-Z a-z 0-9 - . _ ~` as `%XX` with upper-case hex digits. The client sends nothing: the application sends the
+  person there by navigation. The vectors are the list `action_urls` of `vectors/account.json`.
 - **Administration** ([T-147](../backlog/T-147-administration-actions-on-action-pages-area-admin.md)). The same
   pages act on another account for a person who administers it: `admin_lock`, `admin_unlock`, `admin_roles`,
   `admin_totp_reset`, `admin_key_revoke`, `admin_program_revoke`, `admin_session_end` and `admin_signin_link`, at
@@ -605,7 +616,7 @@ request TinySesam answers carries `Remote-Kind`, the header vectors about other 
 | `headers.json` | header mode: `input.headers` → `expected` (`identity` [+ `has_role`] or `error`). A header value is a string of octets, one code point U+0000–U+00FF per octet (convert with Latin-1); a list means the field occurred more than once |
 | `jwks.json` | `sets`: a JWKS document → usable `kids` in order, or `error: jwks_invalid`; `scenarios`: steps with `now`, `jws` and a simulated `fetch` answer (`status`, `cache_control`, `body` or `body_text`, or `error`) → `expect` (`fetched`, `ok`, `error`). A client that fetches where no `fetch` is given fails the step |
 | `topbar.json` | §8: `input.topbar` → the normalized `expected.topbar` |
-| `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account` |
+| `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account`; `action_urls` (§8c, the client's call): `input` `href`, `return`, `state` (a string or `null`) → `expected.url`, or `error: invalid` |
 | `permissions.json` | §3.4: `headers` (as in `headers.json`, `expected.permissions` + `has_permission`, or `error`), `tokens` (as in `token.json`, the same expectations) and `register` (`input` `base_url`, `app`, `permissions` → `expected.request` `method`, `url`, `body`, or `error: invalid`). The identities of `token.json` and `headers.json` do not list `permissions`; this file does |
 
 Every vector has an `id`, a `reason` and an `attack` class (`null` for a plain valid case). Every attack vector carries
@@ -662,6 +673,7 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `topbar-types` | an answer of the wrong shape, an `approvals` that is no count |
 | `account-href` | unsafe links in the account overview |
 | `account-types` | an account overview of the wrong shape, members of the wrong type, unknown and missing members |
+| `action-request` | the address of an action page (§8c): an unsafe `href` or one with a fragment, a `return` that is no absolute printable-ASCII `http(s)` URL, a `state` outside the rule |
 | `permissions-parsing` | commas, spaces, empty and repeated entries, case, a prefix, `admin` — exact comparison, nothing implied |
 | `permissions-header` | `Remote-Permissions` twice, with a control character, invalid UTF-8; a `ts_perms` of the wrong type or with a control character |
 | `register-manifest` | manifests the client refuses before sending: names outside the rule, a name twice, too many entries, an application id outside the rule, a plain `http` base URL |
