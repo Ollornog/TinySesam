@@ -211,6 +211,14 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- CI: CodeQL runs in the sprint lane (T-139). A pull request into `sprint/<name>` runs the Python and JavaScript
+  analysis (job `sprint` of `codeql.yml`, read permission only) without uploading it, and `scripts/_codeql_sprint.py`
+  compares its SARIF with `main`'s newest analysis of the same category and the one at the merge base, fetched through
+  the code-scanning API: a finding is the same when rule, file and CodeQL's line hash agree, counted as a multiset. A
+  finding the sprint adds is red with an annotation; one already on `main`, open or dismissed, is not; no analysis to
+  compare with is red too. The other CodeQL jobs skip in the sprint lane, Go and Rust stay with the closing pull
+  request. Three sprints in a row the closing pull request was red on CodeQL in its first run.
+  `tests/test_codeql_sprint.py` checks the comparison, the choice of analyses and the workflow.
 - `topbar.json` on an application's host with an app frame (T-103): `account.href` and `approvals.href` carry
   `app=<host>`, so TinySesam's pages open in the application's frame — as `account.json` already did.
 - Hygiene test: no call with a side effect inside an `assert` (T-138). `tests/test_repo.py` mirrors CodeQL's

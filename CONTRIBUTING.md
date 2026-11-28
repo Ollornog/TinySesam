@@ -38,7 +38,10 @@ net. Open a pull request; CI runs on the PR and on `main`, and `main` merges onl
 A maintainer's sprint collects its pull requests in a branch `sprint/<name>`: a pull request into it runs only the
 fast checks (the job `classify` of each workflow answers for the shared kit's sprint lane, and the heavy jobs skip;
 so they do for a pull request that changes only text nobody reads). The full suite runs once, in the closing pull
-request into `main`. `tests/test_ci_aggregate.py` holds every workflow to it.
+request into `main`. `tests/test_ci_aggregate.py` holds every workflow to it. CodeQL runs in the sprint lane too, for
+Python and JavaScript, without uploading: the job `sprint` of `codeql.yml` compares its findings with `main`'s analyses
+(`scripts/_codeql_sprint.py`) and is red on a finding the sprint adds, never on one already on `main`
+(`tests/test_codeql_sprint.py`).
 
 ```bash
 git switch -c my-change

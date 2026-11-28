@@ -9,7 +9,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # `sprint/*`: the sprint lane runs only the job `sprint` below (T-139); every other job skips there.
+    branches: [main, "sprint/*"]
   schedule:
     # Early on Mondays: CodeQL queries keep evolving, so a finding can also appear anew without a
     # code change.
@@ -24,6 +25,7 @@ permissions:
 jobs:
   analyse:
     name: CodeQL (python)
+    if: ${{ !startsWith(github.base_ref, 'sprint/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -52,6 +54,7 @@ jobs:
   # deploy/forward-auth/caddy-gate, which is not our code).
   analyse-go:
     name: CodeQL (go)
+    if: ${{ !startsWith(github.base_ref, 'sprint/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -114,6 +117,7 @@ jobs:
   # extractor of one language does not hide the findings of the other.
   analyse-js:
     name: CodeQL (javascript-typescript)
+    if: ${{ !startsWith(github.base_ref, 'sprint/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -164,6 +168,7 @@ jobs:
 
   analyse-rust:
     name: CodeQL (rust)
+    if: ${{ !startsWith(github.base_ref, 'sprint/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -218,3 +223,52 @@ jobs:
         with:
           sarif_file: sarif-rust
           category: "/language:rust"
+
+  # Sprint lane (T-139): a pull request into `sprint/<name>` runs the Python and JavaScript analysis WITHOUT uploading it
+  # and compares its SARIF with `main`'s analyses (scripts/_codeql_sprint.py): a finding the sprint adds is red here,
+  # not first in the closing pull request; a finding already on `main` (open or dismissed) is not. No upload: a sprint
+  # branch has no analysis of its own, so GitHub's check would have nothing to compare against. Go and Rust stay with the
+  # closing pull request (their clients rarely change in a sprint, Rust takes 5-8 minutes). Read permission only.
+  sprint:
+    name: CodeQL sprint (${{ matrix.language }})
+    if: ${{ startsWith(github.base_ref, 'sprint/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: read       # only for this: read main's analyses to compare against
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The same scope as the jobs `analyse` and `analyse-js`: the whole repository for Python, the JS client.
+          - language: python
+            config: "name: sprint lane"
+          - language: javascript-typescript
+            config: |
+              paths:
+                - clients/js
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-and-quality
+          config: ${{ matrix.config }}
+
+      - uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934  # v4.39.5
+        with:
+          category: "/language:${{ matrix.language }}"
+          upload: never
+          output: sarif
+
+      - name: Findings new compared with main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CATEGORY: "/language:${{ matrix.language }}"
+        run: python3 scripts/_codeql_sprint.py --sarif sarif --category "$CATEGORY"

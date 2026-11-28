@@ -252,10 +252,10 @@ for f in LIB:
 print("  no print()/breakpoint() in tinysesam/")
 
 # ---------- No call with a side effect inside an assert (CodeQL py/side-effect-in-assert, T-138) ----------
-# The sprint lane runs no CodeQL; twice in a row this finding first showed in the closing pull request of a sprint and
+# Up to T-139 the sprint lane ran no CodeQL; twice in a row this finding first showed in the closing pull request of a sprint and
 # cost a full round (S4, S5). This check mirrors the rule of CodeQL's query `Statements/SideEffectInAssert.ql` — the
-# same names, the same subprocess calls, the same yields — so the hygiene test, which runs in the sprint lane and in
-# the pre-push hook, catches what CodeQL would. It does not widen the rule: `client.post(...)` inside an assert is no
+# same names, the same subprocess calls, the same yields — so the hygiene test, which runs in the pre-push hook, catches
+# what CodeQL would before the push (the sprint lane's CodeQL job, T-139, only after it). It does not widen the rule: `client.post(...)` inside an assert is no
 # CodeQL finding and no finding here. Under `python -O` an assert is dropped with everything in it.
 _SIDE_EFFECT_NAMES = frozenset({"print", "write", "append", "pop", "remove", "discard", "delete", "close", "open",
                                 "exit"})
