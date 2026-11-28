@@ -35,6 +35,14 @@ final readonly class Topbar
          * @var ?array{pending: int, href: string}
          */
         public ?array $approvals = null,
+        /**
+         * What the shell draws on the application's host (spec section 8d): `layout` ("top" or "side"), the
+         * application's `name` in its app frame, `home` (the way back) and the frame's `links` — the last two only
+         * signed in. Without an app frame: the bar on top, nothing else.
+         *
+         * @var array{layout: string, name: ?string, home: ?string, links: list<array{title: string, href: string}>}
+         */
+        public array $frame = ['layout' => 'top', 'name' => null, 'home' => null, 'links' => []],
     ) {
     }
 
@@ -85,7 +93,7 @@ final readonly class Topbar
         $brand = \is_string($brandValue) ? $brandValue : '';
         $name = Strict::member($data, 'name');
         if (Strict::member($data, 'signed_in') !== true || !\is_string($name)) {
-            return new self($brand);
+            return new self($brand, frame: self::frame(Strict::member($data, 'frame'), false));
         }
         $shown = static function (string $slot) use ($data): ?string {
             $m = Strict::member($data, $slot);
@@ -109,7 +117,34 @@ final readonly class Topbar
             $shown('admin_panel'),
             \is_string($logoutHref) && self::isSafeHref($logoutHref) ? $logoutHref : null,
             self::approvals(Strict::member($data, 'approvals')),
+            self::frame(Strict::member($data, 'frame'), true),
         );
+    }
+
+    /**
+     * `frame` of spec section 8d: layout exactly "side" or else "top", name text or null; home and links only signed
+     * in (a safe href, the safe {title, href} entries). Anything that is no object reads as no frame.
+     *
+     * @return array{layout: string, name: ?string, home: ?string, links: list<array{title: string, href: string}>}
+     */
+    private static function frame(mixed $raw, bool $signedIn): array
+    {
+        $out = ['layout' => 'top', 'name' => null, 'home' => null, 'links' => []];
+        if (!$raw instanceof \stdClass) {
+            return $out;
+        }
+        if (Strict::member($raw, 'layout') === 'side') {
+            $out['layout'] = 'side';
+        }
+        $name = Strict::member($raw, 'name');
+        $out['name'] = \is_string($name) ? $name : null;
+        if ($signedIn) {
+            $home = Strict::member($raw, 'home');
+            $out['home'] = \is_string($home) && self::isSafeHref($home) ? $home : null;
+            $out['links'] = self::links(Strict::member($raw, 'links'));
+        }
+
+        return $out;
     }
 
     /**
@@ -185,6 +220,7 @@ final readonly class Topbar
      *     admin_panel: ?string,
      *     logout: ?string,
      *     approvals: ?array{pending: int, href: string},
+     *     frame: array{layout: string, name: ?string, home: ?string, links: list<array{title: string, href: string}>},
      * }
      */
     public function toArray(): array
@@ -199,6 +235,7 @@ final readonly class Topbar
             'admin_panel' => $this->adminPanel,
             'logout' => $this->logout,
             'approvals' => $this->approvals,
+            'frame' => $this->frame,
         ];
     }
 }

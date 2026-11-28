@@ -53,7 +53,7 @@ __all__ = [
     "NotYetValid", "Expired",
     "WSGIMiddleware", "ASGIMiddleware", "require_auth", "require_role", "require_session", "require_account_kind",
     "guard_status",
-    "current_identity", "Topbar", "TopbarLink", "TopbarApprovals", "parse_topbar", "fetch_topbar",
+    "current_identity", "Topbar", "TopbarLink", "TopbarApprovals", "TopbarFrame", "parse_topbar", "fetch_topbar",
     "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account", "action_url",
     "PermissionRequest", "register_request", "register_permissions", "RegistrationFailed",
 ]
@@ -1208,6 +1208,17 @@ class TopbarApprovals:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class TopbarFrame:
+    """The part `frame` of the top bar (spec §8d): what the shell draws on the application's host — `layout` (`"top"`
+    or `"side"`), the application's `name` in its app frame, `home` (the way back, only for a signed-in person) and the
+    frame's `links` the person may see. Without an app frame: the bar on top, nothing else."""
+    layout: str = "top"
+    name: Optional[str] = None
+    home: Optional[str] = None
+    links: tuple[TopbarLink, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Topbar:
     """TinySesam's top bar data reduced to what an application may render. Do not cache it across sessions."""
     brand: str = ""
@@ -1219,17 +1230,20 @@ class Topbar:
     admin_panel: Optional[str] = None
     logout: Optional[str] = None
     approvals: Optional[TopbarApprovals] = None
+    frame: TopbarFrame = TopbarFrame()
 
     def to_dict(self) -> dict[str, Any]:
         """The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`, `approvals` as
-        `{pending, href}` or None)."""
+        `{pending, href}` or None, `frame` as `{layout, name, home, links}`)."""
         approvals = None if self.approvals is None else {"pending": self.approvals.pending,
                                                          "href": self.approvals.href}
         return {"brand": self.brand, "signed_in": self.signed_in, "name": self.name,
                 "links": [{"title": link.title, "href": link.href} for link in self.links],
                 "menu_links": [{"title": link.title, "href": link.href} for link in self.menu_links],
                 "account": self.account, "admin_panel": self.admin_panel, "logout": self.logout,
-                "approvals": approvals}
+                "approvals": approvals,
+                "frame": {"layout": self.frame.layout, "name": self.frame.name, "home": self.frame.home,
+                          "links": [{"title": link.title, "href": link.href} for link in self.frame.links]}}
 
 
 def _safe_href(href: Any) -> bool:
@@ -1253,7 +1267,7 @@ def parse_topbar(data: Any) -> Topbar:
         return Topbar()
     brand = data["brand"] if isinstance(data.get("brand"), str) else ""
     if data.get("signed_in") is not True or not isinstance(data.get("name"), str):
-        return Topbar(brand=brand)
+        return Topbar(brand=brand, frame=_topbar_frame(data.get("frame"), signed_in=False))
     links, menu_links = _topbar_links(data.get("links")), _topbar_links(data.get("menu_links"))
     slots: dict[str, Optional[str]] = {}
     for slot in ("account", "admin_panel"):
@@ -1263,7 +1277,20 @@ def parse_topbar(data: Any) -> Topbar:
     logout = data.get("logout")
     slots["logout"] = logout["href"] if isinstance(logout, dict) and _safe_href(logout.get("href")) else None
     return Topbar(brand=brand, signed_in=True, name=data["name"], links=links, menu_links=menu_links,
-                  approvals=_topbar_approvals(data.get("approvals")), **slots)
+                  approvals=_topbar_approvals(data.get("approvals")),
+                  frame=_topbar_frame(data.get("frame"), signed_in=True), **slots)
+
+
+def _topbar_frame(raw: Any, *, signed_in: bool) -> TopbarFrame:
+    """`frame` of spec §8d: `layout` exactly `side` or else `top`, `name` text or None; `home` a safe href and `links`
+    the safe `{title, href}` entries — both only signed in. Anything that is no object reads as no frame."""
+    if not isinstance(raw, dict):
+        return TopbarFrame()
+    layout = "side" if raw.get("layout") == "side" else "top"
+    if not signed_in:
+        return TopbarFrame(layout=layout, name=_text(raw.get("name")))
+    return TopbarFrame(layout=layout, name=_text(raw.get("name")), home=_href(raw.get("home")),
+                       links=_topbar_links(raw.get("links")))
 
 
 def _count(value: Any) -> Optional[int]:

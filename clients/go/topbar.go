@@ -29,6 +29,41 @@ type Topbar struct {
 	// Approvals is set when TinySesam has approvals switched on and the answer carries a count of at least 0 and a
 	// safe link (spec section 8). Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
 	Approvals *TopbarApprovals `json:"approvals"`
+	// Frame is what the shell draws on the application's host (spec section 8d); always set.
+	Frame TopbarFrame `json:"frame"`
+}
+
+// TopbarFrame is the part frame of the top bar (spec section 8d): Layout "top" or "side", the application's Name in
+// its app frame (nil without one), Home the way back and Links the frame's links the person may see (both only signed
+// in; Links is never nil). Without an app frame: the bar on top, nothing else.
+type TopbarFrame struct {
+	Layout string       `json:"layout"`
+	Name   *string      `json:"name"`
+	Home   *string      `json:"home"`
+	Links  []TopbarLink `json:"links"`
+}
+
+// emptyTopbar is the signed-out bar without brand and without a frame.
+func emptyTopbar() Topbar {
+	return Topbar{Links: []TopbarLink{}, MenuLinks: []TopbarLink{}, Frame: topbarFrame(nil, false)}
+}
+
+// topbarFrame normalizes the member frame: layout exactly "side" or else "top", name text or nil; home and links only
+// signed in (a safe href, the safe {title, href} entries). Anything that is no object reads as no frame.
+func topbarFrame(raw any, signedIn bool) TopbarFrame {
+	out := TopbarFrame{Layout: "top", Links: []TopbarLink{}}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return out
+	}
+	if l, _ := m["layout"].(string); l == "side" {
+		out.Layout = "side"
+	}
+	out.Name = text(m["name"])
+	if signedIn {
+		out.Home, out.Links = href(m["home"]), topbarLinks(m["links"])
+	}
+	return out
 }
 
 // TopbarApprovals is how many approvals wait for this account and where to decide them.
@@ -40,7 +75,7 @@ type TopbarApprovals struct {
 // ParseTopbar normalizes the body of /.tinysesam/topbar.json or /auth/topbar.json. Anything but a JSON object with
 // signed_in true (the boolean) and a string name counts as signed out; unsafe links are dropped.
 func ParseTopbar(body []byte) Topbar {
-	out := Topbar{Links: []TopbarLink{}, MenuLinks: []TopbarLink{}}
+	out := emptyTopbar()
 	v, err := decodeStrictJSON(body)
 	if err != nil {
 		return out
@@ -54,8 +89,10 @@ func ParseTopbar(body []byte) Topbar {
 	}
 	name, ok := data["name"].(string)
 	if signed, _ := data["signed_in"].(bool); !signed || !ok {
+		out.Frame = topbarFrame(data["frame"], false)
 		return out
 	}
+	out.Frame = topbarFrame(data["frame"], true)
 	out.SignedIn, out.Name = true, &name
 	out.Links, out.MenuLinks = topbarLinks(data["links"]), topbarLinks(data["menu_links"])
 	shown := func(slot string) *string {
@@ -130,7 +167,7 @@ var errTopbarStatus = errors.New("tinysesam: TinySesam answered with a status ot
 func FetchTopbar(ctx context.Context, client *http.Client, topbarURL string, r *http.Request) (Topbar, error) {
 	body, err := fetchTinySesamJSON(ctx, client, topbarURL, r)
 	if err != nil {
-		return Topbar{Links: []TopbarLink{}, MenuLinks: []TopbarLink{}}, err
+		return emptyTopbar(), err
 	}
 	return ParseTopbar(body), nil
 }

@@ -1037,6 +1037,11 @@ there.
    PHP) gains the member `actions` (the own action pages, `null` signed out) and every session `handle` and `end`.
    Code that compares a whole normalized account, or builds a Rust `account::Session` by a struct literal, takes the
    new members; everything else is unchanged.
+6. **The gate clients normalise the top bar's `frame`** (T-143, spec §8d, tier B). The top bar of every client
+   (`Topbar`/`TopbarFrame` in Python, `Topbar.Frame` in Go, `TopBar::frame` in Rust, `Topbar.frame` in JavaScript,
+   `Topbar::$frame` in PHP) gains the always-present member `frame` (`layout`, `name`, `home`, `links`). Code that
+   compares a whole normalized bar, or builds a Rust `topbar::TopBar` by a struct literal, takes the new member;
+   everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 **Schema 27** (T-100, permissions) is additive: this version adds the tables `app_permission` and `role_permission` at

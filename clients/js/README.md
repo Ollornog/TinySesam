@@ -221,7 +221,8 @@ doubt, only links with an absolute `http`/`https` URL or a path starting with ex
 `menu_links`, the account menu). Titles and names are text, never markup — set them with `textContent`. `fetchTopbar(url, cookieHeader)` fetches it server-side with only
 TinySesam's cookies, a 5-second deadline and a 64 KiB limit; do not cache the answer across sessions. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser"). `approvals` is
 `{ pending, href }` when TinySesam has approvals switched on, otherwise `null`; show the number with a word, never a
-coloured dot alone.
+coloured dot alone. `frame` (spec §8d) is always present: `layout` (`'top'` or `'side'`), and on an application's host
+with an app frame its `name`, `home` and `links` (the way back and the links only signed in).
 
 ## Account overview
 

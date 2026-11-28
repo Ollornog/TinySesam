@@ -77,5 +77,6 @@ export {
   signedOutTopbar,
   type Topbar,
   type TopbarApprovals,
+  type TopbarFrame,
   type TopbarLink,
 } from './topbar.ts';

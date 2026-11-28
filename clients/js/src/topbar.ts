@@ -28,6 +28,20 @@ export interface Topbar {
    * at least 0 and a safe link. Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
    */
   readonly approvals: TopbarApprovals | null;
+  /** What the shell draws on the application's host (spec section 8d); always present. */
+  readonly frame: TopbarFrame;
+}
+
+/**
+ * The part `frame` of the top bar (spec section 8d): `layout` (`top` or `side`), the application's `name` in its app
+ * frame, `home` (the way back) and the frame's `links` — the last two only signed in. Without an app frame: the bar on
+ * top, nothing else.
+ */
+export interface TopbarFrame {
+  readonly layout: 'top' | 'side';
+  readonly name: string | null;
+  readonly home: string | null;
+  readonly links: readonly TopbarLink[];
 }
 
 /** How many approvals wait for this account and where to decide them. */
@@ -37,7 +51,7 @@ export interface TopbarApprovals {
 }
 
 /** The top bar of a signed-out request (also the answer to anything doubtful). */
-export function signedOutTopbar(brand = ''): Topbar {
+export function signedOutTopbar(brand = '', frame: TopbarFrame = topbarFrame(undefined, false)): Topbar {
   return {
     brand,
     signed_in: false,
@@ -48,6 +62,25 @@ export function signedOutTopbar(brand = ''): Topbar {
     admin_panel: null,
     logout: null,
     approvals: null,
+    frame,
+  };
+}
+
+/**
+ * `frame` of spec section 8d: layout exactly `side` or else `top`, name text or null; home and links only signed in
+ * (a safe href, the safe `{title, href}` entries). Anything that is no object reads as no frame.
+ */
+function topbarFrame(raw: unknown, signedIn: boolean): TopbarFrame {
+  if (!isObject(raw)) {
+    return { layout: 'top', name: null, home: null, links: [] };
+  }
+  const name = own(raw, 'name');
+  const home = own(raw, 'home');
+  return {
+    layout: own(raw, 'layout') === 'side' ? 'side' : 'top',
+    name: typeof name === 'string' ? name : null,
+    home: signedIn && typeof home === 'string' && isSafeHref(home) ? home : null,
+    links: signedIn ? topbarLinks(own(raw, 'links')) : [],
   };
 }
 
@@ -97,7 +130,7 @@ export function parseTopbar(body: string | Uint8Array): Topbar {
   const brand = typeof brandValue === 'string' ? brandValue : '';
   const name = own(data, 'name');
   if (own(data, 'signed_in') !== true || typeof name !== 'string') {
-    return signedOutTopbar(brand);
+    return signedOutTopbar(brand, topbarFrame(own(data, 'frame'), false));
   }
   const shown = (slot: string): string | null => {
     const m = own(data, slot);
@@ -119,6 +152,7 @@ export function parseTopbar(body: string | Uint8Array): Topbar {
     admin_panel: shown('admin_panel'),
     logout: typeof logoutHref === 'string' && isSafeHref(logoutHref) ? logoutHref : null,
     approvals: topbarApprovals(own(data, 'approvals')),
+    frame: topbarFrame(own(data, 'frame'), true),
   };
 }
 

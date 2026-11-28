@@ -27,7 +27,7 @@ TinySesam itself stays Python; a client never issues tokens and never signs anyo
 ## What every client contains
 
 - **Both modes** of the specification (header mode, token mode with fixed keys and with JWKS), chosen explicitly by
-  configuration; the optional helpers — the top bar of §8 (with its `approvals` member), the account overview of §8a
+  configuration; the optional helpers — the top bar of §8 (with its `approvals` member and the `frame` of §8d), the account overview of §8a
   (with `actions`, the session handle and the address of an action page of §8c) and the approval check of [`spec/approval-token.md`](../spec/approval-token.md) — in every client.
 - **Guards** in the idiom of the language (middleware, extractor, attribute): signed in, `has_role`, session only,
   account kind (`user`/`service`, spec v2). They answer 401/403 and never reveal why (spec §6).

@@ -407,7 +407,8 @@ A helper for it MUST:
 
 The normalized result has the members `brand`, `signed_in`, `name`, `links` and `menu_links` (each a list of
 `title`, `href`; `menu_links` are the entries of the account menu, `[]` when the answer has none or no list),
-`account`, `admin_panel` and `logout` (each an `href` or `null`) and `approvals` (below); `vectors/topbar.json` shows it.
+`account`, `admin_panel` and `logout` (each an `href` or `null`), `approvals` (below) and `frame` (§8d);
+`vectors/topbar.json` shows it.
 The same `href` rule applies to both link lists.
 
 An answer MAY carry further members; a client MUST ignore what it does not know and keep normalizing the rest. With
@@ -583,8 +584,7 @@ browser does everything. Section 8b is kept for the administrator's data of mile
   page) — a form would need TinySesam's CSRF token, which the application's page does not hold —, and without an app
   frame the name leads to `/` of the page's own origin.
 
-The member `frame` of the answer of §8 (always present; a client that does not draw a shell may ignore it, like every
-member it does not know):
+The member `frame` of the answer of §8 (always present; the clients normalize it since T-143):
 
 | Member | Type | Meaning |
 |---|---|---|
@@ -592,6 +592,13 @@ member it does not know):
 | `frame.name` | string or null | the application's name in its app frame (`forward_apps[host]` with `home` or `links`), else `null` |
 | `frame.home` | href or null | where "‹ name" leads back to — only for a signed-in person, like the bar of TinySesam's framed pages |
 | `frame.links` | list of `title`, `href` | the frame's links the person may see, as addresses on the application's host; `[]` signed out |
+
+The normalized `frame` is always an object `{"layout", "name", "home", "links"}`: `layout` is `"side"` when the
+answer says exactly `side`, otherwise `"top"`; `name` is text or `null`; `home` an `href` that passes the rule of §8 or
+`null`; `links` the `{title, href}` entries that pass the rule of the bar's links (anything that is no list counts as
+none). Signed out — the bar of §8 normalizes as signed out — `home` is `null` and `links` `[]` whatever the answer says;
+`layout` and `name` stay. A `frame` that is missing or no object reads as `{"layout": "top", "name": null, "home":
+null, "links": []}`, also for an answer that is no object.
 
 In an app frame `account.href` and `approvals.href` carry `app=<host>`, so TinySesam's pages open in that frame.
 `/auth/topbar.json?app=<host>` answers the same `frame` for a library; a host without an entry changes nothing in the
@@ -670,7 +677,7 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `jwks-shape` | key set documents that are invalid as a whole |
 | `jwks-cache` | the fetch rules of §5 |
 | `topbar-href` | `javascript:`, `data:`, protocol-relative and other unsafe links |
-| `topbar-types` | an answer of the wrong shape, an `approvals` that is no count |
+| `topbar-types` | an answer of the wrong shape, an `approvals` that is no count, a `frame` of the wrong shape or with members of the wrong type |
 | `account-href` | unsafe links in the account overview |
 | `account-types` | an account overview of the wrong shape, members of the wrong type, unknown and missing members |
 | `action-request` | the address of an action page (§8c): an unsafe `href` or one with a fragment, a `return` that is no absolute printable-ASCII `http(s)` URL, a `state` outside the rule |

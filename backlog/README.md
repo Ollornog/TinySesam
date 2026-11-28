@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 24/36 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 25/36 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 92/106 erledigt
@@ -158,7 +158,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-140](T-140-http-test-for-register-in-the-php-client.md)** HTTP test for Permissions::register() in the PHP client · M-2
 * ☐ **[T-141](T-141-acceptance-script-sends-a-forged-remote-permissions.md)** Proxy acceptance script sends a forged Remote-Permissions · M-2
 * ☐ **[T-142](T-142-permissions-of-an-application-in-account-json-without-its-host.md)** Permissions of an application in account.json without its host · M-2
-* ☐ **[T-143](T-143-frame-normalised-in-the-five-clients.md)** The topbar frame part normalised in the five clients · M-2
+* ☑ **[T-143](T-143-frame-normalised-in-the-five-clients.md)** The topbar frame part normalised in the five clients · M-2
 * ☐ **[T-144](T-144-side-layout-without-the-layout-attribute-jumps.md)** Side layout without the layout attribute: the page jumps when the data arrive · M-2
 * ☐ **[T-145](T-145-panel-browser-tests-account-switch-race-and-cdp-helper.md)** Panel browser tests: account-switch race and the shared CDP helper · M-5
 * ☐ **[T-146](T-146-triage-the-open-scorecard-alerts.md)** Triage the open Scorecard alerts · M-5
