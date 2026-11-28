@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 235
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 420 · B 349 names.
+**Status:** A 420 · B 350 names.
 
 ## A · Methods of `TinySesam`
 
@@ -988,17 +988,21 @@ The signature has the wrong length or does not verify.
 
 Base of the token-mode classes below.
 
-### `Topbar(brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None, approvals: 'Optional[TopbarApprovals]' = None) -> None` — class
+### `Topbar(brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None, approvals: 'Optional[TopbarApprovals]' = None, frame: 'TopbarFrame' = TopbarFrame(layout='top', name=None, home=None, links=())) -> None` — class
 
 TinySesam's top bar data reduced to what an application may render. Do not cache it across sessions.
 
 ### `Topbar.to_dict() -> 'dict[str, Any]'`
 
-The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`, `approvals` as `{pending, href}` or None).
+The normalized form of spec §8 (`links` and `menu_links` as lists of `{title, href}`, `approvals` as `{pending, href}` or None, `frame` as `{layout, name, home, links}`).
 
 ### `TopbarApprovals(pending: 'int', href: 'str') -> None` — class
 
 How many approvals wait for this account and where to decide them (spec §8, with approvals switched on). Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
+
+### `TopbarFrame(layout: 'str' = 'top', name: 'Optional[str]' = None, home: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = ()) -> None` — class
+
+The part `frame` of the top bar (spec §8d): what the shell draws on the application's host — `layout` (`"top"` or `"side"`), the application's `name` in its app frame, `home` (the way back, only for a signed-in person) and the frame's `links` the person may see. Without an app frame: the bar on top, nothing else.
 
 ### `TopbarLink(title: 'str', href: 'str') -> None` — class
 

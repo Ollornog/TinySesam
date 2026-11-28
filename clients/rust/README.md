@@ -190,6 +190,8 @@ any doubt, only links with an absolute `http`/`https` URL or a path starting wit
 `menu_links`, the account menu). Titles and names are
 text, never markup; do not cache the answer across sessions. `approvals` is `Some` when TinySesam has approvals
 switched on (`pending` of at least 0 and a safe `href`); show the number with a word, never a coloured dot alone.
+`frame` (spec §8d) is always present: `layout` (`"top"` or `"side"`), and on an application's host with an app frame its
+`name`, `home` and `links` (the way back and the links only signed in).
 
 With the feature `jwks`, `topbar::TopBarFetcher::new(url)?.fetch(cookie_header).await` fetches it server-side with only
 TinySesam's cookies (`account::tinysesam_cookies`), 5 seconds and 64 KiB (`with_deadline` shortens the deadline); anything

@@ -193,9 +193,23 @@ class Probe:
     def headers(self, name: str, via: str = "session", host: str = "") -> dict:
         return dict(self.auth._forward_response_headers(self.user(name, via), host))
 
-    def topbar(self, name=None) -> dict:
+    def topbar(self, name=None, host: str = "") -> dict:
         viewer = self.auth.get_user(self.users[name]) if name else None
-        return self.auth.topbar_data(viewer, base=ISSUER)
+        return self.auth.topbar_data(viewer, base=ISSUER, host=host)
+
+    @contextlib.contextmanager
+    def app_frame(self):
+        """For a moment the probe's host is an application with an app frame (spec §8d, T-91/T-103): `forward_apps`
+        with name, home and links, `apps` with the side layout — the frame's links filtered like `topbar_links`."""
+        cfg = self.auth.cfg
+        saved = (cfg.forward_apps, cfg.apps)
+        cfg.forward_apps = {AUDIENCE: {"name": "Documents", "home": "/start",
+                                       "links": [("Library", "/library"), ("Trash", "/trash", {"admin": True})]}}
+        cfg.apps = {"docs": {"name": {"en": "Documents"}, "hosts": [AUDIENCE], "layout": "side"}}
+        try:
+            yield
+        finally:
+            cfg.forward_apps, cfg.apps = saved
 
 
 # ---------- expected identity (written out by the rules, not by the reference) ----------
@@ -816,10 +830,16 @@ def jwks_scenarios() -> list:
 
 # ---------- top bar ----------
 
+#: The normalized `frame` (spec §8d, T-143) of an answer without an app frame, without the member, or signed out
+#: without a name: the bar on top, nothing else.
+NO_FRAME = {"layout": "top", "name": None, "home": None, "links": []}
+
+
 def topbar_vectors(p: Probe) -> list:
     out = []
 
     def add(vid, reason, data, want, attack=None):
+        want = dict(want, frame=want.get("frame", NO_FRAME))
         out.append({"id": vid, "attack": attack, "reason": reason, "input": {"topbar": data},
                     "expected": {"ok": True, "topbar": want}})
 
@@ -873,6 +893,68 @@ def topbar_vectors(p: Probe) -> list:
         signed_out, attack="topbar-types")
     add("not-object", "An answer that is no object: signed out without brand.", ["x"],
         dict(signed_out, brand=""), attack="topbar-types")
+    out.extend(topbar_frame_vectors(p, signed_out))
+    return out
+
+
+def topbar_frame_vectors(p: Probe, signed_out: dict) -> list:
+    """The member `frame` of spec §8d (T-103), normalized since T-143: from the probe's host as an application with
+    an app frame, and its defects."""
+    out = []
+
+    def add(vid, reason, data, want, attack=None):
+        out.append({"id": vid, "attack": attack, "reason": reason, "input": {"topbar": data},
+                    "expected": {"ok": True, "topbar": want}})
+
+    with p.app_frame():
+        anna, admin, anon = p.topbar("anna", AUDIENCE), p.topbar("admin", AUDIENCE), p.topbar(None, AUDIENCE)
+    home = f"https://{AUDIENCE}/start"
+    library = {"title": "Library", "href": f"https://{AUDIENCE}/library"}
+    assert anna["frame"] == {"name": "Documents", "home": home, "links": [library], "layout": "side"}, anna["frame"]
+    assert anon["frame"] == {"name": "Documents", "home": None, "links": [], "layout": "side"}, anon["frame"]
+    framed = {"brand": "Example", "signed_in": True, "name": "Anna Berg",
+              "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
+              "menu_links": [{"title": "My collections", "href": "/collections"}],
+              "account": f"{ISSUER}/auth/account?app={AUDIENCE}", "admin_panel": None,
+              "logout": f"{ISSUER}/auth/logout", "approvals": None,
+              "frame": {"layout": "side", "name": "Documents", "home": home, "links": [library]}}
+    add("frame-app", "GET /.tinysesam/topbar.json on an application's host with an app frame: layout, name, home and "
+        "the frame's links the person may see.", anna, framed)
+    add("frame-app-admin", "A frame link limited to administrators appears for one.", admin,
+        dict(framed, name="Admin", account=f"{ISSUER}/auth/account?app={AUDIENCE}", admin_panel=f"{ISSUER}/auth/admin",
+             menu_links=[{"title": "My collections", "href": "/collections"},
+                         {"title": "App admin", "href": "https://app.example.com/admin"}],
+             frame=dict(framed["frame"], links=[library, {"title": "Trash", "href": f"https://{AUDIENCE}/trash"}])))
+    add("frame-signed-out", "Signed out on the application's host: the layout and the name, no way back, no links.",
+        anon, dict(signed_out, frame={"layout": "side", "name": "Documents", "home": None, "links": []}))
+    evil = json.loads(json.dumps(anna))
+    evil["frame"].update(home="javascript:alert(1)", links=[
+        {"title": "x", "href": "javascript:alert(1)"}, {"title": "y", "href": "//evil.example.com/"},
+        {"title": "z", "href": "/\\evil.example.com"}, {"title": 5, "href": "/a"}, "Trash",
+        {"title": "ok", "href": f"https://{AUDIENCE}/ok"}])
+    add("frame-unsafe-hrefs", "An unsafe `home` is null; a frame link that fails the rule of §8, or is no "
+        "`{title, href}`, is dropped.", evil,
+        dict(framed, frame=dict(framed["frame"], home=None, links=[{"title": "ok", "href": f"https://{AUDIENCE}/ok"}])),
+        attack="topbar-href")
+    wrong = json.loads(json.dumps(anna))
+    wrong["frame"].update(layout="bottom", name=["Documents"], links={"title": "x", "href": "/x"})
+    add("frame-wrong-types", "A `layout` besides `top` and `side` reads as `top`; a `name` that is no text is null; "
+        "`links` that is no list counts as none.", wrong,
+        dict(framed, frame={"layout": "top", "name": None, "home": home, "links": []}), attack="topbar-types")
+    for vid, reason, value in (
+            ("frame-not-object", "A `frame` that is no object reads as no frame: the bar on top.", "side"),
+            ("frame-missing", "An answer of a TinySesam before the shell (no `frame`): the bar on top.", None)):
+        bad = json.loads(json.dumps(anna))
+        if value is None:
+            del bad["frame"]
+        else:
+            bad["frame"] = value
+        add(vid, reason, bad, dict(framed, frame=NO_FRAME), attack="topbar-types")
+    out_ = json.loads(json.dumps(anna))
+    out_["signed_in"] = False
+    add("frame-signed-out-links", "Signed out: no way back and no frame links, whatever the answer says; layout and "
+        "name stay.", out_, dict(signed_out, frame={"layout": "side", "name": "Documents", "home": None, "links": []}),
+        attack="topbar-types")
     return out
 
 
@@ -881,6 +963,7 @@ def topbar_approval_vectors(ap: "AccountProbe") -> list:
     out = []
 
     def add(vid, reason, data, want, attack=None):
+        want = dict(want, frame=NO_FRAME)
         out.append({"id": vid, "attack": attack, "reason": reason, "input": {"topbar": data},
                     "expected": {"ok": True, "topbar": want}})
 

@@ -3034,7 +3034,8 @@ except gate_client.UntrustedPeer:
   abgemeldet);
   `fetch_topbar(url, cookie_header)` holt sie serverseitig nur mit TinySesams Cookies; `Topbar.to_dict()` liefert die
   normalisierte Form aus §8. Mit eingeschalteten Freigaben ist `Topbar.approvals` ein `TopbarApprovals` (`pending`,
-  `href`), sonst `None`.
+  `href`), sonst `None`. `Topbar.frame` ist ein `TopbarFrame` (Spec §8d): `layout` (`"top"` oder `"side"`) und auf dem
+  Host einer Anwendung mit App-Rahmen deren `name`, `home` und `links` (Rückweg und Links nur angemeldet).
 - **Server-seitig braucht das Sitzungs-Cookie**: Die Proxy-Vorlagen entfernen TinySesams Cookies vor der Anwendung
   (Spec §2.1, Pflicht 4), dahinter lesen `fetch_topbar` und `fetch_account` also *abgemeldet*. Besser der Weg über den
   Browser (die Seite holt `/.tinysesam/topbar.json` bzw. `/.tinysesam/account.json` selbst, der Server hält die

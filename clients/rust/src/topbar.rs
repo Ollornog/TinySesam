@@ -37,6 +37,44 @@ pub struct TopBar {
     /// The approvals waiting for this account, when TinySesam has approvals switched on and the answer carries a count
     /// of at least 0 and a safe link. Show the number with a word ("Approvals (2)"), never as a coloured dot alone.
     pub approvals: Option<Approvals>,
+    /// What the shell draws on the application's host (spec §8d); always present.
+    pub frame: Frame,
+}
+
+/// The part `frame` of the top bar (spec §8d). Without an app frame: the bar on top, nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Frame {
+    /// `"top"` or `"side"`.
+    pub layout: String,
+    /// The application's name in its app frame (text).
+    pub name: Option<String>,
+    /// Where "‹ name" leads back to — only for a signed-in person.
+    pub home: Option<String>,
+    /// The frame's links the person may see — only for a signed-in person.
+    pub links: Vec<Link>,
+}
+
+/// `frame`: layout exactly `side` or else `top`, name text or `None`; home and links only signed in (a safe href, the
+/// safe `{title, href}` entries). Anything that is no object reads as no frame.
+fn frame(raw: Option<&Value>, signed_in: bool) -> Frame {
+    let mut out = Frame {
+        layout: "top".to_owned(),
+        name: None,
+        home: None,
+        links: Vec::new(),
+    };
+    let Some(raw) = raw.and_then(Value::as_object) else {
+        return out;
+    };
+    if raw.get("layout").and_then(Value::as_str) == Some("side") {
+        out.layout = "side".to_owned();
+    }
+    out.name = raw.get("name").and_then(Value::as_str).map(str::to_owned);
+    if signed_in {
+        out.home = safe_href(raw.get("home"));
+        out.links = links(raw.get("links"));
+    }
+    out
 }
 
 /// How many approvals wait for this account and where to decide them.
@@ -82,6 +120,7 @@ pub fn normalize(data: &Value) -> TopBar {
         admin_panel: None,
         logout: None,
         approvals: None,
+        frame: frame(None, false),
     };
     let Some(data) = data.as_object() else {
         return out;
@@ -92,8 +131,10 @@ pub fn normalize(data: &Value) -> TopBar {
     let (Some(Value::Bool(true)), Some(Value::String(name))) =
         (data.get("signed_in"), data.get("name"))
     else {
+        out.frame = frame(data.get("frame"), false);
         return out;
     };
+    out.frame = frame(data.get("frame"), true);
     out.signed_in = true;
     out.name = Some(name.clone());
     out.links = links(data.get("links"));

@@ -172,7 +172,8 @@ string name is signed out, and links that are not absolute `http(s)` URLs or sin
 `data:`, `//host`) are dropped — in `Links` and in `MenuLinks` (the account menu) alike. `FetchTopbar` fetches it server-side with only TinySesam's cookies of the request, a
 5-second deadline and a 64 KiB limit. Do not cache the result across sessions. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser"). `Approvals` is set when TinySesam has
 approvals switched on (`Pending` of at least 0 and a safe `Href`), otherwise nil; show the number with a word
-("Approvals (2)"), never a coloured dot alone.
+("Approvals (2)"), never a coloured dot alone. `Frame` (spec §8d) is always set: `Layout` (`"top"` or `"side"`), and on
+an application's host with an app frame its `Name`, `Home` and `Links` (the way back and the links only signed in).
 
 ## Account overview (optional)
 

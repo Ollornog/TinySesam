@@ -2255,7 +2255,7 @@
       "tier": "B"
     },
     "Topbar": {
-      "sig": "class (brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None, approvals: 'Optional[TopbarApprovals]' = None) -> None",
+      "sig": "class (brand: 'str' = '', signed_in: 'bool' = False, name: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = (), menu_links: 'tuple[TopbarLink, ...]' = (), account: 'Optional[str]' = None, admin_panel: 'Optional[str]' = None, logout: 'Optional[str]' = None, approvals: 'Optional[TopbarApprovals]' = None, frame: 'TopbarFrame' = TopbarFrame(layout='top', name=None, home=None, links=())) -> None",
       "tier": "B"
     },
     "Topbar.to_dict": {
@@ -2264,6 +2264,10 @@
     },
     "TopbarApprovals": {
       "sig": "class (pending: 'int', href: 'str') -> None",
+      "tier": "B"
+    },
+    "TopbarFrame": {
+      "sig": "class (layout: 'str' = 'top', name: 'Optional[str]' = None, home: 'Optional[str]' = None, links: 'tuple[TopbarLink, ...]' = ()) -> None",
       "tier": "B"
     },
     "TopbarLink": {

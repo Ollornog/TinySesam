@@ -39,10 +39,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    PHP) gains the member `actions` (the own action pages, `null` signed out) and every session `handle` and `end`.
    Code that compares a whole normalized account, or builds a Rust `account::Session` by a struct literal, takes the
    new members; everything else is unchanged.
+6. **The gate clients normalise the top bar's `frame`** (T-143, spec §8d, tier B). The top bar of every client
+   (`Topbar`/`TopbarFrame` in Python, `Topbar.Frame` in Go, `TopBar::frame` in Rust, `Topbar.frame` in JavaScript,
+   `Topbar::$frame` in PHP) gains the always-present member `frame` (`layout`, `name`, `home`, `links`). Code that
+   compares a whole normalized bar, or builds a Rust `topbar::TopBar` by a struct literal, takes the new member;
+   everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- The five gate clients normalise the top bar's `frame` (T-143, spec §8d): `layout` (`side` exactly, else `top`),
+  `name` (text), `home` (a safe href) and `links` (the safe `{title, href}` entries) — the way back and the links only
+  signed in; a missing or malformed `frame` reads as the bar on top. Vectors: every top-bar vector expects `frame`, new
+  `frame-*` vectors from an application's host with an app frame.
 - The five gate clients normalise `actions` and the session handle (T-148, spec §8a/§8c). The account overview of
   Python, Go, Rust, JavaScript and PHP carries `actions` (the twelve own action pages, each a safe href or `null`) and
   every session's `handle` (text) and `end` (the action page that ends exactly that session); they used to drop them.
