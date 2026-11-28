@@ -19,7 +19,7 @@ sets it last, once everything else is green; a module version is never moved). U
 release you run:
 
 ```sh
-go get github.com/Ollornog/TinySesam/clients/go@v0.31.0
+go get github.com/Ollornog/TinySesam/clients/go@v0.32.0
 ```
 
 The first published version is `v0.29.0`. A commit between releases works as a pseudo-version (`@main`, `@<sha>`).
