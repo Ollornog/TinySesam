@@ -152,7 +152,10 @@ test('approval: the canonical form sorts by code point and escapes only what RFC
 });
 
 test('account: fetched server-side with only TinySesam cookies; anything but 200 is signed out', async () => {
-  const full = loadVectors('account.json').vectors[0].input.account;
+  // The server's answer (input) and what the helper makes of it (expected): members it does not normalize are dropped.
+  const signedIn = loadVectors('account.json').vectors[0];
+  const full = signedIn.input.account;
+  const normal = signedIn.expected.account;
   let cookie: string | undefined;
   const server = await serve((req, res) => {
     cookie = req.headers.cookie;
@@ -167,7 +170,7 @@ test('account: fetched server-side with only TinySesam cookies; anything but 200
   });
   try {
     const account = await fetchAccount(`${server.url}/auth/account.json`, 'app=private; tinysesam_session=s');
-    assert.deepEqual(account, full);
+    assert.deepEqual(account, normal);
     assert.equal(cookie, 'tinysesam_session=s');
     for (const path of ['/401', '/404', '/429', '/big']) {
       assert.deepEqual(await fetchAccount(`${server.url}${path}`, 'tinysesam_session=s'), signedOutAccount(), path);

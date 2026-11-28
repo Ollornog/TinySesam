@@ -212,11 +212,14 @@ final class ApprovalTest extends TestCase
 
     public function testTheAccountIsFetchedWithOnlyTinySesamCookies(): void
     {
-        $full = Vectors::load('account.json')->vectors[0]->input->account;
+        // The server's answer (input) and what the helper makes of it (expected): members it does not normalize are
+        // dropped.
+        $signedIn = Vectors::load('account.json')->vectors[0];
+        $full = $signedIn->input->account;
         $server = new Server(Vectors::encode($full));
         try {
             $got = Account::fetch($server->base . '/account', 'app=private; tinysesam_session=s; x=1');
-            self::assertSame(Vectors::normalize($full), Vectors::normalize($got));
+            self::assertSame(Vectors::normalize($signedIn->expected->account), Vectors::normalize($got));
             self::assertContains('cookie:tinysesam_session=s', $server->hits());
             foreach (['/account-401', '/status-500', '/nowhere', '/above-limit'] as $path) {
                 $got = Account::fetch($server->base . $path, 'tinysesam_session=s');

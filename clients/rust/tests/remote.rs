@@ -522,7 +522,11 @@ async fn approval_key_set_fetched_once_never_the_gate_set() {
 #[tokio::test]
 async fn account_fetch_forwards_only_tinysesam_cookies() {
     use tinysesam_gate::account::AccountFetcher;
-    let full = load("account.json")["vectors"][0]["input"]["account"].clone();
+    // The server's answer (input) and what the helper makes of it (expected): members it does not normalize are dropped.
+    let doc = load("account.json");
+    let signed_in = &doc["vectors"][0];
+    let full = signed_in["input"]["account"].clone();
+    let normal = signed_in["expected"]["account"].clone();
     let (url, heads) = record(
         "/auth/account.json",
         "200 OK",
@@ -534,7 +538,7 @@ async fn account_fetch_forwards_only_tinysesam_cookies() {
         .fetch(Some("app=private; tinysesam_session=abc; x=1"))
         .await;
     assert!(account.signed_in);
-    assert_eq!(serde_json::to_value(&account).unwrap(), full);
+    assert_eq!(serde_json::to_value(&account).unwrap(), normal);
     let head = heads.lock().unwrap()[0].to_ascii_lowercase();
     assert!(head.contains("cookie: tinysesam_session=abc\r\n"), "{head}");
     assert!(!head.contains("private"), "{head}");
