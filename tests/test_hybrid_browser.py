@@ -1,19 +1,22 @@
 """T-104 acceptance in a real browser: example Ex3, surface "hybrid" — a Node application behind the TinySesam server.
 
 The stack of deploy/ex3 in one process: the server built from deploy/ex3/tinysesam.toml (host names moved to
-example.test, which Chrome resolves to 127.0.0.1; the identity provider stubbed in the server's process), the Node
-program of clients/js/examples/ex3, and in front the forward-auth proxy of `_browser_stack`. Mixed accounts: a local
-one signs in through the pages, a provider's one (its group imported as a role) and an administrator come by cookie.
+example.test, which Chrome resolves to 127.0.0.1; the identity provider a real OpenID provider on a loopback port,
+`_test_idp`), the Node program of clients/js/examples/ex3, and in front the forward-auth proxy of `_browser_stack`.
+Mixed accounts: a local one signs in through the pages, a provider's one through the provider (its group imported as a
+role); an administrator and an account without the permission come by cookie. The cells of the acceptance matrix
+(T-107) are named in brackets.
 
   H1 the local account opens the application, signs in on "Sign in to Documents" (with the application's icon) and
      lands back on the documents; the application's own navigation, one link "Account" to TinySesam's area.
   H2 the area at 375 and 1280 px, light and dark: the frame of app.example.test (‹ Documents, the icon), the tiles,
      the way back to the application; a tile opens the account page in the same frame. Strict CSP everywhere, no
      console error, no broken request, no sideways scrolling, tap targets ≥ 44 px.
-  H3 the provider's account (team-docs) reads the documents too and finds its area; the administrator's area has the
-     panel; an account without the permission is refused by the application (403).
+  H3 the provider's account signs in through the provider — TinySesam's sign-in page, the provider's page, back through
+     the callback — with its group team-docs imported as a role, reads the documents too and finds its area; the
+     administrator's area has the panel; an account without the permission is refused by the application (403).
 
-Skipped without Chrome, `websockets` or `uvicorn`; needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
+Skipped without Chrome, `websockets`, `uvicorn` or the extra [oidc]; needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
 """
 from __future__ import annotations
@@ -25,7 +28,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import parse_qs, urlparse
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -36,13 +38,13 @@ from voraussetzung import braucht, braucht_modul, find_chrome, pflicht_werkzeug 
 
 braucht_modul("websockets")
 braucht_modul("uvicorn")
+braucht_modul("authlib", extra="oidc")      # T-107: the provider's account signs in through a real provider
 CHROME = find_chrome()
 braucht(CHROME, "no Chrome found")
 
 import websockets  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
 
-from _browser_stack import SIZES, ForwardProxy, clean, free_port, serve, shot, view  # noqa: E402
+from _browser_stack import SIZES, ForwardProxy, clean, free_port, serve, shot, sign_in_with_provider, view  # noqa: E402
 from _cdp import Chrome, Page  # noqa: E402
 
 PW = "a long probe password 4711"
@@ -58,6 +60,10 @@ if NODE:
     _major, _minor = (int(x) for x in _version.lstrip("v").split(".")[:2])
     assert (_major, _minor) >= (22, 18), f"Ex3 needs Node >= 22.18 (type stripping), found {_version}"
 
+    from _test_idp import TestIdP
+    # T-107: the provider of deploy/ex3 as a real one: Kim brings the group team-docs.
+    idp = TestIdP({"kim": {"email": "kim@example.test", "email_verified": True, "groups": ["team-docs"]}},
+                  client_id="ex3", client_secret="probe-secret")
     proxy = ForwardProxy(0, 0, auth_name="auth.example.test", app_name="app.example.test")
     AUTH, EX3 = f"http://auth.example.test:{proxy.port}", f"http://app.example.test:{proxy.port}"
     _tmp = tempfile.mkdtemp(prefix="ex3-")
@@ -65,8 +71,10 @@ if NODE:
     toml = (toml.replace("https://auth.example.com", AUTH).replace("example.com", "example.test")
             .replace('trusted_proxies = ["172.30.0.0/16"]', 'trusted_proxies = ["127.0.0.1/32"]')
             .replace('https_mode = "warn"', 'https_mode = "warn"\ncookie_secure = false\n'
-                                            'cookie_domain = ".example.test"'))
-    assert "example.com" not in toml and "cookie_domain" in toml, "deploy/ex3/tinysesam.toml changed its shape"
+                                            'cookie_domain = ".example.test"')
+            .replace('oidc_issuer = "https://idp.example.test"', f'oidc_issuer = "{idp.issuer}"'))
+    assert "example.com" not in toml and "cookie_domain" in toml and idp.issuer in toml, \
+        "deploy/ex3/tinysesam.toml changed its shape"
     with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
         fh.write(toml)
     _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith(("TINYSESAM_", "EX3_"))}
@@ -83,29 +91,10 @@ if NODE:
     ICON = auth.cfg.apps["docs"]["icon"]
     TS_PORT, ts_server = serve(ex3_app)
 
-    # The provider, stubbed in the server's process (as in tests/test_example_ex3.py): Kim brings the group team-docs.
-    class _Claims(dict):
-        def validate(self, *a, **k):
-            pass
-
-    from tinysesam.oidc import OIDCClient
-    _idp = "https://idp.example.test"
-    auth.oidc._meta = {"issuer": _idp, "authorization_endpoint": _idp + "/authorize", "token_endpoint": _idp + "/token",
-                       "userinfo_endpoint": _idp + "/userinfo", "jwks_uri": _idp + "/jwks"}
-    auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
-        _Claims({"sub": "kim-1", "preferred_username": "kim", "email": "kim@example.test", "email_verified": True,
-                 "groups": ["team-docs"], "nonce": nonce}), {"access_token": "at", "refresh_token": "rt-1"})
-    auth.oidc.userinfo = lambda at, expected_sub="": OIDCClient.check_userinfo({}, expected_sub)
-    _kim = TestClient(ex3_app, base_url=AUTH, follow_redirects=False)
-    _state = parse_qs(urlparse(_kim.get("/auth/oidc/start").headers["location"]).query)["state"][0]
-    assert _kim.get(f"/auth/oidc/callback?code=x&state={_state}").status_code == 303
-    KIM_TOKEN = _kim.cookies.get(auth.session_cookie_name)
-    assert KIM_TOKEN and auth.user_roles(auth.store.get_user_by_name("kim")) == ["team-docs"]
     auth.create_user("lou", password=PW, roles=["docs-local"])     # signs in through the pages (H1)
     ADA = int(auth.create_user("ada", password=PW, is_admin=True))
     NIA = int(auth.create_user("nia", password=PW))
-    for _role in ("team-docs", "docs-local"):
-        auth.grant_permission(_role, "docs.read", app="docs", by="test")
+    auth.grant_permission("docs-local", "docs.read", app="docs", by="test")
 
     APP_PORT = free_port()
     _node_log = open(os.path.join(_tmp, "ex3.log"), "w", encoding="utf-8")
@@ -169,7 +158,7 @@ async def part_h(p: Page) -> None:
     assert await p.js("document.getElementById('who').textContent") == "Signed in as lou."
     await clean(p, "Ex3 after the sign-in", console_before, failed_before)
     ok("H1 the local account opens Ex3, signs in on \"Sign in to Documents\" with the application's icon and lands on "
-       "the documents; the application's own navigation: Documents, About, Account")
+       "the documents; the application's own navigation: Documents, About, Account [ex3/local]")
 
     # H2 ─ the area at both sizes, light and dark.
     for width, height in SIZES:
@@ -213,8 +202,19 @@ async def part_h(p: Page) -> None:
     await clean(p, "the account page from the area", console_before, failed_before)
     ok("H2 a tile opens TinySesam's account page in the application's frame")
 
-    # H3 ─ the provider's account, the administrator, an account without the permission.
-    await as_cookie(p, KIM_TOKEN)
+    # H3 ─ the provider's account through the provider, the administrator, an account without the permission.
+    await leave(p)
+    await p.cmd("Network.clearBrowserCookies")
+    await p.go(EX3 + "/", "!!document.querySelector('input[name=username]')")
+    # The first round brings the group team-docs as a role; nothing is assigned to it yet, so the application refuses —
+    # as in production, until an administrator assigns docs.read to the imported group (the panel's Permissions).
+    await sign_in_with_provider(p, "kim", f"location.origin==={json.dumps(EX3)}&&!!document.getElementById('denied')")
+    assert idp.signed_in == ["kim"], idp.signed_in
+    kim = auth.store.get_user_by_name("kim")
+    assert auth.user_roles(kim) == ["team-docs"], "the provider's group is no role"
+    assert auth.store.account_sources([int(kim["id"])])[int(kim["id"])] == ["oidc"], "not a provider's account"
+    p.failed = [f for f in p.failed if not (f[0] == 403 and f[1] == EX3 + "/")]
+    auth.grant_permission("team-docs", "docs.read", app="docs", by="test")
     await p.go(EX3 + "/", DOCS)
     assert await p.js("document.getElementById('who').textContent") == "Signed in as kim."
     await to_area(p)
@@ -228,8 +228,10 @@ async def part_h(p: Page) -> None:
     await p.go(EX3 + "/", "!!document.getElementById('denied')")
     p.failed = [f for f in p.failed if not (f[0] == 403 and f[1] == EX3 + "/")]
     await clean(p, "an account without docs.read", console_before, failed_before)
-    ok("H3 mixed: the provider's account (team-docs) reads the documents and finds its area; the administrator's area "
-       "holds the panel; an account without docs.read is refused by the application")
+    ok("H3 mixed: the provider's account signs in through the provider (TinySesam's page, the provider's page, the "
+       "callback; team-docs imported as a role — refused until docs.read is assigned to it), reads the documents and "
+       "finds its area; the administrator's area "
+       "holds the panel; an account without docs.read is refused by the application [ex3/idp] [ex3/mixed]")
 
 
 async def main() -> None:
@@ -256,5 +258,6 @@ if NODE:
         node_proc.wait(timeout=10)
         _node_log.close()
         ts_server.should_exit = True
+        idp.close()
         import shutil
         shutil.rmtree(_tmp, ignore_errors=True)

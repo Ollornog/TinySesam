@@ -31,9 +31,11 @@ suite can show that no secret ever reached it.
      links TinySesam offers it (lock, unlock, roles, sign-in link), locks and unlocks one; the section reads the state
      again. A reader sees no administration section and never asks for the data. Neither the panel nor the full
      account page is ever opened (T-106 acceptance): the proxy saw no request for them.
+  X9 origin "mixed" (T-107): the configuration plus a real identity provider (`_test_idp`); a provider's account signs
+     in through it beside the local ones and gets the same application under the same rules.
   X1/X3 also show the account's own events and its API keys by name, from account.json (T-106).
 
-Skipped without Chrome, `websockets`, `uvicorn` or the extra [passkey] (Ex4 offers passkeys); needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
+Skipped without Chrome, `websockets`, `uvicorn`, the extra [passkey] (Ex4 offers passkeys) or [oidc] (T-107); needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
 """
 from __future__ import annotations
@@ -57,13 +59,14 @@ from voraussetzung import braucht, braucht_modul, find_chrome, pflicht_werkzeug 
 braucht_modul("websockets")
 braucht_modul("uvicorn")
 braucht_modul("webauthn", extra="passkey")      # Ex4 offers passkeys (T-149): without the extra its server cannot start
+braucht_modul("authlib", extra="oidc")          # T-107: a provider's account signs in through a real provider
 CHROME = find_chrome()
 braucht(CHROME, "no Chrome found")
 
 import websockets  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from _browser_stack import SIZES, ForwardProxy, clean, free_port, serve, shot, view  # noqa: E402
+from _browser_stack import SIZES, ForwardProxy, clean, free_port, serve, shot, sign_in_with_provider, view  # noqa: E402
 from _cdp import Chrome, Page  # noqa: E402
 
 PW = "a long probe password 4711"
@@ -97,6 +100,11 @@ if NODE:
     _major, _minor = (int(x) for x in _version.lstrip("v").split(".")[:2])
     assert (_major, _minor) >= (22, 18), f"Ex4 needs Node >= 22.18 (type stripping), found {_version}"
 
+    from _test_idp import TestIdP
+    # T-107, origin "mixed": the configuration of deploy/ex4 plus an identity provider — a real one on a loopback port
+    # (`_test_idp`) whose group `docs` an administrator mapped to the local role docs-reader. Ex4 itself is unchanged.
+    idp = TestIdP({"ivy": {"email": "ivy@example.test", "email_verified": True, "groups": ["docs"]}},
+                  client_id="ex4", client_secret="probe-secret")
     proxy = RecordingProxy(0, 0, auth_name="auth.example.test", app_name="app.example.test")
     AUTH, EX4 = f"http://auth.example.test:{proxy.port}", f"http://app.example.test:{proxy.port}"
     _tmp = tempfile.mkdtemp(prefix="ex4-")
@@ -104,17 +112,23 @@ if NODE:
     toml = (toml.replace("https://auth.example.com", AUTH).replace("example.com", "example.test")
             .replace('trusted_proxies = ["172.31.0.0/16"]', 'trusted_proxies = ["127.0.0.1/32"]')
             .replace('https_mode = "warn"', 'https_mode = "warn"\ncookie_secure = false\n'
-                                            'cookie_domain = ".example.test"'))
-    assert "example.com" not in toml and "cookie_domain" in toml, "deploy/ex4/tinysesam.toml changed its shape"
+                                            'cookie_domain = ".example.test"\n'
+                                            f'oidc_enabled = true\noidc_issuer = "{idp.issuer}"\n'
+                                            'oidc_client_id = "ex4"\noidc_client_secret = "env:EX4_OIDC_CLIENT_SECRET"\n'
+                                            'oidc_scopes = "openid profile email groups"\n'
+                                            'oidc_group_role_map = { docs = "docs-reader" }'))
+    assert "example.com" not in toml and "cookie_domain" in toml and idp.issuer in toml, \
+        "deploy/ex4/tinysesam.toml changed its shape"
     with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
         fh.write(toml)
     _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
-    os.environ.update(TINYSESAM_CONFIG=os.path.join(_tmp, "tinysesam.toml"), TINYSESAM_DB=os.path.join(_tmp, "ex4.db"))
+    os.environ.update(TINYSESAM_CONFIG=os.path.join(_tmp, "tinysesam.toml"), TINYSESAM_DB=os.path.join(_tmp, "ex4.db"),
+                      EX4_OIDC_CLIENT_SECRET=idp.client_secret)
     try:
         from tinysesam import gateway
         ex4_app = gateway.build_app()
     finally:
-        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB"):
+        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB", "EX4_OIDC_CLIENT_SECRET"):
             os.environ.pop(_k, None)
         os.environ.update(_saved)
     auth = ex4_app.state.auth
@@ -401,6 +415,28 @@ async def part_delegate(p: Page) -> None:
        "— and unlocks it")
 
 
+async def part_provider(p: Page) -> None:
+    """X9: a provider's account beside the local ones — signs in through the provider and gets what a local reader
+    gets: the documents (docs.read through the mapped role), the settings page with its own action pages."""
+    await p.go("about:blank")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.go(EX4 + "/settings", "!!document.querySelector('input[name=username]')")
+    await sign_in_with_provider(p, "ivy", f"location.origin==={json.dumps(EX4)}&&{SETTINGS}")
+    assert idp.signed_in == ["ivy"], idp.signed_in
+    ivy = auth.store.get_user_by_name("ivy")
+    assert auth.user_roles(ivy) == ["docs-reader"], "the provider's group did not map to docs-reader"
+    assert auth.store.account_sources([int(ivy["id"])])[int(ivy["id"])] == ["oidc"], "not a provider's account"
+    assert await p.js("document.querySelector('#row-username span').textContent") == "User name: ivy"
+    assert await p.js("!document.getElementById('admin')"), "a reader sees an administration section"
+    assert await p.js("!!document.querySelector('#row-sessions a.act')"), "no action page for the sessions"
+    await p.go(EX4 + "/", "!!document.getElementById('doc-d1')")
+    assert await p.js("document.getElementById('who').textContent") == "Signed in as ivy."
+    ok("X9 mixed: a provider's account beside the local ones signs in through the provider (TinySesam's page, the "
+       "provider's page, the callback; its group mapped to docs-reader), lands on the settings page drawn from "
+       "account.json with its own action pages and reads the documents — the same application, the same rules "
+       "[ex4/idp] [ex4/mixed]")
+
+
 async def admin_action_named(p: Page, name: str, who: str, *, check) -> None:
     await to_action(p, f"{name}-{who}", f"/auth/act/{name}")
     await p.js(f"document.querySelector('#actform input[name=password]').value={json.dumps(PW)};"
@@ -430,7 +466,7 @@ async def part_x(p: Page) -> None:
     assert "login" in await p.js("document.querySelector('#row-event-0 span').textContent"), "no own events"
     await clean(p, "Ex4 settings after the sign-in", console_before, failed_before)
     ok("X1 the local account signs in on TinySesam's page and lands on the application's settings page, drawn in the "
-       "browser from account.json; no password field and no form in the application")
+       "browser from account.json; no password field and no form in the application [ex4/local]")
 
     # X2 ─ an action page in the application's frame and back, at both sizes, light and dark.
     for width, height in SIZES:
@@ -576,6 +612,10 @@ async def part_x(p: Page) -> None:
     ok(f"X8 headless: of the {views} page views on TinySesam's origin none opened the panel, the area or the full "
        "account page; the administration section read /.tinysesam/admin/accounts.json")
 
+    # X9 ─ the provider's account (T-107): through the provider, the same application, the same rules.
+    await part_provider(p)
+    await clean(p, "Ex4 after the provider's account", console_before, failed_before)
+
     # X5 ─ no secret in the application.
     assert proxy.seen, "the proxy saw no request to the application"
     leaked = [s for s in SECRETS if any(s in req for req in proxy.seen)]
@@ -615,5 +655,6 @@ if NODE:
         node_proc.wait(timeout=10)
         _node_log.close()
         ts_server.should_exit = True
+        idp.close()
         import shutil
         shutil.rmtree(_tmp, ignore_errors=True)

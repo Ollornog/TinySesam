@@ -1662,6 +1662,28 @@ unlinks them again — never the last way in.
 | A rewrite of the core in another language | not planned: the core stays Python and the clients stay thin, see ADR-15 |
 | An administrator interface inside the application's origin | not planned: an XSS of the application could post TinySesam forms |
 
+### The acceptance matrix
+
+Every example application with every origin of an account, in a real browser (T-107). **IdP** means OpenID Connect
+through a real provider on a loopback port (`tests/_test_idp.py`): the browser leaves TinySesam's sign-in page for the
+provider and comes back through the callback; TinySesam fetches discovery, token and key set itself and checks the ID
+token as it checks any provider's. **Mixed** means local and provider accounts in one installation: an account of
+either origin with an equivalent role gets the same result. Each example stays as it is — the suite adds the provider
+to its configuration (Ex1, Ex2 and Ex4 run with local accounts by default; Ex3 is mixed itself).
+
+| Example (surface, mode) | local | IdP | mixed |
+|---|---|---|---|
+| Ex1 shell on top (Go, server) | `test_shell_browser.py` B1 `[ex1/local]` | B5 `[ex1/idp]` | B5 `[ex1/mixed]` |
+| Ex2 shell at the side (Python, library) | `test_shell_browser.py` A2 `[ex2/local]` | A4 `[ex2/idp]` | A4 `[ex2/mixed]` |
+| Ex3 hybrid (Node, server) | `test_hybrid_browser.py` H1 `[ex3/local]` | H3 `[ex3/idp]` | H3 `[ex3/mixed]` |
+| Ex4 headless (single-page app, server) | `test_headless_browser.py` X1 `[ex4/local]` | X9 `[ex4/idp]` | X9 `[ex4/mixed]` |
+
+In CI the job `browser-suite` runs one leg per suite side by side (`browser` is their aggregate), in the sprint lane
+when the library, an example or a browser suite changes, and twice a night in `nightly-repeat`. Deliberately not per
+example: SAML and LDAP as the provider — the examples see only the `Remote-*` headers, which do not depend on the
+protocol; their sign-in has suites of its own (`tests/test_saml.py`, `tests/test_ldap.py`) — and linking a local with a
+provider account (`tests/test_saml_link.py`, T-99).
+
 ## Several apps, one TinySesam
 
 One installation can protect several apps — and **the identity provider decides who gets into

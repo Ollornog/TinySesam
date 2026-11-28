@@ -23,7 +23,7 @@ case "${1:-}" in
     client-rust) pattern='^(clients/rust/|spec/|\.github/workflows/client-rust\.yml$)' ;;
     # The browser suites drive TinySesam's pages and the examples behind a proxy: the library, the examples and their
     # deployments, the suites and their helpers, the workflow. (The sprint lane missed it for T-149: #451 was red.)
-    browser) pattern='^(tinysesam/|examples/|clients/js/examples/|deploy/ex[0-9]+/|tests/test_[a-z_]*browser\.py$|tests/_browser_stack\.py$|tests/_cdp\.py$|tests/voraussetzung\.py$|\.github/workflows/ci\.yml$)' ;;
+    browser) pattern='^(tinysesam/|examples/|clients/js/examples/|deploy/ex[0-9]+/|tests/test_[a-z_]*browser\.py$|tests/_browser_stack\.py$|tests/_test_idp\.py$|tests/_cdp\.py$|tests/voraussetzung\.py$|\.github/workflows/ci\.yml$)' ;;
     *)
         echo "workflow ${1:-<none>} has no scope here"
         exit 1

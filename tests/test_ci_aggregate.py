@@ -40,7 +40,9 @@ LANE = {
     "release.yml": {"automatik": "release automation, workflow_dispatch only"},
 }
 GATE = "${{ !cancelled() && needs.classify.outputs.nur_text != 'ja'"
-# The browser suites have a classifier of their own in ci.yml (scope `browser` of scripts/_client_scope.sh).
+# The browser suites have a classifier of their own in ci.yml (scope `browser` of scripts/_client_scope.sh), and since
+# T-107 an aggregate of their own: the required check `browser` over the matrix `browser-suite`.
+BROWSER_AGG = {"ci.yml": "browser"}
 BROWSER_GATE = "${{ !cancelled() && needs.classify-browser.outputs.nur_text != 'ja' }}"
 
 
@@ -116,6 +118,21 @@ assert "LANE_ANSWER: ${{ needs.classify.outputs.nur_text }}" in jobs_of(texts["c
     "suite-ok: LANE_ANSWER must be the answer of `classify`"
 assert shutil.which("jq") and shutil.which("bash"), "jq and bash are needed to run the aggregate's script (GitHub's runners carry both)"
 
+# T-107: the browser suites run as a matrix (`browser-suite`, one leg per suite); the required check `browser` is its
+# aggregate — the same rules and the same script, with the answer of `classify-browser` instead of `classify`.
+_ci_jobs = jobs_of(texts["ci.yml"])
+_b = _ci_jobs[BROWSER_AGG["ci.yml"]]
+assert needs_of(_b) == ["classify-browser", "browser-suite"], f"browser: needs {needs_of(_b)}"
+assert re.search(r"^    if: \$\{\{ always\(\) \}\}\s*$", _b, re.M), "browser: without always() a failed leg leaves it skipped"
+assert re.search(r"^    name: browser\s*$", _b, re.M) and "continue-on-error" not in _b, "browser: the check name"
+assert "strategy:" in _ci_jobs["browser-suite"] and "fail-fast: false" in _ci_jobs["browser-suite"], \
+    "browser-suite: a matrix whose legs all run"
+assert "LANE_ANSWER: ${{ needs.classify-browser.outputs.nur_text }}" in _b, "browser: LANE_ANSWER of classify-browser"
+_bscript, _benv = step_script(_b, "Every job it needs succeeded")
+assert _benv == env_names and _bscript.rstrip() == script.replace('del(.classify)', 'del(.["classify-browser"])') \
+    .replace('echo "classify: nur_text', 'echo "classify-browser: nur_text').rstrip(), "browser: the aggregate's step differs"
+print("  ci.yml: `browser` aggregates the matrix browser-suite (classify-browser), runs always(), the same script")
+
 
 def verdict(results, lane):
     needs = {k: {"result": v, "outputs": {}} for k, v in results.items()}
@@ -149,7 +166,8 @@ for wf, exempt in LANE.items():
     gated = {j for j, t in jobs.items() if GATE in if_of(t)}
     browser_gated = {j for j, t in jobs.items() if if_of(t) == BROWSER_GATE}
     if wf == "ci.yml":
-        assert browser_gated == {"browser"} and needs_of(jobs["browser"]) == ["classify-browser"], browser_gated
+        assert browser_gated == {"browser-suite"} and needs_of(jobs["browser-suite"]) == ["classify-browser"], \
+            browser_gated
     else:
         assert not browser_gated and "classify-browser" not in jobs, f"{wf}: classify-browser belongs to ci.yml"
     for j in gated:
@@ -163,7 +181,8 @@ for wf, exempt in LANE.items():
     while changed:
         changed = False
         for j, t in jobs.items():
-            if j in follows or j in ("classify", "classify-browser", agg) or j in exempt or j in browser_gated:
+            if j in follows or j in ("classify", "classify-browser", agg, BROWSER_AGG.get(wf)) or j in exempt \
+                    or j in browser_gated:
                 continue
             before = [n for n in needs_of(t) if n in follows]
             if not before:
@@ -174,7 +193,8 @@ for wf, exempt in LANE.items():
                     f"{wf}/{j}: its `if` runs it when {before} skipped — ask for `needs.<job>.result == 'success'`"
             follows.add(j)
             changed = True
-    rest = sorted(set(jobs) - follows - {"classify", "classify-browser", agg} - set(exempt) - browser_gated)
+    rest = sorted(set(jobs) - follows - {"classify", "classify-browser", agg, BROWSER_AGG.get(wf)} - set(exempt)
+                  - browser_gated)
     assert not rest, f"{wf}: {rest} run in the sprint lane — gate them on classify or name the reason in LANE"
     for j in exempt:
         assert j in jobs, f"{wf}: LANE names `{j}`, which is not a job"
@@ -342,7 +362,7 @@ assert without_comments(browser_script) == without_comments(classify_script.repl
     "classify-browser differs from classify (other than the fixed scope `browser`)"
 classify_script_saved = classify_script
 classify_script = browser_script
-for path in ("tests/test_headless_browser.py", "tinysesam/templates.py", "clients/js/examples/ex4/app.js",
+for path in ("tests/test_headless_browser.py", "tests/_test_idp.py", "tinysesam/templates.py", "clients/js/examples/ex4/app.js",
              "examples/showcase.py", "deploy/ex4/tinysesam.toml", ".github/workflows/ci.yml"):
     answer, log = classify("sprint/2026-11-28-probe", {path: "x\n"})
     assert answer == "" and "its tests run" in log, f"browser: a sprint PR changing {path} must run it: {answer!r} {log!r}"
@@ -355,13 +375,45 @@ classify_script = classify_script_saved
 # The browser job installs what the examples it drives switch on: Ex4 offers passkeys (T-149), and without the extra
 # [passkey] its server does not start (`MissingExtra` at the router) — the closing PR of S8 was red on exactly that.
 _ex4 = (ROOT / "deploy/ex4/tinysesam.toml").read_text(encoding="utf-8")
-_browser = without_comments(jobs_of(texts["ci.yml"])["browser"])
+_browser = without_comments(jobs_of(texts["ci.yml"])["browser-suite"])
 if re.search(r"^passkey_enabled = true", _ex4, re.M):
     assert re.search(r"pip install -e \"\.\[[a-z,]*passkey[a-z,]*\]\"", _browser), \
-        "ci.yml/browser: Ex4 switches passkeys on, the job must install the extra [passkey]"
+        "ci.yml/browser-suite: Ex4 switches passkeys on, the job must install the extra [passkey]"
+# T-107: the provider's accounts of the acceptance matrix sign in through tests/_test_idp.py — TinySesam's OIDC client
+# needs the extra [oidc]; a suite that asks for that extra would skip without it.
+_asks_oidc = [f for f in ("test_shell_browser.py", "test_hybrid_browser.py", "test_headless_browser.py")
+              if 'extra="oidc"' in (ROOT / "tests" / f).read_text(encoding="utf-8")]
+if _asks_oidc:
+    assert re.search(r"pip install -e \"\.\[[a-z,]*oidc[a-z,]*\]\"", _browser), \
+        f"ci.yml/browser-suite: {_asks_oidc} need the extra [oidc], the job must install it"
 print("  classify-browser: a sprint PR touching the library, the examples or the browser suites runs the browser job; "
       "it installs the extras Ex4 needs")
 print(f"  classify (T-150): a sprint PR changing a client, spec/ or the workflow runs that client's jobs "
       f"({len(CLIENTS)} clients), anything else skips")
+
+# ── T-107: the acceptance matrix — every cell done, named in both READMEs, carried by a suite of `browser-suite` ──────
+_cells = {f"ex{n}/{o}" for n in range(1, 5) for o in ("local", "idp", "mixed")}
+_suite_job = jobs_of(texts["ci.yml"])["browser-suite"]
+for _readme, _head in (("README.md", "### The acceptance matrix"), ("i18n/README.de.md", "### Die Abnahmematrix")):
+    _text = (ROOT / _readme).read_text(encoding="utf-8")
+    assert _head in _text, f"{_readme}: section {_head!r} missing"
+    _section = _text.split(_head, 1)[1].split("\n## ", 1)[0].split("\n### ", 1)[0]
+    _rows = [z for z in _section.splitlines() if re.match(r"^\| Ex[1-4] ", z)]
+    assert len(_rows) == 4, f"{_readme}: the matrix has {len(_rows)} example rows, not 4"
+    _seen = set()
+    for _row in _rows:
+        _suite = re.search(r"`(test_[a-z_]+\.py)`", _row)
+        assert _suite, f"{_readme}: no suite named in {_row!r}"
+        _src = (ROOT / "tests" / _suite.group(1)).read_text(encoding="utf-8")
+        assert f"python tests/{_suite.group(1)}" in _suite_job, f"ci.yml/browser-suite does not run {_suite.group(1)}"
+        for _m in re.findall(r"`\[(ex[1-4]/(?:local|idp|mixed))\]`", _row):
+            # The marker stands in the text of an `ok(...)` of that suite: printed only once its checks passed.
+            _oks = [part.split(")\n", 1)[0] for part in _src.split(" ok(")[1:]]
+            assert any(f"[{_m}]" in _call for _call in _oks), \
+                f"{_readme}: cell {_m} is not confirmed by an ok() of {_suite.group(1)}"
+            _seen.add(_m)
+    assert _seen == _cells, f"{_readme}: cells missing from the matrix: {sorted(_cells - _seen)}"
+print(f"  acceptance matrix (T-107): {len(_cells)} cells in both READMEs, each confirmed by an ok() of a suite that "
+      "runs in browser-suite")
 
 print("OK test_ci_aggregate")

@@ -154,11 +154,20 @@ jobs:
           fi
           echo "$reason"
 
-  browser:
+  # T-107: the browser suites as a matrix, one leg per suite, side by side instead of one after the other — and with
+  # them the acceptance matrix of milestone M-2: every example (Ex1 shell on top, Ex2 at the side, Ex3 hybrid, Ex4
+  # headless) with a local account, a provider's account through a real OpenID provider (tests/_test_idp.py) and both
+  # in one installation (README, "The acceptance matrix"). The aggregate `browser` below is the required check.
+  browser-suite:
+    name: browser (${{ matrix.suite }})
     needs: classify-browser
     if: ${{ !cancelled() && needs.classify-browser.outputs.nur_text != 'ja' }}
     timeout-minutes: 15
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [pages, shell, hybrid, headless]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -180,44 +189,74 @@ jobs:
       # T-103: tests/test_shell_browser.py builds example Ex1 (Go) and drives it behind a forward-auth proxy; without Go
       # the suite is red, never skipped.
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        if: matrix.suite == 'shell'
         with:
           go-version: stable
           cache: false
       # T-104, T-105: tests/test_hybrid_browser.py and tests/test_headless_browser.py run examples Ex3 and Ex4 (Node >=
       # 22.18, TypeScript without a build) behind the forward-auth proxy; without Node the suites are red, never skipped.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        if: matrix.suite == 'hybrid' || matrix.suite == 'headless'
         with:
           node-version: lts/*
       - name: Dependencies
-        # [services]: T-60 section of the account page; [passkey]: example Ex4 offers passkeys (T-149).
-        run: pip install -e ".[services,passkey]" uvicorn websockets httpx setuptools wheel
+        # [services]: T-60 section of the account page; [passkey]: example Ex4 offers passkeys (T-149); [oidc]: the
+        # provider's accounts of the acceptance matrix sign in through a real OpenID provider (T-107).
+        run: pip install -e ".[services,passkey,oidc]" uvicorn websockets httpx setuptools wheel
       - name: Build the website (must succeed)
+        if: matrix.suite == 'pages'
         run: python -m web.build _site
       # B-13: the tests run THIS Chrome (`CHROME`), not the runner image's preinstalled google-chrome, whose files are
       # still cold on the image disk of a fresh runner.
       - name: Browser test
+        if: matrix.suite == 'pages'
         run: python tests/test_browser.py
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
       # T-103: the shell component, the side layout (Ex2, library) and the shell on top (Ex1, Go behind a proxy).
       - name: Browser test of the shell
+        if: matrix.suite == 'shell'
         run: python tests/test_shell_browser.py
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
       # T-104: surface "hybrid" — example Ex3 (Node behind a proxy) and TinySesam's area.
       - name: Browser test of the hybrid surface
+        if: matrix.suite == 'hybrid'
         run: python tests/test_hybrid_browser.py
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
       # T-105: surface "headless" — example Ex4 (a single-page app in Node behind a proxy) and the action pages.
       - name: Browser test of the headless surface
+        if: matrix.suite == 'headless'
         run: python tests/test_headless_browser.py
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - name: Repo hygiene
+        if: matrix.suite == 'pages'
         run: python tests/test_repo.py
       - name: Website test
+        if: matrix.suite == 'pages'
         run: python tests/test_site.py
+
+  # Aggregate for the branch protection: the required check `browser` (the job of one leg before T-107). Every leg of
+  # the matrix must have passed; a skipped leg is green only in the sprint or text lane (`classify-browser`).
+  browser:
+    name: browser
+    if: ${{ always() }}
+    needs: [classify-browser, browser-suite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every job it needs succeeded (skipped only in the sprint or text lane)
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          LANE_ANSWER: ${{ needs.classify-browser.outputs.nur_text }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "classify-browser: nur_text=${LANE_ANSWER:-<empty>}"
+          printf '%s\n' "$NEEDS" | jq -e --arg lane "$LANE_ANSWER" \
+            'del(.["classify-browser"]) | all(.[]; .result == "success" or ($lane == "ja" and .result == "skipped"))' > /dev/null
 
   # Gate token through a REAL Caddy with caddy-jwt (ADR-9). Exactly the image from
   # deploy/forward-auth/caddy-gate/Dockerfile is built — the one release.yml publishes as tinysesam-caddy-gate. With

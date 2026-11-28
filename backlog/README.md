@@ -8,10 +8,10 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 35/38 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 36/39 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/7 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 93/110 erledigt
+* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 93/111 erledigt
 * ☑ **[M-6](M-6-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -122,7 +122,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md)** Stage S8 — hybrid: TinySesam area with name and icon, library layout slot · M-2
 * ☑ **[T-105](T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md)** Stage S9 — headless writing: action pages with a way back · M-2
 * ☑ **[T-106](T-106-stage-s10-headless-reading-events-keys-admin-data-insid.md)** Stage S10 — headless reading: events, keys, admin data inside the application"s area · M-2
-* ☐ **[T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md)** Stage S11 — acceptance matrix in CI: examples x origins · M-2
+* ☑ **[T-107](T-107-stage-s11-acceptance-matrix-in-ci-examples-x-origins.md)** Stage S11 — acceptance matrix in CI: examples x origins · M-2
 * ☐ **[T-108](T-108-stage-s12-optional-fully-headless-library-register-rese.md)** Stage S12 (optional) — fully headless library: register, reset password, setup status · M-2
 * ☐ **[T-109](T-109-stage-s13-optional-scim-stage-2-for-idp-role-sync.md)** Stage S13 (optional) — SCIM stage 2 for IdP role sync · M-2
 * ☐ **[T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md)** Dependency diet: joserfc instead of authlib.jose, QR as SVG without Pillow, SAML as its own image variant · M-3
@@ -177,6 +177,8 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-159](T-159-client-http-tests-stale-comment-about-dropped-memb.md)** Client HTTP tests: stale comment about dropped members · M-5
 * ☐ **[T-160](T-160-passkey-start-warning-and-operations-promise-a-sta.md)** Passkey start warning and OPERATIONS promise a start that the router build refuses · M-5
 * ☑ **[T-161](T-161-gate-clients-normalise-events-api-keys-and-admin-d.md)** Gate clients normalise events, API keys and admin data of account.json · M-2
+* ☐ **[T-162](T-162-example-deployments-ex1-and-ex4-with-an-identity-p.md)** Example deployments Ex1 and Ex4 with an identity provider · M-2
+* ☐ **[T-163](T-163-top-bar-parity-with-base-url-absolute-links-in-top.md)** Top bar parity with base_url: absolute links in topbar.json, paths in topbar() · M-5
 
 ## Fehler
 

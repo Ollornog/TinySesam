@@ -61,6 +61,15 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The acceptance matrix of milestone M-2 in CI (T-107, README "The acceptance matrix"): every example — Ex1 shell on
+  top (Go), Ex2 at the side (Python library), Ex3 hybrid and Ex4 headless (Node) — with a local account, a provider's
+  account and both in one installation, in a real browser. The provider is a real OpenID provider on a loopback port
+  (`tests/_test_idp.py`: discovery, PKCE, client secret, RS256 ID token, key set, userinfo); the browser goes through
+  its page and TinySesam's callback, nothing is stubbed in TinySesam any more (Ex3 stubbed it before). The browser job
+  of `ci.yml` became a matrix `browser-suite` with one leg per suite side by side (pages, shell, hybrid, headless);
+  `browser` is its aggregate and stays the required check; the legs install the extra `[oidc]`.
+  `tests/test_ci_aggregate.py` checks that each of the twelve cells is named in both READMEs and confirmed by a suite
+  that runs in the matrix.
 - The PHP client's `Permissions::register()` has an HTTP test of its own (T-140, `tests/RegisterHttpTest.php`): a
   `PUT` with the key in `X-Api-Key` and the manifest as the body, any answer but `200` (and one that is no JSON object,
   and no answer at all) a `RegistrationFailed` without the key in its text, and the 5-second deadline against a server
