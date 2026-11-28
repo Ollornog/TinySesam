@@ -2284,6 +2284,7 @@ async def idp_import_panel(_first):
     t33.cfg.oidc_group_import = True
     t33.cfg.idp_group_labels = {"team-docs": "Docs team"}
     t33._register_config_permissions()
+    t33.store.set_roles(carol, ["editor"])          # T-135: one role by hand beside the imported one
     t33._import_idp_groups(carol, "oidc", ["team-docs", "editor"])
     t33.store.note_idp_groups("saml", missing=True)
     async with websockets.connect(tab["webSocketDebuggerUrl"], max_size=30_000_000) as ws:
@@ -2297,6 +2298,7 @@ async def idp_import_panel(_first):
             await _idp_import_panel(p, carol)
         finally:
             t33._import_idp_groups(carol, "oidc", [])
+            t33.store.set_roles(carol, [])
             t33.cfg.available_roles, t33.cfg.apps, t33.cfg.oidc_group_import, t33.cfg.idp_group_labels = before
             t33._register_config_permissions()
             t33.store.delete_orphaned_permission("docs", "docs.read")
@@ -2358,6 +2360,21 @@ async def _idp_import_panel(p, carol):
     await until_py(lambda: "gone-role" not in t33.app_permissions("docs")[0]["suspended_roles"],
                    "the withdraw button did not withdraw")
     await p.until("!document.querySelector('table.permgrid th.removedrole')", "the removed role's column stayed")
+    # T-135: the account page lists each held role with where it comes from — the imported one "⇄ from IdP (OIDC)"
+    # with its last delivery, the one given by hand "✋ assigned by hand" (symbol AND word).
+    sources_js = ("JSON.stringify(Object.fromEntries([...document.querySelectorAll('ul.rolesrc li')]"
+                  ".map(li=>[li.dataset.role,li.querySelector('.muted').innerText])))")
+
+    async def role_sources():
+        await p.until("!!document.querySelector('ul.rolesrc li')", "no role sources on the account page")
+        return json.loads(await p.js(sources_js))
+
+    await p.js(f"location.hash='#user/{carol}';true")
+    got = await role_sources()
+    assert set(got) == {"editor", "team-docs"}, got
+    assert got["editor"] == "✋ assigned by hand", got
+    assert got["team-docs"].startswith("⇄ from IdP (OIDC) — last delivered ") and "by hand" not in got["team-docs"], got
+    await shot("role-sources-1280.png")
     await p.cmd("Emulation.setDeviceMetricsOverride", width=390, height=844, deviceScaleFactor=1, mobile=True)
     for theme in ("light", "dark"):
         await p.js(f"localStorage.setItem('themeMode','{theme}');true")
@@ -2369,12 +2386,19 @@ async def _idp_import_panel(p, carol):
         width = await p.js("document.documentElement.scrollWidth")
         assert width <= 390, f"{theme} roles with the import card: {width}px wide at 390px"
         await shot(f"idp-roles-390-{theme}.png")
+        await p.js(f"location.hash='#user/{carol}';true")
+        assert (await role_sources())["editor"] == "✋ assigned by hand", theme
+        assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark"), theme
+        width = await p.js("document.documentElement.scrollWidth")
+        assert width <= 390, f"{theme} account page with the role sources: {width}px wide at 390px"
+        await shot(f"role-sources-390-{theme}.png")
     viol = await p.js("JSON.stringify(window.__csp===undefined?['(no Listener)']:window.__csp)")
     assert viol == "[]", f"CSP violation on the import panel: {viol}"
     assert not p.console, f"console errors: {p.console[:2]}"
     print("  group import: role page marks the imported role (⇄ symbol and word, source, last delivery, label), the "
           "import card lists a skipped group and a missing claim, the matrix marks the column and a tick assigns, 390px "
-          "light/dark (strict CSP)")
+          "light/dark (strict CSP); the account page lists each role with its source — ⇄ from IdP (OIDC) with the last "
+          "delivery, ✋ assigned by hand (T-135)")
 
 
 async def provisioning_panel(_first):

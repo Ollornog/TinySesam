@@ -127,6 +127,11 @@ auth.set_roles(kim, auth.user_roles(auth.get_user(kim)) + ["team-x"])  # an admi
 sign_in(app, auth, state, ["team-docs", "team-x"])
 sign_in(app, auth, state, ["team-docs"])
 assert "team-x" in roles(auth), "a role held by hand before the provider delivered it was withdrawn with the group"
+sign_in(app, auth, state, ["team-docs", "team-x"])
+assert auth.store.idp_role_deliveries()[int(kim)]["team-x"] == [
+    {"source": "oidc", "seen_at": auth.store.idp_role_deliveries()[int(kim)]["team-x"][0]["seen_at"],
+     "held_before": True}], "the panel would not say the role was given by hand first"
+sign_in(app, auth, state, ["team-docs"])
 ok("2. a role the account held by hand before the provider delivered it stays when the group goes")
 
 auth.set_roles(kim, auth.user_roles(auth.get_user(kim)) + ["shared"])
@@ -252,6 +257,10 @@ uid7 = auth7.store.get_user_by_name("kim")["id"]
 auth7._import_idp_groups(uid7, "ldap", ["cn=staff,ou=groups,dc=example,dc=com", "CN=ops,OU=x", "cn=a\\,b,ou=g"])
 assert roles(auth7) == ["ops", "staff"], roles(auth7)
 assert auth7.store.idp_role_sources(uid7) == {"ops": ["ldap"], "staff": ["ldap", "oidc"]}
+# T-135: the panel's account page reads the deliveries per account — source, last delivery, held by hand before.
+dl = auth7.store.idp_role_deliveries()[int(uid7)]
+assert {r: [d["source"] for d in v] for r, v in dl.items()} == {"ops": ["ldap"], "staff": ["ldap", "oidc"]}, dl
+assert all(isinstance(d["seen_at"], int) and d["held_before"] is False for v in dl.values() for d in v), dl
 assert auth7.store.idp_group_notes()["skipped"]["a\\,b"]["reason"] == "invalid"
 sign_in(app7, auth7, state7, [])
 assert roles(auth7) == ["ops", "staff"], "OIDC withdrew a role LDAP still delivers"

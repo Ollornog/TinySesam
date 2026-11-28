@@ -49,6 +49,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The panel's account page lists each role the account holds with where it comes from (T-135): **⇄ from IdP** with the
+  source and the time of its last delivery, or **✋ assigned by hand** — both for a role held by hand before a source
+  delivered it (`/api/users` carries `role_sources`; `Store.idp_role_deliveries`). Browser test in
+  `tests/test_browser.py` (group import, 1280 and 390 px, light and dark, strict CSP).
 - `/auth/account.json?app=<id>` and `account_overview(user, app=<id>)` (T-142, ADR-17 addendum): the signed-in
   person's own permissions for one application of `apps` on TinySesam's origin — never another account's; an unknown
   id gives `null`; on an application's host the host decides and the parameter is ignored.

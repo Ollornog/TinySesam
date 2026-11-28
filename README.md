@@ -2222,7 +2222,9 @@ permissions to it in the matrix, and the application asks `has_permission` as fo
 - **In the panel** (*Accounts → Roles*): an imported role says **⇄ from IdP** with its source, the last delivery and
   its display name; the card **Group import** lists every skipped group with its reason, a sign-in without the group
   claim and a list over the limit (each hint goes once a later sign-in resolves it, an unresolved one after 30 days).
-  The permission matrix marks an imported role's column with **⇄ from IdP** as well.
+  The permission matrix marks an imported role's column with **⇄ from IdP** as well. An account's page lists each role
+  it holds with where it comes from (T-135): **⇄ from IdP** with the source and the last delivery, or **✋ assigned by
+  hand** — both when the account held the role by hand before a source delivered it.
 - **A complete application:** example Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex3/README.md) — a Node documents application behind
   the TinySesam server with sign-in through an OIDC provider (its `team-*` groups imported) beside local accounts;
   `tests/test_example_ex3.py` is its acceptance: the group arrives, the administrator assigns `docs.read` in the matrix,
