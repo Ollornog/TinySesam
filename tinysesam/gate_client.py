@@ -56,6 +56,7 @@ __all__ = [
     "guard_status",
     "current_identity", "Topbar", "TopbarLink", "TopbarApprovals", "TopbarFrame", "parse_topbar", "fetch_topbar",
     "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account", "action_url", "parse_action_return", "ActionReturnRefused",
+    "parse_admin_accounts",
     "PermissionRequest", "register_request", "register_permissions", "RegistrationFailed",
 ]
 
@@ -1365,7 +1366,7 @@ def fetch_topbar(url: str, cookie_header: str = "") -> Topbar:
 #: The normalized result for a person who is not signed in (any answer but a 200 with `signed_in: true`).
 SIGNED_OUT_ACCOUNT: Mapping[str, Any] = {"signed_in": False, "account": None, "sign_in": None, "sessions": None,
                                          "programs": None, "approvals": None, "permissions": None, "links": None,
-                                         "actions": None}
+                                         "actions": None, "events": None, "admin": None}
 _ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
 #: The own action pages of spec §8c, the members of `actions`.
 _ACCOUNT_ACTIONS = ("username", "email", "password", "pin", "totp", "recovery_codes", "passkeys", "api_keys",
@@ -1401,6 +1402,8 @@ def _items(value: Any, fields: Mapping[str, Callable[[Any], Any]]) -> list[dict[
 
 _USED = {"name": _text, "created_at": _count, "last_used": _count}
 _APP_PASSWORD = {**_USED, "expires_at": _count}
+_API_KEY = {"name": _text, "kind": _text, "created_at": _count, "last_used": _count, "expires_at": _count}
+_EVENT = {"at": _count, "event": _text, "by_admin": _flag}
 _SESSION = {"created_at": _count, "last_seen": _count, "method": _text, "device": _text, "current": _flag,
             "handle": _text, "end": _href}
 
@@ -1423,6 +1426,8 @@ def parse_account(data: Any) -> dict[str, Any]:
     totp, passkeys = sign_in.get("totp"), sign_in.get("passkeys")
     approvals = data.get("approvals")
     pending = _count(approvals.get("pending")) if isinstance(approvals, dict) else None
+    admin = data.get("admin")
+    accounts = _href(admin.get("accounts")) if isinstance(admin, dict) else None
     return {
         "signed_in": True,
         "account": {"username": _text(account.get("username")), "display_name": _text(account.get("display_name")),
@@ -1440,12 +1445,46 @@ def parse_account(data: Any) -> dict[str, Any]:
         "programs": {"oauth": _offered_list(programs.get("oauth"), _USED),
                      "services": _offered_list(programs.get("services"), _USED),
                      "app_passwords": _offered_list(programs.get("app_passwords"), _APP_PASSWORD),
-                     "api_keys_active": _count(programs.get("api_keys_active"))},
+                     "api_keys_active": _count(programs.get("api_keys_active")),
+                     "api_keys": _offered_list(programs.get("api_keys"), _API_KEY)},
         "approvals": None if pending is None else {"pending": pending},
         "permissions": _permissions_view(data.get("permissions")),
         "links": {name: _href(links.get(name)) for name in _ACCOUNT_LINKS},
         "actions": {name: _href(actions.get(name)) for name in _ACCOUNT_ACTIONS},
+        "events": _items(data["events"], _EVENT) if isinstance(data.get("events"), list) else [],
+        "admin": {"accounts": accounts} if accounts is not None else None,
     }
+
+
+#: The administration actions of spec §8c, the members of `actions` of an account in the administration data (§8b).
+_ADMIN_ACTIONS = ("admin_totp_reset", "admin_lock", "admin_unlock", "admin_roles", "admin_key_revoke",
+                  "admin_program_revoke", "admin_session_end", "admin_signin_link")
+
+
+def _strings(value: Any) -> list[str]:
+    """The string entries of a list, in order; `[]` when it is no list."""
+    return _texts(value) or []
+
+
+def parse_admin_accounts(data: Any) -> dict[str, Any]:
+    """Normalize the answer of `/.tinysesam/admin/accounts.json` (spec §8b) — the administration data an application's
+    page reads in the browser for a person who administers accounts inside its area (`admin.accounts` of
+    `parse_account` names it). `{"app", "links": {"panel"}, "accounts": [...]}`: anything that is no object reads as
+    nothing to show (`app` None, `accounts` `[]`); every account has `id`, `username`, `display_name` (text or None),
+    `source` (texts or None), `roles` and `permissions` (texts, `[]` for no list), `disabled` and `totp` (bool or None)
+    and `actions` — the eight administration actions of §8c, each an href that passes the rule of §8 or None. Unknown
+    members are dropped; every string is text, never markup. Each address is a convenience, not a right: the action
+    page checks the person's rights again."""
+    data = _group(data)
+    links = _group(data.get("links"))
+    accounts = data.get("accounts") if isinstance(data.get("accounts"), list) else []
+    return {"app": _text(data.get("app")), "links": {"panel": _href(links.get("panel"))},
+            "accounts": [{"id": _text(a.get("id")), "username": _text(a.get("username")),
+                          "display_name": _text(a.get("display_name")), "source": _texts(a.get("source")),
+                          "roles": _strings(a.get("roles")), "disabled": _flag(a.get("disabled")),
+                          "totp": _flag(a.get("totp")), "permissions": _strings(a.get("permissions")),
+                          "actions": {n: _href(_group(a.get("actions")).get(n)) for n in _ADMIN_ACTIONS}}
+                         for a in accounts if isinstance(a, dict)]}
 
 
 #: `state` of an action page (spec §8c): printable ASCII, at most this long.

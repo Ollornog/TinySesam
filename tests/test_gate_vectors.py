@@ -103,6 +103,7 @@ all_vectors = ([("token", v) for v in TOKEN["vectors"]] + [("headers", v) for v 
                + [("topbar", v) for v in TOPBAR["vectors"]] + [("account", v) for v in ACCOUNT["vectors"]]
                + [("account/action_urls", v) for v in ACCOUNT["action_urls"]]
                + [("account/action_returns", v) for v in ACCOUNT["action_returns"]]
+               + [("account/admin_accounts", v) for v in ACCOUNT["admin_accounts"]]
                + [(f"permissions/{part}", v) for part in ("headers", "tokens", "register") for v in PERMISSIONS[part]])
 ids = [f"{kind}/{v['id']}" for kind, v in all_vectors]
 assert len(ids) == len(set(ids)), "duplicate vector ids"
@@ -303,6 +304,11 @@ def mismatches(relax=frozenset()) -> list:
     for v in ACCOUNT["action_returns"]:
         if run_action_return(v, relax) != v["expected"]:
             bad.append("account/action_returns/" + v["id"])
+    for v in ACCOUNT["admin_accounts"]:
+        with relax_mod.relaxed(*relax):
+            got = {"ok": True, "admin": gc.parse_admin_accounts(v["input"]["answer"])}
+        if got != v["expected"]:
+            bad.append("account/admin_accounts/" + v["id"])
     for part, run in (("headers", run_perm_headers), ("tokens", run_perm_token), ("register", run_register)):
         for v in PERMISSIONS[part]:
             if run(v, relax) != v["expected"]:
@@ -322,7 +328,8 @@ if failed:
 ok(f"gate client: {len(TOKEN['vectors'])} token, {len(HEADERS['vectors'])} header, "
    f"{len(JWKS['sets'])} key-set, {len(JWKS['scenarios'])} cache, {len(TOPBAR['vectors'])} top-bar, "
    f"{len(ACCOUNT['vectors'])} account, {len(ACCOUNT['action_urls'])} action-address, "
-   f"{len(ACCOUNT['action_returns'])} way-back, {sum(len(PERMISSIONS[k]) for k in ('headers', 'tokens', 'register'))} "
+   f"{len(ACCOUNT['action_returns'])} way-back, "
+   f"{len(ACCOUNT['admin_accounts'])} administration, {sum(len(PERMISSIONS[k]) for k in ('headers', 'tokens', 'register'))} "
    "permission vectors passed")
 
 _token_cfg = {"mode": "token", "issuer": "https://auth.example.com", "audience": "app.example.com",

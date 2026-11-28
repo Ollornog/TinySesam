@@ -10,7 +10,9 @@ export {
   ACTION_STATE_MAX,
   type Account,
   type AccountActions,
+  type AccountApiKey,
   type AccountAppPassword,
+  type AccountEvent,
   type AccountLinks,
   type AccountSession,
   type AccountUse,
@@ -22,6 +24,7 @@ export {
   signedOutAccount,
 } from './account.ts';
 export { type ActionReturn, ActionReturnRefused, parseActionReturn } from './action-return.ts';
+export { type AdminAccount, type AdminAccounts, type AdminActions, parseAdminAccounts } from './admin-accounts.ts';
 export {
   APPROVAL_TOKEN_TYPE,
   type ApprovalClaims,

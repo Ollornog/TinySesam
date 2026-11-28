@@ -185,6 +185,10 @@ back as the signed-out `Account` plus the error. `ParseAccount(body)` normalizes
 every string is text (escape it), a member of the wrong type is nil, unknown members are dropped. Changes happen on
 TinySesam's account page — link to `Links.Account`, `Links.Sessions`, … — or on its action pages (spec §8c):
 `Actions` holds their addresses, and every session its `Handle` and `End`, the page that ends exactly that session.
+`Events` are the account's own events, `Programs.APIKeys` its API keys (name, kind, times), and `Admin` — for a person
+who administers accounts inside the application's area — names the administration data: `ParseAdminAccounts(body)`
+normalizes that answer (spec §8b; every account with `ID`, names, roles, lock state and the addresses of the
+administration action pages in `Actions`, an unsafe href nil).
 `ActionURL(href, returnTo, state)` builds the address to send the person to, with the way back to `returnTo` (an
 absolute `http(s)` URL of your host) and your `state`; the page comes back with `ts_action`, `ts_result` and `state`.
 An unsafe href, another `returnTo` or a bad state is an error wrapping `ErrActionURL`. Back on your page,

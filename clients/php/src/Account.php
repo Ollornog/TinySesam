@@ -33,6 +33,9 @@ final class Account
         'api_keys', 'app_passwords', 'sessions', 'session_end', 'programs', 'services', 'admin_totp_reset',
         'admin_lock', 'admin_unlock', 'admin_roles', 'admin_key_revoke', 'admin_program_revoke', 'admin_session_end',
         'admin_signin_link'];
+    /** The administration actions of spec section 8c, the members of `actions` in the administration data. */
+    private const array ADMIN_ACTIONS = ['admin_totp_reset', 'admin_lock', 'admin_unlock', 'admin_roles',
+        'admin_key_revoke', 'admin_program_revoke', 'admin_session_end', 'admin_signin_link'];
     /** The results an action page hands back in `ts_result`. */
     private const array ACTION_RESULTS = ['done', 'cancelled', 'unavailable'];
 
@@ -44,12 +47,13 @@ final class Account
      * The overview of a signed-out request (also the answer to anything doubtful).
      *
      * @return array{signed_in: false, account: null, sign_in: null, sessions: null, programs: null, approvals: null,
-     *     permissions: null, links: null, actions: null}
+     *     permissions: null, links: null, actions: null, events: null, admin: null}
      */
     public static function signedOut(): array
     {
         return ['signed_in' => false, 'account' => null, 'sign_in' => null, 'sessions' => null, 'programs' => null,
-            'approvals' => null, 'permissions' => null, 'links' => null, 'actions' => null];
+            'approvals' => null, 'permissions' => null, 'links' => null, 'actions' => null, 'events' => null,
+            'admin' => null];
     }
 
     /**
@@ -76,6 +80,9 @@ final class Account
         $approvals = Strict::member($data, 'approvals');
         $pending = $approvals instanceof \stdClass ? self::count($approvals, 'pending') : null;
         $appPasswords = Strict::member($programs, 'app_passwords');
+        $apiKeys = Strict::member($programs, 'api_keys');
+        $admin = Strict::member($data, 'admin');
+        $adminAccounts = $admin instanceof \stdClass ? self::href($admin, 'accounts') : null;
         $hrefs = [];
         foreach (self::LINKS as $name) {
             $hrefs[$name] = self::href($links, $name);
@@ -125,12 +132,69 @@ final class Account
                     'expires_at' => self::count($e, 'expires_at'),
                 ], self::objects($appPasswords)) : null,
                 'api_keys_active' => self::count($programs, 'api_keys_active'),
+                // The keys api_keys_active counts: name, kind and times — never the key or its prefix.
+                'api_keys' => \is_array($apiKeys) ? array_map(static fn (\stdClass $e): array => [
+                    'name' => self::text($e, 'name'),
+                    'kind' => self::text($e, 'kind'),
+                    'created_at' => self::count($e, 'created_at'),
+                    'last_used' => self::count($e, 'last_used'),
+                    'expires_at' => self::count($e, 'expires_at'),
+                ], self::objects($apiKeys)) : null,
             ],
             'approvals' => $pending === null ? null : ['pending' => $pending],
             'permissions' => self::permissions(Strict::member($data, 'permissions')),
             'links' => $hrefs,
             'actions' => $pages,
+            // The account's own events, newest first: time, TinySesam's event name (text), caused by another person.
+            'events' => array_map(static fn (\stdClass $e): array => [
+                'at' => self::count($e, 'at'),
+                'event' => self::text($e, 'event'),
+                'by_admin' => self::flag($e, 'by_admin'),
+            ], self::objects(Strict::member($data, 'events'))),
+            // Where the application's page reads the administration data (spec section 8b), for its administrators.
+            'admin' => $adminAccounts === null ? null : ['accounts' => $adminAccounts],
         ];
+    }
+
+    /**
+     * Normalizes the body of a 200 answer of `/.tinysesam/admin/accounts.json` (spec section 8b) — the accounts a
+     * person may administer inside the application's area, read same-origin in the browser for a person whose account
+     * overview names it (`admin.accounts`). Anything that is no JSON object reads as nothing to show; a member of the
+     * wrong type reads as missing, an unsafe href as null, unknown members are dropped. Escape every string. An
+     * address in `actions` is a convenience, not a right: the action page checks the person's rights again.
+     *
+     * @return array{app: ?string, links: array{panel: ?string}, accounts: list<array<string, mixed>>}
+     */
+    public static function parseAdminAccounts(string $body): array
+    {
+        [$ok, $data] = Strict::parseJson($body);
+        if (!$ok || !$data instanceof \stdClass) {
+            $data = new \stdClass();
+        }
+        $accounts = [];
+        foreach (self::objects(Strict::member($data, 'accounts')) as $a) {
+            $actions = self::group($a, 'actions');
+            $pages = [];
+            foreach (self::ADMIN_ACTIONS as $name) {
+                $pages[$name] = self::href($actions, $name);
+            }
+            $accounts[] = [
+                'id' => self::text($a, 'id'),
+                'username' => self::text($a, 'username'),
+                'display_name' => self::text($a, 'display_name'),
+                'source' => self::texts($a, 'source'),
+                'roles' => self::texts($a, 'roles') ?? [],
+                'disabled' => self::flag($a, 'disabled'),
+                'totp' => self::flag($a, 'totp'),
+                'permissions' => self::texts($a, 'permissions') ?? [],
+                'actions' => $pages,
+            ];
+        }
+
+        $links = self::group($data, 'links');
+
+        return ['app' => self::text($data, 'app'), 'links' => ['panel' => self::href($links, 'panel')],
+            'accounts' => $accounts];
     }
 
     /**

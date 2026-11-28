@@ -12,7 +12,7 @@
     {
       "id": "signed-in",
       "attack": null,
-      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included; `events`, `admin` and `programs.api_keys` (T-106) are dropped.",
+      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting; its `actions` (spec §8c), every session's `handle` and `end`, its `events` and `programs.api_keys` (T-106) included.",
       "input": {
         "account": {
           "signed_in": true,
@@ -189,12 +189,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -205,6 +221,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -366,10 +383,18 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": null
+            "api_keys_active": null,
+            "api_keys": null
           },
           "approvals": null,
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": null,
             "sessions": null,
@@ -380,6 +405,7 @@
             "services": null,
             "approvals": null
           },
+          "admin": null,
           "actions": {
             "username": null,
             "email": null,
@@ -418,7 +444,9 @@
           "approvals": null,
           "permissions": null,
           "links": null,
-          "actions": null
+          "actions": null,
+          "events": null,
+          "admin": null
         }
       }
     },
@@ -489,12 +517,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -505,6 +549,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -532,7 +577,9 @@
           "approvals": null,
           "permissions": null,
           "links": null,
-          "actions": null
+          "actions": null,
+          "events": null,
+          "admin": null
         }
       }
     },
@@ -604,12 +651,28 @@
                   "expires_at": 1769817600
                 }
               ],
-              "api_keys_active": 1
+              "api_keys_active": 1,
+              "api_keys": [
+                {
+                  "name": "backup",
+                  "kind": "automation",
+                  "created_at": 1767225600,
+                  "last_used": null,
+                  "expires_at": null
+                }
+              ]
             },
             "approvals": {
               "pending": 1
             },
             "permissions": null,
+            "events": [
+              {
+                "at": 1767225600,
+                "event": "app_password_create",
+                "by_admin": false
+              }
+            ],
             "links": {
               "account": "https://auth.example.com/auth/account",
               "sessions": "https://auth.example.com/auth/account#sessions",
@@ -620,6 +683,7 @@
               "services": null,
               "approvals": "https://auth.example.com/auth/approvals"
             },
+            "admin": null,
             "actions": {
               "username": "https://auth.example.com/auth/act/username",
               "email": null,
@@ -648,7 +712,9 @@
           "approvals": null,
           "permissions": null,
           "links": null,
-          "actions": null
+          "actions": null,
+          "events": null,
+          "admin": null
         }
       }
     },
@@ -719,12 +785,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "javascript:alert(1)",
             "sessions": "//evil.example.com/a",
@@ -735,6 +817,7 @@
             "services": 5,
             "approvals": "/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -815,12 +898,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": null,
             "sessions": null,
@@ -831,6 +930,7 @@
             "services": null,
             "approvals": "/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -902,12 +1002,20 @@
             "app_passwords": [
               null
             ],
-            "api_keys_active": false
+            "api_keys_active": false,
+            "api_keys": "backup"
           },
           "approvals": {
             "pending": -1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -918,6 +1026,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -976,10 +1085,18 @@
             "oauth": null,
             "services": null,
             "app_passwords": [],
-            "api_keys_active": null
+            "api_keys_active": null,
+            "api_keys": null
           },
           "approvals": null,
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -990,6 +1107,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1069,6 +1187,13 @@
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1080,6 +1205,7 @@
             "approvals": "https://auth.example.com/auth/approvals",
             "security_log": "/auth/account#log"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1156,12 +1282,20 @@
             "oauth": null,
             "services": null,
             "app_passwords": null,
-            "api_keys_active": null
+            "api_keys_active": null,
+            "api_keys": null
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1172,6 +1306,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1206,7 +1341,15 @@
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": "/auth/account",
+          "admin": null,
           "actions": [
             "/auth/act/password"
           ]
@@ -1235,7 +1378,8 @@
             "oauth": null,
             "services": null,
             "app_passwords": null,
-            "api_keys_active": null
+            "api_keys_active": null,
+            "api_keys": null
           },
           "approvals": {
             "pending": 1
@@ -1264,7 +1408,15 @@
             "sessions": null,
             "programs": null,
             "services": null
-          }
+          },
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "admin": null
         }
       }
     },
@@ -1342,12 +1494,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1358,6 +1526,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1440,12 +1609,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1456,6 +1641,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1538,12 +1724,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1554,6 +1756,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1632,12 +1835,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1648,6 +1867,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1732,12 +1952,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": true
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1748,6 +1984,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1828,10 +2065,26 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": null,
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1842,6 +2095,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -1926,12 +2180,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -1942,6 +2212,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": [
               "/auth/act/x"
@@ -2025,12 +2296,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2041,6 +2328,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": null,
             "email": null,
@@ -2125,12 +2413,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2141,6 +2445,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "/auth/act/username?app=app.example.com",
             "email": "/auth/act/email?app=app.example.com",
@@ -2221,12 +2526,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2237,6 +2558,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "/auth/act/username?app=app.example.com",
             "email": "/auth/act/email?app=app.example.com",
@@ -2321,12 +2643,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2337,6 +2675,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": "/auth/act/password"
         }
       },
@@ -2404,12 +2743,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2420,6 +2775,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": null,
             "email": null,
@@ -2500,12 +2856,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2515,7 +2887,8 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
-          }
+          },
+          "admin": null
         }
       },
       "expected": {
@@ -2582,12 +2955,28 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
           },
           "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2598,6 +2987,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": null,
             "email": null,
@@ -2682,7 +3072,16 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
@@ -2694,6 +3093,13 @@
               "docs.read"
             ]
           },
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2704,6 +3110,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -2784,7 +3191,16 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
@@ -2796,6 +3212,13 @@
               "docs.read"
             ]
           },
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2806,6 +3229,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -2890,7 +3314,16 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
@@ -2907,6 +3340,13 @@
             ],
             "extra": true
           },
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -2917,6 +3357,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -2997,7 +3438,16 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
@@ -3008,6 +3458,13 @@
               "docs.read"
             ]
           },
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -3018,6 +3475,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -3102,7 +3560,16 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
@@ -3111,6 +3578,13 @@
             "app": "docs",
             "names": "docs.read"
           },
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -3121,6 +3595,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -3201,7 +3676,16 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
@@ -3210,6 +3694,13 @@
             "app": "docs",
             "names": []
           },
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -3220,6 +3711,7 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -3304,7 +3796,16 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
           },
           "approvals": {
             "pending": 1
@@ -3312,6 +3813,716 @@
           "permissions": [
             "docs.read"
           ],
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "events-keys-wrong-types",
+      "attack": "account-types",
+      "reason": "An entry of `events` or `programs.api_keys` that is no object is dropped; a member of the wrong type reads as `null` (a time is a non-negative integer), an unknown member (an address, a key prefix) is dropped.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              null,
+              "backup",
+              {
+                "name": 5,
+                "kind": [
+                  "human"
+                ],
+                "created_at": 1.5,
+                "last_used": true,
+                "expires_at": "1",
+                "prefix": "tsk_probe"
+              },
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            "login",
+            null,
+            {
+              "at": "1",
+              "event": 5,
+              "by_admin": "yes",
+              "ip": "192.0.2.1"
+            },
+            {
+              "at": -1,
+              "event": [
+                "login"
+              ],
+              "by_admin": 1
+            },
+            {
+              "at": 1.5
+            },
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": null,
+                "kind": null,
+                "created_at": null,
+                "last_used": null,
+                "expires_at": null
+              },
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": null,
+              "event": null,
+              "by_admin": null
+            },
+            {
+              "at": null,
+              "event": null,
+              "by_admin": null
+            },
+            {
+              "at": null,
+              "event": null,
+              "by_admin": null
+            },
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "events-keys-not-list",
+      "attack": "account-types",
+      "reason": "`events` that is no list reads as an empty list; `programs.api_keys` that is no list as `null` (not offered).",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": {
+              "name": "backup"
+            }
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": {
+            "at": 1,
+            "event": "login"
+          },
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": null
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "events-keys-admin-missing",
+      "attack": "account-types",
+      "reason": "An answer of a TinySesam before T-106 (no `events`, `admin`, `programs.api_keys`): `[]` and `null`, the rest as usual.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
           "links": {
             "account": "https://auth.example.com/auth/account",
             "sessions": "https://auth.example.com/auth/account#sessions",
@@ -3402,7 +4613,8 @@
                 "expires_at": 1769817600
               }
             ],
-            "api_keys_active": 1
+            "api_keys_active": 1,
+            "api_keys": null
           },
           "approvals": {
             "pending": 1
@@ -3418,6 +4630,1169 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
           },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          },
+          "events": [],
+          "admin": null
+        }
+      }
+    },
+    {
+      "id": "admin-accounts",
+      "attack": null,
+      "reason": "For a person who administers accounts inside the application's area `admin.accounts` names the administration data (§8b); an unknown member of `admin` is dropped.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": {
+            "accounts": "/.tinysesam/admin/accounts.json",
+            "panel": "/auth/admin"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": {
+            "accounts": "/.tinysesam/admin/accounts.json"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "admin-javascript",
+      "attack": "account-href",
+      "reason": "An `admin.accounts` that fails the rule of §8 drops the whole member.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": {
+            "accounts": "javascript:alert(1)"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "admin-protocol-relative",
+      "attack": "account-href",
+      "reason": "A protocol-relative `admin.accounts` drops the whole member.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": {
+            "accounts": "//evil.example.com/.tinysesam/admin/accounts.json"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "admin-not-text",
+      "attack": "account-types",
+      "reason": "An `admin.accounts` that is no text drops the whole member.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": {
+            "accounts": 5
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "admin-not-object",
+      "attack": "account-types",
+      "reason": "An `admin` that is no object reads as `null`.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": "/.tinysesam/admin/accounts.json",
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1,
+            "api_keys": [
+              {
+                "name": "backup",
+                "kind": "automation",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": null
+              }
+            ]
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "events": [
+            {
+              "at": 1767225600,
+              "event": "app_password_create",
+              "by_admin": false
+            }
+          ],
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "admin": null,
           "actions": {
             "username": "https://auth.example.com/auth/act/username",
             "email": null,
@@ -4619,6 +6994,1002 @@
       "expected": {
         "ok": false,
         "error": "state"
+      }
+    }
+  ],
+  "admin_accounts": [
+    {
+      "id": "administrator",
+      "attack": null,
+      "reason": "An administrator's administration data: every account but service accounts, each with the addresses of the administration action pages offered now (`null` elsewhere).",
+      "input": {
+        "answer": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "1",
+              "username": "ada",
+              "display_name": "Ada Admin",
+              "source": [
+                "local"
+              ],
+              "roles": [],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=1",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "3",
+              "username": "dora",
+              "display_name": "dora",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=3",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=3",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ],
+          "links": {
+            "panel": "https://auth.example.com/auth/admin"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "1",
+              "username": "ada",
+              "display_name": "Ada Admin",
+              "source": [
+                "local"
+              ],
+              "roles": [],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=1",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "3",
+              "username": "dora",
+              "display_name": "dora",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=3",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=3",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ],
+          "links": {
+            "panel": "https://auth.example.com/auth/admin"
+          }
+        }
+      }
+    },
+    {
+      "id": "delegate",
+      "attack": null,
+      "reason": "A delegate of the application's area: only the accounts of its scope, only the actions it may take.",
+      "input": {
+        "answer": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ],
+          "links": {
+            "panel": "https://auth.example.com/auth/admin"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ],
+          "links": {
+            "panel": "https://auth.example.com/auth/admin"
+          }
+        }
+      }
+    },
+    {
+      "id": "unsafe-hrefs",
+      "attack": "account-href",
+      "reason": "Every `href` that fails the rule of §8 — the panel's and each action's — becomes `null`.",
+      "input": {
+        "answer": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "1",
+              "username": "ada",
+              "display_name": "Ada Admin",
+              "source": [
+                "local"
+              ],
+              "roles": [],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": "javascript:alert(1)",
+                "admin_lock": "//evil.example.com/auth/act/admin_lock",
+                "admin_unlock": "/\\evil.example.com",
+                "admin_roles": "https://auth.example.com/auth/act/x y",
+                "admin_key_revoke": "/auth/act/x\u0007",
+                "admin_program_revoke": "data:text/html,<script>",
+                "admin_session_end": 5,
+                "admin_signin_link": [
+                  "/auth/act/x"
+                ]
+              }
+            },
+            {
+              "id": "3",
+              "username": "dora",
+              "display_name": "dora",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": "javascript:alert(1)",
+                "admin_lock": "//evil.example.com/auth/act/admin_lock",
+                "admin_unlock": "/\\evil.example.com",
+                "admin_roles": "https://auth.example.com/auth/act/x y",
+                "admin_key_revoke": "/auth/act/x\u0007",
+                "admin_program_revoke": "data:text/html,<script>",
+                "admin_session_end": 5,
+                "admin_signin_link": [
+                  "/auth/act/x"
+                ]
+              }
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "javascript:alert(1)",
+                "admin_lock": "//evil.example.com/auth/act/admin_lock",
+                "admin_unlock": "/\\evil.example.com",
+                "admin_roles": "https://auth.example.com/auth/act/x y",
+                "admin_key_revoke": "/auth/act/x\u0007",
+                "admin_program_revoke": "data:text/html,<script>",
+                "admin_session_end": 5,
+                "admin_signin_link": [
+                  "/auth/act/x"
+                ]
+              }
+            }
+          ],
+          "links": {
+            "panel": "javascript:alert(1)"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "1",
+              "username": "ada",
+              "display_name": "Ada Admin",
+              "source": [
+                "local"
+              ],
+              "roles": [],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": null,
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "3",
+              "username": "dora",
+              "display_name": "dora",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": null,
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": null,
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ],
+          "links": {
+            "panel": null
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-types",
+      "attack": "account-types",
+      "reason": "A member of the wrong type reads as missing: text and flags `null`, `source` `null`, `roles` and `permissions` the strings of a list (`[]` for no list), `links` and `actions` objects with every member `null`; an account that is no object is dropped.",
+      "input": {
+        "answer": {
+          "app": 5,
+          "links": "/auth/admin",
+          "accounts": [
+            "lou",
+            null,
+            {
+              "id": 7,
+              "username": null,
+              "display_name": [
+                "Lou"
+              ],
+              "source": "local",
+              "roles": "docs-reader",
+              "disabled": "no",
+              "totp": 1,
+              "permissions": [
+                1,
+                "docs.read",
+                null
+              ],
+              "actions": [
+                "x"
+              ]
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": null,
+          "links": {
+            "panel": null
+          },
+          "accounts": [
+            {
+              "id": null,
+              "username": null,
+              "display_name": null,
+              "source": null,
+              "roles": [],
+              "disabled": null,
+              "totp": null,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": null,
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unknown-members",
+      "attack": "account-types",
+      "reason": "Members a newer TinySesam adds are dropped — at the top, in `links`, in an account and in its `actions` (no action besides the eight of §8c).",
+      "input": {
+        "answer": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "1",
+              "username": "ada",
+              "display_name": "Ada Admin",
+              "source": [
+                "local"
+              ],
+              "roles": [],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=1",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null,
+                "admin_delete": "/auth/act/admin_delete"
+              },
+              "email": "ada@example.com"
+            },
+            {
+              "id": "3",
+              "username": "dora",
+              "display_name": "dora",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=3",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=3",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null,
+                "admin_delete": "/auth/act/admin_delete"
+              },
+              "email": "dora@example.com"
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null,
+                "admin_delete": "/auth/act/admin_delete"
+              },
+              "email": "lou@example.com"
+            }
+          ],
+          "links": {
+            "panel": "https://auth.example.com/auth/admin",
+            "config": "/auth/admin#config"
+          },
+          "hardening": {
+            "admin_require_mfa": true
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": "docs",
+          "accounts": [
+            {
+              "id": "1",
+              "username": "ada",
+              "display_name": "Ada Admin",
+              "source": [
+                "local"
+              ],
+              "roles": [],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": null,
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=1",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "3",
+              "username": "dora",
+              "display_name": "dora",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": false,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": null,
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=3",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=3",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            },
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ],
+          "links": {
+            "panel": "https://auth.example.com/auth/admin"
+          }
+        }
+      }
+    },
+    {
+      "id": "list-entries",
+      "attack": "account-types",
+      "reason": "An entry of `source`, `roles` or `permissions` that is no string is dropped.",
+      "input": {
+        "answer": {
+          "app": "docs",
+          "links": {
+            "panel": null
+          },
+          "accounts": [
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local",
+                5,
+                "ldap"
+              ],
+              "roles": [
+                "docs-reader",
+                null,
+                3,
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": "docs",
+          "links": {
+            "panel": null
+          },
+          "accounts": [
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local",
+                "ldap"
+              ],
+              "roles": [
+                "docs-reader",
+                "docs-lead"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "roles-permissions-not-list",
+      "attack": "account-types",
+      "reason": "`roles` and `permissions` that are no list read as empty lists.",
+      "input": {
+        "answer": {
+          "app": "docs",
+          "links": {
+            "panel": null
+          },
+          "accounts": [
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": {
+                "docs-reader": true
+              },
+              "disabled": false,
+              "totp": true,
+              "permissions": "docs.read",
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": "docs",
+          "links": {
+            "panel": null
+          },
+          "accounts": [
+            {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [],
+              "disabled": false,
+              "totp": true,
+              "permissions": [],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "not-object",
+      "attack": "account-types",
+      "reason": "An answer that is no object: nothing to show.",
+      "input": {
+        "answer": [
+          {
+            "id": "2",
+            "username": "lou",
+            "display_name": "Lou Reader",
+            "source": [
+              "local"
+            ],
+            "roles": [
+              "docs-reader"
+            ],
+            "disabled": false,
+            "totp": true,
+            "permissions": [
+              "docs.read"
+            ],
+            "actions": {
+              "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+              "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+              "admin_unlock": null,
+              "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+              "admin_key_revoke": null,
+              "admin_program_revoke": null,
+              "admin_session_end": null,
+              "admin_signin_link": null
+            }
+          }
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": null,
+          "links": {
+            "panel": null
+          },
+          "accounts": []
+        }
+      }
+    },
+    {
+      "id": "accounts-not-list",
+      "attack": "account-types",
+      "reason": "`accounts` that is no list reads as none.",
+      "input": {
+        "answer": {
+          "app": "docs",
+          "links": {
+            "panel": null
+          },
+          "accounts": {
+            "lou": {
+              "id": "2",
+              "username": "lou",
+              "display_name": "Lou Reader",
+              "source": [
+                "local"
+              ],
+              "roles": [
+                "docs-reader"
+              ],
+              "disabled": false,
+              "totp": true,
+              "permissions": [
+                "docs.read"
+              ],
+              "actions": {
+                "admin_totp_reset": "https://auth.example.com/auth/act/admin_totp_reset?app=app.example.com&target=2",
+                "admin_lock": "https://auth.example.com/auth/act/admin_lock?app=app.example.com&target=2",
+                "admin_unlock": null,
+                "admin_roles": "https://auth.example.com/auth/act/admin_roles?app=app.example.com&target=2",
+                "admin_key_revoke": null,
+                "admin_program_revoke": null,
+                "admin_session_end": null,
+                "admin_signin_link": null
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": "docs",
+          "links": {
+            "panel": null
+          },
+          "accounts": []
+        }
+      }
+    },
+    {
+      "id": "empty-object",
+      "attack": "account-types",
+      "reason": "An empty object: every member missing.",
+      "input": {
+        "answer": {}
+      },
+      "expected": {
+        "ok": true,
+        "admin": {
+          "app": null,
+          "links": {
+            "panel": null
+          },
+          "accounts": []
+        }
       }
     }
   ]

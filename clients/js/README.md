@@ -232,7 +232,11 @@ your own — only TinySesam's cookies, 5 seconds, 64 KiB, no redirects; anything
 `signedOutAccount()`. `parseAccount(body)` normalizes a body: every href safe or `null`, a member of the wrong type
 `null`, unknown members dropped. Every string is text — set it with `textContent`. Changes happen on TinySesam's
 account page, which `links` lead to, or on its action pages (spec §8c): `actions` holds their addresses, and every
-session its `handle` and `end`, the page that ends exactly that session. `actionUrl(href, returnTo, state)` builds the
+session its `handle` and `end`, the page that ends exactly that session; `events` are the account's own events,
+`programs.api_keys` its API keys (name, kind, times), and `admin` — for a person who administers accounts inside the
+application's area — names the administration data, which `parseAdminAccounts(body)` normalizes (spec §8b; every
+account with `id`, names, roles, lock state and the addresses of the administration action pages, an unsafe href
+`null`). `actionUrl(href, returnTo, state)` builds the
 address to send the person to, with the way back to `returnTo` (an absolute `http(s)` URL of your host) and your
 `state` — `actionUrl(session.end, 'https://app.example.com/settings', 's-81f2')` ends one session; the page comes back
 with `ts_action`, `ts_result` and `state`. An unsafe href, another `returnTo` or a bad state throws a `ConfigError`.

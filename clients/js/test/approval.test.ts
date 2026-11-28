@@ -152,7 +152,7 @@ test('approval: the canonical form sorts by code point and escapes only what RFC
 });
 
 test('account: fetched server-side with only TinySesam cookies; anything but 200 is signed out', async () => {
-  // The server's answer (input) and what the helper makes of it (expected): members it does not normalize are dropped.
+  // The server's answer (input) and what the helper makes of it (expected) — equal: it normalizes every member.
   const signedIn = loadVectors('account.json').vectors[0];
   const full = signedIn.input.account;
   const normal = signedIn.expected.account;

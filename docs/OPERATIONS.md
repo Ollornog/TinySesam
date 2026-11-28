@@ -1052,6 +1052,12 @@ there.
    passwords, `TS_FORWARD_APPS` with `"app_passwords": true`) sets `account_enabled = true` in that file: the
    account page no longer switches itself on from the variable. An own copy of the old compose file keeps working
    unchanged.
+8. **The gate clients normalise `events`, `programs.api_keys` and `admin`** (T-161, spec §8a, tier B). The account
+   overview of every client (`parse_account`/`SIGNED_OUT_ACCOUNT` in Python, `Account` in Go, Rust, JavaScript and
+   PHP) gains the members `events` (a list signed in, `null` signed out) and `admin` (`{"accounts"}` or `null`), and
+   `programs` gains `api_keys` (a list or `null`); they used to be dropped. Code that compares a whole normalized
+   account, or builds a Rust `account::Account` or `account::Programs` by a struct literal, takes the new members;
+   everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 **Schema 27** (T-100, permissions) is additive: this version adds the tables `app_permission` and `role_permission` at

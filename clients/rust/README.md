@@ -207,7 +207,11 @@ signed out unless `signed_in` is `true`, every href safe or `None`, a member of 
 dropped. With the feature `jwks`, `account::AccountFetcher::new(url)?.fetch(cookie_header).await` fetches it
 server-side with only TinySesam's cookies (`account::tinysesam_cookies`), 5 seconds and 64 KiB; anything but a `200`
 is signed out. Changes happen on TinySesam's account page, which `links` lead to, or on its action pages (spec §8c):
-`actions` holds their addresses, and every session its `handle` and `end`, the page that ends exactly that session.
+`actions` holds their addresses, and every session its `handle` and `end`, the page that ends exactly that session;
+`events` are the account's own events, `programs.api_keys` its API keys (name, kind, times), and `admin` — for a person
+who administers accounts inside the application's area — names the administration data, which
+`account::normalize_admin_json(body)` normalizes (spec §8b; every account with `id`, names, roles, lock state and the
+addresses of the administration action pages, an unsafe href `None`).
 `account::action_url(href, return_to, state)` builds the address to send the person to, with the way back to
 `return_to` (an absolute `http(s)` URL of your host) and your `state` — `action_url(end, "https://app.example.com/settings",
 Some("s-81f2"))` ends one session; the page comes back with `ts_action`, `ts_result` and `state`. An unsafe href,

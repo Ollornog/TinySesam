@@ -470,9 +470,8 @@ or its hash; text, an application must not read a format into it) and `end` (the
 session, `null` for the session of the request). Both, and `actions`, are normalized since T-148; a client before it
 dropped them like members it does not know.
 
-`programs.api_keys`, `events` and `admin` (T-106) are members of TinySesam's answer; the normalized result of a helper does
-not carry them yet — a client drops them like members it does not know, and an application that shows them reads the
-answer itself (example Ex4 does so in the browser).
+`programs.api_keys`, `events` and `admin` (T-106) are normalized since T-161; a client before it dropped them like
+members it does not know.
 
 **Refusals** (T-106). Every answer but a `200` carries `error`, a text for programs (the person sees the
 application's own words): `signed_out` (`401`, also with `authenticated` and `signed_in` `false`), `cross_site`
@@ -491,7 +490,8 @@ stable.
 The normalized result of a helper (`vectors/account.json` shows it):
 
 - **Signed out** — any answer but a `200` with a JSON object whose `signed_in` is `true`: `{"signed_in": false}` with
-  `account`, `sign_in`, `sessions`, `programs`, `approvals`, `permissions`, `links` and `actions` all `null`.
+  `account`, `sign_in`, `sessions`, `programs`, `approvals`, `permissions`, `links`, `actions`, `events` and `admin`
+  all `null`.
 - **Signed in** — every member of the table is present, unknown ones are dropped:
   - a text, a flag or a count of the wrong type reads as `null`; a count or a time is a JSON integer from 0 to
     2^53 − 1 (a negative number, a fraction, a boolean or a string is none);
@@ -509,7 +509,14 @@ The normalized result of a helper (`vectors/account.json` shows it):
     members); a session's `handle` is text or `null`;
   - `sign_in.password` is kept as text — a value besides the three of the table is for the application to ignore;
   - `account.source` is a list of texts or `null`: an entry that is no string is dropped, a value that is no list reads
-    as `null`, an unknown text is kept for the application to ignore.
+    as `null`, an unknown text is kept for the application to ignore;
+  - `events` is always a list (`[]` when the answer has none or no list) of `{"at", "event", "by_admin"}` (a time, a
+    text, a flag); `programs.api_keys` a list of `{"name", "kind", "created_at", "last_used", "expires_at"}` or `null`
+    (not offered) — `kind` is kept as text, an unknown one for the application to ignore; an entry of either list that
+    is no object is dropped, a member of the wrong type reads as `null`, an unknown member (an address, a key prefix)
+    is dropped;
+  - `admin` is `{"accounts": <href>}` when the answer's member is an object whose `accounts` passes the rule of §8,
+    otherwise `null` — an unknown member of it is dropped.
 
 ## 8b. Administration data (optional)
 
@@ -548,9 +555,17 @@ stays a link; nothing is switched off.
   hardening and the configuration are not part of the answer and never reachable from an application — they stay
   instance-wide, in the panel. The answer never carries a hash, a secret, a key prefix, an address or an email
   address.
-- **Clients.** The five clients do not normalize this answer yet; the application reads it like any JSON and keeps
-  the rules of §8a for it: only `href`s that pass the rule of §8, every string as text, unknown members ignored, a
-  member of the wrong type read as missing, no caching across sessions.
+- **Clients** (T-161, optional like §8a). A client with the account helper offers one function that normalizes the
+  body of a `200` answer — the page reads it same-origin in the browser; the function needs no fetch of its own. The
+  normalized result is always `{"app", "links": {"panel"}, "accounts": [...]}`: anything that is no JSON object reads
+  as `{"app": null, "links": {"panel": null}, "accounts": []}`; `app` is text or `null`; `links` that is no object, or
+  a `panel` that fails the rule of §8, gives `panel` `null`; `accounts` that is no list reads as `[]`, an entry that is
+  no object is dropped. Every account has every member of the table: `id`, `username` and `display_name` text or
+  `null`; `source` a list of texts or `null` (as `account.source` of §8a); `roles` and `permissions` the string
+  entries of a list, `[]` for no list; `disabled` and `totp` a flag or `null`; `actions` always an object with the
+  eight administration actions, each an `href` that passes the rule of §8 or `null` — an action name besides the eight
+  is dropped, as is every unknown member. No caching across sessions. The vectors are the list `admin_accounts` of
+  `vectors/account.json`.
 
 ## 8c. Action pages (optional)
 
@@ -705,7 +720,7 @@ request TinySesam answers carries `Remote-Kind`, the header vectors about other 
 | `headers.json` | header mode: `input.headers` → `expected` (`identity` [+ `has_role`] or `error`). A header value is a string of octets, one code point U+0000–U+00FF per octet (convert with Latin-1); a list means the field occurred more than once |
 | `jwks.json` | `sets`: a JWKS document → usable `kids` in order, or `error: jwks_invalid`; `scenarios`: steps with `now`, `jws` and a simulated `fetch` answer (`status`, `cache_control`, `body` or `body_text`, or `error`) → `expect` (`fetched`, `ok`, `error`). A client that fetches where no `fetch` is given fails the step |
 | `topbar.json` | §8: `input.topbar` → the normalized `expected.topbar` |
-| `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account`; `action_urls` (§8c, the client's call): `input` `href`, `return`, `state` (a string or `null`) → `expected.url`, or `error: invalid`; `action_returns` (§8c, reading the way back): `input` `url`, `state` (a string or `null`) → `expected.return` (`{"action", "result"}` or `null`), or `error: invalid` / `error: state` |
+| `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account`; `action_urls` (§8c, the client's call): `input` `href`, `return`, `state` (a string or `null`) → `expected.url`, or `error: invalid`; `action_returns` (§8c, reading the way back): `input` `url`, `state` (a string or `null`) → `expected.return` (`{"action", "result"}` or `null`), or `error: invalid` / `error: state`; `admin_accounts` (§8b): `input.answer` (the body of a `200` answer) → the normalized `expected.admin` |
 | `permissions.json` | §3.4: `headers` (as in `headers.json`, `expected.permissions` + `has_permission`, or `error`), `tokens` (as in `token.json`, the same expectations) and `register` (`input` `base_url`, `app`, `permissions` → `expected.request` `method`, `url`, `body`, or `error: invalid`). The identities of `token.json` and `headers.json` do not list `permissions`; this file does |
 
 Every vector has an `id`, a `reason` and an `attack` class (`null` for a plain valid case). Every attack vector carries
@@ -760,8 +775,8 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `jwks-cache` | the fetch rules of §5 |
 | `topbar-href` | `javascript:`, `data:`, protocol-relative and other unsafe links |
 | `topbar-types` | an answer of the wrong shape, an `approvals` that is no count, a `frame` of the wrong shape or with members of the wrong type |
-| `account-href` | unsafe links in the account overview |
-| `account-types` | an account overview of the wrong shape, members of the wrong type, unknown and missing members |
+| `account-href` | unsafe links in the account overview and in the administration data (§8b) |
+| `account-types` | an account overview or administration data of the wrong shape, members of the wrong type, unknown and missing members |
 | `action-request` | the address of an action page (§8c): an unsafe `href` or one with a fragment, a `return` that is no absolute printable-ASCII `http(s)` URL, a `state` outside the rule |
 | `action-return` | the way back of an action page (§8c): an unknown action or result, one of the three names twice or missing, a broken escape, a value outside printable ASCII, a `state` outside the rule or not the one issued |
 | `permissions-parsing` | commas, spaces, empty and repeated entries, case, a prefix, `admin` — exact comparison, nothing implied |
