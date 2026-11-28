@@ -2,7 +2,7 @@
 id: M-2
 type: Milestone
 title: "Shell and headless: every UI mode, local/IdP/mixed users, library and server alike"
-status: offen
+status: erledigt
 rank: 2
 tags: [shell, headless, server, permissions]
 created: 2026-11-23
@@ -55,7 +55,7 @@ schema changes of both go through one pull request at a time. T-110 moved to [M-
 | S3 (SAML) | [T-70](T-70-saml-forceauthn-authninstant-for-re-authentication.md) | SAML step-up: ForceAuthn / AuthnInstant (part of S3: T-99 carries 8 of its 13, T-70 the other 5) | 5 | 8–12 |
 | ~~Diet~~ | [T-110](T-110-dependency-diet-joserfc-instead-of-authlib-jose-qr-as-s.md) | moved to M-3 (2026-11-23) | – | – |
 
-Sums: see `dokutool offen` (the tool adds the points of the entries; 1 SP is about one pull request of 2–3 h, estimates not measured). S12 and S13 are optional. The dependency diet moved to M-3; the module cut of M-1 comes before.
+Sums: see `dokutool offen` (the tool adds the points of the entries; 1 SP is about one pull request of 2–3 h, estimates not measured). S12 and S13 are optional and moved to M-5 on 2026-11-28; M-2 closed with S9 (closing PR #466). The dependency diet moved to M-3; the module cut of M-1 comes before.
 
 ## Existing entries
 
