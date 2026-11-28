@@ -4,6 +4,9 @@
 #   cp deploy/quickstart/example.env deploy/quickstart/.env      # then fill it in (provider, host names, TLS mode)
 #   docker compose -f deploy/quickstart/docker-compose.yml up -d
 #
+# The gateway reads tinysesam.toml next to this file (TINYSESAM_CONFIG, T-133): the switches, the network and the
+# applications live there, under review; .env carries what differs per host and overlays the file.
+#
 # Open https://<TS_APP_HOST>: you land at your provider's sign-in, then on the example application, which shows the
 # Remote-* headers TinySesam set. Replace the `app` service with your own application (it reads who is signed in from
 # Remote-User/-Name/-Email/-Groups/-Id, how it signed in from Remote-Auth, the account kind from Remote-Kind) and set
@@ -31,6 +34,9 @@ services:
     <<: *hardening
     image: ghcr.io/ollornog/tinysesam:v0.31.0
     environment:
+      # The configuration file next to this one (T-133): the switches, the network, the applications. The variables
+      # below overlay it when they are set — what differs per host, from .env.
+      TINYSESAM_CONFIG: /etc/tinysesam.toml
       # `:?` ends `docker compose up` with this message instead of starting a gateway that cannot sign anyone in.
       TINYSESAM_OIDC_ISSUER: ${TS_OIDC_ISSUER:?set TS_OIDC_ISSUER in deploy/quickstart/.env}
       TINYSESAM_OIDC_CLIENT_ID: ${TS_OIDC_CLIENT_ID:?set TS_OIDC_CLIENT_ID in deploy/quickstart/.env}
@@ -48,12 +54,9 @@ services:
       TINYSESAM_TOPBAR_LINKS: ${TS_TOPBAR_LINKS:-}
       # Per application, e.g. app passwords for WebDAV (T-66): {"dav.example.com": {"name": "Files", "app_passwords": true}}
       TINYSESAM_FORWARD_APPS: ${TS_FORWARD_APPS:-}
-      # The network below — the real client address behind Caddy (see deploy/forward-auth/docker-compose.yml).
-      TINYSESAM_TRUSTED_PROXIES: "172.29.0.0/16"
-      TINYSESAM_HTTPS_MODE: "warn"                     # TLS is terminated by Caddy in front
-      TINYSESAM_DB: "/data/gateway.db"
       TINYSESAM_PORT: "8000"
     volumes:
+      - ./tinysesam.toml:/etc/tinysesam.toml:ro
       - tinysesam-data:/data
     networks: [quickstart]
     restart: unless-stopped

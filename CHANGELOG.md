@@ -45,10 +45,21 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    since T-151). Code that
    compares a whole normalized bar, or builds a Rust `topbar::TopBar` by a struct literal, takes the new member;
    everything else is unchanged.
+7. **The quickstart reads a configuration file** (T-133, deploy/quickstart/tinysesam.toml). `docker-compose.yml` mounts the file and sets
+   `TINYSESAM_CONFIG`; the network, the database path and the gateway's switches moved there, `.env` stays as it is
+   and overlays the file. Pull the new compose file together with the file. Whoever runs the WebDAV profile (app
+   passwords, `TS_FORWARD_APPS` with `"app_passwords": true`) sets `account_enabled = true` in that file: the
+   account page no longer switches itself on from the variable. An own copy of the old compose file keeps working
+   unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- The quickstart ships `deploy/quickstart/tinysesam.toml` (T-133, ADR-16): `docker-compose.yml` mounts it and sets
+  `TINYSESAM_CONFIG`; the OIDC gateway's switches, the network and the database path live there, `.env` keeps the
+  per-host values and overlays the file (the client secret as `env:`). The file gives the same configuration as the
+  preset did, field by field (`tests/test_quickstart_config.py`); `tests/test_quickstart.py` starts the stack from it.
+  See "Upgrading from 0.31.x" (WebDAV profile: `account_enabled = true`).
 - Docs and example Ex1 set `<ts-shell layout="…">` (T-144): without the attribute the layout arrives with
   `topbar.json`, and a page in the side layout shifts sideways once (spec §8d now recommends it, README "The shell
   component").

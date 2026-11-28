@@ -2936,6 +2936,13 @@ Beim Anbieter `https://<TS_AUTH_HOST>/auth/oidc/callback` als Weiterleitungs-URL
 öffnen: Nach der Anmeldung zeigt die Beispielanwendung die `Remote-*`-Header, die TinySesam gesetzt hat. Danach den
 eigenen Dienst an die Stelle von `app` setzen.
 
+- **Die Konfigurationsdatei** (T-133): Das Gateway liest
+  [deploy/quickstart/tinysesam.toml](../deploy/quickstart/tinysesam.toml) (`TINYSESAM_CONFIG`, schreibgeschützt
+  eingehängt) — die Schalter des OIDC-Gateways, das Netz, den Datenbankpfad und den Platz zum Ausbauen: eine Anwendung
+  mit ihren Berechtigungen, das Panel, lokale Konten neben dem Anbieter. `.env` behält, was sich je Host unterscheidet
+  (Anbieter, Hostnamen, TLS-Modus); seine Variablen überlagern die Datei, eine leere ändert nichts. Das Client-Secret
+  steht in der Datei nur als `env:TINYSESAM_OIDC_CLIENT_SECRET`. App-Passwörter (das WebDAV-Profil) brauchen dort
+  `account_enabled = true`. Die Datei braucht das Abbild des Releases, das Meilenstein M-2 abschließt, oder neuer.
 - **TLS-Modus** `TS_TLS`: `acme` (öffentliche Domain, Let's Encrypt), `dns` (Domain, die nur zu Hause auflöst, DNS-01 —
   braucht ein Caddy mit dem Modul des DNS-Anbieters: `docker build --build-arg
   CADDY_EXTRA_MODULES=github.com/caddy-dns/<anbieter> deploy/forward-auth/caddy-gate`), `internal` (Domainnamen mit
@@ -3392,7 +3399,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**166 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**167 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
