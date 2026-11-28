@@ -13,14 +13,21 @@ use TinySesam\Gate\Jwks\JwksCache;
 /**
  * Account overview data (spec section 8a): the person's own security state as TinySesam's account page shows it,
  * reduced to what an application may render on its own settings page. The result is a plain array: signed out,
- * every group is null; signed in, `account`, `sign_in`, `sessions`, `programs` and `links` are always arrays and a
- * null inside them means "missing, of the wrong type or not offered". Every string is text, never markup — escape
- * it. Changes happen on TinySesam's account page, which the links lead to. Do not cache the result across sessions.
+ * every group is null; signed in, `account`, `sign_in`, `sessions`, `programs`, `links` and `actions` are always
+ * arrays and a null inside them means "missing, of the wrong type or not offered". Every string is text, never markup
+ * — escape it. Changes happen on TinySesam's account page and its action pages (spec section 8c), which the links and
+ * `actions` lead to; {@see Account::actionUrl()} builds the address with the way back. Do not cache the result across
+ * sessions.
  */
 final class Account
 {
     private const array LINKS = ['account', 'sessions', 'totp', 'passkeys', 'devices', 'app_passwords', 'services',
         'approvals'];
+    /** The own action pages of spec section 8c, the members of `actions`. */
+    private const array ACTIONS = ['username', 'email', 'password', 'pin', 'totp', 'recovery_codes', 'passkeys',
+        'api_keys', 'app_passwords', 'sessions', 'programs', 'services'];
+    /** The longest `state` an action page carries back (spec section 8c). */
+    public const int ACTION_STATE_MAX = 128;
 
     private function __construct()
     {
@@ -30,12 +37,12 @@ final class Account
      * The overview of a signed-out request (also the answer to anything doubtful).
      *
      * @return array{signed_in: false, account: null, sign_in: null, sessions: null, programs: null, approvals: null,
-     *     permissions: null, links: null}
+     *     permissions: null, links: null, actions: null}
      */
     public static function signedOut(): array
     {
         return ['signed_in' => false, 'account' => null, 'sign_in' => null, 'sessions' => null, 'programs' => null,
-            'approvals' => null, 'permissions' => null, 'links' => null];
+            'approvals' => null, 'permissions' => null, 'links' => null, 'actions' => null];
     }
 
     /**
@@ -56,6 +63,7 @@ final class Account
         $sessions = self::group($data, 'sessions');
         $programs = self::group($data, 'programs');
         $links = self::group($data, 'links');
+        $actions = self::group($data, 'actions');
         $totp = Strict::member($signIn, 'totp');
         $passkeys = Strict::member($signIn, 'passkeys');
         $approvals = Strict::member($data, 'approvals');
@@ -64,6 +72,10 @@ final class Account
         $hrefs = [];
         foreach (self::LINKS as $name) {
             $hrefs[$name] = self::href($links, $name);
+        }
+        $pages = [];
+        foreach (self::ACTIONS as $name) {
+            $pages[$name] = self::href($actions, $name);
         }
 
         return [
@@ -89,6 +101,9 @@ final class Account
                     'method' => self::text($e, 'method'),
                     'device' => self::text($e, 'device'),
                     'current' => self::flag($e, 'current'),
+                    // The session handle (opaque text) and the action page that ends exactly this session.
+                    'handle' => self::text($e, 'handle'),
+                    'end' => self::href($e, 'end'),
                 ], self::objects(Strict::member($sessions, 'items'))),
             ],
             'programs' => [
@@ -107,7 +122,36 @@ final class Account
             'approvals' => $pending === null ? null : ['pending' => $pending],
             'permissions' => self::permissions(Strict::member($data, 'permissions')),
             'links' => $hrefs,
+            'actions' => $pages,
         ];
+    }
+
+    /**
+     * The address of an action page with the way back (spec section 8c): $href is a member of `actions` or a session's
+     * `end` (ending exactly that session), $returnTo the absolute http(s) URL on the application's own host to come
+     * back to, $state an optional value of the application (null or '' for none; printable ASCII, at most
+     * {@see self::ACTION_STATE_MAX} characters). Send the person there by navigation; the page leads back with
+     * `ts_action`, `ts_result` and `state`.
+     *
+     * @throws ConfigError an href that fails the rule of spec section 8 or carries a fragment, a $returnTo that is no
+     *     absolute http(s) URL of printable ASCII, a $state outside the rule
+     */
+    public static function actionUrl(string $href, string $returnTo, ?string $state = null): string
+    {
+        if (!Topbar::isSafeHref($href) || str_contains($href, '#')) {
+            throw new ConfigError('actionUrl: the href is no action page address');
+        }
+        if (preg_match('~^https?://[\x21-\x7e]*$~iD', $returnTo) !== 1) {
+            throw new ConfigError('actionUrl: returnTo must be an absolute http(s) URL in printable ASCII');
+        }
+        $state ??= '';
+        if (\strlen($state) > self::ACTION_STATE_MAX || preg_match('~^[\x21-\x7e]*$~D', $state) !== 1) {
+            throw new ConfigError('actionUrl: state is printable ASCII of at most 128 characters');
+        }
+        // rawurlencode keeps exactly A-Z a-z 0-9 - . _ ~ (RFC 3986) and writes upper-case hex digits.
+        $url = $href . (str_contains($href, '?') ? '&' : '?') . 'return=' . rawurlencode($returnTo);
+
+        return $state === '' ? $url : $url . '&state=' . rawurlencode($state);
     }
 
     /**

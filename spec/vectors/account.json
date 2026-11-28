@@ -12,7 +12,7 @@
     {
       "id": "signed-in",
       "attack": null,
-      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting; its `actions` (spec §8c) and the sessions' `handle` and `end` are not normalized and dropped.",
+      "reason": "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included.",
       "input": {
         "account": {
           "signed_in": true,
@@ -146,14 +146,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -183,6 +187,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -190,7 +208,7 @@
     {
       "id": "offered-less",
       "attack": null,
-      "reason": "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` means not offered here.",
+      "reason": "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` means not offered here — every action page and every session's `end` included.",
       "input": {
         "account": {
           "signed_in": true,
@@ -215,14 +233,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": null
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": null
               }
             ]
           },
@@ -250,6 +272,20 @@
             "app_passwords": null,
             "services": null,
             "approvals": null
+          },
+          "actions": {
+            "username": null,
+            "email": null,
+            "password": null,
+            "pin": null,
+            "totp": null,
+            "recovery_codes": null,
+            "passkeys": null,
+            "api_keys": null,
+            "app_passwords": null,
+            "sessions": null,
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -278,14 +314,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": null
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": null
               }
             ]
           },
@@ -313,6 +353,20 @@
             "app_passwords": null,
             "services": null,
             "approvals": null
+          },
+          "actions": {
+            "username": null,
+            "email": null,
+            "password": null,
+            "pin": null,
+            "totp": null,
+            "recovery_codes": null,
+            "passkeys": null,
+            "api_keys": null,
+            "app_passwords": null,
+            "sessions": null,
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -337,7 +391,8 @@
           "programs": null,
           "approvals": null,
           "permissions": null,
-          "links": null
+          "links": null,
+          "actions": null
         }
       }
     },
@@ -382,14 +437,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -419,6 +478,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -432,7 +505,8 @@
           "programs": null,
           "approvals": null,
           "permissions": null,
-          "links": null
+          "links": null,
+          "actions": null
         }
       }
     },
@@ -478,14 +552,18 @@
                   "last_seen": 1767225600,
                   "method": "password",
                   "device": "Firefox · Linux",
-                  "current": null
+                  "current": null,
+                  "handle": "00000000000000000000000000000001",
+                  "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
                 },
                 {
                   "created_at": 1767225600,
                   "last_seen": 1767225600,
                   "method": "passkey",
                   "device": null,
-                  "current": null
+                  "current": null,
+                  "handle": "00000000000000000000000000000002",
+                  "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
                 }
               ]
             },
@@ -515,6 +593,20 @@
               "app_passwords": "https://auth.example.com/auth/account#app-passwords",
               "services": null,
               "approvals": "https://auth.example.com/auth/approvals"
+            },
+            "actions": {
+              "username": "https://auth.example.com/auth/act/username",
+              "email": null,
+              "password": "https://auth.example.com/auth/act/password",
+              "pin": "https://auth.example.com/auth/act/pin",
+              "totp": "https://auth.example.com/auth/act/totp",
+              "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+              "passkeys": "https://auth.example.com/auth/act/passkeys",
+              "api_keys": "https://auth.example.com/auth/act/api_keys",
+              "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+              "sessions": "https://auth.example.com/auth/act/sessions",
+              "programs": null,
+              "services": null
             }
           }
         ]
@@ -529,7 +621,8 @@
           "programs": null,
           "approvals": null,
           "permissions": null,
-          "links": null
+          "links": null,
+          "actions": null
         }
       }
     },
@@ -574,14 +667,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -611,6 +708,20 @@
             "app_passwords": "/x\u0007",
             "services": 5,
             "approvals": "/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -652,14 +763,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -689,6 +804,20 @@
             "app_passwords": null,
             "services": null,
             "approvals": "/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -733,7 +862,9 @@
                 "device": [
                   "a"
                 ],
-                "current": "yes"
+                "current": "yes",
+                "handle": 7,
+                "end": true
               }
             ]
           },
@@ -760,6 +891,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -795,7 +940,9 @@
                 "last_seen": null,
                 "method": null,
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": null,
+                "end": null
               }
             ]
           },
@@ -816,6 +963,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -863,6 +1024,8 @@
                 "method": "password",
                 "device": "Firefox · Linux",
                 "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001",
                 "ip": "192.0.2.1"
               },
               {
@@ -870,7 +1033,9 @@
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -888,6 +1053,20 @@
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals",
             "security_log": "/auth/account#log"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           },
           "recovery": {
             "email": "anna@example.com"
@@ -932,14 +1111,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -962,6 +1145,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -983,7 +1180,10 @@
             "pending": 1
           },
           "permissions": null,
-          "links": "/auth/account"
+          "links": "/auth/account",
+          "actions": [
+            "/auth/act/password"
+          ]
         }
       },
       "expected": {
@@ -1024,6 +1224,20 @@
             "app_passwords": null,
             "services": null,
             "approvals": null
+          },
+          "actions": {
+            "username": null,
+            "email": null,
+            "password": null,
+            "pin": null,
+            "totp": null,
+            "recovery_codes": null,
+            "passkeys": null,
+            "api_keys": null,
+            "app_passwords": null,
+            "sessions": null,
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -1076,14 +1290,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1113,6 +1331,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -1156,14 +1388,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1193,6 +1429,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -1236,14 +1486,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1273,6 +1527,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -1312,14 +1580,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1349,6 +1621,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -1394,14 +1680,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1431,11 +1721,701 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
       "expected": {
         "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": null,
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "actions-unsafe-hrefs",
+      "attack": "account-href",
+      "reason": "Every action page and every session's `end` that fails the rule of §8 becomes `null`; an unknown action (the administration's are no members of `actions`) is dropped.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "javascript:alert(1)"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "//evil.example.com/auth/act/session_end?target=1"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": [
+              "/auth/act/x"
+            ],
+            "email": 5,
+            "password": "javascript:alert(1)",
+            "pin": "//evil.example.com/act",
+            "totp": "/\\evil.example.com",
+            "recovery_codes": "https://auth.example.com/auth/act/x y",
+            "passkeys": "/auth/act/x\u0007",
+            "api_keys": "data:text/html,<script>",
+            "app_passwords": "javascript:alert(1)",
+            "sessions": "//evil.example.com/act",
+            "programs": "/\\evil.example.com",
+            "services": "https://auth.example.com/auth/act/x y",
+            "admin_lock": "/auth/act/admin_lock"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": null,
+            "email": null,
+            "password": null,
+            "pin": null,
+            "totp": null,
+            "recovery_codes": null,
+            "passkeys": null,
+            "api_keys": null,
+            "app_passwords": null,
+            "sessions": null,
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "actions-all-offered",
+      "attack": null,
+      "reason": "Every action page offered (here as paths in an app frame): each member keeps its own address.",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "/auth/act/username?app=app.example.com",
+            "email": "/auth/act/email?app=app.example.com",
+            "password": "/auth/act/password?app=app.example.com",
+            "pin": "/auth/act/pin?app=app.example.com",
+            "totp": "/auth/act/totp?app=app.example.com",
+            "recovery_codes": "/auth/act/recovery_codes?app=app.example.com",
+            "passkeys": "/auth/act/passkeys?app=app.example.com",
+            "api_keys": "/auth/act/api_keys?app=app.example.com",
+            "app_passwords": "/auth/act/app_passwords?app=app.example.com",
+            "sessions": "/auth/act/sessions?app=app.example.com",
+            "programs": "/auth/act/programs?app=app.example.com",
+            "services": "/auth/act/services?app=app.example.com"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "/auth/act/username?app=app.example.com",
+            "email": "/auth/act/email?app=app.example.com",
+            "password": "/auth/act/password?app=app.example.com",
+            "pin": "/auth/act/pin?app=app.example.com",
+            "totp": "/auth/act/totp?app=app.example.com",
+            "recovery_codes": "/auth/act/recovery_codes?app=app.example.com",
+            "passkeys": "/auth/act/passkeys?app=app.example.com",
+            "api_keys": "/auth/act/api_keys?app=app.example.com",
+            "app_passwords": "/auth/act/app_passwords?app=app.example.com",
+            "sessions": "/auth/act/sessions?app=app.example.com",
+            "programs": "/auth/act/programs?app=app.example.com",
+            "services": "/auth/act/services?app=app.example.com"
+          }
+        }
+      }
+    },
+    {
+      "id": "actions-wrong-types",
+      "attack": "account-types",
+      "reason": "`actions` that is no object reads as every action `null`; a `handle` that is no text reads as `null` (its `end` stays: the address carries the handle).",
+      "input": {
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": 1,
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": null,
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": "/auth/act/password"
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": null,
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": null,
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": null,
+            "email": null,
+            "password": null,
+            "pin": null,
+            "totp": null,
+            "recovery_codes": null,
+            "passkeys": null,
+            "api_keys": null,
+            "app_passwords": null,
+            "sessions": null,
+            "programs": null,
+            "services": null
+          }
+        }
+      }
+    },
+    {
+      "id": "actions-missing",
+      "attack": "account-types",
+      "reason": "An answer of a TinySesam before the action pages (no `actions`, no `handle`/`end`): every one `null`, the rest as usual.",
+      "input": {
         "account": {
           "signed_in": true,
           "account": {
@@ -1496,7 +2476,9 @@
             ],
             "api_keys_active": 1
           },
-          "approvals": null,
+          "approvals": {
+            "pending": 1
+          },
           "permissions": null,
           "links": {
             "account": "https://auth.example.com/auth/account",
@@ -1507,6 +2489,102 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "account": {
+          "signed_in": true,
+          "account": {
+            "username": "anna",
+            "display_name": "Anna Berg",
+            "source": [
+              "local"
+            ]
+          },
+          "sign_in": {
+            "password": "set",
+            "totp": {
+              "enabled": true,
+              "recovery_left": 2,
+              "recovery_low": true
+            },
+            "passkeys": {
+              "count": 1,
+              "items": [
+                {
+                  "name": "Security key",
+                  "created_at": 1767225600,
+                  "last_used": null
+                }
+              ]
+            },
+            "pin": true
+          },
+          "sessions": {
+            "count": 2,
+            "items": [
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "password",
+                "device": "Firefox · Linux",
+                "current": null,
+                "handle": null,
+                "end": null
+              },
+              {
+                "created_at": 1767225600,
+                "last_seen": 1767225600,
+                "method": "passkey",
+                "device": null,
+                "current": null,
+                "handle": null,
+                "end": null
+              }
+            ]
+          },
+          "programs": {
+            "oauth": null,
+            "services": null,
+            "app_passwords": [
+              {
+                "name": "Phone calendar",
+                "created_at": 1767225600,
+                "last_used": null,
+                "expires_at": 1769817600
+              }
+            ],
+            "api_keys_active": 1
+          },
+          "approvals": {
+            "pending": 1
+          },
+          "permissions": null,
+          "links": {
+            "account": "https://auth.example.com/auth/account",
+            "sessions": "https://auth.example.com/auth/account#sessions",
+            "totp": "https://auth.example.com/auth/account#totp",
+            "passkeys": "https://auth.example.com/auth/account#passkeys",
+            "devices": null,
+            "app_passwords": "https://auth.example.com/auth/account#app-passwords",
+            "services": null,
+            "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": null,
+            "email": null,
+            "password": null,
+            "pin": null,
+            "totp": null,
+            "recovery_codes": null,
+            "passkeys": null,
+            "api_keys": null,
+            "app_passwords": null,
+            "sessions": null,
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -1552,14 +2630,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1595,6 +2677,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -1636,14 +2732,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1679,6 +2779,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -1724,14 +2838,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1772,6 +2890,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -1813,14 +2945,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1855,6 +2991,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -1900,14 +3050,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -1940,6 +3094,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -1981,14 +3149,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -2021,6 +3193,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       }
@@ -2066,14 +3252,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -2105,6 +3295,20 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
       },
@@ -2146,14 +3350,18 @@
                 "last_seen": 1767225600,
                 "method": "password",
                 "device": "Firefox · Linux",
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000001",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001"
               },
               {
                 "created_at": 1767225600,
                 "last_seen": 1767225600,
                 "method": "passkey",
                 "device": null,
-                "current": null
+                "current": null,
+                "handle": "00000000000000000000000000000002",
+                "end": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000002"
               }
             ]
           },
@@ -2183,8 +3391,346 @@
             "app_passwords": "https://auth.example.com/auth/account#app-passwords",
             "services": null,
             "approvals": "https://auth.example.com/auth/approvals"
+          },
+          "actions": {
+            "username": "https://auth.example.com/auth/act/username",
+            "email": null,
+            "password": "https://auth.example.com/auth/act/password",
+            "pin": "https://auth.example.com/auth/act/pin",
+            "totp": "https://auth.example.com/auth/act/totp",
+            "recovery_codes": "https://auth.example.com/auth/act/recovery_codes",
+            "passkeys": "https://auth.example.com/auth/act/passkeys",
+            "api_keys": "https://auth.example.com/auth/act/api_keys",
+            "app_passwords": "https://auth.example.com/auth/act/app_passwords",
+            "sessions": "https://auth.example.com/auth/act/sessions",
+            "programs": null,
+            "services": null
           }
         }
+      }
+    }
+  ],
+  "action_urls": [
+    {
+      "id": "session-end",
+      "attack": null,
+      "reason": "End one session by its handle: the session's `end` (it carries `?target=<handle>`) with `&return=` and `&state=`.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001",
+        "return": "https://app.example.com/settings",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "url": "https://auth.example.com/auth/act/session_end?target=00000000000000000000000000000001&return=https%3A%2F%2Fapp.example.com%2Fsettings&state=s-81f2"
+      }
+    },
+    {
+      "id": "action-escaped",
+      "attack": null,
+      "reason": "An action page without a query takes `?return=`; `return` and `state` are escaped octet by octet, only `A-Z a-z 0-9 - . _ ~` stay as they are (`!'()*` too are escaped, `~` is not).",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings?tab=security&x=1#top",
+        "state": "a+b/c=d&e%f?g#h!'()*~"
+      },
+      "expected": {
+        "ok": true,
+        "url": "https://auth.example.com/auth/act/password?return=https%3A%2F%2Fapp.example.com%2Fsettings%3Ftab%3Dsecurity%26x%3D1%23top&state=a%2Bb%2Fc%3Dd%26e%25f%3Fg%23h%21%27%28%29%2A~"
+      }
+    },
+    {
+      "id": "no-state",
+      "attack": null,
+      "reason": "Without a `state` the address carries `return` only.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": null
+      },
+      "expected": {
+        "ok": true,
+        "url": "https://auth.example.com/auth/act/password?return=https%3A%2F%2Fapp.example.com%2Fsettings"
+      }
+    },
+    {
+      "id": "empty-state",
+      "attack": null,
+      "reason": "An empty `state` is no state.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": ""
+      },
+      "expected": {
+        "ok": true,
+        "url": "https://auth.example.com/auth/act/password?return=https%3A%2F%2Fapp.example.com%2Fsettings"
+      }
+    },
+    {
+      "id": "framed",
+      "attack": null,
+      "reason": "An action page in an app frame (`?app=<host>`) takes `&return=`.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password?app=app.example.com",
+        "return": "https://app.example.com/settings",
+        "state": "x"
+      },
+      "expected": {
+        "ok": true,
+        "url": "https://auth.example.com/auth/act/password?app=app.example.com&return=https%3A%2F%2Fapp.example.com%2Fsettings&state=x"
+      }
+    },
+    {
+      "id": "state-longest",
+      "attack": null,
+      "reason": "A `state` of 128 printable ASCII characters is kept.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+      },
+      "expected": {
+        "ok": true,
+        "url": "https://auth.example.com/auth/act/password?return=https%3A%2F%2Fapp.example.com%2Fsettings&state=ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+      }
+    },
+    {
+      "id": "path-href",
+      "attack": null,
+      "reason": "An href that is a path (the rule of §8) is kept as a path.",
+      "input": {
+        "href": "/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": null
+      },
+      "expected": {
+        "ok": true,
+        "url": "/auth/act/password?return=https%3A%2F%2Fapp.example.com%2Fsettings"
+      }
+    },
+    {
+      "id": "href-javascript",
+      "attack": "action-request",
+      "reason": "An href that fails the rule of §8 is refused.",
+      "input": {
+        "href": "javascript:alert(1)",
+        "return": "https://app.example.com/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "href-protocol-relative",
+      "attack": "action-request",
+      "reason": "A protocol-relative href is refused.",
+      "input": {
+        "href": "//evil.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "href-backslash",
+      "attack": "action-request",
+      "reason": "A path starting with `/\\` is refused.",
+      "input": {
+        "href": "/\\evil.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "href-space",
+      "attack": "action-request",
+      "reason": "An href with whitespace is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password x",
+        "return": "https://app.example.com/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "href-fragment",
+      "attack": "action-request",
+      "reason": "An href with a fragment is refused: the query would land behind it.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password#top",
+        "return": "https://app.example.com/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "href-empty",
+      "attack": "action-request",
+      "reason": "An empty href is refused.",
+      "input": {
+        "href": "",
+        "return": "https://app.example.com/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "return-path",
+      "attack": "action-request",
+      "reason": "`return` must be an absolute `http(s)` URL — a path is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "return-javascript",
+      "attack": "action-request",
+      "reason": "A `return` with another scheme is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "javascript:alert(1)",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "return-protocol-relative",
+      "attack": "action-request",
+      "reason": "A protocol-relative `return` is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "//app.example.com/settings",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "return-non-ascii",
+      "attack": "action-request",
+      "reason": "A `return` outside printable ASCII is refused (TinySesam would drop it).",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings/ä",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "return-space",
+      "attack": "action-request",
+      "reason": "A `return` with whitespace is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/a b",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "return-control",
+      "attack": "action-request",
+      "reason": "A `return` with a control character is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/a\u0007",
+        "state": "s"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-too-long",
+      "attack": "action-request",
+      "reason": "A `state` above 128 characters is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-space",
+      "attack": "action-request",
+      "reason": "A `state` with a space is refused: printable ASCII 0x21–0x7e only.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": "a b"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-non-ascii",
+      "attack": "action-request",
+      "reason": "A `state` outside ASCII is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": "state-ä"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-control",
+      "attack": "action-request",
+      "reason": "A `state` with a control character is refused.",
+      "input": {
+        "href": "https://auth.example.com/auth/act/password",
+        "return": "https://app.example.com/settings",
+        "state": "a\tb"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
       }
     }
   ]

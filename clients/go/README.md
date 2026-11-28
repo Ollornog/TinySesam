@@ -181,7 +181,12 @@ approvals switched on (`Pending` of at least 0 and a safe `Href`), otherwise nil
 TinySesam's cookies of `r`, 5 seconds, 64 KiB. TinySesam answers only a full browser session; a 401, 404 or 429 comes
 back as the signed-out `Account` plus the error. `ParseAccount(body)` normalizes a body: every href is safe or nil,
 every string is text (escape it), a member of the wrong type is nil, unknown members are dropped. Changes happen on
-TinySesam's account page — link to `Links.Account`, `Links.Sessions`, … Do not cache the result across sessions.
+TinySesam's account page — link to `Links.Account`, `Links.Sessions`, … — or on its action pages (spec §8c):
+`Actions` holds their addresses, and every session its `Handle` and `End`, the page that ends exactly that session.
+`ActionURL(href, returnTo, state)` builds the address to send the person to, with the way back to `returnTo` (an
+absolute `http(s)` URL of your host) and your `state`; the page comes back with `ts_action`, `ts_result` and `state`.
+An unsafe href, another `returnTo` or a bad state is an error wrapping `ErrActionURL`. Do not cache the result across
+sessions.
 
 ```go
 acct, err := tinysesam.FetchAccount(r.Context(), nil, "https://auth.example.com/auth/account.json", r)
@@ -190,6 +195,12 @@ if err != nil || !acct.SignedIn {
 }
 if t := acct.SignIn.TOTP; t != nil && t.RecoveryLow != nil && *t.RecoveryLow {
     // "Few recovery codes left" with a link to *acct.Links.TOTP
+}
+for _, s := range acct.Sessions.Items {
+    if s.End != nil { // every session but this one: a link "End this session"
+        href, _ := tinysesam.ActionURL(*s.End, "https://app.example.com/settings", "s-81f2")
+        _ = href
+    }
 }
 ```
 

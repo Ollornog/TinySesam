@@ -2972,7 +2972,11 @@ except gate_client.UntrustedPeer:
   `/.tinysesam/account.json` on the application's host) server-side with only TinySesam's cookies;
   `parse_account(data)` normalizes an answer into a plain dict — `SIGNED_OUT_ACCOUNT` for anything but
   `signed_in: true`, unsafe links and members of the wrong type `None`; `permissions` names the application and the
-  account's permissions on an application's host.
+  account's permissions on an application's host. `actions` holds the addresses of the action pages (spec §8c), each
+  session its `handle` and the page `end` that ends exactly it. `action_url(href, return_to, state)` builds the address
+  to send the person to — `action_url(session["end"], "https://app.example.com/settings", state)` ends that one
+  session; the page leads back with `ts_action`, `ts_result` and `state` (an unsafe href, a `return_to` that is no
+  absolute `http(s)` URL or a bad `state` is a `ConfigError`).
 - **Permissions** (spec §3.4, T-101): `identity.permissions` comes from `Remote-Permissions` or `ts_perms` — the
   account's permissions for this application; `identity.has_permission("docs.delete")` compares exactly (neither
   `admin` nor a role implies one; a missing header is "none"). At start, register the manifest with

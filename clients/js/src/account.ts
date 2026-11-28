@@ -1,6 +1,7 @@
 // Account overview data (spec section 8a): the person's own security state as TinySesam's account page shows it,
 // reduced to what an application may render on its own settings page.
 
+import { ConfigError } from './errors.ts';
 import { FETCH_TIMEOUT_MS, type FetchFunction, MAX_JWKS_BYTES, readLimited } from './jwks.ts';
 import { isObject, own, parseStrictJson, parseStrictJsonText } from './strict.ts';
 import { isSafeHref, tinysesamCookies } from './topbar.ts';
@@ -17,13 +18,35 @@ export interface AccountAppPassword extends AccountUse {
   readonly expires_at: number | null;
 }
 
-/** One browser session; `current` is null when the answer does not know the request's session. */
+/**
+ * One browser session; `current` is null when the answer does not know the request's session. `handle` is the session
+ * handle (opaque text, never the token); `end` the action page that ends exactly this session (null for the session of
+ * the request) — `actionUrl(session.end, returnTo, state)` is the address to send the person to.
+ */
 export interface AccountSession {
   readonly created_at: number | null;
   readonly last_seen: number | null;
   readonly method: string | null;
   readonly device: string | null;
   readonly current: boolean | null;
+  readonly handle: string | null;
+  readonly end: string | null;
+}
+
+/** The own action pages of spec section 8c; null when not offered to this account (or not a safe link). */
+export interface AccountActions {
+  readonly username: string | null;
+  readonly email: string | null;
+  readonly password: string | null;
+  readonly pin: string | null;
+  readonly totp: string | null;
+  readonly recovery_codes: string | null;
+  readonly passkeys: string | null;
+  readonly api_keys: string | null;
+  readonly app_passwords: string | null;
+  readonly sessions: string | null;
+  readonly programs: string | null;
+  readonly services: string | null;
 }
 
 /** The links to TinySesam's account page and its sections; null when not offered (or not a safe link). */
@@ -71,6 +94,8 @@ export interface SignedInAccount {
   /** On an application's host the application and the account's permissions for it (spec section 8a); else null. */
   readonly permissions: { readonly app: string | null; readonly names: readonly string[] } | null;
   readonly links: AccountLinks;
+  /** The own action pages (spec section 8c); build the address to send the person to with `actionUrl`. */
+  readonly actions: AccountActions;
 }
 
 /** A signed-out account overview: every group null. */
@@ -83,6 +108,7 @@ export interface SignedOutAccount {
   readonly approvals: null;
   readonly permissions: null;
   readonly links: null;
+  readonly actions: null;
 }
 
 /**
@@ -102,6 +128,7 @@ export function signedOutAccount(): SignedOutAccount {
     approvals: null,
     permissions: null,
     links: null,
+    actions: null,
   };
 }
 
@@ -154,6 +181,20 @@ function uses(v: unknown): AccountUse[] {
 }
 
 const LINKS = ['account', 'sessions', 'totp', 'passkeys', 'devices', 'app_passwords', 'services', 'approvals'] as const;
+const ACTIONS = [
+  'username',
+  'email',
+  'password',
+  'pin',
+  'totp',
+  'recovery_codes',
+  'passkeys',
+  'api_keys',
+  'app_passwords',
+  'sessions',
+  'programs',
+  'services',
+] as const;
 
 /**
  * Normalizes the body of a 200 answer of `/.tinysesam/account.json` or `/auth/account.json` (text or UTF-8 bytes).
@@ -171,6 +212,7 @@ export function parseAccount(body: string | Uint8Array): Account {
   const sessions = group(data, 'sessions');
   const programs = group(data, 'programs');
   const links = group(data, 'links');
+  const actions = group(data, 'actions');
   const totp = own(signIn, 'totp');
   const passkeys = own(signIn, 'passkeys');
   const approvals = own(data, 'approvals');
@@ -203,6 +245,8 @@ export function parseAccount(body: string | Uint8Array): Account {
         method: text(e, 'method'),
         device: text(e, 'device'),
         current: flag(e, 'current'),
+        handle: text(e, 'handle'),
+        end: href(e, 'end'),
       })),
     },
     programs: {
@@ -221,7 +265,41 @@ export function parseAccount(body: string | Uint8Array): Account {
     approvals: pending === null ? null : { pending },
     permissions: permissionsView(own(data, 'permissions')),
     links: Object.fromEntries(LINKS.map((n) => [n, href(links, n)])) as unknown as AccountLinks,
+    actions: Object.fromEntries(ACTIONS.map((n) => [n, href(actions, n)])) as unknown as AccountActions,
   };
+}
+
+/** The longest `state` an action page carries back (spec section 8c). */
+export const ACTION_STATE_MAX = 128;
+
+const PRINTABLE_ASCII = /^[\x21-\x7e]*$/;
+
+/** Every character but `A-Z a-z 0-9 - . _ ~` as `%XX` (upper case); the text is printable ASCII. */
+function queryEscape(value: string): string {
+  return value.replace(/[^A-Za-z0-9\-._~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+}
+
+/**
+ * The address of an action page with the way back (spec section 8c): `href` is a member of `actions` or a session's
+ * `end` (ending exactly that session), `returnTo` the absolute http(s) URL on the application's own host to come back
+ * to, `state` an optional value of the application (null, undefined or empty for none; printable ASCII, at most 128
+ * characters). Send the person there by navigation; the page leads back with `ts_action`, `ts_result` and `state`.
+ * Throws a `ConfigError` for an href that fails the rule of spec section 8 or carries a fragment, a `returnTo` that is
+ * no absolute http(s) URL of printable ASCII, and a `state` outside the rule.
+ */
+export function actionUrl(href: string, returnTo: string, state?: string | null): string {
+  if (typeof href !== 'string' || !isSafeHref(href) || href.includes('#')) {
+    throw new ConfigError('actionUrl: the href is no action page address');
+  }
+  if (typeof returnTo !== 'string' || !/^https?:\/\//i.test(returnTo) || !PRINTABLE_ASCII.test(returnTo)) {
+    throw new ConfigError('actionUrl: returnTo must be an absolute http(s) URL in printable ASCII');
+  }
+  const s = state ?? '';
+  if (typeof s !== 'string' || s.length > ACTION_STATE_MAX || !PRINTABLE_ASCII.test(s)) {
+    throw new ConfigError(`actionUrl: state is printable ASCII of at most ${ACTION_STATE_MAX} characters`);
+  }
+  const url = `${href}${href.includes('?') ? '&' : '?'}return=${queryEscape(returnTo)}`;
+  return s === '' ? url : `${url}&state=${queryEscape(s)}`;
 }
 
 /** §8a `permissions`: an object gives `{app, names}` (non-strings dropped, `names` no list → []), anything else null. */

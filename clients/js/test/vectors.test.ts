@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseAccount } from '../src/account.ts';
+import { actionUrl, parseAccount } from '../src/account.ts';
 import { createApprovalVerifier } from '../src/approval.ts';
 import { errorClassOf } from '../src/errors.ts';
 import { Gate } from '../src/gate.ts';
@@ -50,6 +50,18 @@ test('account vectors', (t) => {
     assert.deepStrictEqual(parseAccount(new TextEncoder().encode(body)), v.expected.account, `${v.id} (bytes)`);
   }
   t.diagnostic(`${vectors.length} account vectors`);
+  const urls: Json[] = loadVectors('account.json').action_urls;
+  assert.ok(urls.length > 0, 'no action address vectors');
+  for (const v of urls) {
+    let got: Json;
+    try {
+      got = { ok: true, url: actionUrl(v.input.href, v.input.return, v.input.state) };
+    } catch (err) {
+      got = (err as Error).name === 'ConfigError' ? { ok: false, error: 'invalid' } : { ok: false, error: String(err) };
+    }
+    assert.deepStrictEqual(got, v.expected, `action_urls/${v.id}`);
+  }
+  t.diagnostic(`${urls.length} action address vectors`);
 });
 
 /** Checks one vector of approval.json: the claims or the error class. */

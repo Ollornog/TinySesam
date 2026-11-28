@@ -1015,19 +1015,10 @@ class AccountProbe:
 #: The members of the normalized account overview (spec §8a) — every one present in every signed-in result.
 ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
 SIGNED_OUT_ACCOUNT = {"signed_in": False, "account": None, "sign_in": None, "sessions": None, "programs": None,
-                      "approvals": None, "permissions": None, "links": None}
-#: Members of TinySesam's answer a helper does not normalize (spec §8a): it drops them like any unknown member — of
-#: the answer, and of every session (the session handle and the address of the action page that ends it, T-105).
-ACCOUNT_UNNORMALIZED = ("actions",)
-SESSION_UNNORMALIZED = ("handle", "end")
-
-
-def _drop_unnormalized(answer: dict) -> None:
-    for member in ACCOUNT_UNNORMALIZED:
-        del answer[member]
-    for item in answer["sessions"]["items"]:
-        for member in SESSION_UNNORMALIZED:
-            del item[member]
+                      "approvals": None, "permissions": None, "links": None, "actions": None}
+#: The own action pages of spec §8c, the members of `actions` (T-105, normalized since T-148): each an href or None.
+ACCOUNT_ACTIONS = ("username", "email", "password", "pin", "totp", "recovery_codes", "passkeys", "api_keys",
+                   "app_passwords", "sessions", "programs", "services")
 
 
 def account_vectors(ap: AccountProbe) -> list:
@@ -1040,30 +1031,27 @@ def account_vectors(ap: AccountProbe) -> list:
 
     full = ap.answer()
     # The server's answer has exactly the members this file knows: a new member needs a decision here (and in §8a).
-    # `actions` (§8c, T-105) is a member the helpers do not normalize yet: the browser follows its addresses itself.
-    assert sorted(full) == sorted([*SIGNED_OUT_ACCOUNT, *ACCOUNT_UNNORMALIZED]), sorted(full)
+    assert sorted(full) == sorted(SIGNED_OUT_ACCOUNT), sorted(full)
+    assert sorted(full["actions"]) == sorted(ACCOUNT_ACTIONS), sorted(full["actions"])
     assert all(v is None or v.startswith(f"{ISSUER}/auth/act/") for v in full["actions"].values()), full["actions"]
-    raw = copy.deepcopy(full)
-    _drop_unnormalized(full)
     assert sorted(full["links"]) == sorted(ACCOUNT_LINKS), sorted(full["links"])
     s = full["sessions"]["items"]
     assert full["sign_in"]["password"] == "set" and full["sign_in"]["totp"]["enabled"] is True, full["sign_in"]
     assert full["approvals"] == {"pending": 1} and full["programs"]["api_keys_active"] == 1, full
     assert len(s) == 2 and s[0]["device"] is not None and s[1]["device"] is None, s
+    assert all(e["handle"] and e["end"] == f"{ISSUER}/auth/act/session_end?target={e['handle']}" for e in s), s
     assert full["account"]["source"] == ["local"], full["account"]
     assert [p["name"] for p in full["programs"]["app_passwords"]] == ["Phone calendar"], full["programs"]
-    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type) — without the
-    # member `actions`, which a helper drops like every member it does not normalize.
+    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type).
     add("signed-in", "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API "
-        "key and one approval waiting; its `actions` (spec §8c) and the sessions' `handle` and `end` are not "
-        "normalized and dropped.", raw,
-        copy.deepcopy(full))
+        "key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included.",
+        copy.deepcopy(full), copy.deepcopy(full))
     less = ap.answer(totp_enabled=False, pin_enabled=False, passkey_enabled=False, apikey_enabled=False,
                      approvals_enabled=False, account_enabled=False)
-    _drop_unnormalized(less)
     assert less["sign_in"]["totp"] is None and less["links"]["account"] is None, less
+    assert set(less["actions"].values()) == {None} and {e["end"] for e in less["sessions"]["items"]} == {None}, less
     add("offered-less", "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` "
-        "means not offered here.", less, copy.deepcopy(less))
+        "means not offered here — every action page and every session's `end` included.", less, copy.deepcopy(less))
     add("signed-out-401", "The body of the 401 answer: signed out.", {"authenticated": False, "signed_in": False},
         SIGNED_OUT_ACCOUNT)
     add("signed-in-string", "`signed_in` as a string is no `true`: signed out.", dict(full, signed_in="true"),
@@ -1089,7 +1077,8 @@ def account_vectors(ap: AccountProbe) -> list:
     wrong["sign_in"]["passkeys"] = {"count": 1.5, "items": {"name": "x"}}
     wrong["sign_in"]["pin"] = "true"
     wrong["sessions"] = {"count": "2", "items": ["x", {"created_at": "1", "last_seen": True, "method": 7,
-                                                        "device": ["a"], "current": "yes"}]}
+                                                        "device": ["a"], "current": "yes", "handle": 7,
+                                                        "end": True}]}
     wrong["programs"] = {"oauth": {"name": "x"}, "services": "none", "app_passwords": [None],
                          "api_keys_active": False}
     wrong["approvals"] = {"pending": -1}
@@ -1098,7 +1087,7 @@ def account_vectors(ap: AccountProbe) -> list:
     want["sign_in"] = {"password": None, "totp": {"enabled": None, "recovery_left": None, "recovery_low": None},
                        "passkeys": {"count": None, "items": []}, "pin": None}
     want["sessions"] = {"count": None, "items": [{"created_at": None, "last_seen": None, "method": None,
-                                                  "device": None, "current": None}]}
+                                                  "device": None, "current": None, "handle": None, "end": None}]}
     want["programs"] = {"oauth": None, "services": None, "app_passwords": [], "api_keys_active": None}
     want["approvals"] = None
     add("wrong-types", "A member of the wrong type reads as missing (`null`); an entry of a list that is no object is "
@@ -1114,14 +1103,16 @@ def account_vectors(ap: AccountProbe) -> list:
     want["programs"] = {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None}
     add("unknown-and-missing", "Members a newer TinySesam adds are ignored; a missing group reads as all `null`.",
         grown, want, attack="account-types")
-    groups = dict(full, account="anna", sign_in=5, sessions=True, programs=["x"], links="/auth/account")
+    groups = dict(full, account="anna", sign_in=5, sessions=True, programs=["x"], links="/auth/account",
+                  actions=["/auth/act/password"])
     add("groups-wrong-type", "A group of the wrong type (a string, a number, a boolean, a list) reads as an empty one: "
         "every member `null`, the lists empty.", groups,
         {"signed_in": True, "account": {"username": None, "display_name": None, "source": None},
          "sign_in": {"password": None, "totp": None, "passkeys": None, "pin": None},
          "sessions": {"count": None, "items": []},
          "programs": {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None},
-         "approvals": copy.deepcopy(full["approvals"]), "permissions": None, "links": {k: None for k in ACCOUNT_LINKS}},
+         "approvals": copy.deepcopy(full["approvals"]), "permissions": None, "links": {k: None for k in ACCOUNT_LINKS},
+         "actions": {k: None for k in ACCOUNT_ACTIONS}},
         attack="account-types")
     mixed = copy.deepcopy(full)
     mixed["account"]["source"] = ["local", 5, None, "oidc", ["saml"], "scim"]
@@ -1141,6 +1132,47 @@ def account_vectors(ap: AccountProbe) -> list:
     want["approvals"] = None
     add("approvals-not-integer", "`approvals.pending` must be an integer, a boolean is none.", bool_pending, want,
         attack="account-types")
+    # §8a/§8c `actions` and the session handle (T-148): an href that fails the rule of §8 is null, a handle is text.
+    evil = copy.deepcopy(full)
+    # A list and a number for the first two, an unsafe string for every other member (a text check alone fails them).
+    bad = (["/auth/act/x"], 5, "javascript:alert(1)", "//evil.example.com/act", "/\\evil.example.com",
+           "https://auth.example.com/auth/act/x y", "/auth/act/x\x07", "data:text/html,<script>")
+    evil["actions"] = {name: bad[i] if i < 2 else bad[2 + (i - 2) % (len(bad) - 2)]
+                       for i, name in enumerate(ACCOUNT_ACTIONS)}
+    evil["actions"]["admin_lock"] = "/auth/act/admin_lock"
+    evil["sessions"]["items"][0]["end"] = "javascript:alert(1)"
+    evil["sessions"]["items"][1]["end"] = "//evil.example.com/auth/act/session_end?target=1"
+    want = copy.deepcopy(full)
+    want["actions"] = {k: None for k in ACCOUNT_ACTIONS}
+    for item in want["sessions"]["items"]:
+        item["end"] = None
+    add("actions-unsafe-hrefs", "Every action page and every session's `end` that fails the rule of §8 becomes `null`; "
+        "an unknown action (the administration's are no members of `actions`) is dropped.", evil, want,
+        attack="account-href")
+    every = copy.deepcopy(full)
+    every["actions"] = {name: f"/auth/act/{name}?app=app.example.com" for name in ACCOUNT_ACTIONS}
+    add("actions-all-offered", "Every action page offered (here as paths in an app frame): each member keeps its own "
+        "address.", every, copy.deepcopy(every))
+    wrong = copy.deepcopy(full)
+    wrong["actions"] = "/auth/act/password"
+    wrong["sessions"]["items"][0]["handle"] = 1
+    wrong["sessions"]["items"][1]["handle"] = None
+    want = copy.deepcopy(full)
+    want["actions"] = {k: None for k in ACCOUNT_ACTIONS}
+    want["sessions"]["items"][0]["handle"] = None
+    want["sessions"]["items"][1]["handle"] = None
+    add("actions-wrong-types", "`actions` that is no object reads as every action `null`; a `handle` that is no text "
+        "reads as `null` (its `end` stays: the address carries the handle).", wrong, want, attack="account-types")
+    older = copy.deepcopy(full)
+    del older["actions"]
+    for item in older["sessions"]["items"]:
+        del item["handle"], item["end"]
+    want = copy.deepcopy(older)
+    want["actions"] = {k: None for k in ACCOUNT_ACTIONS}
+    for item in want["sessions"]["items"]:
+        item.update(handle=None, end=None)
+    add("actions-missing", "An answer of a TinySesam before the action pages (no `actions`, no `handle`/`end`): every "
+        "one `null`, the rest as usual.", older, want, attack="account-types")
     # §8a `permissions` (T-101): `null` off an application's host (the probe's own answer above), the object on one.
     assert full["permissions"] is None, "the probe's answer names permissions without an application host"
     on_app = copy.deepcopy(full)
@@ -1163,6 +1195,77 @@ def account_vectors(ap: AccountProbe) -> list:
     not_object["permissions"] = ["docs.read"]
     add("permissions-not-object", "`permissions` that is no object reads as null.", not_object, copy.deepcopy(full),
         attack="account-types")
+    return out
+
+
+# ---------- the address of an action page, spec §8c (T-148) ----------
+
+def _query_escape(text: str) -> str:
+    """Every octet but the unreserved `A-Z a-z 0-9 - . _ ~` as `%XX` (upper case), as spec §8c asks of a client."""
+    from urllib.parse import quote
+    return quote(text, safe="-._~")
+
+
+def action_url_vectors(ap: AccountProbe) -> list:
+    """`input` `href` (an action page of `actions` or a session's `end`), `return`, `state` → `expected.url`, or
+    `error: invalid` for an href, `return` or `state` the client must refuse before navigating."""
+    from urllib.parse import parse_qs, urlsplit
+    out = []
+    full = ap.answer()
+    password, end = full["actions"]["password"], full["sessions"]["items"][0]["end"]
+    assert password and "?" not in password and end and "?target=" in end, (password, end)
+
+    def add(vid, reason, href, ret, state, url=None, attack=None):
+        if url is not None:
+            # The address carries exactly the `return` and `state` given: a parser reads them back unchanged.
+            q = parse_qs(urlsplit(url).query, keep_blank_values=True)
+            assert q["return"] == [ret] and q.get("state") == ([state] if state else None), (vid, q)
+        out.append({"id": vid, "attack": attack, "reason": reason,
+                    "input": {"href": href, "return": ret, "state": state},
+                    "expected": {"ok": True, "url": url} if url is not None else {"ok": False, "error": "invalid"}})
+
+    back = "https://app.example.com/settings"
+    add("session-end", "End one session by its handle: the session's `end` (it carries `?target=<handle>`) with "
+        "`&return=` and `&state=`.", end, back, "s-81f2",
+        f"{end}&return={_query_escape(back)}&state=s-81f2")
+    odd_back, odd_state = "https://app.example.com/settings?tab=security&x=1#top", "a+b/c=d&e%f?g#h!'()*~"
+    add("action-escaped", "An action page without a query takes `?return=`; `return` and `state` are escaped octet by "
+        "octet, only `A-Z a-z 0-9 - . _ ~` stay as they are (`!'()*` too are escaped, `~` is not).", password, odd_back, odd_state,
+        f"{password}?return={_query_escape(odd_back)}&state={_query_escape(odd_state)}")
+    add("no-state", "Without a `state` the address carries `return` only.", password, back, None,
+        f"{password}?return={_query_escape(back)}")
+    add("empty-state", "An empty `state` is no state.", password, back, "", f"{password}?return={_query_escape(back)}")
+    framed = f"{ISSUER}/auth/act/password?app=app.example.com"
+    add("framed", "An action page in an app frame (`?app=<host>`) takes `&return=`.", framed, back, "x",
+        f"{framed}&return={_query_escape(back)}&state=x")
+    add("state-longest", "A `state` of 128 printable ASCII characters is kept.", password, back, "s" * 128,
+        f"{password}?return={_query_escape(back)}&state={'s' * 128}")
+    add("path-href", "An href that is a path (the rule of §8) is kept as a path.", "/auth/act/password", back, None,
+        f"/auth/act/password?return={_query_escape(back)}")
+    for vid, reason, href in (
+            ("href-javascript", "An href that fails the rule of §8 is refused.", "javascript:alert(1)"),
+            ("href-protocol-relative", "A protocol-relative href is refused.", "//evil.example.com/auth/act/password"),
+            ("href-backslash", "A path starting with `/\\` is refused.", "/\\evil.example.com/auth/act/password"),
+            ("href-space", "An href with whitespace is refused.", f"{password} x"),
+            ("href-fragment", "An href with a fragment is refused: the query would land behind it.",
+             f"{password}#top"),
+            ("href-empty", "An empty href is refused.", "")):
+        add(vid, reason, href, back, "s", attack="action-request")
+    for vid, reason, ret in (
+            ("return-path", "`return` must be an absolute `http(s)` URL — a path is refused.", "/settings"),
+            ("return-javascript", "A `return` with another scheme is refused.", "javascript:alert(1)"),
+            ("return-protocol-relative", "A protocol-relative `return` is refused.", "//app.example.com/settings"),
+            ("return-non-ascii", "A `return` outside printable ASCII is refused (TinySesam would drop it).",
+             "https://app.example.com/settings/ä"),
+            ("return-space", "A `return` with whitespace is refused.", "https://app.example.com/a b"),
+            ("return-control", "A `return` with a control character is refused.", "https://app.example.com/a\x07")):
+        add(vid, reason, password, ret, "s", attack="action-request")
+    for vid, reason, state in (
+            ("state-too-long", "A `state` above 128 characters is refused.", "s" * 129),
+            ("state-space", "A `state` with a space is refused: printable ASCII 0x21–0x7e only.", "a b"),
+            ("state-non-ascii", "A `state` outside ASCII is refused.", "state-ä"),
+            ("state-control", "A `state` with a control character is refused.", "a\tb")):
+        add(vid, reason, password, back, state, attack="action-request")
     return out
 
 
@@ -1196,7 +1299,8 @@ def build() -> dict:
             "headers.json": _file("headers", {"vectors": header_vectors(p)}),
             "jwks.json": _file("jwks", {"sets": jwks_sets(), "scenarios": jwks_scenarios()}),
             "topbar.json": _file("topbar", {"vectors": topbar_vectors(p) + topbar_approval_vectors(ap)}),
-            "account.json": _file("account", {"vectors": account_vectors(ap)}),
+            "account.json": _file("account", {"vectors": account_vectors(ap),
+                                              "action_urls": action_url_vectors(ap)}),
             # Last: it names the probe's host as an application for a moment (and assigns two permissions).
             "permissions.json": _file("permissions", permission_vectors(p)),
         }

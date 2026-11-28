@@ -54,7 +54,7 @@ __all__ = [
     "WSGIMiddleware", "ASGIMiddleware", "require_auth", "require_role", "require_session", "require_account_kind",
     "guard_status",
     "current_identity", "Topbar", "TopbarLink", "TopbarApprovals", "parse_topbar", "fetch_topbar",
-    "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account",
+    "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account", "action_url",
     "PermissionRequest", "register_request", "register_permissions", "RegistrationFailed",
 ]
 
@@ -1318,8 +1318,12 @@ def fetch_topbar(url: str, cookie_header: str = "") -> Topbar:
 
 #: The normalized result for a person who is not signed in (any answer but a 200 with `signed_in: true`).
 SIGNED_OUT_ACCOUNT: Mapping[str, Any] = {"signed_in": False, "account": None, "sign_in": None, "sessions": None,
-                                         "programs": None, "approvals": None, "permissions": None, "links": None}
+                                         "programs": None, "approvals": None, "permissions": None, "links": None,
+                                         "actions": None}
 _ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
+#: The own action pages of spec §8c, the members of `actions`.
+_ACCOUNT_ACTIONS = ("username", "email", "password", "pin", "totp", "recovery_codes", "passkeys", "api_keys",
+                    "app_passwords", "sessions", "programs", "services")
 
 
 def _text(value: Any) -> Optional[str]:
@@ -1351,7 +1355,8 @@ def _items(value: Any, fields: Mapping[str, Callable[[Any], Any]]) -> list[dict[
 
 _USED = {"name": _text, "created_at": _count, "last_used": _count}
 _APP_PASSWORD = {**_USED, "expires_at": _count}
-_SESSION = {"created_at": _count, "last_seen": _count, "method": _text, "device": _text, "current": _flag}
+_SESSION = {"created_at": _count, "last_seen": _count, "method": _text, "device": _text, "current": _flag,
+            "handle": _text, "end": _href}
 
 
 def _offered_list(value: Any, fields: Mapping[str, Callable[[Any], Any]]) -> Optional[list[dict[str, Any]]]:
@@ -1368,6 +1373,7 @@ def parse_account(data: Any) -> dict[str, Any]:
         return dict(SIGNED_OUT_ACCOUNT)
     account, sign_in = _group(data.get("account")), _group(data.get("sign_in"))
     sessions, programs, links = _group(data.get("sessions")), _group(data.get("programs")), _group(data.get("links"))
+    actions = _group(data.get("actions"))
     totp, passkeys = sign_in.get("totp"), sign_in.get("passkeys")
     approvals = data.get("approvals")
     pending = _count(approvals.get("pending")) if isinstance(approvals, dict) else None
@@ -1392,7 +1398,40 @@ def parse_account(data: Any) -> dict[str, Any]:
         "approvals": None if pending is None else {"pending": pending},
         "permissions": _permissions_view(data.get("permissions")),
         "links": {name: _href(links.get(name)) for name in _ACCOUNT_LINKS},
+        "actions": {name: _href(actions.get(name)) for name in _ACCOUNT_ACTIONS},
     }
+
+
+#: `state` of an action page (spec §8c): printable ASCII, at most this long.
+_STATE_MAX = 128
+_UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+
+def _printable_ascii(text: str) -> bool:
+    return all("\x21" <= c <= "\x7e" for c in text)
+
+
+def _query_escape(text: str) -> str:
+    """Every character but `A-Z a-z 0-9 - . _ ~` as `%XX` — the text is printable ASCII, one octet per character."""
+    return "".join(c if c in _UNRESERVED else f"%{ord(c):02X}" for c in text)
+
+
+def action_url(href: str, return_to: str, state: Optional[str] = None) -> str:
+    """The address of an action page (spec §8c) with the way back: `href` is a member of `actions` or a session's
+    `end` from `parse_account` — `action_url(session["end"], ...)` ends exactly that session —, `return_to` the
+    absolute `http(s)` URL on the application's own host to come back to, `state` an optional value of the application
+    (printable ASCII, at most 128 characters; `None` or empty for none). Send the person there by navigation; the page
+    leads back with `ts_action`, `ts_result` and `state`. `ConfigError` for an href that fails the rule of §8 or carries
+    a fragment, a `return_to` that is no absolute printable-ASCII `http(s)` URL, or a `state` outside the rule."""
+    if not isinstance(href, str) or not _safe_href(href) or "#" in href:
+        raise ConfigError("action_url: the href is no action page address")
+    if (not isinstance(return_to, str) or not return_to.lower().startswith(("https://", "http://"))
+            or not _printable_ascii(return_to)):
+        raise ConfigError("action_url: return_to must be an absolute http(s) URL in printable ASCII")
+    if state is not None and (not isinstance(state, str) or len(state) > _STATE_MAX or not _printable_ascii(state)):
+        raise ConfigError(f"action_url: state is printable ASCII of at most {_STATE_MAX} characters")
+    url = f"{href}{'&' if '?' in href else '?'}return={_query_escape(return_to)}"
+    return f"{url}&state={_query_escape(state)}" if state else url
 
 
 def _permissions_view(value: Any) -> Optional[dict[str, Any]]:

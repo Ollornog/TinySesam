@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 235
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 420 · B 348 names.
+**Status:** A 420 · B 349 names.
 
 ## A · Methods of `TinySesam`
 
@@ -974,7 +974,7 @@ TinySesam did not take the manifest: not reachable, or any answer but 200 (`stat
 
 ### `SIGNED_OUT_ACCOUNT` — Constant
 
-`{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None}`
+`{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None, 'actions': None}`
 
 ### `SignatureError(detail: 'str' = '', *, kid: 'str' = '')` — class
 
@@ -1023,6 +1023,10 @@ Header mode with `trusted_proxies`: the request did not come from one of them.
 ### `WSGIMiddleware(app: 'Callable[..., Any]', gate: 'GateClient')` — class
 
 Identifies every request and stores the `Identity` (or `None`) in `environ["tinysesam.identity"]` and for `current_identity()`. Lets every request through; guard routes with `require_*` or `guard_status`.
+
+### `action_url(href: 'str', return_to: 'str', state: 'Optional[str]' = None) -> 'str'`
+
+The address of an action page (spec §8c) with the way back: `href` is a member of `actions` or a session's `end` from `parse_account` — `action_url(session["end"], ...)` ends exactly that session —, `return_to` the absolute `http(s)` URL on the application's own host to come back to, `state` an optional value of the application (printable ASCII, at most 128 characters; `None` or empty for none). Send the person there by navigation; the page leads back with `ts_action`, `ts_result` and `state`. `ConfigError` for an href that fails the rule of §8 or carries a fragment, a `return_to` that is no absolute printable-ASCII `http(s)` URL, or a `state` outside the rule.
 
 ### `current_identity(source: 'Any' = None) -> 'Optional[Identity]'`
 

@@ -1032,6 +1032,11 @@ there.
    B). `Identity` has a new last field `permissions` (default `()`), `parse_account` and `SIGNED_OUT_ACCOUNT` a member
    `permissions`. Code that builds an `Identity` by position or compares a whole normalized account dict takes the
    new member; everything else is unchanged.
+5. **The gate clients normalise `actions` and the session handle** (T-148, spec §8a/§8c, tier B). The account
+   overview of every client (`parse_account`/`SIGNED_OUT_ACCOUNT` in Python, `Account` in Go, Rust, JavaScript and
+   PHP) gains the member `actions` (the own action pages, `null` signed out) and every session `handle` and `end`.
+   Code that compares a whole normalized account, or builds a Rust `account::Session` by a struct literal, takes the
+   new members; everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 **Schema 27** (T-100, permissions) is additive: this version adds the tables `app_permission` and `role_permission` at

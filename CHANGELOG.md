@@ -34,10 +34,23 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    B). `Identity` has a new last field `permissions` (default `()`), `parse_account` and `SIGNED_OUT_ACCOUNT` a member
    `permissions`. Code that builds an `Identity` by position or compares a whole normalized account dict takes the
    new member; everything else is unchanged.
+5. **The gate clients normalise `actions` and the session handle** (T-148, spec §8a/§8c, tier B). The account
+   overview of every client (`parse_account`/`SIGNED_OUT_ACCOUNT` in Python, `Account` in Go, Rust, JavaScript and
+   PHP) gains the member `actions` (the own action pages, `null` signed out) and every session `handle` and `end`.
+   Code that compares a whole normalized account, or builds a Rust `account::Session` by a struct literal, takes the
+   new members; everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- The five gate clients normalise `actions` and the session handle (T-148, spec §8a/§8c). The account overview of
+  Python, Go, Rust, JavaScript and PHP carries `actions` (the twelve own action pages, each a safe href or `null`) and
+  every session's `handle` (text) and `end` (the action page that ends exactly that session); they used to drop them.
+  New call `action_url(href, return_to, state)` (`ActionURL`, `account::action_url`, `actionUrl`,
+  `Account::actionUrl`) builds the address of an action page with the way back — on a session's `end` it ends that one
+  session by its handle; an unsafe href or one with a fragment, a `return_to` that is no absolute printable-ASCII
+  `http(s)` URL and a `state` outside the rule are refused. Vectors: `signed-in` now expects the members, new
+  `actions-*` vectors and the list `action_urls` in `spec/vectors/account.json` (attack class `action-request`).
 - The frame travels in the token of the address change, the e-mail confirmation and the invitation too (T-152; since
   T-104 sign-in and reset links). `request_email_change(…, app=)`, `send_verify_email(…, app=)` and
   `create_invite(…, app=)` (the panel's JSON `app`) store the frame's host as `frame`; the account page sends the
