@@ -806,10 +806,14 @@ PERMITTED_WITH_RIGHT = {"echo", "printf", "gh release", "gh attestation", "git l
 # Kit 0.69 holds a pin PR of a breaking release as a draft: `ausfuehren` runs `gh pr ready --undo` — a whole line, since
 # `gh pr ready` without `--undo` would release a held PR. (Mutation probes: `-F force=true` in `ausfuehren`; the DELETE
 # line in `ausfuehren`; a third `gh api` in `aufraeumen`; `--undo` dropped → each red.)
+# Kit 0.74 marks a Dependabot image PR without a registry date with the label `waiting-period`: exactly that label on
+# exactly that PR, a whole line — never the issues API wholesale (it could close or edit the PR). (Mutation probe: the
+# entry here naming another label → red; a changed line in the workflow is caught first by the kit manifest.)
 PERMITTED_LINE_IN_JOB = {
     (".github/workflows/dependabot-auto-merge.yml", "ausfuehren"): {
         'gh api "repos/$REPO/git/refs/heads/$BASIS" -X PATCH -f sha="$HEAD_SHA" -F force=false',
         'GH_TOKEN="${APP_TOKEN:-$GH_TOKEN}" gh pr ready "$PR" --repo "$REPO" --undo',
+        'gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=waiting-period" > /dev/null',
     },
     (".github/workflows/dependabot-auto-merge.yml", "aufraeumen"): {
         'gh api "repos/$REPO/git/refs/heads/$ZWEIG" -X DELETE',

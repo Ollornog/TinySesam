@@ -155,6 +155,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   of 0.31.0. Whoever comes from 0.30.x works through both lists. The hygiene test checks each series (vX.Y.0 up to the
   next series, the latest up to `HEAD`) against its own list between the markers `upgrade-list X.Y.x`; a series with a
   breaking commit and no list, or a list in one of the two files only, is red.
+- Shared test kit 0.75.0 (from 0.73.0): the Dependabot auto-merge waits the cooldown for a docker pull request whose
+  image names a registry host without a publication date (gcr.io and others, where Dependabot skips its own
+  cooldown) — it merges only when the newest commit is at least the ecosystem's `default-days` old (else 3) and marks
+  the wait with the label `waiting-period` (kit 0.74); the rebuild check may read pull requests (kit 0.75). The
+  hygiene test allows exactly the whole label line in `ausfuehren`, never the issues API wholesale.
 - Shared test kit 0.73.0 (from 0.69.0): the new check for unused dependencies (`scripts/_abhaengigkeiten.py`) runs in
   the `audit` workflow — deptry over `pyproject.toml` and `deploy/gateway/requirements.in`, `go mod tidy -diff` over
   every `go.mod`, cargo-machete over `clients/rust` — and is red at once (no `warn_until`): its findings are fixed here.

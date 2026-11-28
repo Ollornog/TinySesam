@@ -109,6 +109,17 @@
 # tests/test_repo.py). With `pull_request` a fork gets no secrets and a read-only token, and `entscheiden` skips it (its
 # `if:`); a branch of the own repo is written by someone with write access anyway. The workflow text is the PR's — a
 # branch from before this kit version has no such trigger, and the six-hour run picks it up as before.
+# WAITING PERIOD WITHOUT A REGISTRY DATE (since 0.74.0, PO 2026-11-27 "way b"): Dependabot keeps `cooldown` only where it
+# knows a publication date; for every other registry it skips it ("No verified registry publication date source for
+# <registry>; skipping cooldown", EightPerDay #38) and opens the PR at once — Google's distroless images are built
+# reproducibly (created 1970) and have no date at all. So a docker/docker_compose PR whose added `FROM`/`image:` lines
+# name an image with a registry host (first path part with a dot, a colon or localhost; Docker Hub images are written
+# without one — an explicit Docker Hub host only costs the extra wait) merges only when its newest commit (Dependabot
+# rewrites it for a newer digest or a rebase) is at
+# least the cooldown old: `default-days` of the ecosystem's entries in dependabot.yml (the largest), else 3 — the wait
+# runs from the first sighting. Until then `entscheiden` ends with `warten` and `ausfuehren` sets the label
+# `waiting-period` (ci-wache counts a lying PR with it from the end of the wait); the six-hour run merges it after.
+# Docker Hub images keep Dependabot's own cooldown. Unreadable first sighting: comment, by hand.
 # LOAD AT FAILURE (since 0.64.0): the read-only jobs end with a step `if: failure()` that writes one load line (runner,
 # cores, loadavg, PSI, free memory, job time) to the job summary and as an annotation — rendered from scripts/_load_note.sh.
 # FAST-FORWARD (since 0.67.0, todo "FF merge end to end", the same rule as pr-mergen): with the app, a PR whose head is
@@ -638,6 +649,36 @@ jobs:
             fi
             echo ff
           }
+          # Waiting period without a registry date (since 0.74.0, see the head). stdin = the patches of the PR; output every
+          # image of an added `FROM` or `image:` line that names a registry host (first path part with a dot, a colon or
+          # localhost), once each. Docker Hub images carry no host; an explicit one only costs the extra wait.
+          ohne_datum() {
+            local z ref erstes
+            while IFS= read -r z; do
+              if [[ "$z" =~ ^\+[[:space:]]*FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?([^[:space:]]+) ]]; then
+                ref="${BASH_REMATCH[2]}"
+              elif [[ "$z" =~ ^\+[[:space:]]*(-[[:space:]]+)?image:[[:space:]]*[\"\']?([^[:space:]\"\']+) ]]; then
+                ref="${BASH_REMATCH[2]}"
+              else
+                continue
+              fi
+              [[ "$ref" == */* ]] || continue
+              erstes="${ref%%/*}"
+              [[ "$erstes" == *.* || "$erstes" == *:* || "$erstes" == localhost ]] || continue
+              echo "$ref"
+            done | sort -u
+          }
+          # Seconds left of the waiting period (0 = over). $1 = first sighting (ISO 8601), $2 = days, $3 = now (epoch).
+          # Exit 1 if $1 or $2 is not readable.
+          wartezeit_rest() {
+            local t rest
+            [[ "$2" =~ ^[0-9]+$ ]] || return 1
+            [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || return 1
+            t="$(date -u -d "$1" +%s 2>/dev/null)" || return 1
+            rest=$(( t + $2 * 86400 - $3 ))
+            if [ "$rest" -lt 0 ]; then rest=0; fi
+            echo "$rest"
+          }
           # <<< Entscheidungshilfen
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { ausgabe nichts "kein gültiger Kopf"; exit 0; }
           PR="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].number // ""')"
@@ -876,6 +917,29 @@ jobs:
             fi
           fi
           if [ -n "$GRUND" ]; then kommentar "$GRUND"; exit 0; fi
+          # Waiting period without a registry date (since 0.74.0, see the head): only Dependabot's docker ecosystems.
+          if [ "$ART" = dependabot ] && { [ "$OEKO" = docker ] || [ "$OEKO" = docker_compose ]; }; then
+            OHNE="$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[].patch // ""' | ohne_datum)"
+            if [ -n "$OHNE" ]; then
+              OHNE="$(tr '\n' ' ' <<<"$OHNE")"; OHNE="${OHNE% }"
+              TAGE=3
+              if [ -n "${DBY:-}" ] && ! grep -q 'separator' <<<"$DBY"; then
+                TAGE="$(yq -o=json '.' <<<"$DBY" | jq -r --arg e "${OEKO//_/-}" \
+                  '[.updates[]? | select(."package-ecosystem" == $e) | .cooldown."default-days" // empty] | max // 3')"
+              fi
+              GESEHEN="$(jq -r 'last.commit.committer.date // ""' <<<"$COMMITS")"
+              JETZT="$(date -u +%s)"
+              if ! REST="$(wartezeit_rest "$GESEHEN" "$TAGE" "$JETZT")"; then
+                kommentar "waiting period not checkable: $OHNE has no registry date, and the first sighting (\"$GESEHEN\") or the cooldown (\"$TAGE\") is not readable"
+                exit 0
+              fi
+              if [ "$REST" -gt 0 ]; then
+                ausgabe warten "waiting period: $OHNE has no registry date (Dependabot skips its cooldown there); first seen $GESEHEN, mergeable from $(date -u -d "@$(( JETZT + REST ))" +%Y-%m-%dT%H:%MZ) ($TAGE days) — the six-hour run checks again"
+                exit 0
+              fi
+              echo "waiting period over: $OHNE, first seen $GESEHEN ($TAGE days)"
+            fi
+          fi
           # Breaking release (since 0.69.0, see the head): only pin PRs of the app, before any wait for the checks.
           if [ "$ART" = pin ]; then
             BRUCH="$(bruch_pruefen)"
@@ -943,7 +1007,7 @@ jobs:
   ausfuehren:
     timeout-minutes: 10
     needs: entscheiden
-    if: contains(fromJSON('["mergen", "kommentieren", "nachziehen", "zurueckhalten"]'), needs.entscheiden.outputs.aktion)
+    if: contains(fromJSON('["mergen", "kommentieren", "nachziehen", "zurueckhalten", "warten"]'), needs.entscheiden.outputs.aktion)
     runs-on: @@RUNNER@@
     env:
       MIT_APP: ${{ secrets.AUTOMERGE_APP_KEY != '' && vars.AUTOMERGE_APP_CLIENT_ID != '' }}
@@ -956,7 +1020,7 @@ jobs:
     steps:
       - name: App-Token holen (nur dieses Repo, nur die drei Rechte)
         id: app
-        if: env.MIT_APP == 'true' && needs.entscheiden.outputs.aktion != 'kommentieren'
+        if: env.MIT_APP == 'true' && needs.entscheiden.outputs.aktion != 'kommentieren' && needs.entscheiden.outputs.aktion != 'warten'
         uses: @@PIN:actions/create-github-app-token@@
         with:
           client-id: ${{ vars.AUTOMERGE_APP_CLIENT_ID }}
@@ -1044,6 +1108,19 @@ jobs:
         run: |
           gh pr comment "$PR" --repo "$REPO" --body "⚠️ Nicht automatisch gemergt: $GRUND. Bitte von Hand prüfen und mergen."
 
+      # Waiting period without a registry date (since 0.74.0, see the head): the label tells ci-wache that the PR waits on
+      # purpose. Adding it again is a no-op; the REST call creates a missing label.
+      - name: Mark the waiting period (label)
+        if: needs.entscheiden.outputs.aktion == 'warten'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.entscheiden.outputs.pr }}
+          GRUND: ${{ needs.entscheiden.outputs.grund }}
+        run: |
+          echo "$GRUND"
+          gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=waiting-period" > /dev/null
+
       # Breaking release (since 0.69.0, see the head): the reason first, with the workflow token (`schon_gesagt` finds it
       # and holds every later run), then the draft as the sign — with the app token if there is one. Fails the draft,
       # this step is red and the comment still holds the PR.
@@ -1128,6 +1205,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      pull-requests: read
     outputs:
       reason: ${{ steps.check.outputs.reason }}
     steps:
