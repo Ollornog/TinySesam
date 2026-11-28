@@ -839,6 +839,7 @@ try:
     lines = [z for z in a.stdout.splitlines() if z.startswith("  ok")]
     assert len(lines) >= 19 and any("HSTS" in z for z in lines), a.stdout
     assert sum("Remote-Kind" in z for z in lines) == 3, a.stdout
+    assert sum("Remote-Permissions" in z for z in lines) == 3, a.stdout       # T-141
     ok(f"acceptance.sh against this setup: {len(lines)} checks passed")
     # Counter-check: the script must turn red when an expectation is wrong — here a path that is
     # closed but is given as a share. Otherwise “passed” would also be the answer of a script that
@@ -854,7 +855,10 @@ try:
     assert a.returncode == 1, a.stdout
     assert "FAIL a forged Remote-Kind does not reach the application on the share path" in a.stdout, a.stdout
     assert "FAIL with session: the application gets TinySesam's Remote-Kind, never a forged one" in a.stdout, a.stdout
-    ok("counter-check: without a stripping proxy acceptance.sh sees the forged Remote-Kind (share path and session)")
+    assert "FAIL a forged Remote-Permissions does not reach the application on the share path" in a.stdout, a.stdout
+    assert "FAIL with session: a forged Remote-Permissions never reaches the application" in a.stdout, a.stdout
+    ok("counter-check: without a stripping proxy acceptance.sh sees the forged Remote-Kind and Remote-Permissions "
+       "(share path and session, T-141)")
     tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/"}, follow_redirects=False)
 
     # ---------- the price: revocation only takes effect on expiry ----------

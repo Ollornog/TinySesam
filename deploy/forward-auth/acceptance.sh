@@ -13,7 +13,8 @@
 #   CURL_EXTRA Optional. Additional curl arguments (e.g. --resolve for a test setup).
 #   ECHO      Optional. 1 = the application reflects the request headers it receives in its response body (a
 #             whoami/echo application such as traefik/whoami in deploy/quickstart). Then the script also checks that a
-#             Remote-Kind the client forges never arrives — with a session and on the share path.
+#             Remote-Kind or Remote-Permissions the client forges never arrives — with a session and on the share path
+#             (T-141; tests/test_acceptance_script.py runs it against a proxy that forgets to strip it).
 #
 # Checks the behaviour that is visible from outside. The headers the application receives INSIDE
 # are not visible to this script unless ECHO=1 — tests/test_gate_caddy.py checks those against the template.
@@ -46,6 +47,8 @@ fetch_body() {  # fetch_body <path> [curl arguments …]
 }
 # A value no TinySesam ever sends: if it shows up in the echo, the proxy passed the client's Remote-Kind on.
 FORGED_KIND="tinysesam-forged-kind-probe"
+# The same for Remote-Permissions (T-101): a permission name no application registers.
+FORGED_PERMS="forged.probe-permission"
 
 echo "Acceptance: $APP"
 
@@ -65,6 +68,8 @@ fetch / -H "Remote-User: admin" -H "Remote-Groups: admin"
 to_sign_in; check "a self-sent Remote-User opens nothing ($code)" $?
 fetch / -H "Remote-User: admin" -H "Remote-Kind: service"
 to_sign_in; check "a self-sent Remote-User with Remote-Kind: service opens nothing ($code)" $?
+fetch / -H "Remote-User: admin" -H "Remote-Permissions: $FORGED_PERMS"
+to_sign_in; check "a self-sent Remote-Permissions opens nothing ($code)" $?
 fetch /.tinysesam/after-logout
 [ "$code" = 200 ]; check "/.tinysesam/* reaches TinySesam past the gate ($code)" $?
 
@@ -81,6 +86,9 @@ if [ -n "$SHARE" ]; then
         fetch_body "$SHARE" -H "Remote-Kind: $FORGED_KIND" -H "Remote-User: admin"
         [ "$code" = 200 ] && ! printf '%s' "$body" | grep -q "$FORGED_KIND"
         check "a forged Remote-Kind does not reach the application on the share path ($code)" $?
+        fetch_body "$SHARE" -H "Remote-Permissions: $FORGED_PERMS"
+        [ "$code" = 200 ] && ! printf '%s' "$body" | grep -q "$FORGED_PERMS"
+        check "a forged Remote-Permissions does not reach the application on the share path ($code)" $?
     fi
 fi
 
@@ -93,6 +101,9 @@ if [ -n "$SESSION" ]; then
         [ "$code" = 200 ] && ! printf '%s' "$body" | grep -q "$FORGED_KIND" \
             && printf '%s' "$body" | grep -qiE 'remote-kind"?: *"?(user|service)'
         check "with session: the application gets TinySesam's Remote-Kind, never a forged one ($code)" $?
+        fetch_body / -H "Cookie: $SESSION" -H "Remote-Permissions: $FORGED_PERMS"
+        [ "$code" = 200 ] && ! printf '%s' "$body" | grep -q "$FORGED_PERMS"
+        check "with session: a forged Remote-Permissions never reaches the application ($code)" $?
     fi
     gate="$(printf '%s' "$head" | tr -d '\r' | sed -n 's/^[Ss]et-[Cc]ookie: \(__Host-tinysesam_gate=[^;]*\).*/\1/p' | head -1)"
     if [ -n "$gate" ]; then
