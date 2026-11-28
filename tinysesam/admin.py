@@ -303,7 +303,7 @@ class PanelActions:
                         f"uid={uid} by=operator")
         return {"ok": True}
 
-    def reset_totp(self, request: Request, me, uid: int) -> dict:
+    def reset_totp(self, request: Request, me, uid: int, confirmed: bool = False) -> dict:
         """Reset the TOTP factor of an account (T-98) — `POST <admin>/api/users/{uid}/totp/reset` and the CLI
         `tinysesam reset-totp`: the holder lost the authenticator app and has no recovery code left. Without it the
         operator had only the whole access reset of an application (`tinysesam.account.reset_access`) or the database.
@@ -311,11 +311,14 @@ class PanelActions:
         The authenticator goes with its recovery codes (`totp_disable`: audit line under the holder and the event
         `totp_disabled`, so the holder learns of it). The failed TOTP attempts end with it — a new authenticator starts
         without a lock someone else filled. Owner model as for passkeys; a fresh confirmation, because removing a
-        second factor from a stale admin session opens the account to whoever holds its password."""
+        second factor from a stale admin session opens the account to whoever holds its password. `confirmed`: the
+        caller has just checked a confirmation of THIS action (an administration action page, T-147, class `each`) —
+        stronger than the window, which it then does not ask for."""
         destination = self.owner_protection(me, uid)
         if destination is None:
             raise HTTPException(404, self.auth.t("api.not_found"))
-        self.auth._require_fresh(request, me)
+        if not confirmed:
+            self.auth._require_fresh(request, me)
         if not self.auth.store.has_confirmed_totp(uid):
             raise HTTPException(409, self.auth.t("api.no_totp"))
         codes = self.auth.store.count_recovery_codes(uid)

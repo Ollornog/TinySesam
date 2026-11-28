@@ -1568,9 +1568,22 @@ https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.ex
 - **Secrets never travel through the application**: a password, a TOTP code, a recovery code, an API key, an app
   password or a pairing code is typed or shown on TinySesam's page only.
 
-The register of the actions is shared with the administration: every action carries a scope (`own`, later `admin`) and
-a step-up class (`window`: the window of a fresh confirmation; `each`: one confirmation per action, for the
-administrator's actions that follow).
+The register of the actions is shared with the administration: every action carries a scope (`own` or `admin`) and
+a step-up class (`window`: the window of a fresh confirmation; `each`: one confirmation per action).
+
+**Administration on action pages** (T-147, with the admin panel on): a person who administers accounts is sent to
+`/auth/act/<name>?target=<account id>&app=<id>&return=<url>&state=<opaque>` — `admin_lock`, `admin_unlock`,
+`admin_roles`, `admin_totp_reset`, `admin_key_revoke`, `admin_program_revoke` (a connected program, a service or an
+app password), `admin_session_end` (one session, by its handle) and `admin_signin_link` (a one-time sign-in link
+instead of setting a password). The page names the account, says what happens, lets the person choose the roles or
+the key, program or session, and asks for a confirmation of THIS action — the password, TOTP code or PIN, typed on the
+page; an open confirmation window is not enough (class `each`). Then the panel's own code runs with the person's
+rights at that moment: an administrator (the owner model applies), or a delegated admin for `admin_lock`,
+`admin_unlock`, `admin_roles` and `admin_signin_link` on an account in scope. Anything else is "not offered". The audit
+gets the panel's lines plus `admin_action act=<name> uid=<id> amr=<method> app=<host>`; a failed confirmation writes
+`admin_action_denied`. The application knows the account ids from its own list (the claim `ts_id`, or the account API);
+TinySesam decides who may act. Not here: the admin flag, owner, deletion, the role catalog — they stay in the panel; a
+passkey or provider as the confirmation of an action is not offered yet.
 
 Example Ex4, [`deploy/ex4`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex4/README.md), is the surface as a
 whole: a Node application behind the server whose settings page is a single-page app — it reads `account.json` in the
@@ -3259,7 +3272,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**163 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**164 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

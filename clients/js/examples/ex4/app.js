@@ -19,7 +19,27 @@
     session_end: 'Session',
     programs: 'Connected programs',
     services: 'Services',
+    admin_lock: 'Lock an account',
+    admin_unlock: 'Unlock an account',
+    admin_roles: 'Roles of an account',
+    admin_totp_reset: 'Reset an authenticator app',
+    admin_key_revoke: 'Revoke an API key',
+    admin_program_revoke: 'Disconnect a program',
+    admin_session_end: 'End a session of an account',
+    admin_signin_link: 'Sign-in link',
   };
+  // The administration actions (spec section 8c, scope admin): links to TinySesam's pages with the account id. The
+  // page asks for a confirmation of every single action; nothing of it passes through this page.
+  const ADMIN = [
+    ['admin_lock', 'Lock'],
+    ['admin_unlock', 'Unlock'],
+    ['admin_roles', 'Roles'],
+    ['admin_totp_reset', 'Reset authenticator'],
+    ['admin_key_revoke', 'Revoke a key'],
+    ['admin_program_revoke', 'Disconnect a program'],
+    ['admin_session_end', 'End a session'],
+    ['admin_signin_link', 'Sign-in link'],
+  ];
   const RESULTS = { done: 'done', cancelled: 'nothing changed', unavailable: 'not offered here' };
   const KEY = 'ex4.states';
 
@@ -163,6 +183,28 @@
     out.append(section('Programs and keys', keys));
   }
 
+  /** The administration section: the accounts the application knows (its own data), each with the links to
+   * TinySesam's administration action pages — built from the address of an own action page (same origin, frame). */
+  function drawAdmin(data, accounts) {
+    const own = safe(data.actions?.sessions);
+    if (!own || !Array.isArray(accounts)) {
+      return;
+    }
+    const rows = [];
+    for (const acc of accounts) {
+      const li = el('li', { id: `admin-${acc.id}` });
+      li.append(el('span', {}, `${acc.name} (${acc.user})`));
+      for (const [name, label] of ADMIN) {
+        const u = new URL(own, location.origin);
+        u.pathname = u.pathname.replace(/\/sessions$/, `/${name}`);
+        u.searchParams.set('target', acc.id);
+        li.append(el('a', { class: 'act', href: u.href, 'data-act': `${name}-${acc.user}` }, label));
+      }
+      rows.push(li);
+    }
+    document.getElementById('settings').append(section('Administration', rows));
+  }
+
   /** Back from an action page: a message for a result this page asked for, and the address without the three. */
   function result() {
     const q = new URLSearchParams(location.search);
@@ -198,6 +240,10 @@
         return;
       }
       draw(data);
+      const adm = await fetch('/admin/accounts.json', { cache: 'no-store', credentials: 'same-origin' });
+      if (adm.ok) {
+        drawAdmin(data, (await adm.json()).accounts);
+      }
       out.dataset.loaded = '1';
     } catch {
       out.replaceChildren(el('p', { id: 'failed' }, 'The settings could not be read.'));

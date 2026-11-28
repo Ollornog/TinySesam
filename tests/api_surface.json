@@ -2903,6 +2903,10 @@
       "keys": [],
       "tier": "B"
     },
+    "POST /auth/act/{name}/{ticket}": {
+      "keys": [],
+      "tier": "B"
+    },
     "POST /auth/apikeys": {
       "keys": [],
       "tier": "B"

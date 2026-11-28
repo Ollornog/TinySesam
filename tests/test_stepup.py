@@ -589,6 +589,9 @@ ONLY_SESSION = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/reg
 #: The FIRST password (B-10): fresh step-up if the account has a factor, otherwise the age of the sign-in
 #: (`set_initial_password`); never an API key, never over an existing password (that is /auth/password).
 FIRST_PASSWORD = {"/auth/password/set"}
+#: An administration action (T-147, class `each`): its own confirmation of THIS action in the same POST (password, TOTP
+#: or PIN through `_stepup_secret`), stronger than the window — tests/test_admin_actions.py.
+EACH = {"/auth/act/{name}/{ticket}"}
 #: Touches no account and no session: the browser's CSP violation reports (T-52) — no cookie, only a log line.
 NO_ACCOUNT = {"/auth/csp-report"}
 #: Known open — with justification. If one of them gets bound, it belongs in STEPUP.
@@ -600,7 +603,7 @@ OPEN = {"/auth/apikeys/{key_id}/revoke": "key revocation without step-up (report
 _post6 = {rt.path for rt in router6.routes
           if "POST" in (getattr(rt, "methods", None) or ())
           and not str(getattr(rt, "path", "")).startswith(auth6.cfg.admin_path)}
-_classes = [SIGN_IN_FLOW, STEPUP, PASSWORD, ONLY_SESSION, FIRST_PASSWORD, NO_ACCOUNT, set(OPEN)]
+_classes = [SIGN_IN_FLOW, STEPUP, PASSWORD, ONLY_SESSION, FIRST_PASSWORD, EACH, NO_ACCOUNT, set(OPEN)]
 _unclassified = sorted(p for p in _post6 if not any(p in k for k in _classes))
 assert not _unclassified, f"self-service route without classification: {_unclassified}"
 _double = [p for p in _post6 if sum(p in k for k in _classes) > 1]
