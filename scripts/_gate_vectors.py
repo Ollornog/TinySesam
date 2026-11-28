@@ -1392,6 +1392,113 @@ def action_url_vectors(ap: AccountProbe) -> list:
     return out
 
 
+# ---------- the way back from an action page, spec §8c (T-158) ----------
+
+#: Every action name an action page hands back in `ts_action`: the own actions and the administration's (T-147).
+ACTION_NAMES = ("username", "email", "password", "pin", "totp", "recovery_codes", "passkeys", "api_keys",
+                "app_passwords", "sessions", "session_end", "programs", "services",
+                "admin_totp_reset", "admin_lock", "admin_unlock", "admin_roles", "admin_key_revoke",
+                "admin_program_revoke", "admin_session_end", "admin_signin_link")
+ACTION_RESULTS = ("done", "cancelled", "unavailable")
+
+
+def action_return_vectors() -> list:
+    """`input` `url` (the address the person came back on) and `state` (the value the application issued, or `null`)
+    → `expected.return` (`{"action", "result"}`, or `null` when the address carries no way back at all), or
+    `error: invalid` (not a way back an action page gives) / `error: state` (a state the application did not issue).
+    The valid addresses come from TinySesam's own way back (`_actions.with_result`)."""
+    from tinysesam import _actions
+    # The register and this file name the same actions and results: a new action needs a decision here (and in §8c).
+    assert sorted(_actions.ACTIONS) == sorted(ACTION_NAMES), sorted(_actions.ACTIONS)
+    assert tuple(_actions.RESULTS) == ACTION_RESULTS, _actions.RESULTS
+    out = []
+
+    def add(vid, reason, url, state, want=None, error=None, attack=None):
+        assert want is None or error is None, vid
+        expected = {"ok": False, "error": error} if error else {"ok": True, "return": want}
+        out.append({"id": vid, "attack": attack, "reason": reason, "input": {"url": url, "state": state},
+                    "expected": expected})
+
+    back, state = "https://app.example.com/settings", "s-81f2"
+    for name in ACTION_NAMES:
+        add(f"action-{name.replace('_', '-')}", f"The way back of the action page `{name}`.",
+            _actions.with_result(back, name, "done", state), state, {"action": name, "result": "done"})
+    for result in ACTION_RESULTS[1:]:
+        add(f"result-{result}", f"The result `{result}`.", _actions.with_result(back, "password", result, state),
+            state, {"action": "password", "result": result})
+    odd = "a+b/c=d&e%f?g#h!'()*~" + "x" * 107
+    assert len(odd) == 128
+    add("state-escaped", "A `state` of 128 printable ASCII characters comes back escaped; it is decoded before the "
+        "comparison.", _actions.with_result(back, "totp", "done", odd), odd, {"action": "totp", "result": "done"})
+    add("no-state", "Without a state on either side.", _actions.with_result(back, "pin", "cancelled", ""), None,
+        {"action": "pin", "result": "cancelled"})
+    add("empty-state", "An empty `state` in the address and none issued are the same.",
+        f"{back}?ts_action=pin&ts_result=done&state=", None, {"action": "pin", "result": "done"})
+    kept = "https://app.example.com/settings?tab=security&ts_action=email&ts_result=x&state=old#top"
+    add("return-with-query", "A `return` with a query of its own and a fragment: TinySesam replaces the three names "
+        "already in it and keeps the rest; the fragment is no part of the query.",
+        _actions.with_result(kept, "api_keys", "done", state), state, {"action": "api_keys", "result": "done"})
+    add("path-only", "The address as a request line names it: a path with its query.",
+        f"/settings?ts_action=passkeys&ts_result=done&state={state}", state, {"action": "passkeys", "result": "done"})
+    add("query-only", "Only the query, with its `?` (a browser's `location.search`).",
+        f"?state={state}&ts_result=unavailable&ts_action=services", state,
+        {"action": "services", "result": "unavailable"})
+    add("encoded-value", "A value is decoded before it is compared (`%77` is `w`).",
+        f"{back}?ts_action=pass%77ord&ts_result=d%6Fne&state=s%2D81f2", state, {"action": "password", "result": "done"})
+    add("other-parameters", "Parameters of the application, also odd ones, are its own business.",
+        f"{back}?q=100%&ts_action=password&x&ts_result=done&=y&state={state}&z=%zz", state,
+        {"action": "password", "result": "done"})
+    for vid, reason, url in (
+            ("absent", "An address without a way back: nothing to read, no refusal.", back),
+            ("absent-other-query", "Only parameters of the application (a `state` alone is none of an action page).",
+             f"{back}?tab=1&state={state}"),
+            ("absent-in-fragment", "The three names in the fragment are no part of the query.",
+             f"{back}#ts_action=password&ts_result=done&state={state}"),
+            ("absent-encoded-names", "A name counts only as it is written: `ts%5Faction` is a parameter of the "
+             "application.", f"{back}?ts%5Faction=password&ts%5Fresult=done&state={state}")):
+        add(vid, reason, url, state, None)
+    q = f"state={state}"
+    for vid, reason, url in (
+            ("unknown-action", "An action name no action page gives.", f"{back}?ts_action=admin_delete&ts_result=done&{q}"),
+            ("action-upper-case", "Action names are compared exactly.", f"{back}?ts_action=Password&ts_result=done&{q}"),
+            ("action-empty", "An empty action name.", f"{back}?ts_action=&ts_result=done&{q}"),
+            ("action-no-value", "`ts_action` without a value.", f"{back}?ts_action&ts_result=done&{q}"),
+            ("action-plus", "`+` is a space: no action name.", f"{back}?ts_action=pass+word&ts_result=done&{q}"),
+            ("action-bad-escape", "A `%` without two hex digits.", f"{back}?ts_action=passwor%6&ts_result=done&{q}"),
+            ("action-raw-non-ascii", "A value outside printable ASCII as it is written.",
+             f"{back}?ts_action=passwordä&ts_result=done&{q}"),
+            ("action-missing", "`ts_result` without `ts_action`.", f"{back}?ts_result=done&{q}"),
+            ("result-missing", "`ts_action` without `ts_result`.", f"{back}?ts_action=password&{q}"),
+            ("unknown-result", "A result no action page gives.", f"{back}?ts_action=password&ts_result=ok&{q}"),
+            ("result-upper-case", "Results are compared exactly.", f"{back}?ts_action=password&ts_result=DONE&{q}"),
+            ("action-twice", "`ts_action` twice.", f"{back}?ts_action=password&ts_action=pin&ts_result=done&{q}"),
+            ("result-twice", "`ts_result` twice, even with the same value.",
+             f"{back}?ts_action=password&ts_result=done&ts_result=done&{q}"),
+            ("state-twice", "`state` twice, even with the same value.",
+             f"{back}?ts_action=password&ts_result=done&{q}&{q}"),
+            ("state-bad-escape", "A `state` with a `%` without two hex digits.",
+             f"{back}?ts_action=password&ts_result=done&state=s-81f2%"),
+            ("state-decodes-to-space", "A `state` that decodes to a space (`+`) is none TinySesam hands back.",
+             f"{back}?ts_action=password&ts_result=done&state=s+81f2"),
+            ("state-decodes-to-non-ascii", "A `state` that decodes outside printable ASCII.",
+             f"{back}?ts_action=password&ts_result=done&state=s-81f2%C3%A4"),
+            ("state-too-long", "A `state` above 128 characters is none TinySesam hands back.",
+             f"{back}?ts_action=password&ts_result=done&state={'s' * 129}")):
+        add(vid, reason, url, state, error="invalid", attack="action-return")
+    # The caller's state of the last vector: the same 129 characters — the address is refused before the comparison.
+    out[-1]["input"]["state"] = "s" * 129
+    good = f"{back}?ts_action=password&ts_result=done"
+    for vid, reason, url, issued in (
+            ("state-other", "A `state` the application did not issue.", f"{good}&state=s-81f3", state),
+            ("state-prefix", "A prefix of the issued `state`.", f"{good}&state=s-81f", state),
+            ("state-longer", "The issued `state` and more.", f"{good}&state=s-81f2x", state),
+            ("state-case", "Another case of the issued `state`.", f"{good}&state=S-81F2", state),
+            ("state-missing", "No `state` came back, one was issued.", good, state),
+            ("state-unexpected", "A `state` came back, none was issued.", f"{good}&state={state}", None)):
+        add(vid, reason, url, issued, error="state", attack="action-return")
+    return out
+
+
 # ---------- files ----------
 
 def _file(kind: str, body: dict) -> str:
@@ -1423,7 +1530,8 @@ def build() -> dict:
             "jwks.json": _file("jwks", {"sets": jwks_sets(), "scenarios": jwks_scenarios()}),
             "topbar.json": _file("topbar", {"vectors": topbar_vectors(p) + topbar_approval_vectors(ap)}),
             "account.json": _file("account", {"vectors": account_vectors(ap),
-                                              "action_urls": action_url_vectors(ap)}),
+                                              "action_urls": action_url_vectors(ap),
+                                              "action_returns": action_return_vectors()}),
             # Last: it names the probe's host as an application for a moment (and assigns two permissions).
             "permissions.json": _file("permissions", permission_vectors(p)),
         }

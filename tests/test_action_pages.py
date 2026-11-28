@@ -283,6 +283,15 @@ assert f"data-act=endsess data-id='{other['handle']}'" in r.text and "<span>Docu
 href, _, done = back(r.text)
 assert query(href) == {"tab": "sessions", "ts_action": "session_end", "ts_result": "cancelled",
                        "state": odd_state}, href
+# Reading it back (T-158): the client's parser reads the page's own way back — both results — with the state issued,
+# and refuses it with any other.
+assert gate_client.parse_action_return(href, odd_state) == {"action": "session_end", "result": "cancelled"}, href
+assert gate_client.parse_action_return(done, odd_state) == {"action": "session_end", "result": "done"}, done
+try:
+    gate_client.parse_action_return(done, "s/1+2=4")
+    raise AssertionError("a way back with another state was read")
+except gate_client.ActionReturnRefused as e:
+    assert e.reason == "state", e.reason
 for bad in (mine_["handle"], "", "nope"):
     assert "This is not offered here." in me.get(f"/auth/act/session_end?target={bad}").text, bad
 before = len([a for a in auth.store.recent_audit(500) if a["event"] == "session_end"])

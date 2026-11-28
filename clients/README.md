@@ -40,7 +40,8 @@ TinySesam itself stays Python; a client never issues tokens and never signs anyo
   - `jwks.json` — `sets` against the key set parser, `scenarios` against the cache with a fake fetcher and a fake
     clock (a fetch where the step gives no `fetch` answer fails the step);
   - `topbar.json` and `account.json` — the normalized result, exactly; the list `action_urls` of `account.json`
-    against the client's call that builds the address of an action page (the URL, or a refusal for `invalid`);
+    against the client's call that builds the address of an action page (the URL, or a refusal for `invalid`), the
+    list `action_returns` against the parser of the way back (`return`, `null`, or the refusal `invalid`/`state`);
   - `approval.json` (`"format": 1`, its own specification) — every vector against the approval helper with a fixed
     key set, a fixed clock and `input.seen` as the `jti` store: the claims or the error class. That every attack vector
     carries one defect is measured once, against the Python reference (`tests/test_approval_vectors.py`); a client

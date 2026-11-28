@@ -2,7 +2,9 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { actionUrl, parseAccount } from '../src/account.ts';
+import { ActionReturnRefused, parseActionReturn } from '../src/action-return.ts';
 import { createApprovalVerifier } from '../src/approval.ts';
 import { errorClassOf } from '../src/errors.ts';
 import { Gate } from '../src/gate.ts';
@@ -62,6 +64,34 @@ test('account vectors', (t) => {
     assert.deepStrictEqual(got, v.expected, `action_urls/${v.id}`);
   }
   t.diagnostic(`${urls.length} action address vectors`);
+});
+
+/** One vector of `action_returns` through a parser: the way back, null, or the reason of the refusal. */
+function runActionReturn(parse: (url: string, state: string | null) => unknown, v: Json): Json {
+  try {
+    return { ok: true, return: parse(v.input.url, v.input.state) };
+  } catch (err) {
+    const reason = (err as { reason?: unknown }).reason;
+    return (err as Error).name === 'ActionReturnRefused'
+      ? { ok: false, error: reason }
+      : { ok: false, error: String(err) };
+  }
+}
+
+test('action return vectors', (t) => {
+  const vectors: Json[] = loadVectors('account.json').action_returns;
+  assert.ok(vectors.length > 0, 'no action return vectors');
+  for (const v of vectors) {
+    assert.deepStrictEqual(runActionReturn(parseActionReturn, v), v.expected, `action_returns/${v.id}`);
+  }
+  // The copy a page without a bundler carries (example Ex4): the source of both declarations, run where nothing else
+  // of this module or of Node exists, passes the same vectors.
+  const copy = runInNewContext(`${ActionReturnRefused}\n${parseActionReturn}\nparseActionReturn`, Object.create(null));
+  for (const v of vectors) {
+    const got = runActionReturn(copy, v);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(got)), v.expected, `action_returns/${v.id} (source copy)`);
+  }
+  t.diagnostic(`${vectors.length} action return vectors, twice`);
 });
 
 /** Checks one vector of approval.json: the claims or the error class. */

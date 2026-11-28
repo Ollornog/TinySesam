@@ -14,7 +14,8 @@ suite can show that no secret ever reached it.
   X3 every write goes over an action page and back with done: the password (changed on TinySesam's page, the new one
      signs in), an API key (shown once in TinySesam's dialog), one other session ended by its handle (with the
      confirmation dialog), a connected program disconnected (the form sent by script, the page reloads as done).
-  X4 a result the settings page did not ask for (a forged `state`) is ignored.
+  X4 a result the settings page did not ask for (a forged `state`) is ignored; the gate client's parser (T-158), which
+     the page carries, refuses an action no action page gives; an ordinary visit shows no notice.
   X5 no secret in the application: the passwords, the API key, the TOTP secret, the recovery codes, the app password,
      the pairing code and the links of the mail and the sign-in link are in no request the application received and
      nowhere on its pages or in their storage.
@@ -548,7 +549,14 @@ async def part_x(p: Page) -> None:
     await p.go(EX4 + "/settings?ts_action=password&ts_result=done&state=forged0000000000000000", SETTINGS)
     assert await p.js("document.getElementById('notice').dataset.result") == "foreign"
     assert await p.js("location.search") == ""
-    ok("X4 a result with a state the settings page did not issue is ignored")
+    # The gate client's parser (T-158) reads the way back: an action no action page gives is refused as invalid.
+    await p.go(EX4 + "/settings?ts_action=admin_delete&ts_result=done&state=forged0000000000000000", SETTINGS)
+    assert await p.js("document.getElementById('notice').dataset.result") == "invalid"
+    assert await p.js("location.search") == ""
+    await p.go(EX4 + "/settings?tab=1", SETTINGS)
+    assert await p.js("document.getElementById('notice').hidden") is True, "an ordinary visit shows a notice"
+    ok("X4 a result with a state the settings page did not issue is ignored; an unknown action is refused by the "
+       "client's parser; an ordinary visit shows nothing")
 
     # X6 ─ administration (T-147): an administrator drives every admin action on lou from the application and back.
     await part_admin(p)

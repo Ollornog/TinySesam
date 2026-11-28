@@ -364,6 +364,25 @@ fn account() {
         }
     }
     report("account.json action_urls", urls.len(), 10, failures);
+    let returns = doc["action_returns"].as_array().unwrap();
+    let mut failures = Vec::new();
+    for v in returns {
+        let (id, input, expected) = (str_of(v, "id"), &v["input"], &v["expected"]);
+        let got = match account::parse_action_return(str_of(input, "url"), input["state"].as_str())
+        {
+            Ok(back) => serde_json::json!({"ok": true, "return": back}),
+            Err(account::ActionReturnRefused::Invalid) => {
+                serde_json::json!({"ok": false, "error": "invalid"})
+            }
+            Err(account::ActionReturnRefused::State) => {
+                serde_json::json!({"ok": false, "error": "state"})
+            }
+        };
+        if &got != expected {
+            failures.push(format!("action_returns/{id}: {got} ≠ {expected}"));
+        }
+    }
+    report("account.json action_returns", returns.len(), 40, failures);
 }
 
 #[test]

@@ -3009,7 +3009,11 @@ except gate_client.UntrustedPeer:
   session its `handle` and the page `end` that ends exactly it. `action_url(href, return_to, state)` builds the address
   to send the person to — `action_url(session["end"], "https://app.example.com/settings", state)` ends that one
   session; the page leads back with `ts_action`, `ts_result` and `state` (an unsafe href, a `return_to` that is no
-  absolute `http(s)` URL or a bad `state` is a `ConfigError`).
+  absolute `http(s)` URL or a bad `state` is a `ConfigError`). Back on your page,
+  `parse_action_return(request_url, state)` reads that way back: `{"action", "result"}` for one of the register's
+  actions and results with exactly the `state` you issued (compared in constant time), `None` for an ordinary visit,
+  and `ActionReturnRefused` (`reason` `invalid` or `state`) for anything else — a hint for a message, never a proof
+  (spec §8c).
 - **Permissions** (spec §3.4, T-101): `identity.permissions` comes from `Remote-Permissions` or `ts_perms` — the
   account's permissions for this application; `identity.has_permission("docs.delete")` compares exactly (neither
   `admin` nor a role implies one; a missing header is "none"). At start, register the manifest with

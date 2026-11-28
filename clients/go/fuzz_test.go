@@ -3,6 +3,7 @@ package tinysesam
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -141,6 +142,30 @@ func FuzzStrictJSON(f *testing.F) {
 			if err := json.Unmarshal(raw, &loose); err != nil || len(loose) != len(m) {
 				t.Fatalf("object members differ: strict %d, loose %d", len(m), len(loose))
 			}
+		}
+	})
+}
+
+// FuzzParseActionReturn: the way back of an action page (spec section 8c) never panics; what it accepts is a known
+// action and result, and only with exactly the state given.
+func FuzzParseActionReturn(f *testing.F) {
+	for _, s := range []string{"", "/settings", "?ts_action=password&ts_result=done&state=s", "?ts_action=%", "#?",
+		"?ts_action=admin_lock&ts_result=unavailable", "?ts_action=pin&ts_action=pin&ts_result=done", "?state=%zz"} {
+		f.Add(s, "s")
+	}
+	f.Fuzz(func(t *testing.T, address, state string) {
+		back, err := ParseActionReturn(address, state)
+		if err != nil && back != nil {
+			t.Fatalf("a refusal with a result: %v", err)
+		}
+		if back == nil {
+			return
+		}
+		if !actionNames[back.Action] || !actionResults[back.Result] {
+			t.Fatalf("accepted %q / %q", back.Action, back.Result)
+		}
+		if _, err := ParseActionReturn(address, state+"x"); !errors.Is(err, ErrActionReturnState) {
+			t.Fatalf("another state was accepted too: %v", err)
 		}
 	})
 }

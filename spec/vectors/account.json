@@ -3759,5 +3759,867 @@
         "error": "invalid"
       }
     }
+  ],
+  "action_returns": [
+    {
+      "id": "action-username",
+      "attack": null,
+      "reason": "The way back of the action page `username`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=username&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "username",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-email",
+      "attack": null,
+      "reason": "The way back of the action page `email`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=email&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "email",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-password",
+      "attack": null,
+      "reason": "The way back of the action page `password`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "password",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-pin",
+      "attack": null,
+      "reason": "The way back of the action page `pin`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=pin&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "pin",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-totp",
+      "attack": null,
+      "reason": "The way back of the action page `totp`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=totp&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "totp",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-recovery-codes",
+      "attack": null,
+      "reason": "The way back of the action page `recovery_codes`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=recovery_codes&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "recovery_codes",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-passkeys",
+      "attack": null,
+      "reason": "The way back of the action page `passkeys`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=passkeys&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "passkeys",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-api-keys",
+      "attack": null,
+      "reason": "The way back of the action page `api_keys`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=api_keys&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "api_keys",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-app-passwords",
+      "attack": null,
+      "reason": "The way back of the action page `app_passwords`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=app_passwords&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "app_passwords",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-sessions",
+      "attack": null,
+      "reason": "The way back of the action page `sessions`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=sessions&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "sessions",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-session-end",
+      "attack": null,
+      "reason": "The way back of the action page `session_end`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=session_end&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "session_end",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-programs",
+      "attack": null,
+      "reason": "The way back of the action page `programs`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=programs&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "programs",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-services",
+      "attack": null,
+      "reason": "The way back of the action page `services`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=services&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "services",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-totp-reset",
+      "attack": null,
+      "reason": "The way back of the action page `admin_totp_reset`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_totp_reset&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_totp_reset",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-lock",
+      "attack": null,
+      "reason": "The way back of the action page `admin_lock`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_lock&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_lock",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-unlock",
+      "attack": null,
+      "reason": "The way back of the action page `admin_unlock`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_unlock&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_unlock",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-roles",
+      "attack": null,
+      "reason": "The way back of the action page `admin_roles`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_roles&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_roles",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-key-revoke",
+      "attack": null,
+      "reason": "The way back of the action page `admin_key_revoke`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_key_revoke&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_key_revoke",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-program-revoke",
+      "attack": null,
+      "reason": "The way back of the action page `admin_program_revoke`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_program_revoke&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_program_revoke",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-session-end",
+      "attack": null,
+      "reason": "The way back of the action page `admin_session_end`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_session_end&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_session_end",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "action-admin-signin-link",
+      "attack": null,
+      "reason": "The way back of the action page `admin_signin_link`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_signin_link&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "admin_signin_link",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "result-cancelled",
+      "attack": null,
+      "reason": "The result `cancelled`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=cancelled&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "password",
+          "result": "cancelled"
+        }
+      }
+    },
+    {
+      "id": "result-unavailable",
+      "attack": null,
+      "reason": "The result `unavailable`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=unavailable&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "password",
+          "result": "unavailable"
+        }
+      }
+    },
+    {
+      "id": "state-escaped",
+      "attack": null,
+      "reason": "A `state` of 128 printable ASCII characters comes back escaped; it is decoded before the comparison.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=totp&ts_result=done&state=a%2Bb%2Fc%3Dd%26e%25f%3Fg%23h%21%27%28%29%2A~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "state": "a+b/c=d&e%f?g#h!'()*~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "totp",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "no-state",
+      "attack": null,
+      "reason": "Without a state on either side.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=pin&ts_result=cancelled",
+        "state": null
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "pin",
+          "result": "cancelled"
+        }
+      }
+    },
+    {
+      "id": "empty-state",
+      "attack": null,
+      "reason": "An empty `state` in the address and none issued are the same.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=pin&ts_result=done&state=",
+        "state": null
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "pin",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "return-with-query",
+      "attack": null,
+      "reason": "A `return` with a query of its own and a fragment: TinySesam replaces the three names already in it and keeps the rest; the fragment is no part of the query.",
+      "input": {
+        "url": "https://app.example.com/settings?tab=security&ts_action=api_keys&ts_result=done&state=s-81f2#top",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "api_keys",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "path-only",
+      "attack": null,
+      "reason": "The address as a request line names it: a path with its query.",
+      "input": {
+        "url": "/settings?ts_action=passkeys&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "passkeys",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "query-only",
+      "attack": null,
+      "reason": "Only the query, with its `?` (a browser's `location.search`).",
+      "input": {
+        "url": "?state=s-81f2&ts_result=unavailable&ts_action=services",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "services",
+          "result": "unavailable"
+        }
+      }
+    },
+    {
+      "id": "encoded-value",
+      "attack": null,
+      "reason": "A value is decoded before it is compared (`%77` is `w`).",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=pass%77ord&ts_result=d%6Fne&state=s%2D81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "password",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "other-parameters",
+      "attack": null,
+      "reason": "Parameters of the application, also odd ones, are its own business.",
+      "input": {
+        "url": "https://app.example.com/settings?q=100%&ts_action=password&x&ts_result=done&=y&state=s-81f2&z=%zz",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": {
+          "action": "password",
+          "result": "done"
+        }
+      }
+    },
+    {
+      "id": "absent",
+      "attack": null,
+      "reason": "An address without a way back: nothing to read, no refusal.",
+      "input": {
+        "url": "https://app.example.com/settings",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": null
+      }
+    },
+    {
+      "id": "absent-other-query",
+      "attack": null,
+      "reason": "Only parameters of the application (a `state` alone is none of an action page).",
+      "input": {
+        "url": "https://app.example.com/settings?tab=1&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": null
+      }
+    },
+    {
+      "id": "absent-in-fragment",
+      "attack": null,
+      "reason": "The three names in the fragment are no part of the query.",
+      "input": {
+        "url": "https://app.example.com/settings#ts_action=password&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": null
+      }
+    },
+    {
+      "id": "absent-encoded-names",
+      "attack": null,
+      "reason": "A name counts only as it is written: `ts%5Faction` is a parameter of the application.",
+      "input": {
+        "url": "https://app.example.com/settings?ts%5Faction=password&ts%5Fresult=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": true,
+        "return": null
+      }
+    },
+    {
+      "id": "unknown-action",
+      "attack": "action-return",
+      "reason": "An action name no action page gives.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=admin_delete&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-upper-case",
+      "attack": "action-return",
+      "reason": "Action names are compared exactly.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=Password&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-empty",
+      "attack": "action-return",
+      "reason": "An empty action name.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-no-value",
+      "attack": "action-return",
+      "reason": "`ts_action` without a value.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-plus",
+      "attack": "action-return",
+      "reason": "`+` is a space: no action name.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=pass+word&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-bad-escape",
+      "attack": "action-return",
+      "reason": "A `%` without two hex digits.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=passwor%6&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-raw-non-ascii",
+      "attack": "action-return",
+      "reason": "A value outside printable ASCII as it is written.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=passwordä&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-missing",
+      "attack": "action-return",
+      "reason": "`ts_result` without `ts_action`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "result-missing",
+      "attack": "action-return",
+      "reason": "`ts_action` without `ts_result`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "unknown-result",
+      "attack": "action-return",
+      "reason": "A result no action page gives.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=ok&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "result-upper-case",
+      "attack": "action-return",
+      "reason": "Results are compared exactly.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=DONE&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "action-twice",
+      "attack": "action-return",
+      "reason": "`ts_action` twice.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_action=pin&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "result-twice",
+      "attack": "action-return",
+      "reason": "`ts_result` twice, even with the same value.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&ts_result=done&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-twice",
+      "attack": "action-return",
+      "reason": "`state` twice, even with the same value.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f2&state=s-81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-bad-escape",
+      "attack": "action-return",
+      "reason": "A `state` with a `%` without two hex digits.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f2%",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-decodes-to-space",
+      "attack": "action-return",
+      "reason": "A `state` that decodes to a space (`+`) is none TinySesam hands back.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s+81f2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-decodes-to-non-ascii",
+      "attack": "action-return",
+      "reason": "A `state` that decodes outside printable ASCII.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f2%C3%A4",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-too-long",
+      "attack": "action-return",
+      "reason": "A `state` above 128 characters is none TinySesam hands back.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss",
+        "state": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+      },
+      "expected": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "state-other",
+      "attack": "action-return",
+      "reason": "A `state` the application did not issue.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f3",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "state"
+      }
+    },
+    {
+      "id": "state-prefix",
+      "attack": "action-return",
+      "reason": "A prefix of the issued `state`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "state"
+      }
+    },
+    {
+      "id": "state-longer",
+      "attack": "action-return",
+      "reason": "The issued `state` and more.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f2x",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "state"
+      }
+    },
+    {
+      "id": "state-case",
+      "attack": "action-return",
+      "reason": "Another case of the issued `state`.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=S-81F2",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "state"
+      }
+    },
+    {
+      "id": "state-missing",
+      "attack": "action-return",
+      "reason": "No `state` came back, one was issued.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done",
+        "state": "s-81f2"
+      },
+      "expected": {
+        "ok": false,
+        "error": "state"
+      }
+    },
+    {
+      "id": "state-unexpected",
+      "attack": "action-return",
+      "reason": "A `state` came back, none was issued.",
+      "input": {
+        "url": "https://app.example.com/settings?ts_action=password&ts_result=done&state=s-81f2",
+        "state": null
+      },
+      "expected": {
+        "ok": false,
+        "error": "state"
+      }
+    }
   ]
 }

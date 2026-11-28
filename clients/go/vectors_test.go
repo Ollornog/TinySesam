@@ -382,6 +382,32 @@ func TestAccountVectors(t *testing.T) {
 		}
 	}
 	t.Logf("%d action address vectors", len(urls))
+	returns := doc["action_returns"].([]any)
+	if len(returns) == 0 {
+		t.Fatal("no action return vectors")
+	}
+	for _, raw := range returns {
+		v := raw.(map[string]any)
+		id := "action_returns/" + v["id"].(string)
+		in, exp := v["input"].(map[string]any), v["expected"].(map[string]any)
+		state, _ := in["state"].(string)
+		back, err := ParseActionReturn(in["url"].(string), state)
+		var got map[string]any
+		switch {
+		case errors.Is(err, ErrActionReturnInvalid) && back == nil:
+			got = map[string]any{"ok": false, "error": "invalid"}
+		case errors.Is(err, ErrActionReturnState) && back == nil:
+			got = map[string]any{"ok": false, "error": "state"}
+		case err != nil:
+			got = map[string]any{"ok": false, "error": err.Error()}
+		default:
+			got = map[string]any{"ok": true, "return": normalize(t, back)}
+		}
+		if !reflect.DeepEqual(got, exp) {
+			t.Errorf("%s: %v, want %v", id, got, exp)
+		}
+	}
+	t.Logf("%d action return vectors", len(returns))
 }
 
 // memoryStore is the jti store of a vector: the ids in input.seen are already in it.

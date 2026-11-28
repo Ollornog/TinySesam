@@ -187,8 +187,11 @@ TinySesam's account page — link to `Links.Account`, `Links.Sessions`, … — 
 `Actions` holds their addresses, and every session its `Handle` and `End`, the page that ends exactly that session.
 `ActionURL(href, returnTo, state)` builds the address to send the person to, with the way back to `returnTo` (an
 absolute `http(s)` URL of your host) and your `state`; the page comes back with `ts_action`, `ts_result` and `state`.
-An unsafe href, another `returnTo` or a bad state is an error wrapping `ErrActionURL`. Do not cache the result across
-sessions.
+An unsafe href, another `returnTo` or a bad state is an error wrapping `ErrActionURL`. Back on your page,
+`ParseActionReturn(r.URL.RequestURI(), state)` reads that way back: an `*ActionReturn` (`Action`, `Result`) for one of
+the register's actions and results with exactly the state you issued (compared in constant time), `nil, nil` for an
+ordinary visit, `ErrActionReturnInvalid` or `ErrActionReturnState` for anything else — a hint for a message, never a
+proof. Do not cache the result across sessions.
 
 ```go
 acct, err := tinysesam.FetchAccount(r.Context(), nil, "https://auth.example.com/auth/account.json", r)

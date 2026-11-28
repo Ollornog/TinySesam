@@ -15,7 +15,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createGate } from '../../src/index.ts';
+import { ActionReturnRefused, createGate, parseActionReturn } from '../../src/index.ts';
 import { gateMiddleware, identityOf } from '../../src/node.ts';
 
 const APP = 'docs';
@@ -25,7 +25,10 @@ if (process.env.TS_TRUSTED_PROXY) {
 }
 const gate = await createGate({ mode: 'header', trustedProxies: proxies });
 const identify = gateMiddleware(gate);
-const SCRIPT = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+// The page has no bundler: it gets the gate client's parser of the way back (spec section 8c) as source in front of
+// its own script. Both declarations are self-contained (src/action-return.ts; the vector test runs this very copy).
+const PARSER = `const tsActionReturn = (() => {\n${ActionReturnRefused}\n${parseActionReturn}\nreturn parseActionReturn;\n})();\n`;
+const SCRIPT = PARSER + readFileSync(new URL('./app.js', import.meta.url), 'utf8');
 
 /** Text into HTML: every character that could leave the text. */
 function e(s: string): string {

@@ -2103,6 +2103,10 @@
       "sig": "class (app: 'Callable[..., Any]', gate: 'GateClient')",
       "tier": "B"
     },
+    "ActionReturnRefused": {
+      "sig": "class (reason: 'str')",
+      "tier": "B"
+    },
     "AudienceError": {
       "sig": "class (detail: 'str' = '', *, kid: 'str' = '')",
       "tier": "B"
@@ -2321,6 +2325,10 @@
     },
     "parse_account": {
       "sig": "(data: 'Any') -> 'dict[str, Any]'",
+      "tier": "B"
+    },
+    "parse_action_return": {
+      "sig": "(address: 'str', state: 'Optional[str]' = None) -> 'Optional[dict[str, str]]'",
       "tier": "B"
     },
     "parse_topbar": {

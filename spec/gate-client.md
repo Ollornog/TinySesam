@@ -596,6 +596,25 @@ GET <actions.password>&return=<url>&state=<opaque>        (?return=… when the 
   `return=<return>` and, with a state, `&state=<state>`, both escaped octet by octet — every character but
   `A-Z a-z 0-9 - . _ ~` as `%XX` with upper-case hex digits. The client sends nothing: the application sends the
   person there by navigation. The vectors are the list `action_urls` of `vectors/account.json`.
+- **Reading the way back** (T-158, optional like the call above). A client with the account helper offers one function
+  that reads the way back from the address the person came back on — an absolute URL, a path with its query, or the
+  query alone with its `?` — and the `state` the application issued (none or empty for none):
+  1. The query is what lies between the first `?` and the first `#` of the address. It is split at `&`, a pair at its
+     first `=` (a pair without `=` has the empty value). Only pairs whose name is exactly `ts_action`, `ts_result` or
+     `state` as written count (`ts%5Faction` is none); every other parameter is the application's.
+  2. Neither `ts_action` nor `ts_result`: no way back, an ordinary visit — the function says so (vector
+     `expected.return: null`), it refuses nothing.
+  3. Otherwise it refuses with `invalid`: one of the three names more than once, `ts_action` or `ts_result` missing, a
+     value whose written form is not printable ASCII (`0x21`–`0x7e`) or carries a `%` without two hex digits, an action
+     besides the 21 names of the register (the thirteen own ones — the twelve of `actions` and `session_end` — and the
+     eight administration actions below), a result besides `done`, `cancelled` and `unavailable`, and a `state` that
+     is not printable ASCII of at most 128 characters. A value is decoded before it is compared: `+` is a space,
+     `%XX` the octet (either case of hex digit); names are compared exactly, case included.
+  4. Then it compares the `state` that came back (none: empty) with the one issued, octet by octet in constant time,
+     and refuses with `state` when they differ — also when one side has none.
+  5. Otherwise the result is `{"action", "result"}`: a hint for a message, never a proof.
+  An application that issued several states (one per link) asks with each of them. The vectors are the list
+  `action_returns` of `vectors/account.json`.
 - **Administration** ([T-147](../backlog/T-147-administration-actions-on-action-pages-area-admin.md)). The same
   pages act on another account for a person who administers it: `admin_lock`, `admin_unlock`, `admin_roles`,
   `admin_totp_reset`, `admin_key_revoke`, `admin_program_revoke`, `admin_session_end` and `admin_signin_link`, at
@@ -686,7 +705,7 @@ request TinySesam answers carries `Remote-Kind`, the header vectors about other 
 | `headers.json` | header mode: `input.headers` → `expected` (`identity` [+ `has_role`] or `error`). A header value is a string of octets, one code point U+0000–U+00FF per octet (convert with Latin-1); a list means the field occurred more than once |
 | `jwks.json` | `sets`: a JWKS document → usable `kids` in order, or `error: jwks_invalid`; `scenarios`: steps with `now`, `jws` and a simulated `fetch` answer (`status`, `cache_control`, `body` or `body_text`, or `error`) → `expect` (`fetched`, `ok`, `error`). A client that fetches where no `fetch` is given fails the step |
 | `topbar.json` | §8: `input.topbar` → the normalized `expected.topbar` |
-| `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account`; `action_urls` (§8c, the client's call): `input` `href`, `return`, `state` (a string or `null`) → `expected.url`, or `error: invalid` |
+| `account.json` | §8a: `input.account` (the body of a `200` answer) → the normalized `expected.account`; `action_urls` (§8c, the client's call): `input` `href`, `return`, `state` (a string or `null`) → `expected.url`, or `error: invalid`; `action_returns` (§8c, reading the way back): `input` `url`, `state` (a string or `null`) → `expected.return` (`{"action", "result"}` or `null`), or `error: invalid` / `error: state` |
 | `permissions.json` | §3.4: `headers` (as in `headers.json`, `expected.permissions` + `has_permission`, or `error`), `tokens` (as in `token.json`, the same expectations) and `register` (`input` `base_url`, `app`, `permissions` → `expected.request` `method`, `url`, `body`, or `error: invalid`). The identities of `token.json` and `headers.json` do not list `permissions`; this file does |
 
 Every vector has an `id`, a `reason` and an `attack` class (`null` for a plain valid case). Every attack vector carries
@@ -744,6 +763,7 @@ three segments, a missing claim) are listed there with the reason. Each file nam
 | `account-href` | unsafe links in the account overview |
 | `account-types` | an account overview of the wrong shape, members of the wrong type, unknown and missing members |
 | `action-request` | the address of an action page (§8c): an unsafe `href` or one with a fragment, a `return` that is no absolute printable-ASCII `http(s)` URL, a `state` outside the rule |
+| `action-return` | the way back of an action page (§8c): an unknown action or result, one of the three names twice or missing, a broken escape, a value outside printable ASCII, a `state` outside the rule or not the one issued |
 | `permissions-parsing` | commas, spaces, empty and repeated entries, case, a prefix, `admin` — exact comparison, nothing implied |
 | `permissions-header` | `Remote-Permissions` twice, with a control character, invalid UTF-8; a `ts_perms` of the wrong type or with a control character |
 | `register-manifest` | manifests the client refuses before sending: names outside the rule, a name twice, too many entries, an application id outside the rule, a plain `http` base URL |

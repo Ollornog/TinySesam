@@ -236,6 +236,11 @@ session its `handle` and `end`, the page that ends exactly that session. `action
 address to send the person to, with the way back to `returnTo` (an absolute `http(s)` URL of your host) and your
 `state` — `actionUrl(session.end, 'https://app.example.com/settings', 's-81f2')` ends one session; the page comes back
 with `ts_action`, `ts_result` and `state`. An unsafe href, another `returnTo` or a bad state throws a `ConfigError`.
+Back on your page, `parseActionReturn(location.search, state)` reads that way back: `{action, result}` for one of the
+register's actions and results with exactly the state you issued (compared in constant time), `null` for an ordinary
+visit, an `ActionReturnRefused` (`reason` `invalid` or `state`) for anything else — a hint for a message, never a proof.
+The parser is self-contained (`src/action-return.ts`), so a page without a bundler can carry its source; example Ex4
+does.
 
 ## Approval confirmations
 

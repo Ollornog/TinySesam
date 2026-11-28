@@ -3,7 +3,8 @@
 // It reads the account's state from /.tinysesam/account.json on this host (spec section 8a) and writes nothing: every
 // change is a link to one of TinySesam's action pages (section 8c) with `return` (this page) and `state` (a value
 // this page issued and keeps in sessionStorage). Back here, `ts_action`, `ts_result` and `state` say what happened —
-// a hint for a message, never a proof: the page reads account.json again. No password, code or key ever reaches it.
+// read by the gate client's parser (parseActionReturn, carried in by the server as `tsActionReturn`) — a hint for a
+// message, never a proof: the page reads account.json again. No password, code or key ever reaches it.
 // For a person who administers accounts in this application's area, account.json names TinySesam's administration
 // data (`admin.accounts`, spec section 8b, T-106): the page reads it the same way and draws its administration
 // section from it — every account with the links TinySesam offers for it.
@@ -241,25 +242,44 @@
 
   /** Back from an action page: a message for a result this page asked for, and the address without the three. */
   function result() {
-    const q = new URLSearchParams(location.search);
-    // Only names this page knows: a value from the address becomes a key of its own tables, never text of its own.
-    const action = Object.keys(TITLES).find((k) => k === q.get('ts_action'));
-    const outcome = Object.keys(RESULTS).find((k) => k === q.get('ts_result')) || 'unknown';
-    if (!q.has('ts_action')) {
+    // The gate client's parser (parseActionReturn, carried in by the server as `tsActionReturn`) reads the way back:
+    // only the 21 action names and three results of the register, the state compared in constant time. A value from
+    // the address becomes a key of this page's own tables, never text of its own.
+    const read = (state) => {
+      try {
+        return { back: tsActionReturn(location.search, state) };
+      } catch (err) {
+        return { refused: err.reason === 'state' ? 'state' : 'invalid' };
+      }
+    };
+    const probe = read(null);
+    if (probe.back === null) {
       return;
     }
-    const state = q.get('state') || '';
-    const list = issued();
+    let back = null;
+    if (probe.refused !== 'invalid') {
+      // This page issues one state per link: the way back must carry one of them.
+      const list = issued();
+      const state = list.find((s) => read(s).back);
+      if (state !== undefined) {
+        back = read(state).back;
+        remember(list.filter((s) => s !== state));
+      }
+    }
     const notice = document.getElementById('notice');
-    if (list.includes(state)) {
-      remember(list.filter((s) => s !== state));
-      notice.textContent = `${action ? TITLES[action] : 'Unknown action'}: ${RESULTS[outcome] || 'unknown result'}`;
-      notice.dataset.result = outcome;
+    if (back) {
+      notice.textContent = `${TITLES[back.action] || back.action}: ${RESULTS[back.result]}`;
+      notice.dataset.result = back.result;
+      notice.dataset.action = back.action;
+    } else if (probe.refused === 'invalid') {
+      notice.textContent = 'An address came back that no action page gives — ignored.';
+      notice.dataset.result = 'invalid';
+      notice.dataset.action = 'unknown';
     } else {
       notice.textContent = 'A result came back that this page did not ask for — ignored.';
       notice.dataset.result = 'foreign';
+      notice.dataset.action = 'unknown';
     }
-    notice.dataset.action = action || 'unknown';
     notice.hidden = false;
     history.replaceState(null, '', location.pathname);
   }

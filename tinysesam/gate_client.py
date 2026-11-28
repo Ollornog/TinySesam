@@ -31,6 +31,7 @@ import contextvars
 import dataclasses
 import functools
 import hashlib
+import hmac
 import inspect
 import ipaddress
 import json
@@ -54,7 +55,7 @@ __all__ = [
     "WSGIMiddleware", "ASGIMiddleware", "require_auth", "require_role", "require_session", "require_account_kind",
     "guard_status",
     "current_identity", "Topbar", "TopbarLink", "TopbarApprovals", "TopbarFrame", "parse_topbar", "fetch_topbar",
-    "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account", "action_url",
+    "SIGNED_OUT_ACCOUNT", "parse_account", "fetch_account", "action_url", "parse_action_return", "ActionReturnRefused",
     "PermissionRequest", "register_request", "register_permissions", "RegistrationFailed",
 ]
 
@@ -1477,6 +1478,86 @@ def action_url(href: str, return_to: str, state: Optional[str] = None) -> str:
         raise ConfigError(f"action_url: state is printable ASCII of at most {_STATE_MAX} characters")
     url = f"{href}{'&' if '?' in href else '?'}return={_query_escape(return_to)}"
     return f"{url}&state={_query_escape(state)}" if state else url
+
+
+#: Every name an action page hands back in `ts_action` (spec §8c): the own actions and the administration's.
+_ACTION_NAMES = frozenset({
+    "username", "email", "password", "pin", "totp", "recovery_codes", "passkeys", "api_keys", "app_passwords",
+    "sessions", "session_end", "programs", "services",
+    "admin_totp_reset", "admin_lock", "admin_unlock", "admin_roles", "admin_key_revoke", "admin_program_revoke",
+    "admin_session_end", "admin_signin_link"})
+#: Every result an action page hands back in `ts_result` — a hint for a message, never a proof.
+_ACTION_RESULTS = frozenset({"done", "cancelled", "unavailable"})
+_BACK_NAMES = ("ts_action", "ts_result", "state")
+_HEX = frozenset("0123456789abcdefABCDEF")
+
+
+class ActionReturnRefused(ValueError):
+    """The address carries a way back that `parse_action_return` refuses. `reason` is `invalid` (not a way back an
+    action page gives: an unknown action or result, a name twice, a broken escape) or `state` (a `state` the
+    application did not issue). Show no message for it; the application reads the account overview again anyway."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"action page way back refused: {reason}")
+        self.reason = reason
+
+
+def _form_decode(raw: str) -> Optional[str]:
+    """A query value as written (printable ASCII) → its octets as a Latin-1 text (`+` a space, `%XX` an octet), or
+    None for a character outside printable ASCII or a `%` without two hex digits."""
+    if not _printable_ascii(raw):
+        return None
+    out, i = [], 0
+    while i < len(raw):
+        c = raw[i]
+        if c == "%":
+            if raw[i + 1:i + 2] not in _HEX or raw[i + 2:i + 3] not in _HEX:
+                return None
+            out.append(chr(int(raw[i + 1:i + 3], 16)))
+            i += 3
+            continue
+        out.append(" " if c == "+" else c)
+        i += 1
+    return "".join(out)
+
+
+def parse_action_return(address: str, state: Optional[str] = None) -> Optional[dict[str, str]]:
+    """Reads the way back of an action page (spec §8c) from the address the person came back on — an absolute URL, a
+    path with its query or the query alone with its `?` (the query is what lies between the first `?` and the first
+    `#`). `state` is the value the application issued with `action_url` (`None` or empty for none).
+
+    Returns `{"action": <action name>, "result": <result>}`, or None when the address carries
+    neither `ts_action` nor `ts_result` (an ordinary visit). Raises `ActionReturnRefused` — `invalid` for a way back no
+    action page gives (an unknown action or result, one of the three names twice, one of them missing, a value outside
+    printable ASCII, a broken escape, a `state` outside the rule), `state` when the `state` that came back is not the
+    one issued (compared in constant time). Only the names `ts_action`, `ts_result` and `state` exactly as written
+    count; every other parameter is the application's. The result is a hint for a message, never a proof."""
+    query = address.split("#", 1)[0]
+    query = query.split("?", 1)[1] if "?" in query else ""
+    found: dict[str, list[str]] = {}
+    for pair in query.split("&"):
+        name, _, value = pair.partition("=")
+        if name in _BACK_NAMES:
+            found.setdefault(name, []).append(value)
+    if "ts_action" not in found and "ts_result" not in found:
+        return None
+    values = {}
+    for name in _BACK_NAMES:
+        raw = found.get(name, [])
+        if len(raw) > 1 or (not raw and name != "state"):
+            raise ActionReturnRefused("invalid")
+        decoded = _form_decode(raw[0]) if raw else ""
+        if decoded is None:
+            raise ActionReturnRefused("invalid")
+        values[name] = decoded
+    action, result, back = values["ts_action"], values["ts_result"], values["state"]
+    if action not in _ACTION_NAMES or result not in _ACTION_RESULTS:
+        raise ActionReturnRefused("invalid")
+    if len(back) > _STATE_MAX or not _printable_ascii(back):
+        raise ActionReturnRefused("invalid")
+    if not hmac.compare_digest(back.encode("latin-1"), (state or "").encode("utf-8")):
+        raise ActionReturnRefused("state")
+    return {"action": action, "result": result}
 
 
 def _permissions_view(value: Any) -> Optional[dict[str, Any]]:

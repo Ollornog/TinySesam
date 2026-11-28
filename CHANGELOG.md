@@ -55,6 +55,15 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The five gate clients read the way back of an action page (T-158, spec §8c "Reading the way back"):
+  `parse_action_return(address, state)` (`ParseActionReturn`, `account::parse_action_return`, `parseActionReturn`,
+  `Account::parseActionReturn`) takes the address the person came back on and the `state` the application issued and
+  gives the action and the result — one of the 21 action names of the register (the own ones, `session_end` and the
+  eight `admin_*`) and `done`, `cancelled` or `unavailable` —, nothing for an ordinary visit, and refuses anything else
+  (`invalid`: an unknown name, one of the three twice or missing, a broken escape; `state`: not the one issued,
+  compared in constant time). Vectors: the list `action_returns` in `spec/vectors/account.json` (attack class
+  `action-return`), from TinySesam's own way back. Example Ex4 reads its results with the JS parser, carried into the
+  page as source; `tests/test_headless_browser.py` X4 shows an unknown action refused and an ordinary visit silent.
 - The quickstart ships `deploy/quickstart/tinysesam.toml` (T-133, ADR-16): `docker-compose.yml` mounts it and sets
   `TINYSESAM_CONFIG`; the OIDC gateway's switches, the network and the database path live there, `.env` keeps the
   per-host values and overlays the file (the client secret as `env:`). The file gives the same configuration as the

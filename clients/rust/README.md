@@ -211,7 +211,11 @@ is signed out. Changes happen on TinySesam's account page, which `links` lead to
 `account::action_url(href, return_to, state)` builds the address to send the person to, with the way back to
 `return_to` (an absolute `http(s)` URL of your host) and your `state` — `action_url(end, "https://app.example.com/settings",
 Some("s-81f2"))` ends one session; the page comes back with `ts_action`, `ts_result` and `state`. An unsafe href,
-another `return_to` or a bad state is a `ConfigError`. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser").
+another `return_to` or a bad state is a `ConfigError`. Back on your page,
+`account::parse_action_return(request_uri, state)` reads that way back: `Ok(Some(ActionReturn { action, result }))`
+for one of the register's actions and results with exactly the state you issued (compared in constant time),
+`Ok(None)` for an ordinary visit, `Err(ActionReturnRefused::Invalid | ActionReturnRefused::State)` for anything else — a
+hint for a message, never a proof. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser").
 
 ## Approval confirmations
 

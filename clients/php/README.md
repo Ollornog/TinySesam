@@ -249,7 +249,11 @@ and every session its `handle` and `end`, the page that ends exactly that sessio
 $returnTo, $state)` builds the address to send the person to, with the way back to `$returnTo` (an absolute `http(s)`
 URL of your host) and your `$state` — `Account::actionUrl($session['end'], 'https://app.example.com/settings',
 's-81f2')` ends one session; the page comes back with `ts_action`, `ts_result` and `state`. An unsafe href, another
-`$returnTo` or a bad state throws a `ConfigError`.
+`$returnTo` or a bad state throws a `ConfigError`. Back on your page,
+`Account::parseActionReturn($_SERVER['REQUEST_URI'], $state)` reads that way back: `['action' => …, 'result' => …]`
+for one of the register's actions and results with exactly the state you issued (compared with `hash_equals`), `null`
+for an ordinary visit, an `ActionReturnRefused` (`reason` `invalid` or `state`) for anything else — a hint for a message,
+never a proof.
 
 ## Approval confirmations
 
