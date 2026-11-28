@@ -235,6 +235,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   cooldown) — it merges only when the newest commit is at least the ecosystem's `default-days` old (else 3) and marks
   the wait with the label `waiting-period` (kit 0.74); the rebuild check may read pull requests (kit 0.75). The
   hygiene test allows exactly the whole label line in `ausfuehren`, never the issues API wholesale.
+- Shared test kit 0.76.0: in a worktree without its own `.venv`, the pre-push hook borrowed the main checkout's
+  environment and its tests imported the main checkout's package instead of the worktree's code (a false red or a
+  false green). The hook now puts the tree on `PYTHONPATH` and stops loudly when an own package is not imported from
+  the tree.
 - Shared test kit 0.73.0 (from 0.69.0): the new check for unused dependencies (`scripts/_abhaengigkeiten.py`) runs in
   the `audit` workflow — deptry over `pyproject.toml` and `deploy/gateway/requirements.in`, `go mod tidy -diff` over
   every `go.mod`, cargo-machete over `clients/rust` — and is red at once (no `warn_until`): its findings are fixed here.
