@@ -24,6 +24,23 @@ people in, its admin panel and account page manage them, and the application cre
 4. Open `https://<app host>/`: TinySesam asks you to sign in, the application greets you by name. `/members` lists the
    people the application created and invites a new one — the answer holds the one-time sign-in link to hand over.
 
+## With an identity provider (optional)
+
+`tinysesam.toml` carries an OpenID Connect provider block, switched off (T-162): with it, the people of your provider
+sign in beside the local accounts on the same sign-in page (mixed accounts), and the provider's group `staff` becomes
+the role `ex1-staff` at every sign-in — and goes at the next one when the provider withdraws the group.
+
+1. At the provider: a confidential client (code flow) with the redirect URI `https://<auth host>/auth/oidc/callback`,
+   sending the `groups` claim (for a scope `groups`), and a group `staff` (or change the key of `oidc_group_role_map`
+   to the name your provider uses).
+2. In `tinysesam.toml`: remove the `#` in front of each `oidc_` line and set `oidc_issuer` and `oidc_client_id` to
+   your provider's. The secret never stands in the file (`oidc_client_secret = "env:EX1_OIDC_CLIENT_SECRET"`).
+3. In `docker-compose.yml`: remove the `#` in front of `EX1_OIDC_CLIENT_SECRET` (service `tinysesam`), and put the
+   secret into `.env`: `EX1_OIDC_CLIENT_SECRET=…`. Without it the server does not start.
+4. `docker compose up -d tinysesam`: the sign-in page offers the provider's button beside the password. The
+   application sees the provider's people like local ones: the role `ex1-staff` opens *Staff*, and the permissions
+   an administrator assigns to it apply to them too.
+
 ## What it shows
 
 - **Sign-in, panel, account page** are TinySesam's own pages; the application has no sign-in code.
@@ -44,4 +61,5 @@ people in, its admin panel and account page manage them, and the application cre
 `tests/test_example_ex1.py` builds the server from this `tinysesam.toml` and makes the calls of the Go program; the
 client-go workflow builds and vets the program. `tests/test_shell_browser.py` (part B) runs the whole stack — this
 configuration, the Go program and a forward-auth proxy doing what the Caddy template does — in Chrome at 375 and
-1280 px, light and dark.
+1280 px, light and dark. Its cell B5 switches the provider block on (a real provider on a loopback port,
+`tests/_test_idp.py`); `tests/test_server_config.py` builds the server from the switched-on block.

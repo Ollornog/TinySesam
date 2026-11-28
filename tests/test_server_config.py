@@ -9,17 +9,23 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import pathlib
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import TinySesamConfig  # noqa: E402
 from tinysesam import gateway  # noqa: E402
-from tinysesam._server_config import (FileError, SECRET_FIELDS, field_names,  # noqa: E402
-                                      values_from_file)
+from tinysesam._server_config import (FileError, SECRET_FIELDS, config_from_file,  # noqa: E402
+                                      field_names, values_from_file)
+
+from _test_idp import deploy_provider  # noqa: E402
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 TMP = tempfile.mkdtemp()
 PW = "a long gateway password 4711"
@@ -202,4 +208,34 @@ with Env(TINYSESAM_CONFIG=OIDC, OIDC_SECRET="s3cr3t", TINYSESAM_OIDC_ISSUER="htt
 assert cfg.oidc_enabled and cfg.password_enabled and cfg.oidc_issuer == "https://id.example.com"
 assert cfg.oidc_client_id == "gw" and cfg.oidc_client_secret == "s3cr3t"
 ok("OIDC and local accounts side by side from one file, issuer and client from the environment")
+
+# (i) T-162: the optional provider block of the example deployments Ex1 and Ex4 — off as shipped; switched on as their
+# README says (the `#` off the oidc_ lines and off the secret's line in the compose file, the secret in .env), the file
+# builds mixed accounts: the provider beside the local ones, the secret from the environment, a group of the provider
+# mapped to a role the example offers. The browser suites build Ex1 and Ex4 from exactly this block (cells B5, X9).
+for ex, role in (("ex1", "ex1-staff"), ("ex4", "docs-reader")):
+    deploy, where = ROOT / "deploy" / ex, f"deploy/{ex}/tinysesam.toml"
+    text = (deploy / "tinysesam.toml").read_text(encoding="utf-8")
+    assert not values_from_file(str(deploy / "tinysesam.toml"), env={}).get("oidc_enabled"), f"{where}: local by default"
+    enabled, block = deploy_provider(text, where)
+    secret_env = block["oidc_client_secret"].removeprefix("env:")
+    assert secret_env == f"{ex.upper()}_OIDC_CLIENT_SECRET", f"{where}: the secret's variable is {secret_env}"
+    compose = (deploy / "docker-compose.yml").read_text(encoding="utf-8")
+    assert f"# {secret_env}: ${{{secret_env}:?" in compose, f"deploy/{ex}/docker-compose.yml does not offer {secret_env}"
+    readme = (deploy / "README.md").read_text(encoding="utf-8")
+    assert "## With an identity provider" in readme and secret_env in readme and "/auth/oidc/callback" in readme, \
+        f"deploy/{ex}/README.md: the steps for the provider are missing"
+    assert block["oidc_issuer"].startswith("https://") and block["oidc_issuer"].endswith(".example.com"), block
+    path = write(f"{ex}-provider.toml", enabled.replace('db_path = "/data/', f'db_path = "{TMP}/'))
+    cfg = config_from_file(path, {}, env={secret_env: "probe-secret"})
+    assert cfg.oidc_enabled and cfg.password_enabled and cfg.oidc_client_secret == "probe-secret", where
+    assert role in cfg.available_roles and role in cfg.oidc_group_role_map.values(), (where, cfg.oidc_group_role_map)
+    try:
+        config_from_file(path, {}, env={})
+    except FileError as e:
+        assert secret_env in str(e), str(e)
+    else:
+        raise AssertionError(f"{where}: the provider block started without its secret")
+ok("Ex1 and Ex4 (T-162): local by default; the optional provider block switched on gives mixed accounts — the secret "
+   "from the environment the compose file passes (no start without it), a group mapped to the example's role")
 print("OK test_server_config")

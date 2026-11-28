@@ -13,6 +13,9 @@ assigns the permissions to the roles in the permission matrix and the roles to t
  4. The editor sees the button and deletes.
  5. The administrator withdraws `docs.delete` — at once the button is gone and the route refuses.
  6. An account without a role reads nothing (403).
+ 8. With an identity provider (optional, T-162): `--demo` reads `EX2_OIDC_*`; none set = local accounts only, some
+    set = a start error naming the missing ones, all set = the provider beside the local accounts, its group `readers`
+    mapped to `docs-reader`.
 """
 from __future__ import annotations
 
@@ -144,3 +147,25 @@ for path in ("/auth/account", "/auth/admin"):
     assert "<header class='tsbar tsside'>" in who.get(path, headers={"Accept": "text/html"}).text, path
 ok("7. shell at the side on the application's pages and on TinySesam's account page and panel; the editor sees "
    "Editing guide (role) and Trash (permission), the reader neither — and the routes agree; strict CSP with a nonce")
+
+# 8. T-162: the optional provider of `--demo` (`provider_from_env`). The browser suite's cell A4 signs in through a real
+# provider with exactly these overrides.
+assert example.provider_from_env({}) == {} and example.provider_from_env({"EX2_OIDC_ISSUER": "  "}) == {}
+try:
+    example.provider_from_env({"EX2_OIDC_ISSUER": "https://idp.example.com", "EX2_OIDC_CLIENT_ID": "ex2"})
+except SystemExit as e:
+    assert "EX2_OIDC_CLIENT_SECRET" in str(e) and "EX2_OIDC_CLIENT_ID as well" not in str(e), str(e)
+else:
+    raise AssertionError("Ex2 started with an incomplete provider")
+_provider = example.provider_from_env({"EX2_OIDC_ISSUER": "https://idp.example.com", "EX2_OIDC_CLIENT_ID": "ex2",
+                                       "EX2_OIDC_CLIENT_SECRET": "probe-secret"})
+assert _provider["oidc_enabled"] and _provider["oidc_issuer"] == "https://idp.example.com", _provider
+assert _provider["base_url"] == example.DEMO_URL and "groups" in _provider["oidc_scopes"].split(), _provider
+assert _provider["oidc_group_role_map"] == {"readers": "docs-reader"}, _provider
+# The configuration holds together (the router itself needs the extra [oidc]: the browser suite builds it).
+_mixed = example.TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "ex2-idp.db"), password_enabled=True,
+                                 available_roles=["docs-reader", "docs-editor"], **_provider)
+assert _mixed.oidc_enabled and _mixed.password_enabled and set(_mixed.oidc_group_role_map.values()) <= set(
+    _mixed.available_roles), _mixed.oidc_group_role_map
+ok("8. --demo with an identity provider (T-162): none of EX2_OIDC_* = local only, an incomplete set = a start error "
+   "naming what is missing, all three = the provider beside the local accounts, its group readers → docs-reader")

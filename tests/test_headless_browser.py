@@ -31,8 +31,9 @@ suite can show that no secret ever reached it.
      links TinySesam offers it (lock, unlock, roles, sign-in link), locks and unlocks one; the section reads the state
      again. A reader sees no administration section and never asks for the data. Neither the panel nor the full
      account page is ever opened (T-106 acceptance): the proxy saw no request for them.
-  X9 origin "mixed" (T-107): the configuration plus a real identity provider (`_test_idp`); a provider's account signs
-     in through it beside the local ones and gets the same application under the same rules.
+  X9 origin "mixed" (T-107): the configuration with its optional provider block switched on (T-162), the provider a
+     real one (`_test_idp`); a provider's account signs in through it beside the local ones and gets the same
+     application under the same rules.
   X1/X3 also show the account's own events and its API keys by name, from account.json (T-106).
 
 Skipped without Chrome, `websockets`, `uvicorn`, the extra [passkey] (Ex4 offers passkeys) or [oidc] (T-107); needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
@@ -100,35 +101,37 @@ if NODE:
     _major, _minor = (int(x) for x in _version.lstrip("v").split(".")[:2])
     assert (_major, _minor) >= (22, 18), f"Ex4 needs Node >= 22.18 (type stripping), found {_version}"
 
-    from _test_idp import TestIdP
-    # T-107, origin "mixed": the configuration of deploy/ex4 plus an identity provider — a real one on a loopback port
-    # (`_test_idp`) whose group `docs` an administrator mapped to the local role docs-reader. Ex4 itself is unchanged.
-    idp = TestIdP({"ivy": {"email": "ivy@example.test", "email_verified": True, "groups": ["docs"]}},
-                  client_id="ex4", client_secret="probe-secret")
+    from _test_idp import TestIdP, deploy_provider
+    # T-107, origin "mixed": deploy/ex4 with its optional provider block switched on (T-162) — the provider a real one
+    # on a loopback port (`_test_idp`); the block maps a group of the provider to the local role docs-reader.
+    _tmp = tempfile.mkdtemp(prefix="ex4-")
+    toml, provider = deploy_provider((ROOT / "deploy" / "ex4" / "tinysesam.toml").read_text(encoding="utf-8"),
+                                     "deploy/ex4/tinysesam.toml")
+    _groups = [g for g, role in provider["oidc_group_role_map"].items() if role == "docs-reader"]
+    assert _groups, f"deploy/ex4/tinysesam.toml: no group of the provider maps to docs-reader: {provider}"
+    _secret_env = provider["oidc_client_secret"].removeprefix("env:")
+    idp = TestIdP({"ivy": {"email": "ivy@example.test", "email_verified": True, "groups": _groups[:1]}},
+                  client_id=provider["oidc_client_id"], client_secret="probe-secret")
     proxy = RecordingProxy(0, 0, auth_name="auth.example.test", app_name="app.example.test")
     AUTH, EX4 = f"http://auth.example.test:{proxy.port}", f"http://app.example.test:{proxy.port}"
-    _tmp = tempfile.mkdtemp(prefix="ex4-")
-    toml = (ROOT / "deploy" / "ex4" / "tinysesam.toml").read_text(encoding="utf-8")
     toml = (toml.replace("https://auth.example.com", AUTH).replace("example.com", "example.test")
             .replace('trusted_proxies = ["172.31.0.0/16"]', 'trusted_proxies = ["127.0.0.1/32"]')
             .replace('https_mode = "warn"', 'https_mode = "warn"\ncookie_secure = false\n'
-                                            'cookie_domain = ".example.test"\n'
-                                            f'oidc_enabled = true\noidc_issuer = "{idp.issuer}"\n'
-                                            'oidc_client_id = "ex4"\noidc_client_secret = "env:EX4_OIDC_CLIENT_SECRET"\n'
-                                            'oidc_scopes = "openid profile email groups"\n'
-                                            'oidc_group_role_map = { docs = "docs-reader" }'))
+                                            'cookie_domain = ".example.test"')
+            .replace(f'oidc_issuer = "{provider["oidc_issuer"].replace("example.com", "example.test")}"',
+                     f'oidc_issuer = "{idp.issuer}"'))
     assert "example.com" not in toml and "cookie_domain" in toml and idp.issuer in toml, \
         "deploy/ex4/tinysesam.toml changed its shape"
     with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
         fh.write(toml)
     _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
-    os.environ.update(TINYSESAM_CONFIG=os.path.join(_tmp, "tinysesam.toml"), TINYSESAM_DB=os.path.join(_tmp, "ex4.db"),
-                      EX4_OIDC_CLIENT_SECRET=idp.client_secret)
+    os.environ.update({"TINYSESAM_CONFIG": os.path.join(_tmp, "tinysesam.toml"),
+                       "TINYSESAM_DB": os.path.join(_tmp, "ex4.db"), _secret_env: idp.client_secret})
     try:
         from tinysesam import gateway
         ex4_app = gateway.build_app()
     finally:
-        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB", "EX4_OIDC_CLIENT_SECRET"):
+        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB", _secret_env):
             os.environ.pop(_k, None)
         os.environ.update(_saved)
     auth = ex4_app.state.auth

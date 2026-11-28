@@ -14,6 +14,8 @@ services:
     environment:
       TINYSESAM_CONFIG: /etc/tinysesam.toml
       TINYSESAM_PORT: "8000"
+      # With the optional identity provider of tinysesam.toml (README, "With an identity provider"): remove the "#".
+      # EX4_OIDC_CLIENT_SECRET: ${EX4_OIDC_CLIENT_SECRET:?the client secret of the provider, in .env}
     volumes:
       - ./tinysesam.toml:/etc/tinysesam.toml:ro
       - tinysesam-data:/data

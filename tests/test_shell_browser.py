@@ -11,7 +11,8 @@
   C. The permission matrix of the panel (T-100): a dangerous permission asks for a step-up, an area administrator sees
      only the own area.
   A4/B5 (T-107, the acceptance matrix): both examples beside a real identity provider (`_test_idp`) — a provider's
-     account signs in through it and gets what the local account with the equivalent role gets.
+     account signs in through it and gets what the local account with the equivalent role gets. The provider's
+     settings are the examples' own (T-162): Ex2's `provider_from_env`, the optional block of deploy/ex1.
 
 Skipped without Chrome, `websockets` or the extra [oidc]; part B needs `go` (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
@@ -106,15 +107,20 @@ async def clean(p: Page, where: str, console_before: int, failed_before: int) ->
 spec = importlib.util.spec_from_file_location("example_ex2", ROOT / "examples" / "ex2" / "app.py")
 ex2 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ex2)
-from _test_idp import TestIdP  # noqa: E402
+from _test_idp import TestIdP, deploy_provider  # noqa: E402
 
-# T-107, origin "mixed": Ex2 as it is plus an identity provider — a real one on a loopback port (`_test_idp`) whose
-# group `readers` an administrator mapped to the local role docs-reader.
-ex2_idp = TestIdP({"ida": {"email": "ida@example.test", "email_verified": True, "groups": ["readers"]}},
-                  client_id="ex2", client_secret="probe-secret")
-ex2_app, ex2_auth = ex2.build(os.path.join(tempfile.mkdtemp(), "ex2.db"), base_url="http://127.0.0.1", oidc_enabled=True, oidc_issuer=ex2_idp.issuer, oidc_client_id="ex2",
-                              oidc_client_secret=ex2_idp.client_secret, oidc_scopes="openid profile email groups",
-                              oidc_group_role_map={"readers": "docs-reader"})
+# T-107, origin "mixed": Ex2 with its optional provider (T-162, `ex2.provider_from_env`, as `--demo` reads it) — the
+# provider a real one on a loopback port (`_test_idp`); the example maps a group of the provider to docs-reader.
+ex2_idp = TestIdP({}, client_id="ex2", client_secret="probe-secret")
+_ex2_provider = ex2.provider_from_env({"EX2_OIDC_ISSUER": ex2_idp.issuer, "EX2_OIDC_CLIENT_ID": ex2_idp.client_id,
+                                       "EX2_OIDC_CLIENT_SECRET": ex2_idp.client_secret}, base_url="http://127.0.0.1")
+_ex2_groups = [g for g, role in _ex2_provider.get("oidc_group_role_map", {}).items() if role == "docs-reader"]
+assert _ex2_provider.get("oidc_enabled") and _ex2_groups, \
+    f"Ex2's provider maps no group to docs-reader: {_ex2_provider}"
+assert ex2.provider_from_env({}) == {}, "Ex2 without the provider's variables must run with local accounts only"
+ex2_idp.users["ida"] = {"sub": "ida-sub", "preferred_username": "ida", "email": "ida@example.test",
+                        "email_verified": True, "groups": _ex2_groups[:1]}
+ex2_app, ex2_auth = ex2.build(os.path.join(tempfile.mkdtemp(), "ex2.db"), **_ex2_provider)
 # OIDC wants a base_url at construction; A1–A3 compare the component with topbar() without one, as Ex2 runs by default
 # (with one, topbar.json names absolute addresses). A4 sets it to the served address for the provider's round.
 ex2_auth.cfg.base_url = ""
@@ -326,31 +332,34 @@ if GO:
     PROXY_PORT = _proxy_sock.getsockname()[1]
     AUTH_HOST, APP_HOST = f"auth.example.test:{PROXY_PORT}", f"app.example.test:{PROXY_PORT}"
     _tmp = tempfile.mkdtemp(prefix="ex1-")
-    # T-107, origin "mixed": deploy/ex1 plus an identity provider whose group `staff` maps to the role ex1-staff.
-    ex1_idp = TestIdP({"ivo": {"email": "ivo@example.test", "email_verified": True, "groups": ["staff"]}},
-                      client_id="ex1", client_secret="probe-secret")
-    toml = (ROOT / "deploy" / "ex1" / "tinysesam.toml").read_text(encoding="utf-8")
+    # T-107, origin "mixed": deploy/ex1 with its optional provider block switched on (T-162) — the provider a real one
+    # on a loopback port (`_test_idp`); the block maps a group of the provider to the role ex1-staff.
+    toml, ex1_provider = deploy_provider((ROOT / "deploy" / "ex1" / "tinysesam.toml").read_text(encoding="utf-8"),
+                                         "deploy/ex1/tinysesam.toml")
+    _ex1_groups = [g for g, role in ex1_provider["oidc_group_role_map"].items() if role == "ex1-staff"]
+    assert _ex1_groups, f"deploy/ex1/tinysesam.toml: no group of the provider maps to ex1-staff: {ex1_provider}"
+    _ex1_secret_env = ex1_provider["oidc_client_secret"].removeprefix("env:")
+    ex1_idp = TestIdP({"ivo": {"email": "ivo@example.test", "email_verified": True, "groups": _ex1_groups[:1]}},
+                      client_id=ex1_provider["oidc_client_id"], client_secret="probe-secret")
     toml = (toml.replace("https://auth.example.com", f"http://{AUTH_HOST}").replace("example.com", "example.test")
             .replace('trusted_proxies = ["172.30.0.0/16"]', 'trusted_proxies = ["127.0.0.1/32"]')
             .replace('https_mode = "warn"', 'https_mode = "warn"\ncookie_secure = false\n'
-                                            'cookie_domain = ".example.test"\nbrand_icon = "/brand/ex1.svg"\n'
-                                            f'oidc_enabled = true\noidc_issuer = "{ex1_idp.issuer}"\n'
-                                            'oidc_client_id = "ex1"\noidc_client_secret = "env:EX1_OIDC_CLIENT_SECRET"\n'
-                                            'oidc_scopes = "openid profile email groups"\n'
-                                            'oidc_group_role_map = { staff = "ex1-staff" }')
+                                            'cookie_domain = ".example.test"\nbrand_icon = "/brand/ex1.svg"')
+            .replace(f'oidc_issuer = "{ex1_provider["oidc_issuer"].replace("example.com", "example.test")}"',
+                     f'oidc_issuer = "{ex1_idp.issuer}"')
             # B-21: a second host of the Go program without an app frame — there the shell draws the logo.
             .replace('trusted_redirect_hosts = ["app.example.test"]',
                      'trusted_redirect_hosts = ["app.example.test", "plain.example.test"]')
             # T-151: the application's icon in the frame — a path on TinySesam's origin, drawn by the shell.
             .replace('[apps.ex1]\naccount = "svc-ex1"', '[apps.ex1]\nicon = "/brand/ex1.svg"\naccount = "svc-ex1"'))
-    assert "example.com" not in toml and "cookie_domain" in toml and "plain.example.test" in toml, \
-        "deploy/ex1/tinysesam.toml changed its shape"
+    assert "example.com" not in toml and "cookie_domain" in toml and "plain.example.test" in toml \
+        and ex1_idp.issuer in toml, "deploy/ex1/tinysesam.toml changed its shape"
     assert 'icon = "/brand/ex1.svg"' in toml, "deploy/ex1/tinysesam.toml changed its shape ([apps.ex1])"
     with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
         fh.write(toml)
     _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
-    os.environ.update(TINYSESAM_CONFIG=os.path.join(_tmp, "tinysesam.toml"), TINYSESAM_DB=os.path.join(_tmp, "ex1.db"),
-                      EX1_OIDC_CLIENT_SECRET=ex1_idp.client_secret)
+    os.environ.update({"TINYSESAM_CONFIG": os.path.join(_tmp, "tinysesam.toml"),
+                       "TINYSESAM_DB": os.path.join(_tmp, "ex1.db"), _ex1_secret_env: ex1_idp.client_secret})
     try:
         from tinysesam import gateway
         ex1_app = gateway.build_app()
@@ -362,7 +371,7 @@ if GO:
             return Response("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><rect width='8' height='8'/></svg>",
                             media_type="image/svg+xml")
     finally:
-        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB", "EX1_OIDC_CLIENT_SECRET"):
+        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB", _ex1_secret_env):
             os.environ.pop(_k, None)
         os.environ.update(_saved)
     ex1_auth = ex1_app.state.auth
