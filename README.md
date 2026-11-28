@@ -265,8 +265,9 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **A complete application:** example Ex2,
   [`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) — `docs.read` and
   `docs.delete`, the roles assigned locally in the panel, the delete button only with the permission (and the route
-  asks again). `python examples/ex2/app.py --demo` starts it with three people; `tests/test_example_ex2.py` is its
-  acceptance through the real panel routes.
+  asks again). `python examples/ex2/app.py --demo` starts it with three people; with `EX2_OIDC_ISSUER`,
+  `EX2_OIDC_CLIENT_ID` and `EX2_OIDC_CLIENT_SECRET` set it adds an OpenID Connect provider beside them (its group
+  `readers` becomes `docs-reader`, T-162). `tests/test_example_ex2.py` is its acceptance through the real panel routes.
 
 ## Accounts in code
 
@@ -1668,8 +1669,11 @@ Every example application with every origin of an account, in a real browser (T-
 through a real provider on a loopback port (`tests/_test_idp.py`): the browser leaves TinySesam's sign-in page for the
 provider and comes back through the callback; TinySesam fetches discovery, token and key set itself and checks the ID
 token as it checks any provider's. **Mixed** means local and provider accounts in one installation: an account of
-either origin with an equivalent role gets the same result. Each example stays as it is — the suite adds the provider
-to its configuration (Ex1, Ex2 and Ex4 run with local accounts by default; Ex3 is mixed itself).
+either origin with an equivalent role gets the same result. The provider's settings are the examples' own (T-162): Ex1
+and Ex4 run with local accounts by default and carry an optional provider block (deploy/ex1/tinysesam.toml,
+deploy/ex4/tinysesam.toml) — the suite switches it on as their READMEs tell an operator to (the `#` off the `oidc_`
+lines, the secret through the environment); Ex2's `--demo` adds the provider when `EX2_OIDC_*` is set, the suite
+passes the same; Ex3 is mixed itself.
 
 | Example (surface, mode) | local | IdP | mixed |
 |---|---|---|---|

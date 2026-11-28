@@ -25,6 +25,17 @@ available_roles = ["docs-reader", "docs-admin"]
 # The administration action "sign-in link" (T-147): a one-time link shown on TinySesam's page instead of a password.
 magiclink_enabled = true
 
+# Optional (T-162): an OpenID Connect identity provider beside the local accounts — mixed accounts on one sign-in page.
+# To use it, remove the "#" in front of each oidc_ line below and of EX4_OIDC_CLIENT_SECRET in docker-compose.yml, set
+# the issuer and the client id of your provider, and put the client secret into .env (README, "With an identity
+# provider"). The provider's group `docs` becomes the role docs-reader at every sign-in and goes when the group goes.
+#oidc_enabled = true
+#oidc_issuer = "https://idp.example.com"
+#oidc_client_id = "ex4"
+#oidc_client_secret = "env:EX4_OIDC_CLIENT_SECRET"
+#oidc_scopes = "openid profile email groups"
+#oidc_group_role_map = { docs = "docs-reader" }
+
 # Connected programs (OAuth for an MCP client of the application): the settings page lists them, the action page
 # "programs" disconnects one.
 oauth_enabled = true

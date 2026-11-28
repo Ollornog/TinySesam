@@ -265,8 +265,9 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Eine vollständige Anwendung:** Beispiel Ex2,
   [`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) — `docs.read` und
   `docs.delete`, die Rollen lokal im Panel vergeben, der Löschknopf nur mit der Berechtigung (und die Route fragt noch
-  einmal). `python examples/ex2/app.py --demo` startet sie mit drei Personen; `tests/test_example_ex2.py` ist ihre
-  Abnahme über die echten Panel-Routen.
+  einmal). `python examples/ex2/app.py --demo` startet sie mit drei Personen; mit gesetztem `EX2_OIDC_ISSUER`,
+  `EX2_OIDC_CLIENT_ID` und `EX2_OIDC_CLIENT_SECRET` kommt ein OpenID-Connect-Anbieter daneben (seine Gruppe `readers`
+  wird zu `docs-reader`, T-162). `tests/test_example_ex2.py` ist ihre Abnahme über die echten Panel-Routen.
 
 ## Konten im Code
 
@@ -1712,9 +1713,11 @@ Jede Beispielanwendung mit jeder Herkunft eines Kontos, in einem echten Browser 
 über einen echten Anbieter auf einem Loopback-Port (`tests/_test_idp.py`): Der Browser verlässt TinySesams
 Anmeldeseite zum Anbieter und kommt über den Callback zurück; TinySesam holt Discovery, Token und Schlüsselsatz selbst
 und prüft das ID-Token wie das jedes Anbieters. **Gemischt** heißt lokale und Anbieter-Konten in einer Installation: Ein
-Konto beider Herkünfte mit gleichwertiger Rolle bekommt dasselbe Ergebnis. Jedes Beispiel bleibt, wie es ist — die
-Suite ergänzt den Anbieter in seiner Konfiguration (Ex1, Ex2 und Ex4 laufen von Haus aus mit lokalen Konten; Ex3 ist
-selbst gemischt).
+Konto beider Herkünfte mit gleichwertiger Rolle bekommt dasselbe Ergebnis. Die Anbieter-Einstellungen sind die der
+Beispiele selbst (T-162): Ex1 und Ex4 laufen von Haus aus mit lokalen Konten und tragen einen optionalen Anbieter-Block
+(deploy/ex1/tinysesam.toml, deploy/ex4/tinysesam.toml) — die Suite schaltet ihn so ein, wie ihre READMEs es dem
+Betreiber sagen (das `#` vor den `oidc_`-Zeilen weg, das Geheimnis über die Umgebung); Ex2s `--demo` nimmt den
+Anbieter dazu, wenn `EX2_OIDC_*` gesetzt ist, die Suite übergibt dasselbe; Ex3 ist selbst gemischt.
 
 | Beispiel (Oberfläche, Betriebsart) | lokal | IdP | gemischt |
 |---|---|---|---|

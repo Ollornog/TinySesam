@@ -1,7 +1,7 @@
 ---
 type: Task
 title: Example deployments Ex1 and Ex4 with an identity provider
-status: offen
+status: erledigt
 points: 3
 id: T-162
 milestone: M-2
