@@ -33,6 +33,26 @@ export interface AccountSession {
   readonly end: string | null;
 }
 
+/** An API key of the account (spec section 8a, T-106): its name, kind and times — never the key or its prefix. */
+export interface AccountApiKey {
+  readonly name: string | null;
+  /** `automation` or `human`; an unknown text is for the application to ignore. */
+  readonly kind: string | null;
+  readonly created_at: number | null;
+  readonly last_used: number | null;
+  readonly expires_at: number | null;
+}
+
+/**
+ * One of the account's own events (spec section 8a, T-106), newest first: when (Unix seconds), TinySesam's event name
+ * (text — show it or a word of your own, keep an unknown one as text) and whether another person caused it.
+ */
+export interface AccountEvent {
+  readonly at: number | null;
+  readonly event: string | null;
+  readonly by_admin: boolean | null;
+}
+
 /** The own action pages of spec section 8c; null when not offered to this account (or not a safe link). */
 export interface AccountActions {
   readonly username: string | null;
@@ -89,6 +109,8 @@ export interface SignedInAccount {
     readonly services: readonly AccountUse[] | null;
     readonly app_passwords: readonly AccountAppPassword[] | null;
     readonly api_keys_active: number | null;
+    /** The API keys `api_keys_active` counts; null when API keys are not offered. */
+    readonly api_keys: readonly AccountApiKey[] | null;
   };
   readonly approvals: { readonly pending: number } | null;
   /** On an application's host the application and the account's permissions for it (spec section 8a); else null. */
@@ -96,6 +118,13 @@ export interface SignedInAccount {
   readonly links: AccountLinks;
   /** The own action pages (spec section 8c); build the address to send the person to with `actionUrl`. */
   readonly actions: AccountActions;
+  /** The account's own events, newest first (always a list). */
+  readonly events: readonly AccountEvent[];
+  /**
+   * For a person who administers accounts inside the application's area: where its page reads the administration data
+   * (spec section 8b, `parseAdminAccounts`); null for anyone else and on any other host.
+   */
+  readonly admin: { readonly accounts: string } | null;
 }
 
 /** A signed-out account overview: every group null. */
@@ -109,6 +138,8 @@ export interface SignedOutAccount {
   readonly permissions: null;
   readonly links: null;
   readonly actions: null;
+  readonly events: null;
+  readonly admin: null;
 }
 
 /**
@@ -129,31 +160,38 @@ export function signedOutAccount(): SignedOutAccount {
     permissions: null,
     links: null,
     actions: null,
+    events: null,
+    admin: null,
   };
 }
 
-type Obj = Record<string, unknown>;
+export type Obj = Record<string, unknown>;
 
 /** A member that is always an object in the answer: anything else reads as an empty one. */
-function group(data: Obj, name: string): Obj {
+export function group(data: Obj, name: string): Obj {
   const v = own(data, name);
   return isObject(v) ? v : {};
 }
 
-function text(m: Obj, name: string): string | null {
+export function text(m: Obj, name: string): string | null {
   const v = own(m, name);
   return typeof v === 'string' ? v : null;
 }
 
 /** The string entries of a list, in order; null when it is no list. */
-function texts(m: Obj, name: string): string[] | null {
+export function texts(m: Obj, name: string): string[] | null {
   const v = own(m, name);
   return Array.isArray(v) ? v.filter((e): e is string => typeof e === 'string') : null;
 }
 
-function flag(m: Obj, name: string): boolean | null {
+export function flag(m: Obj, name: string): boolean | null {
   const v = own(m, name);
   return typeof v === 'boolean' ? v : null;
+}
+
+/** The string entries of a list, in order; `[]` when it is no list. */
+export function strings(m: Obj, name: string): string[] {
+  return texts(m, name) ?? [];
 }
 
 /** A count or a time: an integer from 0 to 2^53 - 1. */
@@ -162,13 +200,13 @@ export function count(m: Obj, name: string): number | null {
   return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null;
 }
 
-function href(m: Obj, name: string): string | null {
+export function href(m: Obj, name: string): string | null {
   const v = own(m, name);
   return typeof v === 'string' && isSafeHref(v) ? v : null;
 }
 
 /** The object entries of a list; anything that is no list counts as none. */
-function objects(v: unknown): Obj[] {
+export function objects(v: unknown): Obj[] {
   return Array.isArray(v) ? v.filter(isObject) : [];
 }
 
@@ -218,6 +256,10 @@ export function parseAccount(body: string | Uint8Array): Account {
   const approvals = own(data, 'approvals');
   const pending = isObject(approvals) ? count(approvals, 'pending') : null;
   const appPasswords = own(programs, 'app_passwords');
+  const apiKeys = own(programs, 'api_keys');
+  const events = own(data, 'events');
+  const admin = own(data, 'admin');
+  const accounts = isObject(admin) ? href(admin, 'accounts') : null;
   return {
     signed_in: true,
     account: {
@@ -261,11 +303,26 @@ export function parseAccount(body: string | Uint8Array): Account {
           }))
         : null,
       api_keys_active: count(programs, 'api_keys_active'),
+      api_keys: Array.isArray(apiKeys)
+        ? objects(apiKeys).map((e) => ({
+            name: text(e, 'name'),
+            kind: text(e, 'kind'),
+            created_at: count(e, 'created_at'),
+            last_used: count(e, 'last_used'),
+            expires_at: count(e, 'expires_at'),
+          }))
+        : null,
     },
     approvals: pending === null ? null : { pending },
     permissions: permissionsView(own(data, 'permissions')),
     links: Object.fromEntries(LINKS.map((n) => [n, href(links, n)])) as unknown as AccountLinks,
     actions: Object.fromEntries(ACTIONS.map((n) => [n, href(actions, n)])) as unknown as AccountActions,
+    events: objects(events).map((e) => ({
+      at: count(e, 'at'),
+      event: text(e, 'event'),
+      by_admin: flag(e, 'by_admin'),
+    })),
+    admin: accounts === null ? null : { accounts },
   };
 }
 

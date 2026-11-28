@@ -1123,11 +1123,10 @@ class AccountProbe:
 #: The members of the normalized account overview (spec §8a) — every one present in every signed-in result.
 ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
 SIGNED_OUT_ACCOUNT = {"signed_in": False, "account": None, "sign_in": None, "sessions": None, "programs": None,
-                      "approvals": None, "permissions": None, "links": None, "actions": None}
-#: Members of the server's answer the normalized result does not carry (yet, T-106): a client drops them like members it
-#: does not know — `events` and `admin` at the top, `api_keys` inside `programs`.
-ACCOUNT_NOT_NORMALIZED = ("events", "admin")
-ACCOUNT_PROGRAMS_NOT_NORMALIZED = ("api_keys",)
+                      "approvals": None, "permissions": None, "links": None, "actions": None, "events": None,
+                      "admin": None}
+#: The members of an entry of `programs.api_keys` (T-106, normalized since T-161).
+ACCOUNT_API_KEY = ("name", "kind", "created_at", "last_used", "expires_at")
 #: The own action pages of spec §8c, the members of `actions` (T-105, normalized since T-148): each an href or None.
 ACCOUNT_ACTIONS = ("username", "email", "password", "pin", "totp", "recovery_codes", "passkeys", "api_keys",
                    "app_passwords", "sessions", "programs", "services")
@@ -1141,17 +1140,13 @@ def account_vectors(ap: AccountProbe) -> list:
         out.append({"id": vid, "attack": attack, "reason": reason, "input": {"account": data},
                     "expected": {"ok": True, "account": want}})
 
-    def normalized(answer: dict) -> dict:
-        """The answer without the members a client does not normalize (T-106)."""
-        out = {k: copy.deepcopy(v) for k, v in answer.items() if k not in ACCOUNT_NOT_NORMALIZED}
-        out["programs"] = {k: v for k, v in out["programs"].items() if k not in ACCOUNT_PROGRAMS_NOT_NORMALIZED}
-        return out
-
     raw = ap.answer()
     # The server's answer has exactly the members this file knows: a new member needs a decision here (and in §8a).
-    assert sorted(raw) == sorted([*SIGNED_OUT_ACCOUNT, *ACCOUNT_NOT_NORMALIZED]), sorted(raw)
-    assert "api_keys" in raw["programs"] and isinstance(raw["events"], list) and raw["events"], raw
-    full = normalized(raw)
+    assert sorted(raw) == sorted(SIGNED_OUT_ACCOUNT), sorted(raw)
+    assert all(sorted(e) == ["at", "by_admin", "event"] for e in raw["events"]) and raw["events"], raw["events"]
+    assert [sorted(k) for k in raw["programs"]["api_keys"]] == [sorted(ACCOUNT_API_KEY)], raw["programs"]
+    assert raw["admin"] is None, "the probe's answer names the administration data without an application host"
+    full = copy.deepcopy(raw)
     assert sorted(full["actions"]) == sorted(ACCOUNT_ACTIONS), sorted(full["actions"])
     assert all(v is None or v.startswith(f"{ISSUER}/auth/act/") for v in full["actions"].values()), full["actions"]
     assert sorted(full["links"]) == sorted(ACCOUNT_LINKS), sorted(full["links"])
@@ -1162,15 +1157,14 @@ def account_vectors(ap: AccountProbe) -> list:
     assert all(e["handle"] and e["end"] == f"{ISSUER}/auth/act/session_end?target={e['handle']}" for e in s), s
     assert full["account"]["source"] == ["local"], full["account"]
     assert [p["name"] for p in full["programs"]["app_passwords"]] == ["Phone calendar"], full["programs"]
-    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type) — without the
-    # members no client normalizes yet (T-106: `events`, `admin`, `programs.api_keys`), which it drops.
+    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type).
     add("signed-in", "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API "
-        "key and one approval waiting; its `actions` (spec §8c) and every session's `handle` and `end` included; "
-        "`events`, `admin` and `programs.api_keys` (T-106) are dropped.",
-        copy.deepcopy(raw), copy.deepcopy(full))
+        "key and one approval waiting; its `actions` (spec §8c), every session's `handle` and `end`, its `events` and "
+        "`programs.api_keys` (T-106) included.", copy.deepcopy(raw), copy.deepcopy(full))
     less_raw = ap.answer(totp_enabled=False, pin_enabled=False, passkey_enabled=False, apikey_enabled=False,
                          approvals_enabled=False, account_enabled=False)
-    less = normalized(less_raw)
+    less = copy.deepcopy(less_raw)
+    assert less["programs"]["api_keys"] is None and less["events"], less
     assert less["sign_in"]["totp"] is None and less["links"]["account"] is None, less
     assert set(less["actions"].values()) == {None} and {e["end"] for e in less["sessions"]["items"]} == {None}, less
     add("offered-less", "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` "
@@ -1203,7 +1197,7 @@ def account_vectors(ap: AccountProbe) -> list:
                                                         "device": ["a"], "current": "yes", "handle": 7,
                                                         "end": True}]}
     wrong["programs"] = {"oauth": {"name": "x"}, "services": "none", "app_passwords": [None],
-                         "api_keys_active": False}
+                         "api_keys_active": False, "api_keys": "backup"}
     wrong["approvals"] = {"pending": -1}
     want = copy.deepcopy(full)
     want["account"]["username"] = None
@@ -1211,7 +1205,8 @@ def account_vectors(ap: AccountProbe) -> list:
                        "passkeys": {"count": None, "items": []}, "pin": None}
     want["sessions"] = {"count": None, "items": [{"created_at": None, "last_seen": None, "method": None,
                                                   "device": None, "current": None, "handle": None, "end": None}]}
-    want["programs"] = {"oauth": None, "services": None, "app_passwords": [], "api_keys_active": None}
+    want["programs"] = {"oauth": None, "services": None, "app_passwords": [], "api_keys_active": None,
+                        "api_keys": None}
     want["approvals"] = None
     add("wrong-types", "A member of the wrong type reads as missing (`null`); an entry of a list that is no object is "
         "dropped; a negative count is no count.", wrong, want, attack="account-types")
@@ -1223,7 +1218,8 @@ def account_vectors(ap: AccountProbe) -> list:
     grown["links"]["security_log"] = "/auth/account#log"
     del grown["programs"]
     want = copy.deepcopy(full)
-    want["programs"] = {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None}
+    want["programs"] = {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None,
+                        "api_keys": None}
     add("unknown-and-missing", "Members a newer TinySesam adds are ignored; a missing group reads as all `null`.",
         grown, want, attack="account-types")
     groups = dict(full, account="anna", sign_in=5, sessions=True, programs=["x"], links="/auth/account",
@@ -1233,9 +1229,10 @@ def account_vectors(ap: AccountProbe) -> list:
         {"signed_in": True, "account": {"username": None, "display_name": None, "source": None},
          "sign_in": {"password": None, "totp": None, "passkeys": None, "pin": None},
          "sessions": {"count": None, "items": []},
-         "programs": {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None},
+         "programs": {"oauth": None, "services": None, "app_passwords": None, "api_keys_active": None,
+                      "api_keys": None},
          "approvals": copy.deepcopy(full["approvals"]), "permissions": None, "links": {k: None for k in ACCOUNT_LINKS},
-         "actions": {k: None for k in ACCOUNT_ACTIONS}},
+         "actions": {k: None for k in ACCOUNT_ACTIONS}, "events": copy.deepcopy(full["events"]), "admin": None},
         attack="account-types")
     mixed = copy.deepcopy(full)
     mixed["account"]["source"] = ["local", 5, None, "oidc", ["saml"], "scim"]
@@ -1318,6 +1315,168 @@ def account_vectors(ap: AccountProbe) -> list:
     not_object["permissions"] = ["docs.read"]
     add("permissions-not-object", "`permissions` that is no object reads as null.", not_object, copy.deepcopy(full),
         attack="account-types")
+    # §8a `events`, `programs.api_keys` and `admin` (T-106, normalized since T-161).
+    wrong = copy.deepcopy(full)
+    wrong["events"] = ["login", None, {"at": "1", "event": 5, "by_admin": "yes", "ip": "192.0.2.1"},
+                       {"at": -1, "event": ["login"], "by_admin": 1}, {"at": 1.5}, copy.deepcopy(full["events"][0])]
+    wrong["programs"]["api_keys"] = [None, "backup", {"name": 5, "kind": ["human"], "created_at": 1.5,
+                                                      "last_used": True, "expires_at": "1", "prefix": "tsk_probe"},
+                                     copy.deepcopy(full["programs"]["api_keys"][0])]
+    nothing = {"at": None, "event": None, "by_admin": None}
+    want = copy.deepcopy(full)
+    want["events"] = [nothing, nothing, nothing, copy.deepcopy(full["events"][0])]
+    want["programs"]["api_keys"] = [{"name": None, "kind": None, "created_at": None, "last_used": None,
+                                     "expires_at": None}, copy.deepcopy(full["programs"]["api_keys"][0])]
+    add("events-keys-wrong-types", "An entry of `events` or `programs.api_keys` that is no object is dropped; a member "
+        "of the wrong type reads as `null` (a time is a non-negative integer), an unknown member (an address, a key "
+        "prefix) is dropped.", wrong, want, attack="account-types")
+    wrong = copy.deepcopy(full)
+    wrong["events"] = {"at": 1, "event": "login"}
+    wrong["programs"]["api_keys"] = {"name": "backup"}
+    want = copy.deepcopy(full)
+    want["events"] = []
+    want["programs"]["api_keys"] = None
+    add("events-keys-not-list", "`events` that is no list reads as an empty list; `programs.api_keys` that is no list "
+        "as `null` (not offered).", wrong, want, attack="account-types")
+    older = copy.deepcopy(full)
+    del older["events"], older["admin"], older["programs"]["api_keys"]
+    want = copy.deepcopy(older)
+    want.update(events=[], admin=None)
+    want["programs"]["api_keys"] = None
+    add("events-keys-admin-missing", "An answer of a TinySesam before T-106 (no `events`, `admin`, "
+        "`programs.api_keys`): `[]` and `null`, the rest as usual.", older, want, attack="account-types")
+    path = "/.tinysesam/admin/accounts.json"
+    on_app = copy.deepcopy(full)
+    on_app["admin"] = {"accounts": path, "panel": "/auth/admin"}
+    want = copy.deepcopy(full)
+    want["admin"] = {"accounts": path}
+    add("admin-accounts", "For a person who administers accounts inside the application's area `admin.accounts` names "
+        "the administration data (§8b); an unknown member of `admin` is dropped.", on_app, want)
+    for vid, reason, value in (
+            ("admin-javascript", "An `admin.accounts` that fails the rule of §8 drops the whole member.",
+             {"accounts": "javascript:alert(1)"}),
+            ("admin-protocol-relative", "A protocol-relative `admin.accounts` drops the whole member.",
+             {"accounts": "//evil.example.com/.tinysesam/admin/accounts.json"}),
+            ("admin-not-text", "An `admin.accounts` that is no text drops the whole member.", {"accounts": 5}),
+            ("admin-not-object", "An `admin` that is no object reads as `null`.", path)):
+        bad = copy.deepcopy(full)
+        bad["admin"] = value
+        add(vid, reason, bad, copy.deepcopy(full), attack="account-types" if "not-" in vid else "account-href")
+    return out
+
+
+# ---------- the administration data, spec §8b (T-106, normalized since T-161) ----------
+
+#: The administration actions of §8c, the members of `actions` of an account in the administration data (T-147).
+ADMIN_ACTIONS = ("admin_totp_reset", "admin_lock", "admin_unlock", "admin_roles", "admin_key_revoke",
+                 "admin_program_revoke", "admin_session_end", "admin_signin_link")
+#: The members of an account in the administration data.
+ADMIN_ACCOUNT = ("id", "username", "display_name", "source", "roles", "disabled", "totp", "permissions", "actions")
+EMPTY_ADMIN = {"app": None, "links": {"panel": None}, "accounts": []}
+
+
+def admin_account_vectors() -> list:
+    """`input.answer` (the body of a `200` answer of `GET /.tinysesam/admin/accounts.json`) → `expected.admin`, the
+    normalized form. The valid answers come from TinySesam's own `admin_overview` for an administrator and for a
+    delegate of the application's area, under the fixed clock."""
+    import copy
+    import shutil
+    from tinysesam import TinySesam, TinySesamConfig
+    host = "app.example.com"
+    out = []
+
+    def add(vid, reason, answer, want, attack=None):
+        out.append({"id": vid, "attack": attack, "reason": reason, "input": {"answer": answer},
+                    "expected": {"ok": True, "admin": want}})
+
+    d = tempfile.mkdtemp(prefix="tinysesam-admin-vectors-")
+    try:
+        with AccountProbe.clock(), open(os.devnull, "w") as quiet, contextlib.redirect_stderr(quiet):
+            with TinySesam(TinySesamConfig(
+                db_path=os.path.join(d, "admin.db"), base_url=ISSUER, oidc_enabled=False, passkey_enabled=False,
+                totp_enabled=True, apikey_enabled=True, admin_enabled=True, account_enabled=True,
+                forward_auth_enabled=True, available_roles=["docs-reader", "docs-lead"],
+                admin_delegates={"docs-lead": {"roles": ["docs-reader"], "apps": ["docs"]}},
+                forward_apps={host: {"name": "Docs", "home": "/"}},
+                apps={"docs": {"name": "Documents", "hosts": [host],
+                               "permissions": [{"name": "docs.read", "suggested_roles": ["docs-reader"]}]}})) as auth:
+                pw = "a long probe password 4711"
+                ada = int(auth.create_user("ada", password=pw, display_name="Ada Admin"))
+                auth.store.set_admin(ada, True)
+                lou = int(auth.create_user("lou", password=pw, roles=["docs-reader"], display_name="Lou Reader"))
+                auth.store.set_totp(lou, "JBSWY3DPEHPK3PXP", confirmed=True)
+                dora = int(auth.create_user("dora", password=pw, roles=["docs-lead"]))
+                auth.grant_permission("docs-reader", "docs.read", app="docs", by="vectors")
+                admin = auth.admin_overview({**auth.get_user(ada), "_via": "session"}, host, base=ISSUER)
+                lead = auth.admin_overview({**auth.get_user(dora), "_via": "session"}, host, base=ISSUER)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # The server's answer has exactly the members this file knows: a new member needs a decision here (and in §8b).
+    assert admin and lead and sorted(admin) == ["accounts", "app", "links"] and sorted(admin["links"]) == ["panel"]
+    for acc in admin["accounts"] + lead["accounts"]:
+        assert sorted(acc) == sorted(ADMIN_ACCOUNT) and sorted(acc["actions"]) == sorted(ADMIN_ACTIONS), acc
+    assert [a["username"] for a in lead["accounts"]] == ["lou"], lead["accounts"]
+    assert any(v for a in admin["accounts"] for v in a["actions"].values()), admin
+    add("administrator", "An administrator's administration data: every account but service accounts, each with the "
+        "addresses of the administration action pages offered now (`null` elsewhere).", admin, copy.deepcopy(admin))
+    add("delegate", "A delegate of the application's area: only the accounts of its scope, only the actions it may "
+        "take.", lead, copy.deepcopy(lead))
+    lou_entry = next(a for a in admin["accounts"] if a["username"] == "lou")
+    evil = copy.deepcopy(admin)
+    evil["links"]["panel"] = "javascript:alert(1)"
+    bad = ("javascript:alert(1)", "//evil.example.com/auth/act/admin_lock", "/\\evil.example.com",
+           "https://auth.example.com/auth/act/x y", "/auth/act/x\x07", "data:text/html,<script>", 5, ["/auth/act/x"])
+    for acc in evil["accounts"]:
+        acc["actions"] = {name: bad[i % len(bad)] for i, name in enumerate(ADMIN_ACTIONS)}
+    want = copy.deepcopy(admin)
+    want["links"]["panel"] = None
+    for acc in want["accounts"]:
+        acc["actions"] = dict.fromkeys(ADMIN_ACTIONS)
+    add("unsafe-hrefs", "Every `href` that fails the rule of §8 — the panel's and each action's — becomes `null`.",
+        evil, want, attack="account-href")
+    wrong = {"app": 5, "links": "/auth/admin", "accounts": [
+        "lou", None, {"id": 7, "username": None, "display_name": ["Lou"], "source": "local", "roles": "docs-reader",
+                      "disabled": "no", "totp": 1, "permissions": [1, "docs.read", None], "actions": ["x"]},
+        copy.deepcopy(lou_entry)]}
+    want = {"app": None, "links": {"panel": None}, "accounts": [
+        {"id": None, "username": None, "display_name": None, "source": None, "roles": [], "disabled": None,
+         "totp": None, "permissions": ["docs.read"], "actions": dict.fromkeys(ADMIN_ACTIONS)},
+        copy.deepcopy(lou_entry)]}
+    add("wrong-types", "A member of the wrong type reads as missing: text and flags `null`, `source` `null`, `roles` and "
+        "`permissions` the strings of a list (`[]` for no list), `links` and `actions` objects with every member "
+        "`null`; an account that is no object is dropped.", wrong, want, attack="account-types")
+    grown = copy.deepcopy(admin)
+    grown["hardening"] = {"admin_require_mfa": True}
+    grown["links"]["config"] = "/auth/admin#config"
+    for acc in grown["accounts"]:
+        acc["email"] = f"{acc['username']}@example.com"
+        acc["actions"]["admin_delete"] = "/auth/act/admin_delete"
+    add("unknown-members", "Members a newer TinySesam adds are dropped — at the top, in `links`, in an account and in "
+        "its `actions` (no action besides the eight of §8c).", grown, copy.deepcopy(admin), attack="account-types")
+    mixed = copy.deepcopy(lou_entry)
+    mixed["source"] = ["local", 5, "ldap"]
+    mixed["roles"] = ["docs-reader", None, 3, "docs-lead"]
+    want_entry = copy.deepcopy(lou_entry)
+    want_entry.update(source=["local", "ldap"], roles=["docs-reader", "docs-lead"])
+    add("list-entries", "An entry of `source`, `roles` or `permissions` that is no string is dropped.",
+        {"app": "docs", "links": {"panel": None}, "accounts": [mixed]},
+        {"app": "docs", "links": {"panel": None}, "accounts": [want_entry]}, attack="account-types")
+    flat = copy.deepcopy(lou_entry)
+    flat.update(roles={"docs-reader": True}, permissions="docs.read")
+    want_entry = copy.deepcopy(lou_entry)
+    want_entry.update(roles=[], permissions=[])
+    add("roles-permissions-not-list", "`roles` and `permissions` that are no list read as empty lists.",
+        {"app": "docs", "links": {"panel": None}, "accounts": [flat]},
+        {"app": "docs", "links": {"panel": None}, "accounts": [want_entry]}, attack="account-types")
+    for vid, reason, answer in (
+            ("not-object", "An answer that is no object: nothing to show.", [lou_entry]),
+            ("accounts-not-list", "`accounts` that is no list reads as none.",
+             {"app": "docs", "links": {"panel": None}, "accounts": {"lou": lou_entry}}),
+            ("empty-object", "An empty object: every member missing.", {})):
+        want = copy.deepcopy(EMPTY_ADMIN)
+        if isinstance(answer, dict) and "app" in answer:
+            want["app"] = "docs"
+        add(vid, reason, answer, want, attack="account-types")
     return out
 
 
@@ -1531,7 +1690,8 @@ def build() -> dict:
             "topbar.json": _file("topbar", {"vectors": topbar_vectors(p) + topbar_approval_vectors(ap)}),
             "account.json": _file("account", {"vectors": account_vectors(ap),
                                               "action_urls": action_url_vectors(ap),
-                                              "action_returns": action_return_vectors()}),
+                                              "action_returns": action_return_vectors(),
+                                              "admin_accounts": admin_account_vectors()}),
             # Last: it names the probe's host as an application for a moment (and assigns two permissions).
             "permissions.json": _file("permissions", permission_vectors(p)),
         }

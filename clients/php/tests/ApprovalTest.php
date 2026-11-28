@@ -212,8 +212,7 @@ final class ApprovalTest extends TestCase
 
     public function testTheAccountIsFetchedWithOnlyTinySesamCookies(): void
     {
-        // The server's answer (input) and what the helper makes of it (expected): members it does not normalize are
-        // dropped.
+        // The server's answer (input) and what the helper makes of it (expected) — equal: it normalizes every member.
         $signedIn = Vectors::load('account.json')->vectors[0];
         $full = $signedIn->input->account;
         $server = new Server(Vectors::encode($full));

@@ -383,6 +383,24 @@ fn account() {
         }
     }
     report("account.json action_returns", returns.len(), 40, failures);
+    let admin = doc["admin_accounts"].as_array().unwrap();
+    let mut failures = Vec::new();
+    for v in admin {
+        let id = str_of(v, "id");
+        let got = serde_json::to_value(account::normalize_admin(&v["input"]["answer"])).unwrap();
+        if got != v["expected"]["admin"] {
+            failures.push(format!(
+                "admin_accounts/{id}: {got} ≠ {}",
+                v["expected"]["admin"]
+            ));
+        }
+        let from_bytes =
+            account::normalize_admin_json(&serde_json::to_vec(&v["input"]["answer"]).unwrap());
+        if serde_json::to_value(from_bytes).unwrap() != got {
+            failures.push(format!("admin_accounts/{id}: normalize_admin_json differs"));
+        }
+    }
+    report("account.json admin_accounts", admin.len(), 8, failures);
 }
 
 #[test]

@@ -3005,7 +3005,11 @@ except gate_client.UntrustedPeer:
   `/.tinysesam/account.json` on the application's host) server-side with only TinySesam's cookies;
   `parse_account(data)` normalizes an answer into a plain dict — `SIGNED_OUT_ACCOUNT` for anything but
   `signed_in: true`, unsafe links and members of the wrong type `None`; `permissions` names the application and the
-  account's permissions on an application's host. `actions` holds the addresses of the action pages (spec §8c), each
+  account's permissions on an application's host; `events` the account's own events (`at`, `event`, `by_admin`),
+  `programs.api_keys` its API keys by name, kind and times, and `admin` — for a person who administers accounts inside
+  the application's area — where the page reads the administration data: `parse_admin_accounts(data)` normalizes that
+  answer (spec §8b; every account with id, names, roles, lock state and the addresses of the administration action
+  pages, an unsafe href `None`). `actions` holds the addresses of the action pages (spec §8c), each
   session its `handle` and the page `end` that ends exactly it. `action_url(href, return_to, state)` builds the address
   to send the person to — `action_url(session["end"], "https://app.example.com/settings", state)` ends that one
   session; the page leads back with `ts_action`, `ts_result` and `state` (an unsafe href, a `return_to` that is no

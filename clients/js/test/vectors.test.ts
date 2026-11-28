@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { actionUrl, parseAccount } from '../src/account.ts';
 import { ActionReturnRefused, parseActionReturn } from '../src/action-return.ts';
+import { parseAdminAccounts } from '../src/admin-accounts.ts';
 import { createApprovalVerifier } from '../src/approval.ts';
 import { errorClassOf } from '../src/errors.ts';
 import { Gate } from '../src/gate.ts';
@@ -64,6 +65,14 @@ test('account vectors', (t) => {
     assert.deepStrictEqual(got, v.expected, `action_urls/${v.id}`);
   }
   t.diagnostic(`${urls.length} action address vectors`);
+  const admin: Json[] = loadVectors('account.json').admin_accounts;
+  assert.ok(admin.length > 0, 'no administration vectors');
+  for (const v of admin) {
+    const body = JSON.stringify(v.input.answer);
+    assert.deepStrictEqual({ ok: true, admin: parseAdminAccounts(body) }, v.expected, `admin_accounts/${v.id}`);
+    assert.deepStrictEqual(parseAdminAccounts(new TextEncoder().encode(body)), v.expected.admin, `${v.id} (bytes)`);
+  }
+  t.diagnostic(`${admin.length} administration vectors`);
 });
 
 /** One vector of `action_returns` through a parser: the way back, null, or the reason of the refusal. */

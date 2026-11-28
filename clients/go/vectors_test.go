@@ -408,6 +408,20 @@ func TestAccountVectors(t *testing.T) {
 		}
 	}
 	t.Logf("%d action return vectors", len(returns))
+	admin := doc["admin_accounts"].([]any)
+	if len(admin) == 0 {
+		t.Fatal("no administration vectors")
+	}
+	for _, raw := range admin {
+		v := raw.(map[string]any)
+		id := "admin_accounts/" + v["id"].(string)
+		got := ParseAdminAccounts(mustJSON(t, v["input"].(map[string]any)["answer"]))
+		want := v["expected"].(map[string]any)["admin"]
+		if !reflect.DeepEqual(normalize(t, got), want) {
+			t.Errorf("%s: %s, want %s", id, mustJSON(t, got), mustJSON(t, want))
+		}
+	}
+	t.Logf("%d administration vectors", len(admin))
 }
 
 // memoryStore is the jti store of a vector: the ids in input.seen are already in it.

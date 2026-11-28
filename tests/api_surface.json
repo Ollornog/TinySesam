@@ -2248,7 +2248,7 @@
       "tier": "B"
     },
     "SIGNED_OUT_ACCOUNT": {
-      "sig": "{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None, 'actions': None}",
+      "sig": "{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None, 'actions': None, 'events': None, 'admin': None}",
       "tier": "B"
     },
     "SignatureError": {
@@ -2329,6 +2329,10 @@
     },
     "parse_action_return": {
       "sig": "(address: 'str', state: 'Optional[str]' = None) -> 'Optional[dict[str, str]]'",
+      "tier": "B"
+    },
+    "parse_admin_accounts": {
+      "sig": "(data: 'Any') -> 'dict[str, Any]'",
       "tier": "B"
     },
     "parse_topbar": {

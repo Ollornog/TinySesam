@@ -522,7 +522,7 @@ async fn approval_key_set_fetched_once_never_the_gate_set() {
 #[tokio::test]
 async fn account_fetch_forwards_only_tinysesam_cookies() {
     use tinysesam_gate::account::AccountFetcher;
-    // The server's answer (input) and what the helper makes of it (expected): members it does not normalize are dropped.
+    // The server's answer (input) and what the helper makes of it (expected) — equal: it normalizes every member.
     let doc = load("account.json");
     let signed_in = &doc["vectors"][0];
     let full = signed_in["input"]["account"].clone();

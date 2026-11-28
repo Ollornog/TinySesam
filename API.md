@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 235
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 421 · B 353 names.
+**Status:** A 421 · B 354 names.
 
 ## A · Methods of `TinySesam`
 
@@ -982,7 +982,7 @@ TinySesam did not take the manifest: not reachable, or any answer but 200 (`stat
 
 ### `SIGNED_OUT_ACCOUNT` — Constant
 
-`{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None, 'actions': None}`
+`{'signed_in': False, 'account': None, 'sign_in': None, 'sessions': None, 'programs': None, 'approvals': None, 'permissions': None, 'links': None, 'actions': None, 'events': None, 'admin': None}`
 
 ### `SignatureError(detail: 'str' = '', *, kid: 'str' = '')` — class
 
@@ -1063,6 +1063,10 @@ Normalize the answer of `/.tinysesam/account.json` (or `/auth/account.json`), sp
 ### `parse_action_return(address: 'str', state: 'Optional[str]' = None) -> 'Optional[dict[str, str]]'`
 
 Reads the way back of an action page (spec §8c) from the address the person came back on — an absolute URL, a path with its query or the query alone with its `?` (the query is what lies between the first `?` and the first `#`). `state` is the value the application issued with `action_url` (`None` or empty for none).
+
+### `parse_admin_accounts(data: 'Any') -> 'dict[str, Any]'`
+
+Normalize the answer of `/.tinysesam/admin/accounts.json` (spec §8b) — the administration data an application's page reads in the browser for a person who administers accounts inside its area (`admin.accounts` of `parse_account` names it). `{"app", "links": {"panel"}, "accounts": [...]}`: anything that is no object reads as nothing to show (`app` None, `accounts` `[]`); every account has `id`, `username`, `display_name` (text or None), `source` (texts or None), `roles` and `permissions` (texts, `[]` for no list), `disabled` and `totp` (bool or None) and `actions` — the eight administration actions of §8c, each an href that passes the rule of §8 or None. Unknown members are dropped; every string is text, never markup. Each address is a convenience, not a right: the action page checks the person's rights again.
 
 ### `parse_topbar(data: 'Any') -> 'Topbar'`
 

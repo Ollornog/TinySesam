@@ -51,10 +51,25 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    passwords, `TS_FORWARD_APPS` with `"app_passwords": true`) sets `account_enabled = true` in that file: the
    account page no longer switches itself on from the variable. An own copy of the old compose file keeps working
    unchanged.
+8. **The gate clients normalise `events`, `programs.api_keys` and `admin`** (T-161, spec §8a, tier B). The account
+   overview of every client (`parse_account`/`SIGNED_OUT_ACCOUNT` in Python, `Account` in Go, Rust, JavaScript and
+   PHP) gains the members `events` (a list signed in, `null` signed out) and `admin` (`{"accounts"}` or `null`), and
+   `programs` gains `api_keys` (a list or `null`); they used to be dropped. Code that compares a whole normalized
+   account, or builds a Rust `account::Account` or `account::Programs` by a struct literal, takes the new members;
+   everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- The five gate clients normalise `events`, `programs.api_keys` and `admin` of `account.json` (T-161, spec §8a) — a
+  list of `{at, event, by_admin}`, a list of `{name, kind, created_at, last_used, expires_at}` or `null`, and
+  `{accounts}` (a safe href) or `null`; they used to drop them. New helper for the administration data (spec §8b):
+  `parse_admin_accounts` (`ParseAdminAccounts`, `account::normalize_admin`/`normalize_admin_json`,
+  `parseAdminAccounts`, `Account::parseAdminAccounts`) normalizes the answer of `/.tinysesam/admin/accounts.json` —
+  every account with id, names, source, roles, lock state, TOTP, the application's permissions and the eight
+  administration action pages (each a safe href or `null`), unknown members and actions dropped. Vectors: `signed-in`
+  and `offered-less` now expect the members, new `events-keys-*` and `admin-*` vectors and the list `admin_accounts`
+  in `spec/vectors/account.json` (from TinySesam's own `admin_overview`). See "Upgrading from 0.31.x", item 8.
 - The five gate clients read the way back of an action page (T-158, spec §8c "Reading the way back"):
   `parse_action_return(address, state)` (`ParseActionReturn`, `account::parse_action_return`, `parseActionReturn`,
   `Account::parseActionReturn`) takes the address the person came back on and the `state` the application issued and

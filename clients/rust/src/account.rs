@@ -35,6 +35,45 @@ pub struct Account {
     pub links: Option<Links>,
     /// The own action pages (spec §8c); build the address to send the person to with [`action_url`].
     pub actions: Option<Actions>,
+    /// The account's own events, newest first (always a list signed in).
+    pub events: Option<Vec<Event>>,
+    /// For a person who administers accounts inside the application's area: where its page reads the administration
+    /// data (spec §8b, [`normalize_admin`]); `None` for anyone else and on any other host.
+    pub admin: Option<Admin>,
+}
+
+/// One of the account's own events: when (Unix seconds), TinySesam's event name (text — show it or a word of your own,
+/// keep an unknown one as text) and whether another person caused it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Event {
+    /// When.
+    pub at: Option<u64>,
+    /// TinySesam's event name.
+    pub event: Option<String>,
+    /// Another person caused it.
+    pub by_admin: Option<bool>,
+}
+
+/// Where the application's page reads the administration data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Admin {
+    /// The path (a safe href) of `/.tinysesam/admin/accounts.json`.
+    pub accounts: String,
+}
+
+/// An API key of the account: its name, kind and times — never the key or its prefix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ApiKey {
+    /// The name (text).
+    pub name: Option<String>,
+    /// `automation` or `human`; an unknown text is for the application to ignore.
+    pub kind: Option<String>,
+    /// Created.
+    pub created_at: Option<u64>,
+    /// Last used.
+    pub last_used: Option<u64>,
+    /// Expires; `None` = never.
+    pub expires_at: Option<u64>,
 }
 
 /// The application of the host and the account's permissions for it.
@@ -155,6 +194,8 @@ pub struct Programs {
     pub app_passwords: Option<Vec<AppPassword>>,
     /// Active API keys.
     pub api_keys_active: Option<u64>,
+    /// The API keys `api_keys_active` counts; `None` when API keys are not offered.
+    pub api_keys: Option<Vec<ApiKey>>,
 }
 
 /// The approvals waiting for this account.
@@ -347,6 +388,17 @@ pub fn normalize(data: &Value) -> Account {
                         .collect()
                 }),
             api_keys_active: count(programs, "api_keys_active"),
+            api_keys: programs.get("api_keys").filter(|v| v.is_array()).map(|v| {
+                objects(Some(v))
+                    .map(|e| ApiKey {
+                        name: text(e, "name"),
+                        kind: text(e, "kind"),
+                        created_at: count(e, "created_at"),
+                        last_used: count(e, "last_used"),
+                        expires_at: count(e, "expires_at"),
+                    })
+                    .collect()
+            }),
         }),
         approvals: data
             .get("approvals")
@@ -393,6 +445,135 @@ pub fn normalize(data: &Value) -> Account {
             programs: action("programs"),
             services: action("services"),
         }),
+        events: Some(
+            objects(data.get("events"))
+                .map(|e| Event {
+                    at: count(e, "at"),
+                    event: text(e, "event"),
+                    by_admin: flag(e, "by_admin"),
+                })
+                .collect(),
+        ),
+        admin: data
+            .get("admin")
+            .and_then(Value::as_object)
+            .and_then(|a| safe_href(a.get("accounts")))
+            .map(|accounts| Admin { accounts }),
+    }
+}
+
+/// The administration data of an application (spec §8b): the accounts a person may administer inside the
+/// application's area, as TinySesam's `/.tinysesam/admin/accounts.json` answers it on the application's host. Every
+/// string is text, never markup; every href passed [`crate::topbar::safe_href`]. An address is a convenience, not a
+/// right: the action page checks the person's rights again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct AdminAccounts {
+    /// The application id.
+    pub app: Option<String>,
+    /// The panel.
+    pub links: AdminLinks,
+    /// Every account the person may administer (always a list).
+    pub accounts: Vec<AdminAccount>,
+}
+
+/// The links of the administration data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct AdminLinks {
+    /// The panel; `None` without its pages.
+    pub panel: Option<String>,
+}
+
+/// One account the person may administer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdminAccount {
+    /// The account id: the claim `ts_id` and the header `Remote-Id`.
+    pub id: Option<String>,
+    /// The sign-in name.
+    pub username: Option<String>,
+    /// The display name.
+    pub display_name: Option<String>,
+    /// Where the account comes from; `None` when missing or no list.
+    pub source: Option<Vec<String>>,
+    /// The account's roles.
+    pub roles: Vec<String>,
+    /// The account is locked.
+    pub disabled: Option<bool>,
+    /// A confirmed authenticator app; `None` with TOTP off.
+    pub totp: Option<bool>,
+    /// The account's permissions for this application.
+    pub permissions: Vec<String>,
+    /// The administration action pages for this account.
+    pub actions: AdminActions,
+}
+
+/// The administration actions of spec §8c for one account; `None` where the person may not act on it now (or not a
+/// safe link).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdminActions {
+    /// Reset the authenticator app.
+    pub admin_totp_reset: Option<String>,
+    /// Lock the account.
+    pub admin_lock: Option<String>,
+    /// Unlock the account.
+    pub admin_unlock: Option<String>,
+    /// Change its roles.
+    pub admin_roles: Option<String>,
+    /// Revoke an API key.
+    pub admin_key_revoke: Option<String>,
+    /// Disconnect a program.
+    pub admin_program_revoke: Option<String>,
+    /// End one of its sessions.
+    pub admin_session_end: Option<String>,
+    /// Make a sign-in link.
+    pub admin_signin_link: Option<String>,
+}
+
+/// The string entries of a list, in order; an empty list when it is no list.
+fn strings(m: &Map<String, Value>, name: &str) -> Vec<String> {
+    texts(m, name).unwrap_or_default()
+}
+
+/// Normalizes the body of a `200` answer of `/.tinysesam/admin/accounts.json` (strict JSON); anything unreadable is
+/// nothing to show.
+pub fn normalize_admin_json(raw: &[u8]) -> AdminAccounts {
+    json_value(raw).map_or_else(AdminAccounts::default, |v| normalize_admin(&v))
+}
+
+/// Normalizes a parsed answer of `/.tinysesam/admin/accounts.json` (spec §8b): anything that is no object reads as
+/// nothing to show; a member of the wrong type reads as missing, an unsafe href as `None`, unknown members are dropped.
+pub fn normalize_admin(data: &Value) -> AdminAccounts {
+    let data = data.as_object().unwrap_or(&EMPTY);
+    AdminAccounts {
+        app: text(data, "app"),
+        links: AdminLinks {
+            panel: safe_href(group(data, "links").get("panel")),
+        },
+        accounts: objects(data.get("accounts"))
+            .map(|a| {
+                let actions = group(a, "actions");
+                let action = |name: &str| safe_href(actions.get(name));
+                AdminAccount {
+                    id: text(a, "id"),
+                    username: text(a, "username"),
+                    display_name: text(a, "display_name"),
+                    source: texts(a, "source"),
+                    roles: strings(a, "roles"),
+                    disabled: flag(a, "disabled"),
+                    totp: flag(a, "totp"),
+                    permissions: strings(a, "permissions"),
+                    actions: AdminActions {
+                        admin_totp_reset: action("admin_totp_reset"),
+                        admin_lock: action("admin_lock"),
+                        admin_unlock: action("admin_unlock"),
+                        admin_roles: action("admin_roles"),
+                        admin_key_revoke: action("admin_key_revoke"),
+                        admin_program_revoke: action("admin_program_revoke"),
+                        admin_session_end: action("admin_session_end"),
+                        admin_signin_link: action("admin_signin_link"),
+                    },
+                }
+            })
+            .collect(),
     }
 }
 
@@ -520,7 +701,7 @@ mod tests {
             out,
             serde_json::json!({"signed_in": false, "account": null, "sign_in": null, "sessions": null,
                                "programs": null, "approvals": null, "permissions": null, "links": null,
-                               "actions": null})
+                               "actions": null, "events": null, "admin": null})
         );
     }
 }

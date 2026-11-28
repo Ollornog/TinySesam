@@ -70,6 +70,13 @@ final class VectorsTest extends TestCase
             }
             self::assertSame(Vectors::normalize($v->expected), Vectors::normalize($got), "action_returns/{$v->id}");
         }
+        $admin = Vectors::load('account.json')->admin_accounts;
+        self::assertNotEmpty($admin, 'no administration vectors');
+        foreach ($admin as $v) {
+            $got = Account::parseAdminAccounts(Vectors::encode($v->input->answer));
+            $want = Vectors::normalize($v->expected->admin);
+            self::assertSame($want, Vectors::normalize($got), "admin_accounts/{$v->id}");
+        }
     }
 
     public function testApprovalVectors(): void

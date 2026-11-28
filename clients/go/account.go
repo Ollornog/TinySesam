@@ -28,6 +28,34 @@ type Account struct {
 	// Actions are the addresses of the own action pages (spec section 8c); build the address to send the person to
 	// with ActionURL.
 	Actions *AccountActions `json:"actions"`
+	// Events are the account's own events, newest first (never nil signed in).
+	Events []AccountEvent `json:"events"`
+	// Admin names the administration data (spec section 8b, ParseAdminAccounts) for a person who administers accounts
+	// inside the application's area; nil for anyone else and on any other host.
+	Admin *AccountAdmin `json:"admin"`
+}
+
+// AccountEvent is one of the account's own events: when (Unix seconds), TinySesam's event name (text — show it or a
+// word of your own, keep an unknown one as text) and whether another person caused it.
+type AccountEvent struct {
+	At      *int64  `json:"at"`
+	Event   *string `json:"event"`
+	ByAdmin *bool   `json:"by_admin"`
+}
+
+// AccountAdmin is where the application's page reads the administration data (a safe href).
+type AccountAdmin struct {
+	Accounts string `json:"accounts"`
+}
+
+// AccountAPIKey is an API key of the account: its name, kind ("automation" or "human") and times — never the key or
+// its prefix.
+type AccountAPIKey struct {
+	Name      *string `json:"name"`
+	Kind      *string `json:"kind"`
+	CreatedAt *int64  `json:"created_at"`
+	LastUsed  *int64  `json:"last_used"`
+	ExpiresAt *int64  `json:"expires_at"`
 }
 
 // AccountPermissions names the application (nil when missing or no text) and the account's permissions for it
@@ -107,6 +135,8 @@ type AccountPrograms struct {
 	Services      []AccountUse         `json:"services"`
 	AppPasswords  []AccountAppPassword `json:"app_passwords"`
 	APIKeysActive *int64               `json:"api_keys_active"`
+	// APIKeys are the keys APIKeysActive counts; nil when API keys are not offered.
+	APIKeys []AccountAPIKey `json:"api_keys"`
 }
 
 // AccountApprovals is how many approvals wait for this account.
@@ -179,6 +209,24 @@ func ParseAccount(body []byte) Account {
 			APIKeys: href(actions["api_keys"]), AppPasswords: href(actions["app_passwords"]),
 			Sessions: href(actions["sessions"]), Programs: href(actions["programs"]),
 			Services: href(actions["services"])},
+		Events: []AccountEvent{},
+	}
+	for _, e := range objects(data["events"]) {
+		out.Events = append(out.Events, AccountEvent{At: count(e["at"]), Event: text(e["event"]),
+			ByAdmin: flag(e["by_admin"])})
+	}
+	if a, ok := data["admin"].(map[string]any); ok {
+		if h := href(a["accounts"]); h != nil {
+			out.Admin = &AccountAdmin{Accounts: *h}
+		}
+	}
+	if list, ok := programs["api_keys"].([]any); ok {
+		out.Programs.APIKeys = []AccountAPIKey{}
+		for _, e := range objects(list) {
+			out.Programs.APIKeys = append(out.Programs.APIKeys, AccountAPIKey{Name: text(e["name"]),
+				Kind: text(e["kind"]), CreatedAt: count(e["created_at"]), LastUsed: count(e["last_used"]),
+				ExpiresAt: count(e["expires_at"])})
+		}
 	}
 	if t, ok := signIn["totp"].(map[string]any); ok {
 		out.SignIn.TOTP = &AccountTOTP{Enabled: flag(t["enabled"]), RecoveryLeft: count(t["recovery_left"]),
