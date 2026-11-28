@@ -883,8 +883,11 @@ thread management instead of the gate; hence `hey`.
 `deploy/forward-auth/acceptance.sh` checks a real deployment from outside: sign-in required, a
 self-supplied `Remote-User` opens nothing, `/.tinysesam/*` reaches TinySesam, the share path
 is open and its path tricks stay shut; with the session cookie of a test account additionally gate token,
-tampered token, "sign out only here". `tests/test_gate_caddy.py` runs the script against the
-test setup, including a counter-check (a wrong expectation must turn it red).
+tampered token, "sign out only here". With `ECHO=1` (an application that reflects the headers it receives, like the
+quickstart's whoami) it also checks that a `Remote-Kind` or `Remote-Permissions` the client forges never reaches the
+application — on the share path and with a session (T-141). `tests/test_gate_caddy.py` runs the script against the
+test setup, including counter-checks (a wrong expectation, a proxy that does not strip, must turn it red);
+`tests/test_acceptance_script.py` runs it against a stand-in proxy that forgets to strip `Remote-Permissions`.
 
 ```bash
 APP=https://app.example.com SHARE=/s/abc123 SESSION='__Host-tinysesam_session=…' deploy/forward-auth/acceptance.sh

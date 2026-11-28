@@ -49,6 +49,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- `deploy/forward-auth/acceptance.sh` sends a forged `Remote-Permissions` (T-141): without a session it opens nothing,
+  and with `ECHO=1` it must never reach the application — on the share path and with a session. A proxy template
+  without its strip line turns the script red (`tests/test_acceptance_script.py`, a stand-in proxy; the counter-check
+  of `tests/test_gate_caddy.py` against Caddy).
 - The panel's account page lists each role the account holds with where it comes from (T-135): **⇄ from IdP** with the
   source and the time of its last delivery, or **✋ assigned by hand** — both for a role held by hand before a source
   delivered it (`/api/users` carries `role_sources`; `Store.idp_role_deliveries`). Browser test in
