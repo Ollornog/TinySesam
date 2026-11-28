@@ -8,8 +8,8 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use tinysesam_gate::approval::{ApprovalConfig, ApprovalExpect, ApprovalVerifier, StoreFailed};
 use tinysesam_gate::{
-    FetchOutcome, HeaderMode, JwksCache, KeySet, TokenConfig, TokenError, account, key_id,
-    precheck, topbar,
+    FetchOutcome, HeaderMode, Identity, JwksCache, KeySet, TokenConfig, TokenError, account,
+    key_id, precheck, register_request, topbar,
 };
 
 #[test]
@@ -25,6 +25,7 @@ fn every_vector_file_has_a_runner() {
         "headers.json",
         "jwks.json",
         "keys.json",
+        "permissions.json",
         "token.json",
         "topbar.json",
     ]
@@ -461,4 +462,108 @@ fn approval_store() {
         !touched.get(),
         "the store was written for a refused confirmation"
     );
+}
+
+fn permission_mismatches(identity: &Identity, expected: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if serde_json::json!(identity.permissions) != expected["permissions"] {
+        out.push(format!(
+            "permissions {:?} ≠ {}",
+            identity.permissions, expected["permissions"]
+        ));
+    }
+    if let Some(checks) = expected.get("has_permission").and_then(Value::as_object) {
+        for (p, want) in checks {
+            if identity.has_permission(p) != want.as_bool().unwrap() {
+                out.push(format!("has_permission({p:?}) ≠ {want}"));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn permissions() {
+    let doc = load("permissions.json");
+    let mut failures = Vec::new();
+    let mut count = 0;
+    let mode = HeaderMode::trust_proxy();
+    for v in doc["headers"].as_array().unwrap() {
+        count += 1;
+        let (id, expected) = (str_of(v, "id"), &v["expected"]);
+        let mut fields: Vec<(String, Vec<u8>)> = Vec::new();
+        for (name, value) in v["input"]["headers"].as_object().unwrap() {
+            match value {
+                Value::Array(list) => fields.extend(
+                    list.iter()
+                        .map(|x| (name.clone(), octets(x.as_str().unwrap()))),
+                ),
+                other => fields.push((name.clone(), octets(other.as_str().unwrap()))),
+            }
+        }
+        let result =
+            mode.identify_fields(fields.iter().map(|(n, b)| (n.as_str(), b.as_slice())), None);
+        match (result, expected["ok"].as_bool().unwrap()) {
+            (Ok(identity), true) => failures.extend(
+                permission_mismatches(&identity, expected)
+                    .into_iter()
+                    .map(|m| format!("headers/{id}: {m}")),
+            ),
+            (Ok(_), false) => failures.push(format!("headers/{id}: accepted")),
+            (Err(e), true) => failures.push(format!("headers/{id}: refused ({})", e.class())),
+            (Err(e), false) => {
+                if e.class() != str_of(expected, "error") {
+                    failures.push(format!(
+                        "headers/{id}: {} ≠ {}",
+                        e.class(),
+                        expected["error"]
+                    ));
+                }
+            }
+        }
+    }
+    for v in doc["tokens"].as_array().unwrap() {
+        count += 1;
+        let (id, input, expected) = (str_of(v, "id"), &v["input"], &v["expected"]);
+        let keys = KeySet::from_jwks(&input["jwks"]).unwrap();
+        let config = TokenConfig::new(str_of(input, "issuer"), str_of(input, "audience")).unwrap();
+        match (
+            config.verify_with(str_of(input, "jws"), &keys, input["now"].as_i64().unwrap()),
+            expected["ok"].as_bool().unwrap(),
+        ) {
+            (Ok(verified), true) => failures.extend(
+                permission_mismatches(&verified.identity, expected)
+                    .into_iter()
+                    .map(|m| format!("tokens/{id}: {m}")),
+            ),
+            (Ok(_), false) => failures.push(format!("tokens/{id}: accepted")),
+            (Err(e), true) => failures.push(format!("tokens/{id}: refused ({})", e.class())),
+            (Err(e), false) => {
+                if e.class() != str_of(expected, "error") {
+                    failures.push(format!(
+                        "tokens/{id}: {} ≠ {}",
+                        e.class(),
+                        expected["error"]
+                    ));
+                }
+            }
+        }
+    }
+    for v in doc["register"].as_array().unwrap() {
+        count += 1;
+        let (id, input, expected) = (str_of(v, "id"), &v["input"], &v["expected"]);
+        let got = match register_request(
+            str_of(input, "base_url"),
+            str_of(input, "app"),
+            &input["permissions"],
+        ) {
+            Ok(req) => serde_json::json!({"ok": true,
+                "request": {"method": req.method, "url": req.url, "body": req.body}}),
+            Err(_) => serde_json::json!({"ok": false, "error": "invalid"}),
+        };
+        if &got != expected {
+            failures.push(format!("register/{id}: {got} ≠ {expected}"));
+        }
+    }
+    report("permissions.json", count, 20, failures);
 }

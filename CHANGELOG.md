@@ -38,6 +38,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Permissions in the Rust and PHP gate clients (T-101 part 4): `has_permission` / `hasPermission`, the
+  `Remote-Permissions` slot and `ts_perms`, `account` normalization with `permissions`, `register_request` /
+  `register_permissions` (Rust, sending with the feature `jwks`) and `Permissions::request` / `Permissions::register`
+  (PHP), against `spec/vectors/permissions.json` — the vectors are green in all five clients.
 - Permissions in the Go and JS gate clients and example Ex1 (T-101 part 3): `Identity.Permissions` /
   `HasPermission` (`identity.permissions` / `hasPermission`), the `Remote-Permissions` header slot and the `ts_perms`
   claim with the rules of §2.2/§4.4, `ParseAccount`/`parseAccount` with `permissions`, `RegisterPermissions` /

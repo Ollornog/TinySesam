@@ -51,7 +51,10 @@ final class Headers
     {
         $names ??= new HeaderNames();
         $pairs = \is_array($fields) ? $fields : iterator_to_array($fields, false);
-        $values = ['user' => '', 'name' => '', 'email' => '', 'groups' => '', 'id' => '', 'auth' => '', 'kind' => ''];
+        $values = [
+            'user' => '', 'name' => '', 'email' => '', 'groups' => '', 'id' => '', 'auth' => '', 'kind' => '',
+            'perms' => '',
+        ];
         foreach ($names->slots() as $slot => $headerName) {
             $found = self::values($pairs, $headerName);
             if ($found === []) {
@@ -88,6 +91,7 @@ final class Headers
             $values['id'],
             $values['auth'],
             $values['kind'],
+            $values['perms'],
         );
     }
 }

@@ -21,7 +21,7 @@ pub const TOKEN_TYPE: &str = "tinysesam-gate+jwt";
 
 pub(crate) const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 const HEADER_MEMBERS: [&str; 3] = ["alg", "typ", "kid"];
-const IDENTITY_CLAIMS: [&str; 7] = [
+const IDENTITY_CLAIMS: [&str; 8] = [
     "ts_user",
     "ts_name",
     "ts_email",
@@ -29,6 +29,7 @@ const IDENTITY_CLAIMS: [&str; 7] = [
     "ts_id",
     "ts_auth",
     "ts_kind",
+    "ts_perms",
 ];
 
 /// Seconds since the Unix epoch from the system clock (0 if the clock stands before 1970).
@@ -280,7 +281,8 @@ fn identity_from_claims(c: &Map<String, Value>) -> Result<Identity, TokenError> 
         text("sub"),
         &text("ts_auth"),
         account_kind,
-    ))
+    )
+    .with_permissions(&text("ts_perms")))
 }
 
 /// The claims of a verified token. Unknown claims are kept but mean nothing to the client.

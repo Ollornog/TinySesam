@@ -149,6 +149,11 @@ how the request came in, `account_kind` what the account is: a paired service ac
 
 - Key your own records by `id`, never by `user`, `name` or `email`.
 - `has_role` compares exactly: no case folding, no Unicode normalization; `admin` implies no other role.
+- `has_permission` (spec §3.4): `identity.permissions` comes from `Remote-Permissions` or `ts_perms` — the account's
+  permissions for this application, compared exactly; a missing header means none. `register_request(base, app,
+  &manifest)` checks a manifest and builds the `PermissionRequest`; with the feature `jwks`,
+  `register_permissions(&client, base, app, &manifest, api_key)` sends it (the automation key of the application's
+  service account, scope `permissions:register`; it grants nothing). `account::normalize` carries `permissions`.
 - The groups of a token request (`kind == Token`) are incomplete on purpose — never revoke or sync away a role because
   a token request lacks it. `Requirement::Session` guards routes that need the full picture.
 - Names may contain bidi overrides and zero-width characters: escape them in HTML and isolate bidi text.

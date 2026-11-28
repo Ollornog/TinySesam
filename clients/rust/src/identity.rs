@@ -119,6 +119,9 @@ pub struct Identity {
     pub kind: Kind,
     /// `User` or `Service` (spec version 2); a request without it is refused.
     pub account_kind: AccountKind,
+    /// The account's permissions for this application (spec §3.4, `Remote-Permissions` / `ts_perms`), parsed like the
+    /// groups; empty when TinySesam sends none — which means "holds none", never "unknown".
+    pub permissions: Vec<String>,
 }
 
 impl Identity {
@@ -146,7 +149,20 @@ impl Identity {
             auth,
             kind,
             account_kind,
+            permissions: Vec::new(),
         }
+    }
+
+    /// The permissions from `Remote-Permissions` / `ts_perms` (spec §3.4), parsed like the groups.
+    pub(crate) fn with_permissions(mut self, permissions: &str) -> Identity {
+        self.permissions = parse_groups(permissions);
+        self
+    }
+
+    /// `permission ∈ permissions`, compared exactly (spec §3.4): no case folding, no wildcard, and neither `admin`
+    /// nor a role implies one.
+    pub fn has_permission(&self, permission: &str) -> bool {
+        self.permissions.iter().any(|p| p == permission)
     }
 
     /// `role ∈ groups`, compared exactly (no case folding, no normalization). `admin` implies no other role.
