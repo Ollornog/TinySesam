@@ -1299,6 +1299,10 @@ Schema 27 (T-100, ADR-17) adds two tables; nothing existing changes.
   is neither in the configuration nor in the catalog any more are suspended (B-19; audited once) and named in a
   security-log warning at every start until an administrator withdraws them (panel: the column marked "Role removed",
   or `auth.revoke_permission(role, permission, app=…)`). Such a role grants nothing even before that start.
+- **While running** (B-20): when a role leaves the configuration (a changed `available_roles`) or the catalog, its
+  assignments are suspended at the next permission check or assignment read — audited and named as at a start — so
+  the role coming back without a start in between holds nothing until an administrator assigns again. Named limit: a
+  role that leaves and returns with no check in between is not seen gone.
 
 ## Pairing code for people's programs: columns
 

@@ -105,19 +105,29 @@ def require_permission(self, permission: str, *, app: str, mfa: bool = False):
 
 def _known_roles(self) -> set:
     """The roles a permission can be assigned to: the configuration's (`available_roles`, the group maps' targets …)
-    and the role catalog's."""
+    and the role catalog's.
+
+    B-20: the set is remembered; when a role has left it since the last look (the configuration changed while the
+    instance runs), the assignments of every role no longer known are suspended at once — not only at the next start
+    (B-19) —, so the role coming back without a start in between does not bring them back. Named limit: a role that
+    leaves and returns between two looks (no permission evaluated, no assignment read in between) is not seen gone."""
     from . import _role_catalog, config_check
     configured = {r for _, r in config_check.configured_roles(self.cfg) if isinstance(r, str)}
-    return (configured | set(_role_catalog.catalog_names(self.store))) - set(_role_catalog.RESERVED)
+    known = (configured | set(_role_catalog.catalog_names(self.store))) - set(_role_catalog.RESERVED)
+    seen = self.__dict__.get("_roles_seen")
+    self.__dict__["_roles_seen"] = known
+    if seen is not None and seen - known and self.store.has_role_permissions():
+        self._suspend_removed_role_permissions(known)
+    return known
 
 
-def _suspend_removed_role_permissions(self) -> list:
+def _suspend_removed_role_permissions(self, known: Optional[set] = None) -> list:
     """At start (B-19): the assignments of roles that are neither in the configuration nor in the catalog any more.
     Active ones are suspended (`active` = 0, audit `permissions_suspended reason=role_removed`): they grant nothing,
     and a role created later under the same name does not inherit them — an administrator assigns again. Every such
     row is named in a security-log warning at each start until an administrator withdraws it (the panel shows it).
     Returns the rows (`role`, `app`, `name`, `suspended` = just now)."""
-    rows = self.store.suspend_assignments_of_removed_roles(self._known_roles())
+    rows = self.store.suspend_assignments_of_removed_roles(self._known_roles() if known is None else known)
     if not rows:
         return rows
     fresh = [r for r in rows if r["suspended"]]
