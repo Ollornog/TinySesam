@@ -205,13 +205,19 @@ assert "tsframe" not in registration("").text, "a confirmation link without a fr
 framed_form = client(capp).get("/auth/register?app=docs").text
 assert "action='/auth/register?app=docs.example.com'" in framed_form, "the framed registration loses its frame"
 
-url = cauth.create_invite("ivy@example.com", BASE, app="docs")["url"]
-r = client(capp).get(urlsplit(url).path)
-assert r.status_code == 303 and r.headers["location"].endswith("&app=docs.example.com"), r.headers.get("location")
-assert "tsbar tsframe" in client(capp).get(r.headers["location"]).text, "the invitation's registration is unframed"
-r = client(capp).get(urlsplit(cauth.create_invite("ida@example.com", BASE)["url"]).path)
-assert "app=" not in r.headers["location"], "an invitation without a frame names one"
-r = client(capp).get(urlsplit(cauth.create_invite("ira@example.com", BASE, app="nosuchapp")["url"]).path)
-assert "app=" not in r.headers["location"], "an unknown frame travelled in the invitation"
+
+
+def invited(app=None):
+    """The registration page an invitation leads to (`/auth/invite/<t>` → `/auth/register?invite=<t>`)."""
+    r = client(capp).get(urlsplit(cauth.create_invite(f"ivy{len(cmails)}@example.com", BASE, app=app)["url"]).path)
+    assert r.status_code == 303, r.status_code
+    return client(capp).get(r.headers["location"]).text
+
+
+page = invited("docs")
+assert "tsbar tsframe" in page, "the invitation's registration is unframed"
+assert "action='/auth/register?app=docs.example.com'" in page, "the invitation's registration loses its frame"
+assert "tsframe" not in invited(), "an invitation without a frame opens framed"
+assert "tsframe" not in invited("nosuchapp"), "an unknown frame travelled in the invitation"
 ok("C the address-change, confirmation and invitation links open in the application's frame they were asked for in "
    "(T-152); without one or with an unknown one unframed; the framed registration keeps its frame")
