@@ -1706,6 +1706,29 @@ verknüpft OIDC-, SAML- und LDAP-Identitäten und löst sie wieder — nie die l
 | Neuschreiben des Kerns in einer anderen Sprache | nicht geplant: der Kern bleibt Python, die Clients bleiben dünn, siehe ADR-15 |
 | Eine Administrationsoberfläche auf der Herkunft der Anwendung | nicht geplant: ein XSS der Anwendung könnte TinySesam-Formulare absenden |
 
+### Die Abnahmematrix
+
+Jede Beispielanwendung mit jeder Herkunft eines Kontos, in einem echten Browser (T-107). **IdP** heißt OpenID Connect
+über einen echten Anbieter auf einem Loopback-Port (`tests/_test_idp.py`): Der Browser verlässt TinySesams
+Anmeldeseite zum Anbieter und kommt über den Callback zurück; TinySesam holt Discovery, Token und Schlüsselsatz selbst
+und prüft das ID-Token wie das jedes Anbieters. **Gemischt** heißt lokale und Anbieter-Konten in einer Installation: Ein
+Konto beider Herkünfte mit gleichwertiger Rolle bekommt dasselbe Ergebnis. Jedes Beispiel bleibt, wie es ist — die
+Suite ergänzt den Anbieter in seiner Konfiguration (Ex1, Ex2 und Ex4 laufen von Haus aus mit lokalen Konten; Ex3 ist
+selbst gemischt).
+
+| Beispiel (Oberfläche, Betriebsart) | lokal | IdP | gemischt |
+|---|---|---|---|
+| Ex1 Shell oben (Go, Server) | `test_shell_browser.py` B1 `[ex1/local]` | B5 `[ex1/idp]` | B5 `[ex1/mixed]` |
+| Ex2 Shell seitlich (Python, Bibliothek) | `test_shell_browser.py` A2 `[ex2/local]` | A4 `[ex2/idp]` | A4 `[ex2/mixed]` |
+| Ex3 hybrid (Node, Server) | `test_hybrid_browser.py` H1 `[ex3/local]` | H3 `[ex3/idp]` | H3 `[ex3/mixed]` |
+| Ex4 headless (Single-Page-App, Server) | `test_headless_browser.py` X1 `[ex4/local]` | X9 `[ex4/idp]` | X9 `[ex4/mixed]` |
+
+In der CI fährt der Job `browser-suite` je Suite einen Strang nebeneinander (`browser` fasst sie zusammen), in der
+Sprint-Spur, wenn sich die Bibliothek, ein Beispiel oder eine Browser-Suite ändert, und nachts zweimal in
+`nightly-repeat`. Bewusst nicht je Beispiel: SAML und LDAP als Anbieter — die Beispiele sehen nur die
+`Remote-*`-Header, die nicht vom Protokoll abhängen; deren Anmeldung hat eigene Suiten (`tests/test_saml.py`,
+`tests/test_ldap.py`) — und das Verknüpfen eines lokalen mit einem Anbieter-Konto (`tests/test_saml_link.py`, T-99).
+
 ## Mehrere Anwendungen, ein TinySesam
 
 Eine Installation kann mehrere Anwendungen schützen — und **wer in welche darf, entscheidet der

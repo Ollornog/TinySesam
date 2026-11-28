@@ -66,6 +66,22 @@ async def view(p, width: int, height: int, theme: str) -> None:
     await p.js(f"localStorage.setItem('themeMode','{theme}');true")
 
 
+async def sign_in_with_provider(p, name: str, done: str) -> None:
+    """From TinySesam's sign-in page through the identity provider of `_test_idp` as `name` (T-107): the page's
+    provider button, the provider's page, its button for `name`; then wait for `done` (a JS condition of the page
+    the round ends on)."""
+    await p.until("!!document.querySelector('a[href*=\"/auth/oidc/start\"]')", "no provider button on the page")
+    await p.js("window.__old=true;document.querySelector('a[href*=\"/auth/oidc/start\"]').click();true")
+    await p.until(f"window.__old===undefined&&!!document.getElementById('idp-{name}')", "no provider page")
+    await p.js(f"window.__old=true;document.getElementById('idp-{name}').click();true")
+    try:
+        await p.until(f"window.__old===undefined&&document.readyState==='complete'&&{done}",
+                      f"the provider's round for {name} did not end where expected")
+    except AssertionError as e:
+        text = await p.js("document.body?document.body.innerText.slice(0,300):''")
+        raise AssertionError(f"{e} — the page says: {text!r}") from None
+
+
 async def clean(p, where: str, console_before: int, failed_before: int) -> None:
     viol = await p.csp()
     assert viol == [], f"CSP violation on {where}: {viol}"

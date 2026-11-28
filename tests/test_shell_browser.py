@@ -10,8 +10,10 @@
      application's icon (`frame.icon`, T-151) does too.
   C. The permission matrix of the panel (T-100): a dangerous permission asks for a step-up, an area administrator sees
      only the own area.
+  A4/B5 (T-107, the acceptance matrix): both examples beside a real identity provider (`_test_idp`) — a provider's
+     account signs in through it and gets what the local account with the equivalent role gets.
 
-Skipped without Chrome or `websockets`; part B needs `go` (CI installs it in the jobs that run this suite).
+Skipped without Chrome, `websockets` or the extra [oidc]; part B needs `go` (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
 """
 from __future__ import annotations
@@ -37,6 +39,7 @@ from voraussetzung import braucht, braucht_modul, find_chrome, pflicht_werkzeug 
 
 braucht_modul("websockets")
 braucht_modul("uvicorn")
+braucht_modul("authlib", extra="oidc")      # T-107: a provider's account signs in through a real provider
 CHROME = find_chrome()
 braucht(CHROME, "no Chrome found")
 braucht((ROOT / "examples").is_dir(), "no `examples/` — the browser test runs the examples from the repo")
@@ -46,6 +49,7 @@ import websockets  # noqa: E402
 from fastapi import Request  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 
+from _browser_stack import sign_in_with_provider  # noqa: E402
 from _cdp import Chrome, Page  # noqa: E402
 
 PW = "a long probe password 4711"
@@ -102,7 +106,18 @@ async def clean(p: Page, where: str, console_before: int, failed_before: int) ->
 spec = importlib.util.spec_from_file_location("example_ex2", ROOT / "examples" / "ex2" / "app.py")
 ex2 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ex2)
-ex2_app, ex2_auth = ex2.build(os.path.join(tempfile.mkdtemp(), "ex2.db"))
+from _test_idp import TestIdP  # noqa: E402
+
+# T-107, origin "mixed": Ex2 as it is plus an identity provider — a real one on a loopback port (`_test_idp`) whose
+# group `readers` an administrator mapped to the local role docs-reader.
+ex2_idp = TestIdP({"ida": {"email": "ida@example.test", "email_verified": True, "groups": ["readers"]}},
+                  client_id="ex2", client_secret="probe-secret")
+ex2_app, ex2_auth = ex2.build(os.path.join(tempfile.mkdtemp(), "ex2.db"), base_url="http://127.0.0.1", oidc_enabled=True, oidc_issuer=ex2_idp.issuer, oidc_client_id="ex2",
+                              oidc_client_secret=ex2_idp.client_secret, oidc_scopes="openid profile email groups",
+                              oidc_group_role_map={"readers": "docs-reader"})
+# OIDC wants a base_url at construction; A1–A3 compare the component with topbar() without one, as Ex2 runs by default
+# (with one, topbar.json names absolute addresses). A4 sets it to the served address for the provider's round.
+ex2_auth.cfg.base_url = ""
 for role in ("docs-reader", "docs-editor"):
     ex2_auth.grant_permission(role, "docs.read", app="docs", by="test")
 ex2_auth.grant_permission("docs-editor", "docs.delete", app="docs", by="test")
@@ -264,7 +279,33 @@ async def part_a(p: Page) -> None:
     ok("A2 Ex2 (library, side): the application's page and the account page at 375 and 1280 px, light and dark — a "
        "248 px side bar the page gives way to, a top bar on a phone with the links in the menu; Editing guide (role) "
        "and Trash (permission) for the editor only; current page marked; menu on screen; tap targets ≥ 44 px; strict "
-       "CSP, no console error, no broken request")
+       "CSP, no console error, no broken request [ex2/local]")
+
+    # 4. T-107: a provider's account beside the local ones — through the provider, the same rules as rita.
+    console_before, failed_before = len(p.console), len(p.failed)
+    ex2_auth.cfg.base_url = EX2
+    await p.go("about:blank")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+    await p.go(EX2 + "/auth/login", "!!document.querySelector('input[name=username]')")
+    await sign_in_with_provider(p, "ida", f"location.origin==={json.dumps(EX2)}&&!document.getElementById('idp-ida')")
+    assert ex2_idp.signed_in == ["ida"], ex2_idp.signed_in
+    ida = ex2_auth.store.get_user_by_name("ida")
+    assert ex2_auth.user_roles(ida) == ["docs-reader"], "the provider's group did not map to docs-reader"
+    assert ex2_auth.store.account_sources([int(ida["id"])])[int(ida["id"])] == ["oidc"], "not a provider's account"
+    links = []
+    for uid in (None, RITA):
+        if uid is not None:
+            await as_user(p, ex2_auth, uid, EX2)
+        await p.go(EX2 + "/", "!!document.getElementById('doc-d1')")
+        links.append(await p.js("[...document.querySelectorAll('.tsbar-links a')].map(a=>a.textContent).join()"
+                                "+'|'+document.querySelectorAll('button[id^=del-]').length"))
+    assert links[0] == links[1] == "Documents|0", f"the provider's account and rita differ: {links}"
+    await clean(p, "Ex2 for the provider's account", console_before, failed_before)
+    ex2_auth.cfg.base_url = ""
+    ok("A4 mixed: a provider's account beside the local ones signs in through the provider on Ex2's own sign-in page "
+       "(the library's OIDC round, its group mapped to docs-reader) and gets what rita (local, docs-reader) gets: the "
+       "documents, the same side-bar links, no delete button [ex2/idp] [ex2/mixed]")
 
 
 # ══ B. Server: Ex1, shell on top ═════════════════════════════════════════════════════════════════════════════════
@@ -285,11 +326,18 @@ if GO:
     PROXY_PORT = _proxy_sock.getsockname()[1]
     AUTH_HOST, APP_HOST = f"auth.example.test:{PROXY_PORT}", f"app.example.test:{PROXY_PORT}"
     _tmp = tempfile.mkdtemp(prefix="ex1-")
+    # T-107, origin "mixed": deploy/ex1 plus an identity provider whose group `staff` maps to the role ex1-staff.
+    ex1_idp = TestIdP({"ivo": {"email": "ivo@example.test", "email_verified": True, "groups": ["staff"]}},
+                      client_id="ex1", client_secret="probe-secret")
     toml = (ROOT / "deploy" / "ex1" / "tinysesam.toml").read_text(encoding="utf-8")
     toml = (toml.replace("https://auth.example.com", f"http://{AUTH_HOST}").replace("example.com", "example.test")
             .replace('trusted_proxies = ["172.30.0.0/16"]', 'trusted_proxies = ["127.0.0.1/32"]')
             .replace('https_mode = "warn"', 'https_mode = "warn"\ncookie_secure = false\n'
-                                            'cookie_domain = ".example.test"\nbrand_icon = "/brand/ex1.svg"')
+                                            'cookie_domain = ".example.test"\nbrand_icon = "/brand/ex1.svg"\n'
+                                            f'oidc_enabled = true\noidc_issuer = "{ex1_idp.issuer}"\n'
+                                            'oidc_client_id = "ex1"\noidc_client_secret = "env:EX1_OIDC_CLIENT_SECRET"\n'
+                                            'oidc_scopes = "openid profile email groups"\n'
+                                            'oidc_group_role_map = { staff = "ex1-staff" }')
             # B-21: a second host of the Go program without an app frame — there the shell draws the logo.
             .replace('trusted_redirect_hosts = ["app.example.test"]',
                      'trusted_redirect_hosts = ["app.example.test", "plain.example.test"]')
@@ -301,7 +349,8 @@ if GO:
     with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
         fh.write(toml)
     _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
-    os.environ.update(TINYSESAM_CONFIG=os.path.join(_tmp, "tinysesam.toml"), TINYSESAM_DB=os.path.join(_tmp, "ex1.db"))
+    os.environ.update(TINYSESAM_CONFIG=os.path.join(_tmp, "tinysesam.toml"), TINYSESAM_DB=os.path.join(_tmp, "ex1.db"),
+                      EX1_OIDC_CLIENT_SECRET=ex1_idp.client_secret)
     try:
         from tinysesam import gateway
         ex1_app = gateway.build_app()
@@ -313,7 +362,7 @@ if GO:
             return Response("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><rect width='8' height='8'/></svg>",
                             media_type="image/svg+xml")
     finally:
-        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB"):
+        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB", "EX1_OIDC_CLIENT_SECRET"):
             os.environ.pop(_k, None)
         os.environ.update(_saved)
     ex1_auth = ex1_app.state.auth
@@ -463,7 +512,7 @@ async def part_b(p: Page) -> None:
     ok("B1 Ex1 (Go, server, shell on top): the component from /.tinysesam/shell.js on the application's host at 375 "
        "and 1280 px, light and dark — the layout of apps.ex1, the frame with \u2039 Ex1, Members (permission) and Staff "
        "(role) for the staff, Home only for a member; the menu with Security framed, on screen, Escape closes it "
-       "(focus back); tap targets ≥ 44 px; the Go page's strict CSP, no console error, no broken request")
+       "(focus back); tap targets ≥ 44 px; the Go page's strict CSP, no console error, no broken request [ex1/local]")
 
     # The theme switch of the component, and the routes agree with the links.
     await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
@@ -504,6 +553,27 @@ async def part_b(p: Page) -> None:
     await p.until(f"{icon}.complete&&{icon}.naturalWidth>0", "the application's icon in the frame did not load")
     await clean(p, "Ex1 in its frame with the application's icon", console_before, failed_before)
     ok("B4 the application's icon in the frame (frame.icon): before the name, from TinySesam's origin, loaded (T-151)")
+
+    # B5 ─ T-107: a provider's account beside the local ones — through the provider, the links of sam (local staff).
+    await p.go("about:blank")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.go(f"http://{AUTH_HOST}/auth/login", "!!document.querySelector('input[name=username]')")
+    await sign_in_with_provider(p, "ivo", f"location.origin==={json.dumps('http://' + AUTH_HOST)}"
+                                          "&&!document.getElementById('idp-ivo')")
+    assert ex1_idp.signed_in == ["ivo"], ex1_idp.signed_in
+    ivo = ex1_auth.store.get_user_by_name("ivo")
+    assert ex1_auth.user_roles(ivo) == ["ex1-staff"], "the provider's group did not map to ex1-staff"
+    assert ex1_auth.store.account_sources([int(ivo["id"])])[int(ivo["id"])] == ["oidc"], "not a provider's account"
+    await p.go(EX1 + "/", drawn)
+    titles = await p.js(f"[...{root}.querySelectorAll('.tsbar-links a')].map(a=>a.textContent).join()")
+    assert titles == "Home,Members,Staff", f"the provider's staff member sees {titles!r}, sam saw Home,Members,Staff"
+    await p.go(EX1 + "/members", "document.readyState==='complete'&&!!document.querySelector('main ul,ul')")
+    assert "needs the permission" not in await p.js("document.body.innerText"), \
+        "the Go program refused the provider's staff member the members page"
+    await clean(p, "Ex1 for the provider's account", console_before, failed_before)
+    ok("B5 mixed: a provider's account beside the local ones signs in through the provider (its group mapped to "
+       "ex1-staff) and gets what sam (local, ex1-staff) gets: the frame's links Home, Members (permission), Staff "
+       "(role), and the Go program's members page [ex1/idp] [ex1/mixed]")
 
 
 # ══ C. The permission matrix of the panel (T-100) ════════════════════════════════════════════════════════════════
@@ -646,11 +716,13 @@ try:
     print("OK test_shell_browser")
 finally:
     ex2_server.should_exit = True
+    ex2_idp.close()
     mx_server.should_exit = True
     if EX1:
         go_proc.terminate()
         go_proc.wait(timeout=10)
         _go_log.close()
         ts_server.should_exit = True
+        ex1_idp.close()
         import shutil
         shutil.rmtree(_tmp, ignore_errors=True)
