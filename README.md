@@ -1470,7 +1470,7 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 | **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()`, example Ex1 |
 | **Shell at the side** | the same component as a side bar | as above | `layout="side"`, `shell_layout`, `apps[id].layout`, example Ex2 |
 | **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the TinySesam area `/auth/area?app=<id>` (T-104, below), example Ex3 |
-| **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the account overview and the account API, T-105 and T-106 add the action pages and the reading side |
+| **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the action pages `/auth/act/<name>` (T-105, below) and the account overview; T-106 adds the reading side |
 
 ### The TinySesam area (hybrid)
 
@@ -1534,6 +1534,43 @@ Example Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/depl
 whole: a Node application behind the server with its own navigation and one link "Account" to the area, local and
 identity-provider accounts side by side; `tests/test_hybrid_browser.py` drives it in Chrome at 375 and 1280 px, light
 and dark.
+
+### Action pages (headless)
+
+An application that draws everything itself — a single-page app behind the server, say — reads the account's state from
+`/.tinysesam/account.json` and changes nothing itself. For every change it sends the person to an action page on
+TinySesam's origin and gets them back (T-105):
+
+```text
+https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.example.com%2Fsettings&state=k3
+  → back to https://docs.example.com/settings?ts_action=password&ts_result=done&state=k3
+```
+
+- **Which actions.** `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`,
+  `app_passwords`, `sessions`, `programs` (connected programs and the pairing code) and `services`. The member
+  `actions` of `account.json` (and of `account_overview`) holds the address of each one this installation offers this
+  account — in the application's frame on its host —, `null` for the others. The application adds `return` and `state`.
+- **One session.** Every session carries a session handle — an opaque random reference, worthless for signing in,
+  kept through a token rotation (schema 29). `account.json` names it per session (`sessions.items[].handle`) with the
+  action page that ends exactly that session (`end`: `/auth/act/session_end?target=<handle>`, `null` for the
+  session of the request itself — that is signing out). The account page lists an "end" button per other session; the
+  route behind both, `POST /auth/sessions/end`, wants a fresh confirmation and ends only an own other session.
+- **What the page is.** The section of the account page for that action, with the same script and the same routes
+  behind it — so the same CSRF and step-up checks —, in the application's frame with its name and icon above the
+  heading, never framed itself (`frame-ancestors 'none'`). A GET changes nothing. Actions that create new access
+  (`username`, `email`, `pin`, `totp`, `recovery_codes`, `passkeys`) ask for a fresh confirmation as they open and come
+  back after it. Signed out, the sign-in page comes first and leads back to the same address.
+- **The way back.** `return` must be an address `link_next_ok` accepts and, in an app frame, lie on exactly the frame's
+  host; anything else is replaced in silence by the frame's home, without a result. `state` (printable ASCII, at most
+  128 characters) is passed through unread. `ts_result` is `done` once a change worked on the page, `cancelled` when the
+  person went back without one, `unavailable` when the action is not offered — a hint, not a proof: the application
+  reads `account.json` again.
+- **Secrets never travel through the application**: a password, a TOTP code, a recovery code, an API key, an app
+  password or a pairing code is typed or shown on TinySesam's page only.
+
+The register of the actions is shared with the administration: every action carries a scope (`own`, later `admin`) and
+a step-up class (`window`: the window of a fresh confirmation; `each`: one confirmation per action, for the
+administrator's actions that follow).
 
 ### The three origins of an account
 
@@ -3216,7 +3253,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**161 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**162 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -427,7 +427,8 @@ programs) fetches it like the top bar: same-origin at `/.tinysesam/account.json`
 exception of §8 ("Server-side or in the browser"); the browser way is the recommended one. It is an optional helper: a client without it is still a
 complete gate client. TinySesam answers only for a full browser session — an API key, an OAuth token, an app password
 or a half session gets `401` — so the check "a person, by browser" stays with TinySesam and the application needs no
-route of its own. Reading only: every change happens on TinySesam's account page, which the links lead to.
+route of its own. Reading only: every change happens on TinySesam's account page or its action pages (§8c), which
+the links lead to.
 
 A helper for it MUST:
 
@@ -459,6 +460,13 @@ The members (TinySesam's answer; `null` means "not offered by this installation"
 | `permissions` | object or null | on an application's host (§3.4): `app` (string, the application id) and `names` (list of strings); `null` on any other host |
 | `links` | object | `account`, `sessions`, `totp`, `passkeys`, `devices`, `app_passwords`, `services`, `approvals`: each an `href` or `null` |
 
+Besides these, the answer carries `actions` (T-105): the action pages of §8c — `username`, `email`, `password`, `pin`,
+`totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — each an `href`
+or `null` (not offered to this account). A helper does not normalize it and drops it like any member it does not know
+(the vector `signed-in` carries it); the application's page reads it in the browser and follows the addresses. In the
+same way every entry of `sessions.items` carries `handle` (the session handle: an opaque random reference, never the
+token or its hash) and `end` (the action page that ends exactly that session, `null` for the session of the request).
+
 Times are Unix seconds (integer) or `null` (never used). `device` is a coarse "browser · system" taken from the
 User-Agent, or `null`; `current` is `true` for the session of this request, `false` for the others, `null` when the
 answer does not know the request's session. The answer never carries an address, a hash, a secret, a key prefix or the
@@ -487,12 +495,46 @@ The normalized result of a helper (`vectors/account.json` shows it):
   - `account.source` is a list of texts or `null`: an entry that is no string is dropped, a value that is no list reads
     as `null`, an unknown text is kept for the application to ignore.
 
+## 8c. Action pages (optional)
+
+An application that draws everything itself writes nothing itself
+([T-105](../backlog/T-105-stage-s9-headless-writing-action-pages-with-a-way-back.md)): for every change it sends the
+person — by navigation, never by a script call — to an action page on TinySesam's origin and gets them back. No client
+code is needed; the browser does everything. The addresses come from the member `actions` of §8a (on the application's
+host they carry `app=<host>`, so the page stands in the application's frame); `null` means the installation does not
+offer that action to this account.
+
+```text
+GET <actions.password>&return=<url>&state=<opaque>        (?return=… when the href carries no query)
+  → the way back: <url>?ts_action=password&ts_result=done&state=<opaque>
+```
+
+- **One object.** `session_end` acts on one session: its address is the member `end` of that session in §8a
+  (`…/auth/act/session_end?target=<handle>`), not a member of `actions`. A handle of another account, an unknown one or
+  that of the current session gives the page "not offered" — one answer for all three.
+- **The request.** The application adds `return` — the address to come back to, an `http(s)` URL on its own host — and
+  optionally `state` (printable ASCII `0x21`–`0x7e`, at most 128 characters; anything else is dropped). TinySesam
+  accepts a `return` that passes its redirect rule (the host of `base_url` or of `trusted_redirect_hosts`, no user
+  part, no control character, no `//host`, no other scheme) and, in an app frame, lies on exactly the frame's host. Any
+  other `return` is replaced in silence by the frame's home, without the three parameters.
+- **The page.** On TinySesam's origin only — never under `/.tinysesam/`, where the application's host counts as
+  TinySesam's own origin —, framed with the application's name and icon, never framed itself (`frame-ancestors
+  'none'`). A GET changes nothing. Signed out, or by API key, the sign-in page comes first and leads back to the same
+  address; an action that creates new access asks for a fresh confirmation first. Every secret — password, TOTP code,
+  recovery code, API key, app password, pairing code — is typed or shown on this page only.
+- **The way back.** A link on the page leads to `return` with `ts_action` (the action's name), `ts_result` and `state`
+  in the query (before a fragment; values of these three names already in `return` are replaced). `ts_result` is a hint
+  for a message, never a proof — anyone can type it: `done` (a change worked on the page), `cancelled` (the person went
+  back without one), `unavailable` (not offered). The application reads §8a again; whoever needs a binding confirmation
+  uses the approvals ([`approval-token.md`](approval-token.md)).
+- An application MUST treat `state` as its own opaque value (TinySesam neither reads nor stores it) and SHOULD check
+  that a `state` it gets back is one it issued, so a link from elsewhere cannot fake its message.
+
 ## 8d. Shell component (optional)
 
 An application that shows TinySesam's bar instead of drawing its own loads the shell component
 ([T-103](../backlog/T-103-stage-s7-shell-on-top-and-at-the-side-one-component-lay.md)) — no client code at all, the
-browser does everything. Sections 8b and 8c are kept for the administrator's data and the action pages of milestone
-M-2.
+browser does everything. Section 8b is kept for the administrator's data of milestone M-2.
 
 ```html
 <head>

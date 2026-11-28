@@ -1505,7 +1505,7 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 | **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()`, Beispiel Ex1 |
 | **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | `layout="side"`, `shell_layout`, `apps[id].layout`, Beispiel Ex2 |
 | **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der TinySesam-Bereich `/auth/area?app=<id>` (T-104, unten), Beispiel Ex3 |
-| **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Kontoübersicht und die Konten-API, T-105 und T-106 bringen Aktionsseiten und die Leseseite |
+| **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Aktionsseiten `/auth/act/<name>` (T-105, unten) und die Kontoübersicht; T-106 bringt die Leseseite |
 
 ### Der TinySesam-Bereich (hybrid)
 
@@ -1571,6 +1571,45 @@ Beispiel Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/dep
 als Ganzes: eine Node-Anwendung hinter dem Server mit eigener Navigation und einem Link „Konto“ in den Bereich, lokale
 Konten und solche des Identity-Providers nebeneinander; `tests/test_hybrid_browser.py` fährt sie in Chrome bei 375 und
 1280 px, hell und dunkel.
+
+### Aktionsseiten (headless)
+
+Eine Anwendung, die alles selbst zeichnet — etwa eine Single-Page-App hinter dem Server —, liest den Stand des Kontos
+aus `/.tinysesam/account.json` und ändert selbst nichts. Für jede Änderung schickt sie die Person auf eine Aktionsseite
+auf TinySesams Ursprung und bekommt sie zurück (T-105):
+
+```text
+https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.example.com%2Fsettings&state=k3
+  → zurück nach https://docs.example.com/settings?ts_action=password&ts_result=done&state=k3
+```
+
+- **Welche Aktionen.** `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`,
+  `app_passwords`, `sessions`, `programs` (verbundene Programme und der Kopplungscode) und `services`. Das Mitglied
+  `actions` von `account.json` (und von `account_overview`) enthält die Adresse jeder Aktion, die diese Installation
+  diesem Konto anbietet — auf dem Host der Anwendung in ihrem Rahmen —, `null` für die übrigen. Die Anwendung hängt
+  `return` und `state` an.
+- **Eine Sitzung.** Jede Sitzung trägt einen Sitzungs-Handle — eine undurchsichtige, zufällige Referenz, wertlos zum
+  Anmelden, die eine Token-Rotation überdauert (Schema 29). `account.json` nennt ihn je Sitzung
+  (`sessions.items[].handle`) mit der Aktionsseite, die genau diese Sitzung beendet (`end`:
+  `/auth/act/session_end?target=<handle>`, `null` für die Sitzung der Anfrage selbst — das ist Abmelden). Die Kontoseite
+  zeigt je anderer Sitzung einen Knopf „beenden“; die Route dahinter, `POST /auth/sessions/end`, verlangt eine frische
+  Bestätigung und beendet nur eine eigene andere Sitzung.
+- **Was die Seite ist.** Der Abschnitt der Kontoseite für diese Aktion, mit demselben Skript und denselben Routen
+  dahinter — also denselben CSRF- und Step-up-Prüfungen —, im Rahmen der Anwendung mit Name und Symbol über der
+  Überschrift, selbst nie gerahmt (`frame-ancestors 'none'`). Ein GET ändert nichts. Aktionen, die einen neuen Zugang
+  schaffen (`username`, `email`, `pin`, `totp`, `recovery_codes`, `passkeys`), fragen beim Öffnen eine frische
+  Bestätigung ab und kommen danach zurück. Abgemeldet kommt zuerst die Anmeldeseite und führt zur selben Adresse zurück.
+- **Der Rückweg.** `return` muss eine Adresse sein, die `link_next_ok` annimmt, und im Rahmen einer Anwendung genau auf
+  deren Host liegen; alles andere wird still durch die Startseite des Rahmens ersetzt, ohne Ergebnis. `state` (druckbares
+  ASCII, höchstens 128 Zeichen) wird ungelesen durchgereicht. `ts_result` ist `done`, sobald eine Änderung auf der Seite
+  geklappt hat, `cancelled`, wenn die Person ohne Änderung zurückgeht, `unavailable`, wenn die Aktion nicht angeboten
+  wird — ein Hinweis, kein Beweis: Die Anwendung liest `account.json` neu.
+- **Geheimnisse laufen nie durch die Anwendung**: Passwort, TOTP-Code, Recovery-Code, API-Key, App-Passwort oder
+  Kopplungscode werden nur auf TinySesams Seite eingegeben oder gezeigt.
+
+Das Register der Aktionen teilt sich die Verwaltung: Jede Aktion trägt einen Bereich (`own`, später `admin`) und eine
+Step-up-Klasse (`window`: das Fenster einer frischen Bestätigung; `each`: eine Bestätigung je Aktion, für die folgenden
+Aktionen der Verwaltung).
 
 ### Die drei Herkünfte eines Kontos
 
@@ -3298,7 +3337,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**161 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**162 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

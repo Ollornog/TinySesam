@@ -954,6 +954,8 @@ class AccountProbe:
             a.store.create_session(uid, 3600, 1, "password", ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) "
                                                                "Gecko/20100101 Firefox/140.0")
             a.store.create_session(uid, 3600, 1, "passkey", ua="")
+            # The session handles (T-105) are random; fixed ones keep the vectors reproducible.
+            a.store._exec("UPDATE session_handle SET handle = printf('%032x', rowid)")
             a.store.add_api_key(uid, "backup", "tsk_probe", "key-hash")
             a.create_app_password(uid, "Phone calendar", expires_days=30)
             from tinysesam import approvals as apv
@@ -1014,6 +1016,18 @@ class AccountProbe:
 ACCOUNT_LINKS = ("account", "sessions", "totp", "passkeys", "devices", "app_passwords", "services", "approvals")
 SIGNED_OUT_ACCOUNT = {"signed_in": False, "account": None, "sign_in": None, "sessions": None, "programs": None,
                       "approvals": None, "permissions": None, "links": None}
+#: Members of TinySesam's answer a helper does not normalize (spec §8a): it drops them like any unknown member — of
+#: the answer, and of every session (the session handle and the address of the action page that ends it, T-105).
+ACCOUNT_UNNORMALIZED = ("actions",)
+SESSION_UNNORMALIZED = ("handle", "end")
+
+
+def _drop_unnormalized(answer: dict) -> None:
+    for member in ACCOUNT_UNNORMALIZED:
+        del answer[member]
+    for item in answer["sessions"]["items"]:
+        for member in SESSION_UNNORMALIZED:
+            del item[member]
 
 
 def account_vectors(ap: AccountProbe) -> list:
@@ -1026,7 +1040,11 @@ def account_vectors(ap: AccountProbe) -> list:
 
     full = ap.answer()
     # The server's answer has exactly the members this file knows: a new member needs a decision here (and in §8a).
-    assert sorted(full) == sorted(SIGNED_OUT_ACCOUNT), sorted(full)
+    # `actions` (§8c, T-105) is a member the helpers do not normalize yet: the browser follows its addresses itself.
+    assert sorted(full) == sorted([*SIGNED_OUT_ACCOUNT, *ACCOUNT_UNNORMALIZED]), sorted(full)
+    assert all(v is None or v.startswith(f"{ISSUER}/auth/act/") for v in full["actions"].values()), full["actions"]
+    raw = copy.deepcopy(full)
+    _drop_unnormalized(full)
     assert sorted(full["links"]) == sorted(ACCOUNT_LINKS), sorted(full["links"])
     s = full["sessions"]["items"]
     assert full["sign_in"]["password"] == "set" and full["sign_in"]["totp"]["enabled"] is True, full["sign_in"]
@@ -1034,11 +1052,15 @@ def account_vectors(ap: AccountProbe) -> list:
     assert len(s) == 2 and s[0]["device"] is not None and s[1]["device"] is None, s
     assert full["account"]["source"] == ["local"], full["account"]
     assert [p["name"] for p in full["programs"]["app_passwords"]] == ["Phone calendar"], full["programs"]
-    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type).
+    # Valid and complete: the normalized form IS the answer (every href safe, every member of its type) — without the
+    # member `actions`, which a helper drops like every member it does not normalize.
     add("signed-in", "GET /auth/account.json for a person with password, TOTP, a passkey, a PIN, two sessions, an API "
-        "key and one approval waiting.", full, copy.deepcopy(full))
+        "key and one approval waiting; its `actions` (spec §8c) and the sessions' `handle` and `end` are not "
+        "normalized and dropped.", raw,
+        copy.deepcopy(full))
     less = ap.answer(totp_enabled=False, pin_enabled=False, passkey_enabled=False, apikey_enabled=False,
                      approvals_enabled=False, account_enabled=False)
+    _drop_unnormalized(less)
     assert less["sign_in"]["totp"] is None and less["links"]["account"] is None, less
     add("offered-less", "An installation without TOTP, PIN, passkeys, API keys, approvals and account page: `null` "
         "means not offered here.", less, copy.deepcopy(less))

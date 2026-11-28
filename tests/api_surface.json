@@ -2593,6 +2593,15 @@
       "keys": [],
       "tier": "B"
     },
+    "GET /auth/act/{name}": {
+      "keys": [
+        "query:app",
+        "query:return",
+        "query:state",
+        "query:target"
+      ],
+      "tier": "B"
+    },
     "GET /auth/apikeys": {
       "keys": [],
       "tier": "B"
@@ -3163,6 +3172,10 @@
       "keys": [
         "form:_csrf"
       ],
+      "tier": "B"
+    },
+    "POST /auth/sessions/end": {
+      "keys": [],
       "tier": "B"
     },
     "POST /auth/sessions/revoke": {

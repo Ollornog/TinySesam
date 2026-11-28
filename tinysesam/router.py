@@ -19,7 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
-from . import _chain, _shell
+from . import _shell
 from .errors import ConfigError
 from . import security
 from .store import replacement_name, key_kind_of, name_invalid, norm_email, valid_email
@@ -1264,65 +1264,17 @@ def build_router(auth) -> APIRouter:
                 "other_sessions": auth.count_other_sessions(request, u) if u else 0}
 
     if cfg.account_enabled:
+        from ._routes_actions import account_ctx as _account_ctx
+
         @r.get("/auth/account", response_class=HTMLResponse)
         def account_page(request: Request):
             u = auth.current_user(request)
             if not u:
                 return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.browser_path(request, '/auth/account'))}", 303)
-            # The account page asks which factors an account maintains, not what the login page
-            # starts with: a PIN that a strict chain permits only as a follow-up factor (G7) needs
-            # its section anyway, as does one that the chain demands (with `pin_login=False`).
-            methods = cfg.enabled_methods()
-            if (cfg.pin_enabled and (cfg.pin_login or "pin" in _chain.factors(cfg.login_chain))
-                    and "pin" not in methods):
-                methods.append("pin")
             # One source (T-91): the page reads the state from `account_overview`, the same function behind
-            # `/auth/account.json` — page and data cannot drift apart.
+            # `/auth/account.json` — page and data cannot drift apart; its action pages (T-105) read the same.
             view = auth.account_overview(u) or {}
-            sign_in = view.get("sign_in") or {}
-            totp = sign_in.get("totp") or {}
-            return auth.render_page("account", request=request, user=u, methods=methods,
-                                    # B-10: without a password the page offers to set one, without the
-                                    # field for the current one (not with a directory: `set_initial_password`).
-                                    password_initial=sign_in.get("password") == "unset",
-                                    # A directory account without a local password changes it in the directory.
-                                    password_directory=sign_in.get("password") == "directory",
-                                    # T-99: link this account with an identity at the OIDC provider (not yet linked).
-                                    oidc_link=bool(cfg.oidc_enabled and not auth.store.is_oidc_account(u["id"])),
-                                    # …and with SAML, LDAP; the linked ones with "Unlink" (never the last way in).
-                                    identities=(auth._identities_view(u) if cfg.oidc_enabled or cfg.saml_enabled
-                                                or cfg.ldap_enabled else []),
-                                    has_totp=bool(totp.get("enabled")),
-                                    recovery_left=totp.get("recovery_left"),
-                                    recovery_warn=auth._RECOVERY_WARN_THRESHOLD,
-                                    has_pin=bool(sign_in.get("pin")),
-                                    is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
-                                    # The link to the panel: administrators and delegated admins (T-74).
-                                    admin_panel=auth._admin_panel_visible(u),
-                                    events=auth.own_events(u["id"]),
-                                    # Connected programs (OAuth, T-36) — None leaves the section out.
-                                    oauth_devices=(auth._oauth_server().devices(u["id"])
-                                                   if cfg.oauth_enabled else None),
-                                    # Services (T-60) — the resources a pairing code may name; None leaves the
-                                    # section out.
-                                    # Pairing code for a program (ADR-14) — None leaves the section out.
-                                    oauth_pairing=({"minutes": int(cfg.oauth_pairing_consent_minutes),
-                                                    "resources": [(r, auth._forward_app(r)["name"])
-                                                                  for r in auth._oauth_server().resources()]}
-                                                   if cfg.oauth_enabled and cfg.oauth_pairing_consent_enabled
-                                                   else None),
-                                    service_resources=(auth._oauth_server().resources()
-                                                       if cfg.oauth_enabled and cfg.oauth_service_clients
-                                                       else None),
-                                    # App passwords (T-66) — None leaves the section out.
-                                    app_passwords=({"apps": auth.app_password_hosts(),
-                                                    "default_days": int(cfg.app_password_default_days),
-                                                    "allow_unlimited": bool(cfg.app_password_allow_unlimited)}
-                                                   if auth.app_password_hosts() else None),
-                                    username_change=(cfg.self_service_username_change
-                                                     and cfg.login_identifier != "email"
-                                                     and not cfg.ldap_enabled),
-                                    email_change=(cfg.self_service_email_change and auth.mail_configured()))
+            return auth.render_page("account", request=request, user=u, **_account_ctx(auth, request, u, view))
 
     # ---------- Self-service: username and address (PO decision 2026-09-25) ----------
     def _fresh_for_identifier(request: Request) -> dict:
@@ -1402,8 +1354,27 @@ def build_router(auth) -> APIRouter:
         cur = auth._session_from_request(request)
         # One source with `account_overview` (T-91): the same rows, here with address and browser string.
         return [{"created_at": s["created_at"], "ip": s["ip"], "method": s["method"], "user_agent": s["user_agent"],
-                 "current": bool(s["current"])}
+                 "current": bool(s["current"]), "handle": s["handle"]}
                 for s in auth._own_session_rows(u["id"], cur["token_hash"] if cur else None)]
+
+    @r.post("/auth/sessions/end")
+    async def own_session_end(request: Request):
+        """End ONE other session by its session handle (T-105) — with a fresh confirmation, like ending the others
+        (F-09). The own session is no target (that is signing out); a handle of another account ends nothing (404)."""
+        if not auth.current_user(request):
+            raise HTTPException(401)
+        u = auth.require_mfa(request)
+        handle = str((await auth.json_body(request)).get("handle") or "")
+        cur = auth._session_from_request(request)
+        own = auth.store.list_sessions(u["id"])
+        if any(s["public_handle"] == handle and cur and s["token_hash"] == cur["token_hash"] for s in own):
+            raise HTTPException(400, auth.t("api.invalid", reason="the current session — sign out instead"))
+        if not auth.store.end_session_by_public_handle(u["id"], handle):
+            raise HTTPException(404)
+        # An open address change may stem from the ended session (as with "end the others", finding 1).
+        auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
+        auth.audit("session_end", u["username"], auth.client_ip(request))
+        return {"ok": True}
 
     @r.post("/auth/sessions/revoke-after-login")
     async def sessions_revoke_after_login(request: Request):
@@ -1902,10 +1873,13 @@ def build_router(auth) -> APIRouter:
     if cfg.admin_enabled:
         r.include_router(auth.admin_router(), prefix=cfg.admin_path)
 
-    # The TinySesam area of an application (T-104, surface "hybrid"): beside the account page it leads to.
+    # The TinySesam area of an application (T-104, surface "hybrid") and the action pages (T-105, surface "headless"):
+    # beside the account page they lead to.
     if cfg.account_enabled:
+        from ._routes_actions import add_routes as _add_routes_actions
         from ._routes_area import add_routes as _add_routes_area
         _add_routes_area(r, auth, cfg)
+        _add_routes_actions(r, auth, cfg)
 
     # Forward auth and the gate (T-112: its own module, imported only when `cfg.forward_auth_enabled` is on).
     if cfg.forward_auth_enabled:

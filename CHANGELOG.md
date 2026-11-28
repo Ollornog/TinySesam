@@ -38,6 +38,26 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Action pages, surface "headless" (T-105, part 1). `/auth/act/<name>?app=<id>&return=<url>&state=<opaque>` is one
+  action of the own account — `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`,
+  `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — on TinySesam's origin, in the application's frame
+  with its name and icon, never framed itself (`frame-ancestors 'none'`, `X-Frame-Options: DENY`). The page is the
+  account page's section for that action with the same script and routes behind it (template `action`); a GET changes
+  nothing; actions that create new access ask the step-up as they open; signed out, the sign-in page leads back. The
+  way back goes to `return` with `ts_action`, `ts_result` (`done`, `cancelled`, `unavailable` — a hint, not a proof)
+  and `state`; a `return` that `link_next_ok` refuses or that leaves the frame's host is replaced in silence by the
+  frame's home. `account_overview` and `account.json` gain the member `actions` (each own action → its page, or `null`
+  where not offered). One register of the actions (`_actions.ACTIONS`) with scope and step-up class (`window`/`each`)
+  for the administration to share. Spec §8c. `tests/test_action_pages.py`.
+- The session handle (T-105, schema 29): every session carries an opaque random reference (table
+  `session_handle`, given by a trigger, kept through a token rotation), worthless for signing in. `account_overview` and
+  `account.json` name it per session (`sessions.items[].handle`) with `end`, the action page `session_end` that ends
+  exactly that session (`null` for the request's own). `POST /auth/sessions/end` (tier B) ends one own other session
+  with a fresh confirmation, audited as `session_end`; the account page lists an "end" button per other session.
+  `docs/OPERATIONS.md` ("Updating"): a schema-28 version opens the file with the newer-version warning and needs no SQL.
+- Revoking a connected program on the account page is sent by the page's script, and the page reloads (T-105): it
+  stays in its app frame (until now the answer led to the unframed account page), and an action page marks its way
+  back as done.
 - The TinySesam area of an application, surface "hybrid" (T-104, part 1). `/auth/area?app=<id>` shows the tiles of
   the own account — account, security, sessions, programs, approvals where offered, the admin panel for an
   administrator or an area administrator of this application — in the application's frame (name, icon, links of

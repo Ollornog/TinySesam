@@ -514,7 +514,24 @@ TinySesam's (the session ends), not the application's `forward_logout`.
   foreign origin's page cannot read it; `no-store` and `Vary: Cookie` keep it out of shared caches. There is no writing
   route under `/.tinysesam/`: there the application's host counts as an own origin (`_origin_ok`), and an XSS in the
   application could otherwise end sessions after a fresh step-up. Ending sessions, revoking programs and app passwords
-  stay on the account page, behind the existing audited and step-up-guarded routes.
+  stay on the account page and its action pages, behind the existing audited and step-up-guarded routes.
+
+**Action pages** (`/auth/act/<name>`, T-105, spec §8c): an application on another origin changes an account only by
+sending the person there.
+
+- **TinySesam's origin only**, never under `/.tinysesam/`; never framed (`frame-ancestors 'none'`, `X-Frame-Options:
+  DENY`), so a page of the application cannot lay itself over the buttons. A GET changes nothing; the buttons call the
+  account page's routes with their own CSRF, session (never an API key) and step-up checks — the action page adds no
+  writing route. Actions that create new access ask for the fresh confirmation as the page opens.
+- **The way back** is a link, never a redirect after a write: `return` must pass `link_next_ok` and, in an app frame,
+  lie on exactly the frame's host; anything else becomes the frame's home in silence. `state` is printable ASCII of at
+  most 128 characters, passed through unread. `ts_result` is a hint anyone can type, never a proof — the application
+  reads `account.json` again, and a binding confirmation is an approval.
+- **No secret leaves TinySesam's origin**: a password, a code, an API key, an app password or a pairing code is typed
+  or shown on the action page only, and the way back carries none.
+- **The session handle** (schema 29) is a random reference of its own per session, never the token or its hash: it
+  names a session to end and signs nobody in. Ending by it (`POST /auth/sessions/end`) wants a fresh confirmation, ends
+  only a session of the same account (a foreign handle is 404, like an unknown one) and never the current one.
 - **Rate and log:** 60 reads per account and minute; a refusal (429, `Retry-After`) writes a
   `failed verification … reason=ratelimit_account_json` line, never `failed login` (the fail2ban jail stays quiet).
   Reads are not audited (own data; every change is).

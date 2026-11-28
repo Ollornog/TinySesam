@@ -575,6 +575,7 @@ SIGN_IN_FLOW = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request",
 #: Demand fresh confirmation (require_mfa): expired session → 403 + X-TinySesam-Reauth.
 STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
           "/auth/passkey/delete", "/auth/sessions/revoke",   # sessions/revoke: F-09
+          "/auth/sessions/end",                              # one session by its handle (T-105), like F-09
           "/auth/account/username", "/auth/account/email",   # self-service (2026-09-25)
           # B-12 (H2): a new API key is new, lasting access — fresh confirmation like a new factor.
           "/auth/apikeys"}
@@ -622,6 +623,7 @@ def _stale_client():
 _payload = {"/auth/pin/set": {"json": {"pin": "999999"}}, "/auth/totp/setup": {"data": {"code": "000000"}},
              "/auth/password": {"json": {"current": "wrong-wrong", "new": "New1234567890!"}},
              "/auth/sessions/revoke": {"json": {"scope": "others"}},
+             "/auth/sessions/end": {"json": {"handle": "0" * 32}},
              "/auth/apikeys": {"json": {"name": "new"}},
              "/auth/account/username": {"json": {"username": "different"}},
              "/auth/account/email": {"json": {"email": "different@example.com"}}}

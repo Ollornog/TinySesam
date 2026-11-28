@@ -271,7 +271,7 @@ ok("A10: POST, DELETE, PUT, PATCH on both routes → 405")
 # ══ A11: the fields of draft §9 — current, last_seen, a coarse device; name and last_used per program ══════════
 j = ca.get("/auth/account.json").json()
 items = j["sessions"]["items"]
-assert all(set(s) == {"created_at", "last_seen", "method", "device", "current"} for s in items), items
+assert all(set(s) == {"created_at", "last_seen", "method", "device", "current", "handle", "end"} for s in items), items
 mine = [s for s in items if s["current"] is True]
 assert len(mine) == 1 and mine[0]["device"] == "Firefox · Linux", items
 assert any(s["device"] == "curl" and s["current"] is False for s in items), items

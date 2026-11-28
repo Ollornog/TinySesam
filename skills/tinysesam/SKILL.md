@@ -237,7 +237,9 @@ def security_state(request: Request):
 ```
 
 Behind the gateway, an app in another language reads `/.tinysesam/account.json` on its own host (same-origin, through
-the proxy) instead. A wrapper that hands `account_overview` on itself must call it only for `Remote-Kind: user` with
+the proxy) instead. An app that draws everything itself sends the person to the action pages in its member `actions`
+(`/auth/act/<name>?app=<id>`, add `return=<url on your host>&state=<yours>`) and reads `account.json` again when they
+come back — the result in the address is a hint, never a proof (README: *Action pages (headless)*). A wrapper that hands `account_overview` on itself must call it only for `Remote-Kind: user` with
 `Remote-Auth: session`, only for that request's `Remote-Id`, and answer `no-store`. README: *Two ways to use
 TinySesam*.
 

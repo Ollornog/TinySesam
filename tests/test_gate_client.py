@@ -635,7 +635,8 @@ ok("top bar: fetched server-side with only TinySesam's cookies; an error status 
 
 # ---------- account overview fetch (spec §8a) ----------
 ACCOUNT_DOC = json.loads(pathlib.Path(ROOT, "spec", "vectors", "account.json").read_text(encoding="utf-8"))
-full_answer = next(v for v in ACCOUNT_DOC["vectors"] if v["id"] == "signed-in")["input"]["account"]
+_signed_in = next(v for v in ACCOUNT_DOC["vectors"] if v["id"] == "signed-in")
+full_answer, full_normal = _signed_in["input"]["account"], _signed_in["expected"]["account"]
 
 
 def account(h, srv):
@@ -645,7 +646,7 @@ def account(h, srv):
 
 s = Server(account)
 got = gc.fetch_account(s.url + "/auth/account.json", "other=1; tinysesam_session=abc; x=2")
-assert got["signed_in"] is True and got["account"]["username"] == "anna" and got == full_answer, got
+assert got["signed_in"] is True and got["account"]["username"] == "anna" and got == full_normal, got
 assert seen_cookie["value"] == "tinysesam_session=abc", seen_cookie
 s.close()
 for status, body in ((401, {"authenticated": False, "signed_in": False}), (404, {"detail": "not found"}),

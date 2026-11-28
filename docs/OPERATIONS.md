@@ -1044,6 +1044,12 @@ SQL: it opens the file with the "newer version" warning and never reads the two 
 accounts as plain roles and in the role catalog as plain catalog rows — nothing withdraws them any more until the
 version with the import runs again.
 
+**Schema 29** (T-105, session handle) is additive: the table `session_handle` (one opaque reference per session, the
+target of ending one session from an action page) and the trigger `trg_session_handle` that gives every new session
+one; the existing sessions get theirs at the first start, stamp 29 (a 26, 27 or 28 file reaches it in the same start).
+Going back to a schema-28 version needs no SQL: it opens the file with the "newer version" warning and never reads the
+table; the trigger still hands its new sessions a handle, so nothing is missing when this version runs again.
+
 ### From a version before 0.30.0: two steps
 
 **0.30.0 is the last release with database migrations.** Since the schema baseline (T-111) a new database is created
