@@ -1392,15 +1392,14 @@ def admin_account_vectors() -> list:
     d = tempfile.mkdtemp(prefix="tinysesam-admin-vectors-")
     try:
         with AccountProbe.clock(), open(os.devnull, "w") as quiet, contextlib.redirect_stderr(quiet):
-            auth = TinySesam(TinySesamConfig(
+            with TinySesam(TinySesamConfig(
                 db_path=os.path.join(d, "admin.db"), base_url=ISSUER, oidc_enabled=False, passkey_enabled=False,
                 totp_enabled=True, apikey_enabled=True, admin_enabled=True, account_enabled=True,
                 forward_auth_enabled=True, available_roles=["docs-reader", "docs-lead"],
                 admin_delegates={"docs-lead": {"roles": ["docs-reader"], "apps": ["docs"]}},
                 forward_apps={host: {"name": "Docs", "home": "/"}},
                 apps={"docs": {"name": "Documents", "hosts": [host],
-                               "permissions": [{"name": "docs.read", "suggested_roles": ["docs-reader"]}]}}))
-            try:
+                               "permissions": [{"name": "docs.read", "suggested_roles": ["docs-reader"]}]}})) as auth:
                 pw = "a long probe password 4711"
                 ada = int(auth.create_user("ada", password=pw, display_name="Ada Admin"))
                 auth.store.set_admin(ada, True)
@@ -1410,8 +1409,6 @@ def admin_account_vectors() -> list:
                 auth.grant_permission("docs-reader", "docs.read", app="docs", by="vectors")
                 admin = auth.admin_overview({**auth.get_user(ada), "_via": "session"}, host, base=ISSUER)
                 lead = auth.admin_overview({**auth.get_user(dora), "_via": "session"}, host, base=ISSUER)
-            finally:
-                auth.close()
     finally:
         shutil.rmtree(d, ignore_errors=True)
     # The server's answer has exactly the members this file knows: a new member needs a decision here (and in §8b).
