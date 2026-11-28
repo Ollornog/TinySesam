@@ -228,10 +228,13 @@ def _bar(auth, ctx, current="") -> str:
         return ""
     ctx = ctx or {}
     # The app frame (T-91): `render_page` puts the frame of the host a person comes from into ctx["frame"].
+    # The layout (T-103): `apps[id].layout` of the framing application's host, else `shell_layout`.
     if ctx.get("frame"):
+        layout = _topbar.layout_for(auth, ctx["frame"]["host"])
         return (_topbar.render_frame(auth, ctx["frame"], viewer=ctx.get("viewer"), csrf=ctx.get("csrf", ""),
-                                     current=current) + _topbar.assets())
-    return _topbar.render(auth, viewer=ctx.get("viewer"), csrf=ctx.get("csrf", ""), current=current) + _topbar.assets()
+                                     current=current, layout=layout) + _topbar.assets())
+    return (_topbar.render(auth, viewer=ctx.get("viewer"), csrf=ctx.get("csrf", ""), current=current,
+                           layout=_topbar.layout_for(auth)) + _topbar.assets())
 
 
 def _app_q(ctx, sep: str = "?") -> str:

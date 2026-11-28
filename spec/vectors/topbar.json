@@ -44,6 +44,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           }
         }
       },
@@ -115,6 +121,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           }
         }
       },
@@ -170,7 +182,13 @@
             "shown": false,
             "href": null
           },
-          "logout": null
+          "logout": null,
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
+          }
         }
       },
       "expected": {
@@ -263,6 +281,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           }
         }
       },
@@ -320,6 +344,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           }
         }
       },
@@ -380,6 +410,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           }
         }
       },
@@ -481,6 +517,12 @@
           "logout": {
             "href": "https://auth.example.com/auth/logout"
           },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
+          },
           "approvals": {
             "pending": 1,
             "href": "https://auth.example.com/auth/approvals"
@@ -526,6 +568,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           },
           "approvals": {
             "pending": 0,
@@ -573,6 +621,12 @@
           "logout": {
             "href": "https://auth.example.com/auth/logout"
           },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
+          },
           "approvals": {
             "pending": 1,
             "href": "javascript:alert(1)"
@@ -615,6 +669,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           },
           "approvals": {
             "pending": 1,
@@ -659,6 +719,12 @@
           "logout": {
             "href": "https://auth.example.com/auth/logout"
           },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
+          },
           "approvals": {
             "pending": -1,
             "href": "/auth/approvals"
@@ -701,6 +767,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           },
           "approvals": {
             "pending": true,
@@ -745,6 +817,12 @@
           "logout": {
             "href": "https://auth.example.com/auth/logout"
           },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
+          },
           "approvals": {
             "pending": "1",
             "href": "/auth/approvals"
@@ -787,6 +865,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           },
           "approvals": {
             "pending": 1.5,
@@ -831,6 +915,12 @@
           "logout": {
             "href": "https://auth.example.com/auth/logout"
           },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
+          },
           "approvals": {
             "pending": 1
           }
@@ -872,6 +962,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           },
           "approvals": [
             1,
@@ -915,6 +1011,12 @@
           },
           "logout": {
             "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": null,
+            "home": null,
+            "links": [],
+            "layout": "top"
           },
           "approvals": {
             "pending": 1,

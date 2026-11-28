@@ -21,7 +21,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 233 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 234 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 233
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 418 · B 340 names.
+**Status:** A 420 · B 343 names.
 
 ## A · Methods of `TinySesam`
 
@@ -712,11 +712,11 @@ True if the current session has freshly confirmed a factor (sudo freshness).
 
 Translated text for key in config.lang (fallback en → key). Placeholders via {name}.
 
-### `topbar(request: 'Request', *, nonce: 'str' = '', current: 'str' = '') -> 'str'`
+### `topbar(request: 'Request', *, nonce: 'str' = '', current: 'str' = '', layout: 'str' = '') -> 'str'`
 
-The top bar of the built-in pages for an own page of the app (T-64) — first thing in `<body>`, with `topbar_head()` in `<head>`. Logo, name, `topbar_links` and, for a signed-in session, the account menu (account, admin panel for admins, light/dark/system, sign out as a POST with the CSRF field). `nonce`: the page's CSP nonce for its `<script>`; empty = none. `current`: "account", "admin" or a link path of `topbar_links` — that entry gets `aria-current=page`. The CSRF cookie: `ensure_csrf(request, response)` on the response, as for every own form.
+The top bar of the built-in pages for an own page of the app (T-64) — first thing in `<body>`, with `topbar_head()` in `<head>`. Logo, name, `topbar_links` and, for a signed-in session, the account menu (account, admin panel for admins, light/dark/system, sign out as a POST with the CSRF field). `nonce`: the page's CSP nonce for its `<script>`; empty = none. `current`: "account", "admin" or a link path of `topbar_links` — that entry gets `aria-current=page`. `layout` (T-103): "top" or "side" (the same bar as a side bar; the page gives way by itself); empty = `shell_layout`. The CSRF cookie: `ensure_csrf(request, response)` on the response, as for every own form.
 
-### `topbar_data(user=None, *, base: 'Optional[str]' = None) -> 'dict'`
+### `topbar_data(user=None, *, base: 'Optional[str]' = None, host: 'str' = '') -> 'dict'`
 
 The top bar as data (T-76) for an account — the same answer `GET /auth/topbar.json` gives its session: the links of `topbar_links` this account may see (`{"title", "href"}`), those of `topbar_menu_links` as `menu_links` (the account menu, always present, `[]` without an account), its display name, whether *Account* and *Admin panel* appear and where they lead, the sign-out address.
 
@@ -796,7 +796,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `oidc_group_import`, `saml_group_import`, `ldap_group_import`, `oidc_group_import_filter`, `saml_group_import_filter`, `ldap_group_import_filter`, `idp_group_labels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `oauth_pairing_consent_enabled`, `oauth_pairing_consent_minutes`, `hsts`, `totp_required`, `totp_app_hint`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `approval_pickup_sec`, `approval_token_ttl_sec`, `approval_app_requests_per_hour`, `approval_key_file`, `apps`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `shell_layout`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `oidc_group_import`, `saml_group_import`, `ldap_group_import`, `oidc_group_import_filter`, `saml_group_import_filter`, `ldap_group_import_filter`, `idp_group_labels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `oauth_pairing_consent_enabled`, `oauth_pairing_consent_minutes`, `hsts`, `totp_required`, `totp_app_hint`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `approval_pickup_sec`, `approval_token_ttl_sec`, `approval_app_requests_per_hour`, `approval_key_file`, `apps`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
@@ -1139,6 +1139,8 @@ What a proxy (Caddy `forward_auth`, nginx `auth_request`, Traefik) and the appli
 | GET | `/.tinysesam/callback` | `query:code` |
 | GET | `/.tinysesam/logout` | `query:next`, `query:scope` |
 | POST | `/.tinysesam/logout` | `form:_csrf`, `form:next`, `form:scope` |
+| GET | `/.tinysesam/shell.css` | — |
+| GET | `/.tinysesam/shell.js` | — |
 | GET | `/.tinysesam/start` | `query:rd`, `query:signed_out` |
 | GET | `/.tinysesam/topbar.json` | — |
 | GET | `/auth/forward` | — |
@@ -1276,7 +1278,9 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/sessions/revoke` | — |
 | POST | `/auth/sessions/revoke-after-login` | — |
 | GET | `/auth/setup` | `query:next` |
-| GET | `/auth/topbar.json` | — |
+| GET | `/auth/shell.css` | — |
+| GET | `/auth/shell.js` | — |
+| GET | `/auth/topbar.json` | `query:app` |
 | GET | `/auth/totp` | `query:error`, `query:next` |
 | POST | `/auth/totp` | `form:_csrf`, `form:code`, `form:next` |
 | POST | `/auth/totp/disable` | — |

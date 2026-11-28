@@ -20,7 +20,7 @@ with their front door: keep the surface small, every feature optional, and prove
 | `tinysesam/store.py` | SQLite store core: connection, schema stamp (`Store.SCHEMA_VERSION`, baseline 26), flow state, settings; the index `_PART_METHODS` |
 | `tinysesam/_store_<part>.py`, `_store_schema.py` | the other store methods by feature (users, factors, sessions, OAuth, …), loaded on first use (T-112; `tests/test_store_parts.py`); the schema text |
 | `tinysesam/security.py` | client IP behind proxies, rate limits, lockout thresholds, the `tinysesam.security` logger |
-| `tinysesam/templates.py`, `theme.py`, `topbar.py`, `dialog.py`, `c22.css` | built-in pages, design tokens (the only place with colour values), top bar, own dialogs, C22 adapter |
+| `tinysesam/templates.py`, `theme.py`, `topbar.py`, `_shell.py`, `dialog.py`, `c22.css` | built-in pages, design tokens (the only place with colour values), top bar (top or side), the shell component `<ts-shell>` (`shell.js`/`shell.css`), own dialogs, C22 adapter |
 | `tinysesam/oidc.py`, `saml_.py`, `ldap_.py`, `webauthn_.py`, `totp.py`, `passwords.py` | sign-in methods; optional ones live behind extras |
 | `tinysesam/oauth.py` | OAuth 2.1 authorization server for MCP clients (ADR-11) |
 | `tinysesam/gate.py`, `gateway.py`, `gate_client.py` | gate token (ADR-9), the ready-to-run OIDC gateway, the gate client for WSGI/ASGI apps without FastAPI (T-86; every check a small function, relaxed one at a time by `tests/_gate_relax.py`) |

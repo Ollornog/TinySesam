@@ -65,6 +65,9 @@ CORES_VARIABLE = "CI_KERNE"
 #: Without both variables: two jobs — a safe default, not a detection (see `jobs_determine`).
 JOBS_DEFAULT = 2
 
+#: The suites that drive Chrome — left out by `--no-browser` (the CI job `browser` runs each on its own).
+BROWSER_SUITES = ("test_browser.py", "test_shell_browser.py")
+
 #: These suites start FIRST in a parallel run — the slowest, measured 2026-09-27 (0.22.0).
 #: The list only determines WHEN a suite starts; result and order of the output stay
 #: the same. Without it `test_browser.py` (~80 s, almost only waiting for Chrome) and
@@ -72,7 +75,7 @@ JOBS_DEFAULT = 2
 #: whole run. With one job it does not apply — that is the serial run of old. A
 #: stale entry costs time, never a result; that every entry is still a suite is checked by
 #: `tests/test_runner.py`.
-LONG_FIRST = ("test_browser.py", "test_ldap.py", "test_prebooking_pending.py",
+LONG_FIRST = ("test_browser.py", "test_shell_browser.py", "test_ldap.py", "test_prebooking_pending.py",
                 "test_audit_round2.py", "test_t13_decisions.py", "test_repo.py",
                 "test_admin_account.py", "test_security_findings.py", "test_hardening2.py")
 
@@ -208,7 +211,7 @@ def run_suite(path):
 
 
 def main(argv):
-    # --no-browser: the browser test is the slowest. Only for interim runs, never before a push.
+    # --no-browser: the browser suites are the slowest. Only for interim runs, never before a push.
     skip_browser = "--no-browser" in argv
     argv = [a for a in argv if a != "--no-browser"]
     if argv:
@@ -216,7 +219,7 @@ def main(argv):
     else:
         files = sorted(glob.glob(os.path.join(HERE, "test_*.py")))
     if skip_browser:
-        files = [f for f in files if not f.endswith("test_browser.py")]
+        files = [f for f in files if os.path.basename(f) not in BROWSER_SUITES]
     try:
         jobs = jobs_determine()
     except ValueError as error:

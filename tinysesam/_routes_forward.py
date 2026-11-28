@@ -335,7 +335,20 @@ def add_routes(r, auth, cfg, *, _account_json, _provider_logout_url, _topbar_jso
         before the application. The session via the own cookie or this host's connection (T-26)."""
         host = _gate_host_or_404(request)
         s = auth._gate_session(request, host)
-        return _topbar_json(auth._account_of_session(s) if s else None, request)
+        return _topbar_json(auth._account_of_session(s) if s else None, request, host)
+
+    # The shell component (T-103, spec §8d) on the application's host, beside its data: only for a protected host.
+    @r.get("/.tinysesam/shell.js")
+    def gate_shell_js(request: Request):
+        from . import _shell
+        _gate_host_or_404(request)
+        return _shell.asset(auth, request, "js")
+
+    @r.get("/.tinysesam/shell.css")
+    def gate_shell_css(request: Request):
+        from . import _shell
+        _gate_host_or_404(request)
+        return _shell.asset(auth, request, "css")
 
     @r.get("/.tinysesam/account.json")
     def gate_account_json(request: Request):

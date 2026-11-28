@@ -38,12 +38,28 @@ def _topbar_link_findings(config, f: str, links, hosts: set, roles_known: set, e
             admin_rule = isinstance(rule, dict) and set(rule) == {"admin"} and rule["admin"] is True
             role_rule = (isinstance(rule, dict) and set(rule) == {"role"} and isinstance(rule["role"], str)
                          and bool(rule["role"].strip()))
-            if not (admin_rule or role_rule):
+            # T-103: a permission of one application — the same answer the target's `require_permission` gives.
+            permission_rule = (isinstance(rule, dict) and set(rule) == {"permission", "app"}
+                               and isinstance(rule["permission"], str) and isinstance(rule["app"], str))
+            if not (admin_rule or role_rule or permission_rule):
                 error.append(_t(
                     config,
-                    "{f}: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}",
+                    "{f}: {v!r} — the visibility is {{\"admin\": True}}, {{\"role\": \"name\"}} or "
+                    "{{\"permission\": \"app.name\", \"app\": \"id\"}}",
                     f=f, v=link))
                 continue
+            if permission_rule:
+                from ._permissions import NAME as _permission_name
+                apps = getattr(config, "apps", None)
+                if not _permission_name.match(rule["permission"]) or not (
+                        isinstance(apps, dict) and rule["app"] in apps):
+                    error.append(_t(
+                        config,
+                        "{f}: the link {title!r} names the permission {perm!r} of the application {app!r} — the "
+                        "name must follow the permission rule and the application must stand in apps, or nobody "
+                        "would ever see the link",
+                        f=f, title=link[0], perm=rule["permission"], app=rule["app"]))
+                    continue
             if role_rule and rule["role"] not in roles_known:
                 warnings.append(_t(
                     config,

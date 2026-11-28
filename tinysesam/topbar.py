@@ -12,6 +12,11 @@ pages show only logo and name. An app builds its own pages with the same bar thr
   confirmation page).
 * **Phone:** below 640 px the bar links move into the menu (first, before the menu links); every tap target is at
   least 44 px high.
+* **Layout (T-103):** `layout="side"` draws the same bar as a side bar on the left (class `tsside`: logo and name on
+  top, the links below each other, the account menu at the foot, opening upwards); below `SIDE_PX` it folds back into
+  the top bar. The page gives way with `padding-left` on `<body>`. `shell_layout` chooses it for the built-in pages,
+  `apps[id].layout` in an application's frame; the shell component `<ts-shell>` (`_shell.py`) draws the same markup
+  from `topbar.json` in its shadow DOM, with the same CSS.
 * **Keyboard:** the menu button carries `aria-expanded`; Escape closes and puts the focus back on the button, a click
   or the focus outside closes it too. The menu is a disclosure (links and buttons in a list), not an ARIA
   `role=menu` — Tab walks through it like through the page.
@@ -34,6 +39,15 @@ MENU_PAGES = frozenset({"account", "account_setup", "approval", "approvals", "ga
 
 #: Below this width the links move into the menu.
 NARROW_PX = 640
+
+#: From this width on the side layout is a side bar; below it, it is the top bar (T-103).
+SIDE_PX = 900
+
+#: Width of the side bar, the padding `<body>` gives way with.
+SIDE_WIDTH_PX = 248
+
+#: The layouts of the shell (T-103) — `shell_layout`, `apps[id].layout`, `layout=` of `auth.topbar`.
+LAYOUTS = ("top", "side")
 
 #: The built-in mark: a rounded tile with a keyhole ("open sesame"). Drawn with `currentColor` for the tile and
 #: the class `tsbar-hole` for the keyhole, so it follows the tokens (and C22) in light and dark.
@@ -110,6 +124,28 @@ CSS = f"""
   .tsbar .tsbar-mlinks{{display:flex}}
 }}
 @media(prefers-reduced-motion:reduce){{.tsbar .tsbar-chev{{transition:none}}}}
+@media(min-width:{SIDE_PX + 1}px){{
+  body:has(> .tsbar.tsside),body:has(> ts-shell[layout=side]){{padding-left:{SIDE_WIDTH_PX}px}}
+  .tsbar.tsside{{position:fixed;top:0;bottom:0;left:0;box-sizing:border-box;width:{SIDE_WIDTH_PX}px;border-bottom:0;
+    border-right:1px solid var(--ts-line);overflow-y:auto}}
+  .tsbar.tsside .tsbar-in{{flex-direction:column;align-items:stretch;gap:12px;height:100%;max-width:none;
+    min-height:0;padding:14px 12px}}
+  .tsbar.tsside .tsbar-links{{flex-direction:column;align-items:stretch;gap:2px;overflow:visible}}
+  .tsbar.tsside .tsbar-links a{{white-space:normal}}
+  .tsbar.tsside .tsbar-links a[aria-current=page]{{background:var(--ts-surface-2);text-decoration:none;
+    font-weight:600}}
+  .tsbar.tsside .tsbar-menu{{margin:auto 0 0}}
+  .tsbar.tsside .tsbar-btn{{width:100%}}
+  .tsbar.tsside .tsbar-name{{max-width:none;flex:1;text-align:left}}
+  .tsbar.tsside .tsbar-pop{{top:auto;bottom:calc(100% + 6px);left:0;right:auto;width:100%}}
+}}
+/* The shell component (T-103, shadow DOM): its host carries the position, the bar inside fills it. */
+:host{{display:block;position:sticky;top:0;z-index:30}}
+:host > .tsbar{{position:static}}
+@media(min-width:{SIDE_PX + 1}px){{
+  :host([layout=side]){{position:fixed;top:0;bottom:0;left:0;width:{SIDE_WIDTH_PX}px}}
+  :host([layout=side]) > .tsbar.tsside{{position:static;width:auto;height:100%}}
+}}
 """
 
 # One IIFE per page, idempotent. Menu: disclosure with aria-expanded, Escape/outside click/focus leaving closes.
@@ -199,7 +235,8 @@ def link_visible(auth, viewer, rule) -> bool:
 
     `{"admin": True}` — accounts with the admin flag. `{"role": "editors"}` — accounts with the role, decided by
     `auth.has_role`, so `admin_implies_roles` (default on) lets an admin see role links too — the same answer the
-    target's own `require(role=…)` gives. Visibility is a convenience, not a protection: the target checks access
+    target's own `require(role=…)` gives. `{"permission": "docs.delete", "app": "docs"}` (T-103) — accounts holding
+    the permission of that application, decided by `auth.has_permission`. Visibility is a convenience, not a protection: the target checks access
     itself. An unknown rule hides the link (fail-closed); `config_check` refuses one at the start."""
     if not rule:
         return True
@@ -209,6 +246,13 @@ def link_visible(auth, viewer, rule) -> bool:
         return bool(_field(viewer, "is_admin"))
     if set(rule) == {"role"} and isinstance(rule["role"], str) and rule["role"]:
         return bool(auth.has_role(viewer, rule["role"]))
+    if set(rule) == {"permission", "app"} and isinstance(rule["permission"], str) and isinstance(rule["app"], str):
+        # T-103: the permission of one application (`require_permission` asks the same); an unknown one is held by
+        # nobody, so the link stays hidden.
+        try:
+            return bool(auth.has_permission(viewer, rule["permission"], app=rule["app"]))
+        except (ValueError, KeyError, TypeError):
+            return False
     return False
 
 
@@ -231,22 +275,37 @@ def filter_links(auth, viewer, entries) -> list:
     return out
 
 
-def data(auth, viewer, *, base: str) -> dict:
+def data(auth, viewer, *, base: str, host: str = "") -> dict:
     """The bar as data for an application that draws its own (T-76, `GET /auth/topbar.json`): what `render` would show
     `viewer`. `base` is put in front of TinySesam's own paths (the origin of `base_url` plus the mount prefix), so a
-    page on another host links back correctly. Without a viewer: no links, no menu links, no menu — like the bar."""
+    page on another host links back correctly. Without a viewer: no links, no menu links, no menu — like the bar.
+
+    `frame` (T-103, always present): what the shell component needs on the application's `host` — `layout`
+    (`layout_for`), and for a host with an app frame (`forward_apps[host]`, T-91) its `name`, `home` and the `links`
+    `viewer` may see as addresses on that host (`home` and `links` only for a viewer, like `render_frame`); `name` and
+    `home` are None, `links` [] without one. In a frame `account` and `approvals` carry `app=<host>`, so TinySesam's
+    pages open framed."""
+    from urllib.parse import quote
     cfg = auth.cfg
+    app_frame = auth._frame_of(host) if host else None
     out: dict = {"brand": getattr(cfg, "gate_brand", "") or cfg.rp_name, "signed_in": bool(viewer), "name": None,
            "links": [], "menu_links": [], "account": {"shown": False, "href": None},
-           "admin_panel": {"shown": False, "href": None}, "logout": None}
+           "admin_panel": {"shown": False, "href": None}, "logout": None,
+           "frame": {"name": app_frame["name"] if app_frame else None, "home": None, "links": [],
+                     "layout": layout_for(auth, host)}}
     if not viewer:
         return out
+    q = "?app=" + quote(app_frame["host"], safe="") if app_frame else ""
+    if app_frame:
+        out["frame"]["home"] = app_frame["home"]
+        out["frame"]["links"] = [{"title": title, "href": frame_href(app_frame["host"], target)}
+                                 for title, target in filter_links(auth, viewer, app_frame.get("links"))]
     out["name"] = str(_field(viewer, "display_name") or _field(viewer, "username") or "")
     out["links"] = [{"title": title, "href": href} for title, href in visible_links(auth, viewer)]
     out["menu_links"] = [{"title": title, "href": href}
                          for title, href in visible_links(auth, viewer, "topbar_menu_links")]
     if getattr(cfg, "account_enabled", True):
-        out["account"] = {"shown": True, "href": f"{base}/auth/account"}
+        out["account"] = {"shown": True, "href": f"{base}/auth/account{q}"}
     if auth._admin_panel_visible(viewer) and getattr(cfg, "admin_ui_enabled", True):
         out["admin_panel"] = {"shown": True, "href": f"{base}{cfg.admin_path}"}
     out["logout"] = {"href": f"{base}/auth/logout"}
@@ -254,22 +313,41 @@ def data(auth, viewer, *, base: str) -> dict:
     if pending is not None:
         # Only with `approvals_enabled` (spec §8: an optional member a client may pass on): the number and where to
         # decide — an application with its own bar shows it in words, never as a coloured dot alone.
-        out["approvals"] = {"pending": pending, "href": f"{base}/auth/approvals"}
+        out["approvals"] = {"pending": pending, "href": f"{base}/auth/approvals{q}"}
     return out
 
 
-def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str = "") -> str:
+def _header(layout: str, extra: str = "") -> str:
+    """The opening tag of the bar: `tsbar`, plus `tsside` for the side layout and `extra` (the frame's class)."""
+    classes = " ".join(c for c in ("tsbar", "tsside" if layout == "side" else "", extra) if c)
+    return f"<header class={classes}>" if " " not in classes else f"<header class='{classes}'>"
+
+
+def layout_for(auth, host: str = "") -> str:
+    """The shell layout (T-103) for a request on `host`: `apps[id].layout` of the application whose `hosts` name it,
+    else `shell_layout`, else "top" — read at request time, an unknown value counts as "top"."""
+    cfg = auth.cfg
+    app = auth._app_of_host(host) if host else None
+    entry = (cfg.apps or {}).get(app) if app and isinstance(getattr(cfg, "apps", None), dict) else None
+    chosen = entry.get("layout") if isinstance(entry, dict) else None
+    if chosen not in LAYOUTS:
+        chosen = getattr(cfg, "shell_layout", "top")
+    return chosen if chosen in LAYOUTS else "top"
+
+
+def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str = "", layout: str = "top") -> str:
     """HTML of the bar (without CSS/JS — see `CSS`, `JS`). App paths carry `__TS_P__` (the mount prefix).
 
     `viewer` is the signed-in account (a row with `username`, `display_name`, `is_admin`); without one, or with
     `menu=False`, only logo and name. `csrf` goes into the sign-out form, `current` ("account" | "admin" | a link
-    path) marks the entry of the page shown with `aria-current=page`."""
+    path) marks the entry of the page shown with `aria-current=page`. `layout` "side" draws it as a side bar
+    (T-103)."""
     cfg = auth.cfg
     t = auth.t
     name = getattr(cfg, "gate_brand", "") or cfg.rp_name
     brand = (f"<a class=tsbar-brand href='__TS_P__/'>{logo(cfg)}<span>{_e(name)}</span></a>")
     if not (menu and viewer):
-        return f"<header class=tsbar><div class=tsbar-in>{brand}</div></header>"
+        return f"{_header(layout)}<div class=tsbar-in>{brand}</div></header>"
     links = visible_links(auth, viewer)
 
     def cur(key):
@@ -303,7 +381,7 @@ def render(auth, *, viewer=None, menu: bool = True, csrf: str = "", current: str
         items.append(f"<a class=tsbar-item href='{_e('__TS_P__' + cfg.admin_path)}'{cur('admin')}>{_svg('admin')}"
                      f"{_e(t('acc.admin'))}</a>")
     menu_html = _menu(t, shown, pending, items, csrf)
-    return f"<header class=tsbar><div class=tsbar-in>{brand}{nav}{menu_html}</div></header>"
+    return f"{_header(layout)}<div class=tsbar-in>{brand}{nav}{menu_html}</div></header>"
 
 
 def _menu(t, shown, pending, items: list, csrf: str) -> str:
@@ -341,7 +419,8 @@ def frame_href(host: str, target: str) -> str:
     return f"https://{host}{target}" if target.startswith("/") else target
 
 
-def render_frame(auth, frame: dict, *, viewer=None, menu: bool = True, csrf: str = "", current: str = "") -> str:
+def render_frame(auth, frame: dict, *, viewer=None, menu: bool = True, csrf: str = "", current: str = "",
+                 layout: str = "top") -> str:
     """HTML of the bar in the app frame (T-91, without CSS/JS): TinySesam's page looks like part of the application.
 
     `frame` comes from `TinySesam._frame` — host, name, home and links, all from `forward_apps[host]`, never from the
@@ -350,7 +429,8 @@ def render_frame(auth, frame: dict, *, viewer=None, menu: bool = True, csrf: str
     the account menu: "Signed in as", on a phone the links under the application's name, "Security" (the account page,
     framed), approvals (number and word), the admin panel for operators (the admin flag) only, light/dark/system,
     sign out. `topbar_links` and `topbar_menu_links` do not appear. Without a viewer (sign-in, errors): the name only —
-    no back link (it would lead straight back to the sign-in) and no link at all in the source."""
+    no back link (it would lead straight back to the sign-in) and no link at all in the source. `layout` "side" draws
+    it as a side bar (T-103)."""
     from urllib.parse import quote
     cfg = auth.cfg
     t = auth.t
@@ -359,22 +439,26 @@ def render_frame(auth, frame: dict, *, viewer=None, menu: bool = True, csrf: str
     via = f"<span class=tsbar-via>{_e(t('bar.via', name=gate))}</span>" if gate and gate != name else ""
     label = f"<span class=tsbar-app><span>{_e(name)}</span>{via}</span>"
     if not (menu and viewer):
-        return f"<header class='tsbar tsframe'><div class=tsbar-in><div class=tsbar-brand>{label}</div></div></header>"
+        return f"{_header(layout, 'tsframe')}<div class=tsbar-in><div class=tsbar-brand>{label}</div></div></header>"
     q = "?app=" + quote(host, safe="")
 
     def cur(key):
         return " aria-current=page" if key and key == current else ""
 
+    def cur_link(h):
+        # A frame link is an address on the application's host; `current` names the application's path (T-103).
+        return " aria-current=page" if current and h in (current, frame_href(host, current)) else ""
+
     brand = (f"<a class='tsbar-brand tsbar-back' href='{_e(frame['home'])}' aria-label='{_e(t('bar.back', name=name))}'>"
              f"{_svg('back')}{label}</a>")
     links = [(title, frame_href(host, target)) for title, target in filter_links(auth, viewer, frame.get("links"))]
     nav = (f"<nav class=tsbar-links aria-label='{_e(name)}'>"
-           + "".join(f"<a href='{_e(h)}'>{_e(title)}</a>" for title, h in links) + "</nav>") if links else ""
+           + "".join(f"<a href='{_e(h)}'{cur_link(h)}>{_e(title)}</a>" for title, h in links) + "</nav>") if links else ""
     shown = _field(viewer, "display_name") or _field(viewer, "username") or "?"
     items = []
     if links:
         items.append(f"<div class=tsbar-mlinks><div class=tsbar-label>{_e(name)}</div>"
-                     + "".join(f"<a class=tsbar-item href='{_e(h)}'>{_svg('link')}{_e(title)}</a>"
+                     + "".join(f"<a class=tsbar-item href='{_e(h)}'{cur_link(h)}>{_svg('link')}{_e(title)}</a>"
                                for title, h in links)
                      + "<div class=tsbar-sep></div></div>")
     if getattr(cfg, "account_enabled", True):
@@ -390,7 +474,7 @@ def render_frame(auth, frame: dict, *, viewer=None, menu: bool = True, csrf: str
             and getattr(cfg, "admin_ui_enabled", True)):
         items.append(f"<a class=tsbar-item href='{_e('__TS_P__' + cfg.admin_path)}'{cur('admin')}>{_svg('admin')}"
                      f"{_e(t('acc.admin'))}</a>")
-    return (f"<header class='tsbar tsframe'><div class=tsbar-in>{brand}{nav}"
+    return (f"{_header(layout, 'tsframe')}<div class=tsbar-in>{brand}{nav}"
             f"{_menu(t, shown, pending, items, csrf)}</div></header>")
 
 

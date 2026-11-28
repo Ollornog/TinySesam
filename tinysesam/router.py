@@ -19,7 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
-from . import _chain
+from . import _chain, _shell
 from .errors import ConfigError
 from . import security
 from .store import replacement_name, key_kind_of, name_invalid, norm_email, valid_email
@@ -1529,18 +1529,28 @@ def build_router(auth) -> APIRouter:
                 "roles": auth.user_roles(u)}
 
     # ---------- The top bar as data (T-76) ----------
-    def _topbar_json(viewer, request: Request):
+    def _topbar_json(viewer, request: Request, host: str = ""):
         """What the top bar shows the account of this request — for an application that draws its own bar.
         `no-store` + `Vary: Cookie` (the answer depends on the session) and no CORS header: another origin's page
         cannot read it; an application fetches it server-side with the request's cookie or same-origin through
-        the proxy (`/.tinysesam/topbar.json`)."""
+        the proxy (`/.tinysesam/topbar.json`). `host`: the application's host, for the part `frame` (T-103)."""
         base = (security.normalize_base(str(cfg.base_url or "").strip()) or "").rstrip("/") or auth._prefix(request)
-        return JSONResponse(auth.topbar_data(viewer, base=base),
+        return JSONResponse(auth.topbar_data(viewer, base=base, host=host),
                             headers={"Cache-Control": "no-store", "Vary": "Cookie"})
 
     @r.get("/auth/topbar.json")
-    def topbar_json(request: Request):
-        return _topbar_json(auth.session_user(request), request)
+    def topbar_json(request: Request, app: str = ""):
+        # `?app=<host>` names the frame like on the built-in pages (T-103); an unknown host changes nothing.
+        return _topbar_json(auth.session_user(request), request, app[:253])
+
+    # ---------- The shell component (T-103, spec §8d) ----------
+    @r.get("/auth/shell.js")
+    def shell_js(request: Request):
+        return _shell.asset(auth, request, "js")
+
+    @r.get("/auth/shell.css")
+    def shell_css(request: Request):
+        return _shell.asset(auth, request, "css")
 
     # ---------- The own account as data (T-91) ----------
     def _account_json(viewer, request: Request, app_host: str = ""):

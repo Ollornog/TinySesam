@@ -688,20 +688,24 @@ def topbar_head(self, *, nonce: str = "") -> str:
     return _inject_nonce(out, nonce) if nonce else out
 
 
-def topbar(self, request: Request, *, nonce: str = "", current: str = "") -> str:
+def topbar(self, request: Request, *, nonce: str = "", current: str = "", layout: str = "") -> str:
     """The top bar of the built-in pages for an own page of the app (T-64) — first thing in `<body>`, with
     `topbar_head()` in `<head>`. Logo, name, `topbar_links` and, for a signed-in session, the account menu
     (account, admin panel for admins, light/dark/system, sign out as a POST with the CSRF field).
     `nonce`: the page's CSP nonce for its `<script>`; empty = none. `current`: "account", "admin" or a link path of
-    `topbar_links` — that entry gets `aria-current=page`. The CSRF cookie: `ensure_csrf(request, response)`
+    `topbar_links` — that entry gets `aria-current=page`. `layout` (T-103): "top" or "side" (the same bar as a side
+    bar; the page gives way by itself); empty = `shell_layout`. The CSRF cookie: `ensure_csrf(request, response)`
     on the response, as for every own form."""
+    if layout and layout not in _topbar.LAYOUTS:
+        raise ValueError(f"layout={layout!r}: \"top\" or \"side\"")
     viewer = self.session_user(request)
-    out = (_topbar.render(self, viewer=viewer, csrf=self.csrf_token(request), current=current)
+    out = (_topbar.render(self, viewer=viewer, csrf=self.csrf_token(request), current=current,
+                          layout=layout or _topbar.layout_for(self))
            .replace(_PREFIX_PLACEHOLDER, self._prefix(request)) + f"<script>{_topbar.JS}</script>")
     return _inject_nonce(out, nonce) if nonce else out
 
 
-def topbar_data(self, user=None, *, base: Optional[str] = None) -> dict:
+def topbar_data(self, user=None, *, base: Optional[str] = None, host: str = "") -> dict:
     """The top bar as data (T-76) for an account — the same answer `GET /auth/topbar.json` gives its session: the
     links of `topbar_links` this account may see (`{"title", "href"}`), those of `topbar_menu_links` as
     `menu_links` (the account menu, always present, `[]` without an account), its display name, whether *Account*
@@ -711,7 +715,9 @@ def topbar_data(self, user=None, *, base: Optional[str] = None) -> dict:
     template engine of another language): hand it this dict, e.g. for the account behind `Remote-Id` or
     `session_user(request)`. `user`: an account dict (`get_user`, `session_user`) or None; a locked or unknown
     account counts as none (no links, no menu). `base` goes in front of TinySesam's own paths; default: `base_url`
-    (empty without one — then the paths are relative to the root, put the mount prefix here)."""
+    (empty without one — then the paths are relative to the root, put the mount prefix here). `host` (T-103): the
+    application's host the bar is drawn on — its `frame` (layout of `apps[id].layout`, the app frame of
+    `forward_apps[host]`); empty = `shell_layout`, no frame."""
     if base is None:
         base = (security.normalize_base(str(self.cfg.base_url or "").strip()) or "").rstrip("/")
     if user is not None:
@@ -719,7 +725,7 @@ def topbar_data(self, user=None, *, base: Optional[str] = None) -> dict:
         row = self.store.get_user(uid) if uid is not None else None
         if row is None or row["disabled"]:
             user = None
-    return _topbar.data(self, user, base=base)
+    return _topbar.data(self, user, base=base, host=host)
 
 
 def _check_secure_flag(self, request: Request) -> None:
