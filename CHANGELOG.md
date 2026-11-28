@@ -61,6 +61,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   from that file, the Go program, a forward-auth proxy doing what the Caddy template does — in Chrome at 375 and
   1280 px, light and dark; the CI jobs `browser` and `repeat` install Go for it (without Go the suite is red, never
   skipped).
+- The permission matrix of the panel in a real browser (T-103, part 3; T-100 had checked it by screenshot):
+  `tests/test_shell_browser.py` part C — an ordinary permission is assigned at once, a dangerous one sends an
+  administrator signed in long ago over the reauth page and back first; an area administrator sees only the
+  application of the own area and only the roles it manages, and the server refuses one outside. T-103 is done.
 - Permissions in the Rust and PHP gate clients (T-101 part 4): `has_permission` / `hasPermission`, the
   `Remote-Permissions` slot and `ts_perms`, `account` normalization with `permissions`, `register_request` /
   `register_permissions` (Rust, sending with the feature `jwks`) and `Permissions::request` / `Permissions::register`

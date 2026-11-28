@@ -2,7 +2,7 @@
 id: T-103
 type: Task
 title: "Stage S7 — shell on top and at the side: one component, layout top or side"
-status: offen
+status: erledigt
 points: 14
 milestone: M-2
 blocked_by: [T-97]
@@ -27,3 +27,20 @@ One component for both shells: `<ts-shell layout="top|side" current="/docs">`, s
 
 ## Acceptance
 - **Ex1** as surface "shell on top" (Go, server) and **Ex2** as surface "shell at the side" (Python, library): browser test at 375 and 1280 px, light and dark, strict CSP, no console errors, role and permission links.
+
+## Closed 2026-11-28
+
+Done in three pull requests into the sprint branch of S6:
+
+- **Part 1** (#422): `shell_layout`, `apps[id].layout` (with its reader), `auth.topbar(layout=…)`, the side layout of
+  TinySesam's own pages (panel and account page included) from `topbar.py`; the component `<ts-shell>`
+  (`/.tinysesam/shell.js`, `/auth/shell.js`, `shell.css`) with the part `frame` of `topbar.json` (spec §8d); links by
+  permission; Ex2 as "shell at the side". The browser test proves that the component draws exactly the markup of
+  `topbar.py` (sign-out by design a link).
+- **Part 2** (#423): Ex1 as "shell on top" — the Go pages load the component; the whole stack (server from
+  `deploy/ex1/tinysesam.toml`, Go program, forward-auth proxy) in Chrome at 375 and 1280 px, light and dark.
+- **Part 3**: the browser test of the permission matrix of T-100 (a dangerous permission asks for a step-up, an area
+  administrator sees only the own area).
+
+The planned shell component "E8" of T-91 is this component. `apps[id].icon` stays with
+[T-104](T-104-stage-s8-hybrid-tinysesam-area-with-name-and-icon-libra.md).
