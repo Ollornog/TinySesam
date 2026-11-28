@@ -40,6 +40,8 @@ export interface Topbar {
 export interface TopbarFrame {
   readonly layout: 'top' | 'side';
   readonly name: string | null;
+  /** The application's icon: an image address (http(s), a path or a `data:image/…`) — set it as an image `src`. */
+  readonly icon: string | null;
   readonly home: string | null;
   readonly links: readonly TopbarLink[];
 }
@@ -66,19 +68,24 @@ export function signedOutTopbar(brand = '', frame: TopbarFrame = topbarFrame(und
   };
 }
 
+/** `frame.icon` as a data: address: an image type of `apps[id].icon`, then printable ASCII without `"'<>\`. */
+const DATA_ICON = /^data:image\/(?:png|gif|jpeg|webp|svg\+xml)[;,][!#-&(-;=?-[\]-~]+$/;
+
 /**
  * `frame` of spec section 8d: layout exactly `side` or else `top`, name text or null; home and links only signed in
  * (a safe href, the safe `{title, href}` entries). Anything that is no object reads as no frame.
  */
 function topbarFrame(raw: unknown, signedIn: boolean): TopbarFrame {
   if (!isObject(raw)) {
-    return { layout: 'top', name: null, home: null, links: [] };
+    return { layout: 'top', name: null, icon: null, home: null, links: [] };
   }
   const name = own(raw, 'name');
+  const icon = own(raw, 'icon');
   const home = own(raw, 'home');
   return {
     layout: own(raw, 'layout') === 'side' ? 'side' : 'top',
     name: typeof name === 'string' ? name : null,
+    icon: typeof icon === 'string' && (isSafeHref(icon) || DATA_ICON.test(icon)) ? icon : null,
     home: signedIn && typeof home === 'string' && isSafeHref(home) ? home : null,
     links: signedIn ? topbarLinks(own(raw, 'links')) : [],
   };

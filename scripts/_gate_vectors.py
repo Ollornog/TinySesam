@@ -205,7 +205,8 @@ class Probe:
         saved = (cfg.forward_apps, cfg.apps)
         cfg.forward_apps = {AUDIENCE: {"name": "Documents", "home": "/start",
                                        "links": [("Library", "/library"), ("Trash", "/trash", {"admin": True})]}}
-        cfg.apps = {"docs": {"name": {"en": "Documents"}, "hosts": [AUDIENCE], "layout": "side"}}
+        cfg.apps = {"docs": {"name": {"en": "Documents"}, "hosts": [AUDIENCE], "layout": "side",
+                             "icon": "/icons/docs.svg"}}
         try:
             yield
         finally:
@@ -832,7 +833,7 @@ def jwks_scenarios() -> list:
 
 #: The normalized `frame` (spec §8d, T-143) of an answer without an app frame, without the member, or signed out
 #: without a name: the bar on top, nothing else.
-NO_FRAME = {"layout": "top", "name": None, "home": None, "links": []}
+NO_FRAME = {"layout": "top", "name": None, "icon": None, "home": None, "links": []}
 
 
 def topbar_vectors(p: Probe) -> list:
@@ -909,24 +910,28 @@ def topbar_frame_vectors(p: Probe, signed_out: dict) -> list:
     with p.app_frame():
         anna, admin, anon = p.topbar("anna", AUDIENCE), p.topbar("admin", AUDIENCE), p.topbar(None, AUDIENCE)
     home = f"https://{AUDIENCE}/start"
+    icon = f"{ISSUER}/icons/docs.svg"
     library = {"title": "Library", "href": f"https://{AUDIENCE}/library"}
-    assert anna["frame"] == {"name": "Documents", "home": home, "links": [library], "layout": "side"}, anna["frame"]
-    assert anon["frame"] == {"name": "Documents", "home": None, "links": [], "layout": "side"}, anon["frame"]
+    assert anna["frame"] == {"name": "Documents", "icon": icon, "home": home, "links": [library],
+                             "layout": "side"}, anna["frame"]
+    assert anon["frame"] == {"name": "Documents", "icon": icon, "home": None, "links": [], "layout": "side"}, anon["frame"]
     framed = {"brand": "Example", "signed_in": True, "name": "Anna Berg",
               "links": [{"title": "Wiki", "href": "https://app.example.com/wiki"}, {"title": "Files", "href": "/files/"}],
               "menu_links": [{"title": "My collections", "href": "/collections"}],
               "account": f"{ISSUER}/auth/account?app={AUDIENCE}", "admin_panel": None,
               "logout": f"{ISSUER}/auth/logout", "approvals": None,
-              "frame": {"layout": "side", "name": "Documents", "home": home, "links": [library]}}
-    add("frame-app", "GET /.tinysesam/topbar.json on an application's host with an app frame: layout, name, home and "
-        "the frame's links the person may see.", anna, framed)
+              "frame": {"layout": "side", "name": "Documents", "icon": icon, "home": home, "links": [library]}}
+    add("frame-app", "GET /.tinysesam/topbar.json on an application's host with an app frame: layout, name, the "
+        "application's icon (an address on TinySesam's origin), home and the frame's links the person may see.", anna,
+        framed)
     add("frame-app-admin", "A frame link limited to administrators appears for one.", admin,
         dict(framed, name="Admin", account=f"{ISSUER}/auth/account?app={AUDIENCE}", admin_panel=f"{ISSUER}/auth/admin",
              menu_links=[{"title": "My collections", "href": "/collections"},
                          {"title": "App admin", "href": "https://app.example.com/admin"}],
              frame=dict(framed["frame"], links=[library, {"title": "Trash", "href": f"https://{AUDIENCE}/trash"}])))
-    add("frame-signed-out", "Signed out on the application's host: the layout and the name, no way back, no links.",
-        anon, dict(signed_out, frame={"layout": "side", "name": "Documents", "home": None, "links": []}))
+    add("frame-signed-out", "Signed out on the application's host: the layout, the name and the icon, no way back, no "
+        "links.", anon, dict(signed_out, frame={"layout": "side", "name": "Documents", "icon": icon, "home": None,
+                                                "links": []}))
     evil = json.loads(json.dumps(anna))
     evil["frame"].update(home="javascript:alert(1)", links=[
         {"title": "x", "href": "javascript:alert(1)"}, {"title": "y", "href": "//evil.example.com/"},
@@ -940,7 +945,8 @@ def topbar_frame_vectors(p: Probe, signed_out: dict) -> list:
     wrong["frame"].update(layout="bottom", name=["Documents"], links={"title": "x", "href": "/x"})
     add("frame-wrong-types", "A `layout` besides `top` and `side` reads as `top`; a `name` that is no text is null; "
         "`links` that is no list counts as none.", wrong,
-        dict(framed, frame={"layout": "top", "name": None, "home": home, "links": []}), attack="topbar-types")
+        dict(framed, frame={"layout": "top", "name": None, "icon": icon, "home": home, "links": []}),
+        attack="topbar-types")
     for vid, reason, value in (
             ("frame-not-object", "A `frame` that is no object reads as no frame: the bar on top.", "side"),
             ("frame-missing", "An answer of a TinySesam before the shell (no `frame`): the bar on top.", None)):
@@ -952,9 +958,28 @@ def topbar_frame_vectors(p: Probe, signed_out: dict) -> list:
         add(vid, reason, bad, dict(framed, frame=NO_FRAME), attack="topbar-types")
     out_ = json.loads(json.dumps(anna))
     out_["signed_in"] = False
-    add("frame-signed-out-links", "Signed out: no way back and no frame links, whatever the answer says; layout and "
-        "name stay.", out_, dict(signed_out, frame={"layout": "side", "name": "Documents", "home": None, "links": []}),
-        attack="topbar-types")
+    add("frame-signed-out-links", "Signed out: no way back and no frame links, whatever the answer says; layout, "
+        "name and icon stay.", out_, dict(signed_out, frame={"layout": "side", "name": "Documents", "icon": icon,
+                                                            "home": None, "links": []}), attack="topbar-types")
+    # `frame.icon` (T-151): an address of §8 or a data: image of the five types `apps[id].icon` takes, else null.
+    for vid, reason, value, kept in (
+            ("frame-icon-data", "A `data:image/…` icon (one of png, gif, jpeg, webp, svg+xml) is kept as it is.",
+             "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnLz4=", True),
+            ("frame-icon-path", "An icon given as a path (a library without `base_url`) is kept.", "/icons/docs.svg",
+             True),
+            ("frame-icon-javascript", "A `javascript:` icon is null.", "javascript:alert(1)", False),
+            ("frame-icon-protocol-relative", "A protocol-relative icon is null.", "//evil.example.com/i.svg", False),
+            ("frame-icon-data-html", "A `data:` address that is no image is null.", "data:text/html,<script>", False),
+            ("frame-icon-data-type", "A `data:image/` of another type is null.", "data:image/bmp;base64,Qk0=", False),
+            ("frame-icon-data-quote", "A `data:` icon with a quote, `<` or `>` is null.",
+             "data:image/svg+xml,<svg/onload='x'>", False),
+            ("frame-icon-data-space", "A `data:` icon with a space is null: printable ASCII only.",
+             "data:image/png;base64,iVBO Rw0K", False),
+            ("frame-icon-not-text", "An icon that is no text is null.", ["/icons/docs.svg"], False)):
+        bad = json.loads(json.dumps(anna))
+        bad["frame"]["icon"] = value
+        add(vid, reason, bad, dict(framed, frame=dict(framed["frame"], icon=value if kept else None)),
+            attack=None if kept else ("topbar-types" if vid.endswith("not-text") else "topbar-href"))
     return out
 
 

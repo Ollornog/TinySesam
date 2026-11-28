@@ -41,13 +41,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
    new members; everything else is unchanged.
 6. **The gate clients normalise the top bar's `frame`** (T-143, spec §8d, tier B). The top bar of every client
    (`Topbar`/`TopbarFrame` in Python, `Topbar.Frame` in Go, `TopBar::frame` in Rust, `Topbar.frame` in JavaScript,
-   `Topbar::$frame` in PHP) gains the always-present member `frame` (`layout`, `name`, `home`, `links`). Code that
+   `Topbar::$frame` in PHP) gains the always-present member `frame` (`layout`, `name`, `icon`, `home`, `links`; `icon`
+   since T-151). Code that
    compares a whole normalized bar, or builds a Rust `topbar::TopBar` by a struct literal, takes the new member;
    everything else is unchanged.
 <!-- upgrade-list 0.31.x:end -->
 
 ### Added
 
+- `frame.icon` in `topbar.json` (T-151, spec §8d): the application's icon (`apps[id].icon`) in its app frame — a path
+  as an absolute address on TinySesam's origin, a `data:image/…` address as it is, `null` without one. The shell
+  component draws it before the application's name on the application's host (`tests/test_shell_browser.py` B4, Ex1);
+  the five gate clients normalise it (an href of §8 or a `data:image/` address of png, gif, jpeg, webp or svg+xml,
+  else `null`). Vectors `frame-icon-*`.
 - The five gate clients normalise the top bar's `frame` (T-143, spec §8d): `layout` (`side` exactly, else `top`),
   `name` (text), `home` (a safe href) and `links` (the safe `{title, href}` entries) — the way back and the links only
   signed in; a missing or malformed `frame` reads as the bar on top. Vectors: every top-bar vector expects `frame`, new

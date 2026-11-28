@@ -48,6 +48,9 @@ pub struct Frame {
     pub layout: String,
     /// The application's name in its app frame (text).
     pub name: Option<String>,
+    /// The application's icon in its app frame: an image address (`http(s)`, a path or a `data:image/…`) — draw it as
+    /// an image, never as markup.
+    pub icon: Option<String>,
     /// Where "‹ name" leads back to — only for a signed-in person.
     pub home: Option<String>,
     /// The frame's links the person may see — only for a signed-in person.
@@ -60,6 +63,7 @@ fn frame(raw: Option<&Value>, signed_in: bool) -> Frame {
     let mut out = Frame {
         layout: "top".to_owned(),
         name: None,
+        icon: None,
         home: None,
         links: Vec::new(),
     };
@@ -70,11 +74,30 @@ fn frame(raw: Option<&Value>, signed_in: bool) -> Frame {
         out.layout = "side".to_owned();
     }
     out.name = raw.get("name").and_then(Value::as_str).map(str::to_owned);
+    out.icon = frame_icon(raw.get("icon"));
     if signed_in {
         out.home = safe_href(raw.get("home"));
         out.links = links(raw.get("links"));
     }
     out
+}
+
+/// `frame.icon`: an href of spec §8, or a `data:image/` address of the five types `apps[id].icon` takes followed by
+/// `;` or `,` and printable ASCII without a quote, `<`, `>` or a backslash; anything else `None`.
+fn frame_icon(raw: Option<&Value>) -> Option<String> {
+    let icon = raw?.as_str()?;
+    if safe_href(raw).is_some() {
+        return Some(icon.to_owned());
+    }
+    let rest = ["png", "gif", "jpeg", "webp", "svg+xml"]
+        .iter()
+        .find_map(|kind| icon.strip_prefix("data:image/")?.strip_prefix(kind))?;
+    let tail = rest.strip_prefix(';').or_else(|| rest.strip_prefix(','))?;
+    let ok = !tail.is_empty()
+        && tail.bytes().all(|b| {
+            (0x21..=0x7e).contains(&b) && !matches!(b, b'"' | b'\'' | b'<' | b'>' | b'\\')
+        });
+    ok.then(|| icon.to_owned())
 }
 
 /// How many approvals wait for this account and where to decide them.

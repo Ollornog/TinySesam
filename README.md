@@ -2964,7 +2964,8 @@ except gate_client.UntrustedPeer:
   it server-side with only TinySesam's cookies; `Topbar.to_dict()` gives the normalized form of spec §8. With
   approvals switched on, `Topbar.approvals` is a `TopbarApprovals` (`pending`, `href`), otherwise `None`.
   `Topbar.frame` is a `TopbarFrame` (spec §8d): `layout` (`"top"` or `"side"`), and on an application's host with an
-  app frame its `name`, `home` and `links` (the way back and the links only signed in).
+  app frame its `name`, `icon` (an image address — draw it as an image), `home` and `links` (the way back and the links
+  only signed in).
 - **Server-side needs the session cookie**: the proxy templates strip TinySesam's cookies before the application (spec
   §2.1, duty 4), so `fetch_topbar` and `fetch_account` read *signed out* behind them. Prefer the browser way (the page
   fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself, and the server never holds the session);

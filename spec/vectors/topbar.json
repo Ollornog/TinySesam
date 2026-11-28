@@ -47,6 +47,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -82,6 +83,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -130,6 +132,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -169,6 +172,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -197,6 +201,7 @@
           "logout": null,
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -218,6 +223,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -302,6 +308,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -333,6 +340,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -371,6 +379,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -401,6 +410,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -443,6 +453,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -473,6 +484,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -507,6 +519,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -537,6 +550,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -546,7 +560,7 @@
     {
       "id": "frame-app",
       "attack": null,
-      "reason": "GET /.tinysesam/topbar.json on an application's host with an app frame: layout, name, home and the frame's links the person may see.",
+      "reason": "GET /.tinysesam/topbar.json on an application's host with an app frame: layout, name, the application's icon (an address on TinySesam's origin), home and the frame's links the person may see.",
       "input": {
         "topbar": {
           "brand": "Example",
@@ -581,6 +595,7 @@
           },
           "frame": {
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "https://app.example.com/start",
             "links": [
               {
@@ -621,6 +636,7 @@
           "frame": {
             "layout": "side",
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "https://app.example.com/start",
             "links": [
               {
@@ -674,6 +690,7 @@
           },
           "frame": {
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "https://app.example.com/start",
             "links": [
               {
@@ -722,6 +739,7 @@
           "frame": {
             "layout": "side",
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "https://app.example.com/start",
             "links": [
               {
@@ -740,7 +758,7 @@
     {
       "id": "frame-signed-out",
       "attack": null,
-      "reason": "Signed out on the application's host: the layout and the name, no way back, no links.",
+      "reason": "Signed out on the application's host: the layout, the name and the icon, no way back, no links.",
       "input": {
         "topbar": {
           "brand": "Example",
@@ -759,6 +777,7 @@
           "logout": null,
           "frame": {
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": null,
             "links": [],
             "layout": "side"
@@ -780,6 +799,7 @@
           "frame": {
             "layout": "side",
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": null,
             "links": []
           }
@@ -824,6 +844,7 @@
           },
           "frame": {
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "javascript:alert(1)",
             "links": [
               {
@@ -881,6 +902,7 @@
           "frame": {
             "layout": "side",
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": null,
             "links": [
               {
@@ -932,6 +954,7 @@
             "name": [
               "Documents"
             ],
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "https://app.example.com/start",
             "links": {
               "title": "x",
@@ -970,6 +993,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "https://app.example.com/start",
             "links": []
           }
@@ -1044,6 +1068,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1117,6 +1142,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1126,7 +1152,7 @@
     {
       "id": "frame-signed-out-links",
       "attack": "topbar-types",
-      "reason": "Signed out: no way back and no frame links, whatever the answer says; layout and name stay.",
+      "reason": "Signed out: no way back and no frame links, whatever the answer says; layout, name and icon stay.",
       "input": {
         "topbar": {
           "brand": "Example",
@@ -1161,6 +1187,7 @@
           },
           "frame": {
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": "https://app.example.com/start",
             "links": [
               {
@@ -1187,8 +1214,830 @@
           "frame": {
             "layout": "side",
             "name": "Documents",
+            "icon": "https://auth.example.com/icons/docs.svg",
             "home": null,
             "links": []
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-data",
+      "attack": null,
+      "reason": "A `data:image/…` icon (one of png, gif, jpeg, webp, svg+xml) is kept as it is.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnLz4=",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnLz4=",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-path",
+      "attack": null,
+      "reason": "An icon given as a path (a library without `base_url`) is kept.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "/icons/docs.svg",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": "/icons/docs.svg",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-javascript",
+      "attack": "topbar-href",
+      "reason": "A `javascript:` icon is null.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "javascript:alert(1)",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": null,
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-protocol-relative",
+      "attack": "topbar-href",
+      "reason": "A protocol-relative icon is null.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "//evil.example.com/i.svg",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": null,
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-data-html",
+      "attack": "topbar-href",
+      "reason": "A `data:` address that is no image is null.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "data:text/html,<script>",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": null,
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-data-type",
+      "attack": "topbar-href",
+      "reason": "A `data:image/` of another type is null.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "data:image/bmp;base64,Qk0=",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": null,
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-data-quote",
+      "attack": "topbar-href",
+      "reason": "A `data:` icon with a quote, `<` or `>` is null.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "data:image/svg+xml,<svg/onload='x'>",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": null,
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-data-space",
+      "attack": "topbar-href",
+      "reason": "A `data:` icon with a space is null: printable ASCII only.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": "data:image/png;base64,iVBO Rw0K",
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": null,
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "frame-icon-not-text",
+      "attack": "topbar-types",
+      "reason": "An icon that is no text is null.",
+      "input": {
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": {
+            "shown": true,
+            "href": "https://auth.example.com/auth/account?app=app.example.com"
+          },
+          "admin_panel": {
+            "shown": false,
+            "href": null
+          },
+          "logout": {
+            "href": "https://auth.example.com/auth/logout"
+          },
+          "frame": {
+            "name": "Documents",
+            "icon": [
+              "/icons/docs.svg"
+            ],
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ],
+            "layout": "side"
+          }
+        }
+      },
+      "expected": {
+        "ok": true,
+        "topbar": {
+          "brand": "Example",
+          "signed_in": true,
+          "name": "Anna Berg",
+          "links": [
+            {
+              "title": "Wiki",
+              "href": "https://app.example.com/wiki"
+            },
+            {
+              "title": "Files",
+              "href": "/files/"
+            }
+          ],
+          "menu_links": [
+            {
+              "title": "My collections",
+              "href": "/collections"
+            }
+          ],
+          "account": "https://auth.example.com/auth/account?app=app.example.com",
+          "admin_panel": null,
+          "logout": "https://auth.example.com/auth/logout",
+          "approvals": null,
+          "frame": {
+            "layout": "side",
+            "name": "Documents",
+            "icon": null,
+            "home": "https://app.example.com/start",
+            "links": [
+              {
+                "title": "Library",
+                "href": "https://app.example.com/library"
+              }
+            ]
           }
         }
       }
@@ -1217,6 +2066,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1245,6 +2095,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1275,6 +2126,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1303,6 +2155,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1333,6 +2186,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1358,6 +2212,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1388,6 +2243,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1413,6 +2269,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1443,6 +2300,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1468,6 +2326,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1498,6 +2357,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1523,6 +2383,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1553,6 +2414,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1578,6 +2440,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1608,6 +2471,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1633,6 +2497,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1663,6 +2528,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1687,6 +2553,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1717,6 +2584,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1742,6 +2610,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }
@@ -1772,6 +2641,7 @@
           },
           "frame": {
             "name": null,
+            "icon": null,
             "home": null,
             "links": [],
             "layout": "top"
@@ -1797,6 +2667,7 @@
           "frame": {
             "layout": "top",
             "name": null,
+            "icon": null,
             "home": null,
             "links": []
           }

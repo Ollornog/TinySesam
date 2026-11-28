@@ -95,7 +95,8 @@ ok("a link with {permission, app} appears for the holder of the permission only 
 
 # ══ The part `frame` of topbar.json ══════════════════════════════════════════════════════════════════════════════
 anon = TestClient(app, base_url=BASE)
-assert anon.get("/auth/topbar.json").json()["frame"] == {"name": None, "home": None, "links": [], "layout": "top"}
+assert anon.get("/auth/topbar.json").json()["frame"] == {"name": None, "icon": None, "home": None, "links": [],
+                                                         "layout": "top"}
 # `?app=` with a host of an application: its layout; an unknown host answers byte for byte like none.
 assert c_rita.get("/auth/topbar.json?app=docs.example.com").json()["frame"]["layout"] == "side"
 assert (c_rita.get("/auth/topbar.json?app=evil.example.net").content == c_rita.get("/auth/topbar.json").content)
@@ -116,19 +117,38 @@ auth_g.grant_permission("docs-editor", "docs.delete", app="docs", by="test")
 proxy = {"X-Forwarded-Host": "docs.example.com", "X-Forwarded-Proto": "https"}
 g = client(auth_g, app_g, u_g, "https://docs.example.com")
 j = g.get("/.tinysesam/topbar.json", headers=proxy).json()
-assert j["frame"] == {"name": "Documents", "home": "https://docs.example.com/", "layout": "side",
+assert j["frame"] == {"name": "Documents", "icon": None, "home": "https://docs.example.com/", "layout": "side",
                       "links": [{"title": "All", "href": "https://docs.example.com/all"},
                                 {"title": "Trash", "href": "https://docs.example.com/trash"}]}, j["frame"]
 assert j["account"]["href"] == f"{BASE}/auth/account?app=docs.example.com", j["account"]
 g_anon = TestClient(app_g, base_url="https://docs.example.com")
 j = g_anon.get("/.tinysesam/topbar.json", headers=proxy).json()
-assert j["frame"] == {"name": "Documents", "home": None, "links": [], "layout": "side"}, j["frame"]
+assert j["frame"] == {"name": "Documents", "icon": None, "home": None, "links": [], "layout": "side"}, j["frame"]
 # A host of forward_apps without a frame and without an application: no name, the instance's layout.
 j = g.get("/.tinysesam/topbar.json", headers={**proxy, "X-Forwarded-Host": "wiki.example.com"}).json()
-assert j["frame"] == {"name": None, "home": None, "links": [], "layout": "top"}, j["frame"]
+assert j["frame"] == {"name": None, "icon": None, "home": None, "links": [], "layout": "top"}, j["frame"]
 assert j["account"]["href"] == f"{BASE}/auth/account", j["account"]
-ok("/.tinysesam/topbar.json: the frame of the host (name, home, links for the viewer as addresses on the host, "
-   "layout of the application), the account page framed; signed out the name only")
+# T-151: the application's icon (`apps[id].icon`) — a path as an address on TinySesam's origin (the shell draws it on
+# the application's page), a data: icon unchanged, signed out too; no icon without an app frame.
+auth_g.cfg.apps = {"docs": {**DOCS, "icon": "/icons/docs.svg"}}
+j = g.get("/.tinysesam/topbar.json", headers=proxy).json()
+assert j["frame"]["icon"] == f"{BASE}/icons/docs.svg", j["frame"]
+assert g_anon.get("/.tinysesam/topbar.json", headers=proxy).json()["frame"]["icon"] == f"{BASE}/icons/docs.svg"
+dot = "data:image/svg+xml;base64,PHN2Zy8+"
+auth_g.cfg.apps = {"docs": {**DOCS, "icon": dot}}
+assert g.get("/.tinysesam/topbar.json", headers=proxy).json()["frame"]["icon"] == dot
+assert g.get("/.tinysesam/topbar.json", headers={**proxy, "X-Forwarded-Host": "wiki.example.com"}).json()[
+    "frame"]["icon"] is None
+from tinysesam import topbar as topbar_mod  # noqa: E402
+
+assert topbar_mod.icon_address("/i.svg", "") == "/i.svg" and topbar_mod.icon_address("/i.svg", f"{BASE}/sub") == \
+    f"{BASE}/i.svg"
+assert [topbar_mod.icon_address(v, BASE) for v in ("//evil.example/i.svg", "https://evil.example/i.svg", 5, "")] == \
+    [None, None, None, None]
+auth_g.cfg.apps = {"docs": DOCS}
+ok("/.tinysesam/topbar.json: the frame of the host (name, icon, home, links for the viewer as addresses on the host, "
+   "layout of the application), the account page framed; signed out the name and the icon only; the icon's path on "
+   "TinySesam's origin, a data: icon unchanged")
 
 # ══ Side layout of the built-in pages and of auth.topbar ═════════════════════════════════════════════════════════
 c_boss = client(auth, app, auth.create_user("boss", password=PW, is_admin=True))

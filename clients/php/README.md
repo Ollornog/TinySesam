@@ -235,8 +235,8 @@ them. `Topbar::fetch($url, $_SERVER['HTTP_COOKIE'] ?? '')` fetches it server-sid
 5 seconds, 64 KiB and no redirects (anything but a `200` or a failed transfer is the signed-out value); never cache the
 answer across sessions. Behind the proxy templates these cookies never reach the application (spec §2.1, duty 4), so a server-side fetch reads signed out there: prefer the browser way (the page fetches `/.tinysesam/topbar.json` or `/.tinysesam/account.json` itself), or let exactly the session cookie through with the commented variant in `deploy/forward-auth/Caddyfile.gate` — only for an application you trust with the person's browser session (spec §8, "Server-side or in the browser"). `approvals` is `['pending' => …, 'href' => …]` when TinySesam has approvals switched on,
 otherwise `null`; show the number with a word, never a coloured dot alone. `frame` (spec §8d) is always set:
-`layout` (`'top'` or `'side'`), and on an application's host with an app frame its `name`, `home` and `links` (the way
-back and the links only signed in).
+`layout` (`'top'` or `'side'`), and on an application's host with an app frame its `name`, `icon` (an image address —
+an image `src`, escaped), `home` and `links` (the way back and the links only signed in).
 
 ## Account overview
 

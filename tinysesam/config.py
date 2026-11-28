@@ -644,7 +644,9 @@ class TinySesamConfig:
     # of TinySesam's own pages in the application's frame; without it `shell_layout` holds. It needs `hosts`.
     # `icon` (T-104, ADR-19) is the application's icon: a path on TinySesam's own origin (`"/icons/docs.svg"`) or a
     # `data:image/…` address of at most 64 KiB, never a foreign address. It stands above "Sign in to <application>" on
-    # the gate's sign-in page, in the application's frame and on its TinySesam area `/auth/area?app=<id>` — the tiles
+    # the gate's sign-in page, in the application's frame — also in the shell on the application's hosts, through
+    # `frame.icon` of `topbar.json` (T-151; a path there as an address on TinySesam's origin, so a page with a strict
+    # CSP names that origin in its `img-src`) — and on its TinySesam area `/auth/area?app=<id>` — the tiles
     # of the own account (account, security, sessions, programs, approvals, the panel for the application's
     # administrators) framed with the application's name and links, with a way back; `?app=<id>` frames every
     # TinySesam page like `?app=<host>`.

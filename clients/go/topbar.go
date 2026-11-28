@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -33,14 +34,28 @@ type Topbar struct {
 	Frame TopbarFrame `json:"frame"`
 }
 
-// TopbarFrame is the part frame of the top bar (spec section 8d): Layout "top" or "side", the application's Name in
-// its app frame (nil without one), Home the way back and Links the frame's links the person may see (both only signed
-// in; Links is never nil). Without an app frame: the bar on top, nothing else.
+// TopbarFrame is the part frame of the top bar (spec section 8d): Layout "top" or "side", the application's Name and
+// Icon (an image address: http(s), a path or a data:image/...; draw it as an image) in its app frame (nil without
+// one), Home the way back and Links the frame's links the person may see (both only signed in; Links is never nil).
+// Without an app frame: the bar on top, nothing else.
 type TopbarFrame struct {
 	Layout string       `json:"layout"`
 	Name   *string      `json:"name"`
+	Icon   *string      `json:"icon"`
 	Home   *string      `json:"home"`
 	Links  []TopbarLink `json:"links"`
+}
+
+// dataIconRE is frame.icon as a data: address: one of the image types apps[id].icon takes, then printable ASCII
+// without a quote, < > or a backslash.
+var dataIconRE = regexp.MustCompile(`^data:image/(?:png|gif|jpeg|webp|svg\+xml)[;,][!#-&(-;=?-\[\]-~]+$`)
+
+// frameIcon keeps an href of spec section 8 or a data:image/ address of the five types; anything else is nil.
+func frameIcon(v any) *string {
+	if s, ok := v.(string); ok && (safeHref(s) || dataIconRE.MatchString(s)) {
+		return &s
+	}
+	return nil
 }
 
 // emptyTopbar is the signed-out bar without brand and without a frame.
@@ -59,7 +74,7 @@ func topbarFrame(raw any, signedIn bool) TopbarFrame {
 	if l, _ := m["layout"].(string); l == "side" {
 		out.Layout = "side"
 	}
-	out.Name = text(m["name"])
+	out.Name, out.Icon = text(m["name"]), frameIcon(m["icon"])
 	if signedIn {
 		out.Home, out.Links = href(m["home"]), topbarLinks(m["links"])
 	}
