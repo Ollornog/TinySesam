@@ -23,8 +23,9 @@
 // Surface "shell on top" (T-103): every page loads TinySesam's shell component from its own host
 // (/.tinysesam/shell.js, passed to TinySesam by the proxy) and puts <ts-shell> first in <body> — TinySesam's bar
 // with the application's name, its links (Members for holders of ex1.members.read, Staff for the role ex1-staff) and
-// the account menu, drawn from the frame of forward_apps and the layout of apps.ex1 in tinysesam.toml. The pages
-// carry a strict CSP: only the nonce on the script and the style.
+// the account menu, drawn from the frame of forward_apps in tinysesam.toml. The element carries layout="top" itself,
+// the same as apps.ex1.layout (T-144): without the attribute the layout arrives with the data, and a side layout
+// would shift the page once. The pages carry a strict CSP: only the nonce on the script and the style.
 package main
 
 import (
@@ -228,7 +229,7 @@ func page(w http.ResponseWriter, title, current, body string) {
 	_, _ = fmt.Fprintf(w, "<!doctype html><html lang=en><head><meta charset=utf-8>"+
 		"<meta name=viewport content=\"width=device-width,initial-scale=1\"><title>%s</title><link rel=icon href=\"data:,\">"+
 		"<script src=\"/.tinysesam/shell.js\" nonce=\"%s\"></script><style nonce=\"%s\">%s</style></head><body>"+
-		"<ts-shell current=\"%s\"></ts-shell><main><h1>%s</h1>%s</main></body></html>",
+		"<ts-shell layout=\"top\" current=\"%s\"></ts-shell><main><h1>%s</h1>%s</main></body></html>",
 		html.EscapeString(title), nonce, nonce, pageStyle, html.EscapeString(current), html.EscapeString(title), body)
 }
 

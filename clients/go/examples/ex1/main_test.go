@@ -109,7 +109,7 @@ func TestPagesCarryTheShell(t *testing.T) {
 		if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "style-src 'nonce-"+nonce+"'") ||
 			!strings.Contains(body, `<script src="/.tinysesam/shell.js" nonce="`+nonce+`">`) ||
 			!strings.Contains(body, `<style nonce="`+nonce+`">`) ||
-			!strings.Contains(body, `<ts-shell current="`+path+`"></ts-shell>`) {
+			!strings.Contains(body, `<ts-shell layout="top" current="`+path+`"></ts-shell>`) {
 			t.Errorf("%s: no shell under a strict CSP:\n%s\n%s", path, csp, body)
 		}
 		if strings.Contains(body, "<Anna>") {

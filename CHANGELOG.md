@@ -49,6 +49,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Docs and example Ex1 set `<ts-shell layout="…">` (T-144): without the attribute the layout arrives with
+  `topbar.json`, and a page in the side layout shifts sideways once (spec §8d now recommends it, README "The shell
+  component").
 - `deploy/forward-auth/acceptance.sh` sends a forged `Remote-Permissions` (T-141): without a session it opens nothing,
   and with `ECHO=1` it must never reach the application — on the share path and with a session. A proxy template
   without its strip line turns the script red (`tests/test_acceptance_script.py`, a stand-in proxy; the counter-check

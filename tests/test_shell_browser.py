@@ -424,8 +424,9 @@ async def part_b(p: Page) -> None:
                 await p.go(EX1 + "/", drawn)
                 await p.frames()
                 await clean(p, where, console_before, failed_before)
+                # T-144: Ex1 sets the attribute (no jump when the data arrive), the same as apps.ex1.layout.
                 assert await p.js("document.querySelector('ts-shell').getAttribute('layout')") == "top", \
-                    f"{where}: the layout of apps.ex1 did not arrive"
+                    f"{where}: Ex1 lost its layout attribute"
                 head = await p.js(f"{root}.querySelector('header').className")
                 assert head == "tsbar tsframe", f"{where}: {head}"
                 assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")

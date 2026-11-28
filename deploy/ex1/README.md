@@ -34,9 +34,10 @@ people in, its admin panel and account page manage them, and the application cre
   its allowlist (`ex1-member`) and never touches an account it did not create.
 - **Shell on top** (T-103, surface "shell on top"): every page of the Go program loads TinySesam's shell component from
   its own host (`<script src="/.tinysesam/shell.js" nonce=…>`, the proxy passes `/.tinysesam/*` to TinySesam) and puts
-  `<ts-shell current="/…">` first in `<body>`. The bar carries the application's frame from `[forward_apps."…"]`
-  (‹ Ex1 back home, *Members* for holders of `ex1.members.read`, *Staff* for the role `ex1-staff`) and the layout of
-  `apps.ex1.layout`; the account menu leads to TinySesam's account page in Ex1's frame. The pages carry a strict CSP
+  `<ts-shell layout="top" current="/…">` first in `<body>`. The bar carries the application's frame from
+  `[forward_apps."…"]` (‹ Ex1 back home, *Members* for holders of `ex1.members.read`, *Staff* for the role
+  `ex1-staff`); the element names its layout itself (the same as `apps.ex1.layout`, T-144: without the attribute the
+  layout arrives with the data and a side layout shifts the page once); the account menu leads to TinySesam's account page in Ex1's frame. The pages carry a strict CSP
   with a fresh nonce (images also from TinySesam's origin, for a `brand_icon` given as a path, B-21) and colour
   themselves only with TinySesam's `--ts-*` tokens.
 

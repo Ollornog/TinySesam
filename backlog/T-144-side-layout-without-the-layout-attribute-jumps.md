@@ -2,7 +2,7 @@
 id: T-144
 type: Task
 title: "Side layout without the layout attribute: the page jumps when the data arrive"
-status: offen
+status: erledigt
 points: 1
 milestone: M-2
 tags: [shell, docs]
@@ -20,3 +20,10 @@ learns the side layout from `topbar.json`, and the page shifts once.
 
 ## Acceptance
 - Both examples set the attribute; the docs say why.
+
+## Done (S9)
+
+Spec §8d (SHOULD set the attribute, and why), README and `README.de.md` ("The shell component"), the snippet in both
+with `layout="top"`; example Ex1 sets `layout="top"` (Go test and `tests/test_shell_browser.py`). Ex2 uses the
+library's server-side bar (`auth.topbar(…)`), which knows the layout before the first paint — no jump there. No
+console hint: the component has no dev mode to tell it apart from production.
