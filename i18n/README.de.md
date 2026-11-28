@@ -1607,9 +1607,23 @@ https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.ex
 - **Geheimnisse laufen nie durch die Anwendung**: Passwort, TOTP-Code, Recovery-Code, API-Key, App-Passwort oder
   Kopplungscode werden nur auf TinySesams Seite eingegeben oder gezeigt.
 
-Das Register der Aktionen teilt sich die Verwaltung: Jede Aktion trägt einen Bereich (`own`, später `admin`) und eine
-Step-up-Klasse (`window`: das Fenster einer frischen Bestätigung; `each`: eine Bestätigung je Aktion, für die folgenden
-Aktionen der Verwaltung).
+Das Register der Aktionen teilt sich die Verwaltung: Jede Aktion trägt einen Bereich (`own` oder `admin`) und eine
+Step-up-Klasse (`window`: das Fenster einer frischen Bestätigung; `each`: eine Bestätigung je Aktion).
+
+**Verwaltung auf Aktionsseiten** (T-147, bei eingeschaltetem Admin-Panel): Eine Person, die Konten verwaltet, wird nach
+`/auth/act/<name>?target=<Konto-Id>&app=<id>&return=<url>&state=<opak>` geschickt — `admin_lock`, `admin_unlock`,
+`admin_roles`, `admin_totp_reset`, `admin_key_revoke`, `admin_program_revoke` (ein verbundenes Programm, ein Dienst
+oder ein App-Passwort), `admin_session_end` (eine Sitzung, über ihren Handle) und `admin_signin_link` (ein einmaliger
+Anmeldelink, statt ein Passwort zu setzen). Die Seite nennt das Konto, sagt, was passiert, lässt die Rollen bzw. den
+Key, das Programm oder die Sitzung wählen und verlangt eine Bestätigung GENAU DIESER Aktion — Passwort, TOTP-Code
+oder PIN, auf der Seite eingegeben; ein offenes Bestätigungsfenster reicht nicht (Klasse `each`). Dann läuft der Code
+des Panels mit den Rechten der Person in diesem Moment: ein Administrator (es gilt das Owner-Modell) oder ein
+delegierter Admin für `admin_lock`, `admin_unlock`, `admin_roles` und `admin_signin_link` an einem Konto in seinem
+Bereich. Alles andere ist „nicht angeboten“. Das Audit bekommt die Zeilen des Panels und dazu
+`admin_action act=<name> uid=<id> amr=<Methode> app=<Host>`; eine gescheiterte Bestätigung schreibt
+`admin_action_denied`. Die Anwendung kennt die Konto-Ids aus ihrer eigenen Liste (Claim `ts_id` oder Konten-API);
+TinySesam entscheidet, wer handeln darf. Nicht hier: Admin-Recht, Owner, Löschen, Rollenkatalog — sie bleiben im Panel;
+Passkey oder Provider als Bestätigung einer Aktion gibt es noch nicht.
 
 Beispiel Ex4, [`deploy/ex4`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex4/README.md), ist die Oberfläche
 im Ganzen: eine Node-Anwendung hinter dem Server, deren Einstellungsseite eine Single-Page-App ist — sie liest
@@ -3343,7 +3357,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**163 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**164 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -38,6 +38,12 @@ one file, `tinysesam.toml` (`TINYSESAM_CONFIG`, T-97).
 - **Ending one session**: every other session of the account has an *End* link to the action page `session_end` with
   that session's handle; the page asks for confirmation (and, when the last one is too old, for a fresh sign-in
   confirmation first).
+- **Administration** (T-147): a holder of the application's permission `docs.admin` (role `docs-admin`) sees an
+  *Administration* section — the accounts the application has seen through forward auth (its own list, served by
+  `/admin/accounts.json`), each with links to TinySesam's administration action pages: lock, unlock, roles, reset the
+  authenticator app, revoke a key, disconnect a program, end a session, a sign-in link. TinySesam names the account,
+  asks for the administrator's password (or code) for that one action, and decides who may act; the sign-in link is
+  shown on its page only. Give the role `docs-admin` the permission `docs.admin` and an administrator the role.
 - The pages carry a strict CSP with a fresh nonce (`connect-src 'self'`, `form-action 'none'`: the application posts no
   form at all) and colour themselves only with TinySesam's `--ts-*` tokens (`/.tinysesam/shell.css`).
 

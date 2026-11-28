@@ -8,7 +8,7 @@ recovery code, an API key, an app password, a pairing code — are typed or show
 travel through the application.
 
 The register (`ACTIONS`) holds every action with its scope (`own`: the own account; `admin`: an account the viewer
-administers — the classes below are shared, the admin actions follow), its step-up class (`window`: the window of a
+administers, `_admin_actions`, T-147), its step-up class (`window`: the window of a
 fresh confirmation, `_require_fresh`; `each`: one step-up per action, the confirmation of the approvals), the sections of
 the account page it shows (`templates.account_sections`: the page does exactly what the account page does, with the
 same script and the same routes behind it) and whether it asks the step-up as it opens (`fresh`; the routes behind it
@@ -60,6 +60,16 @@ ACTIONS: dict = {a.name: a for a in (
     Action("session_end", "own", "window", ("session_end",), target="session"),
     Action("programs", "own", "window", ("programs", "pairing")),
     Action("services", "own", "window", ("services",)),
+    # Scope `admin` (T-147, `_admin_actions`): an account the viewer administers, `?target=<account id>`; class
+    # `each` — a confirmation for every single action, typed on the page.
+    Action("admin_totp_reset", "admin", "each", (), target="account"),
+    Action("admin_lock", "admin", "each", (), target="account"),
+    Action("admin_unlock", "admin", "each", (), target="account"),
+    Action("admin_roles", "admin", "each", (), target="account"),
+    Action("admin_key_revoke", "admin", "each", (), target="account"),
+    Action("admin_program_revoke", "admin", "each", (), target="account"),
+    Action("admin_session_end", "admin", "each", (), target="account"),
+    Action("admin_signin_link", "admin", "each", (), target="account"),
 )}
 
 
@@ -200,6 +210,9 @@ def page(auth, ctx: dict) -> str:
     from . import templates as _templates
     t = auth.t
     action: Action = ctx["action"]
+    if action.scope == "admin":
+        from . import _admin_actions
+        return _admin_actions.page(auth, ctx)
     sections = _templates.account_sections(auth, ctx)
     body = [_area.heading(auth, ctx, t(f"act.{action.name}"))]
     if ctx.get("available"):

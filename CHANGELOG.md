@@ -38,6 +38,18 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Administration actions on action pages, surface "headless" (T-147, scope `admin`, class `each`; with the admin panel
+  on). `/auth/act/<name>?target=<account id>&app=<id>&return=<url>&state=<opaque>` for `admin_lock`, `admin_unlock`,
+  `admin_roles`, `admin_totp_reset`, `admin_key_revoke`, `admin_program_revoke` (program, service or app password),
+  `admin_session_end` (one session by its handle) and `admin_signin_link` (instead of setting a password; the link is
+  shown on the page only). The page names the account, asks what it needs and a confirmation of that one action —
+  password, TOTP code or PIN, an open window is not enough —, then runs the panel's code (`PanelActions`) with the
+  person's rights at that moment (administrator under the owner model; a delegate for lock, unlock, roles and sign-in
+  link in scope). A ticket per page (one use, ten minutes) binds the confirmation to person, action and account. Audit
+  `admin_action` / `admin_action_denied`. `PanelActions.reset_totp` takes `confirmed=True` from such a page. Example
+  Ex4 has an administration section for holders of `docs.admin` (its own list of the accounts it has seen) that drives
+  every one of them; `tests/test_admin_actions.py`, `tests/test_headless_browser.py` (X6). Not yet: a passkey or
+  provider as the confirmation of an action.
 - Action pages, surface "headless" (T-105, part 1). `/auth/act/<name>?app=<id>&return=<url>&state=<opaque>` is one
   action of the own account — `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`,
   `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — on TinySesam's origin, in the application's frame

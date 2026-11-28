@@ -529,6 +529,16 @@ GET <actions.password>&return=<url>&state=<opaque>        (?return=… when the 
   uses the approvals ([`approval-token.md`](approval-token.md)).
 - An application MUST treat `state` as its own opaque value (TinySesam neither reads nor stores it) and SHOULD check
   that a `state` it gets back is one it issued, so a link from elsewhere cannot fake its message.
+- **Administration** ([T-147](../backlog/T-147-administration-actions-on-action-pages-area-admin.md)). The same
+  pages act on another account for a person who administers it: `admin_lock`, `admin_unlock`, `admin_roles`,
+  `admin_totp_reset`, `admin_key_revoke`, `admin_program_revoke`, `admin_session_end` and `admin_signin_link`, at
+  `…/auth/act/<name>?target=<account id>` with `app`, `return` and `state` as above. They are not members of
+  `actions`: the application builds the address from its own list of accounts (the id is the claim `ts_id`), for
+  example from the address of `actions.sessions` with the last path segment replaced. Each asks for a confirmation of
+  THAT action on the page (password, TOTP code or PIN — a fresh confirmation window is not enough) and acts with the
+  rights of the person at the moment of the confirmation; anything the person may not do, or that does not apply to
+  the account, gives "not offered". A sign-in link is shown on the page only. The admin flag, owner, deletion and the
+  role catalog are not offered here.
 
 ## 8d. Shell component (optional)
 

@@ -95,8 +95,9 @@ c = session(auth, app, ann)
 # ── A. register and account.json ─────────────────────────────────────────────────────────────────────────────────────
 from tinysesam import _actions  # noqa: E402
 
-assert tuple(_actions.ACTIONS) == OWN, tuple(_actions.ACTIONS)
-assert all(a.scope == "own" and a.cls in ("window", "each") for a in _actions.ACTIONS.values())
+assert tuple(n for n, a in _actions.ACTIONS.items() if a.scope == "own") == OWN, tuple(_actions.ACTIONS)
+assert all(a.scope in ("own", "admin") and a.cls in ("window", "each") for a in _actions.ACTIONS.values())
+# Scope `admin` (T-147): tests/test_admin_actions.py.
 data = c.get("/auth/account.json").json()
 assert set(data["actions"]) == set(OWN) - {"session_end"}, data["actions"]
 on = {k for k, v in data["actions"].items() if v}

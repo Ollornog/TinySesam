@@ -18,13 +18,25 @@ basis="${PREPUSH_SPRINT_BASIS:-}"
 [[ -n "$basis" ]] || { echo "  repo extra: no origin/main to compare with — PR CI"; exit 0; }
 changed="$(git diff --name-only "$basis" HEAD)"
 
-py=python3
-[[ -x .venv/bin/python ]] && py=.venv/bin/python
+# A Python that imports FastAPI (the suites and the generators need it): the tree's .venv, the one of the main
+# working tree (a linked worktree has none; the suites put this tree first on sys.path), an active one, python3.
+py=""
+common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+for cand in .venv/bin/python "${common%/.git}/.venv/bin/python" "${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}" python3; do
+    if [[ -n "$cand" ]] && command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import fastapi' >/dev/null 2>&1; then
+        py="$cand"
+        break
+    fi
+done
 
 # 1. Python gate client: vectors (spec/vectors against the client and the generators), HTTP and middleware.
 if grep -qE '^(spec/|scripts/_(gate|approval)_vectors\.py$|tinysesam/gate_client\.py$)' <<<"$changed"; then
     echo "  python gate client: spec/ or the client changed — its vector and HTTP suites"
+    if [[ -z "$py" ]]; then
+        echo "  python gate client: NOT checked here (no Python with FastAPI) — the PR CI runs the suites" >&2
+    fi
     for suite in tests/test_gate_vectors.py tests/test_approval_vectors.py tests/test_gate_client.py; do
+        [[ -n "$py" ]] || break
         echo "  $suite"
         "$py" "$suite" || { echo "  python gate client: $suite is red" >&2; exit 1; }
     done
@@ -35,7 +47,7 @@ grep -qE '^tests/test_gate_caddy\.py$' <<<"$changed" && exit 0
 grep -qE '^(deploy/forward-auth/|tests/_gate_caddy_binary\.py$)' <<<"$changed" || exit 0
 
 echo "  gate-caddy: a change near the gate — running tests/test_gate_caddy.py"
-"$py" tests/test_gate_caddy.py
+"${py:-python3}" tests/test_gate_caddy.py
 rc=$?
 if [[ $rc -eq 77 ]]; then
     echo "  gate-caddy: NOT checked here (see the reason above) — the PR CI job gate-caddy runs it" >&2

@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 235
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 420 · B 347 names.
+**Status:** A 420 · B 348 names.
 
 ## A · Methods of `TinySesam`
 
@@ -1207,6 +1207,7 @@ The HTML pages (sign-in, registration, account, admin panel, the pages behind e-
 | POST | `/auth/account/email` | — |
 | POST | `/auth/account/username` | — |
 | GET | `/auth/act/{name}` | `query:app`, `query:return`, `query:state`, `query:target` |
+| POST | `/auth/act/{name}/{ticket}` | — |
 | GET | `/auth/apikeys` | — |
 | POST | `/auth/apikeys` | — |
 | POST | `/auth/apikeys/{key_id}/revoke` | — |

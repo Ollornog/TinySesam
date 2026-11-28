@@ -529,6 +529,15 @@ sending the person there.
   reads `account.json` again, and a binding confirmation is an approval.
 - **No secret leaves TinySesam's origin**: a password, a code, an API key, an app password or a pairing code is typed
   or shown on the action page only, and the way back carries none.
+- **Administration actions** (T-147, scope `admin`, class `each`): every single action asks for its own confirmation
+  on the page (`_stepup_secret`: offered methods only, throttled in the reauth bucket, logged) — an open confirmation
+  window is not enough, so a link that reaches an administrator with a fresh session acts on nothing. The page issues
+  a ticket (one use, ten minutes, bound to the person, the action and the account); the POST refuses a token in the
+  request and a missing CSRF token, then checks the ticket, the confirmation and only then the rights at that moment
+  (`PanelActions.target`: an administrator under the owner model, a delegate only for lock, unlock, roles and a
+  sign-in link on an account in scope), and runs the panel's code. An account out of reach, an unknown one and an
+  action that does not apply all give the same "not offered" page. The admin flag, owner, deletion and the role
+  catalog are not offered; a sign-in link is shown on TinySesam's page only.
 - **The session handle** (schema 29) is a random reference of its own per session, never the token or its hash: it
   names a session to end and signs nobody in. Ending by it (`POST /auth/sessions/end`) wants a fresh confirmation, ends
   only a session of the same account (a foreign handle is 404, like an unknown one) and never the current one.

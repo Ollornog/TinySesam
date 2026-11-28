@@ -24,6 +24,10 @@ if (process.env.TS_TRUSTED_PROXY) {
 const gate = await createGate({ mode: 'header', trustedProxies: proxies });
 const identify = gateMiddleware(gate);
 const SCRIPT = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
+/** The accounts this application has seen — forward auth names one on every request. Its administration lists
+ * them (T-147); a real application keeps its own list or reads TinySesam's account API. Only id and names: the
+ * link to an administration action page carries the account id, TinySesam decides who may act. */
+const known = new Map<string, { id: string; user: string; name: string }>();
 
 /** Text into HTML: every character that could leave the text. */
 function e(s: string): string {
@@ -84,6 +88,9 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   identify(req, res, () => {
     const id = identityOf(req);
     const path = (req.url ?? '/').split('?')[0];
+    if (id?.id) {
+      known.set(id.id, { id: id.id, user: id.user, name: id.name || id.user });
+    }
     if (!id) {
       // Behind the proxy this never happens: forward auth sends the browser to TinySesam's sign-in first.
       page(res, 401, 'Not signed in', '', '<p>Not signed in.</p>');
@@ -94,6 +101,15 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
         return;
       }
       page(res, 200, 'Documents', '/', `${who}<ul><li id=doc-d1>Quarterly report</li></ul>`);
+    } else if (path === '/admin/accounts.json') {
+      // The application's own data for its administration section: the list only for holders of its permission
+      // docs.admin, null for everyone else (the page then draws no section).
+      res.setHeader('content-type', 'application/json');
+      res.setHeader('cache-control', 'no-store');
+      const accounts = id.hasPermission(`${APP}.admin`)
+        ? [...known.values()].sort((a, b) => a.user.localeCompare(b.user))
+        : null;
+      res.end(JSON.stringify({ accounts }));
     } else if (path === '/settings') {
       // The settings page is drawn in the browser from account.json (app.js); the server sends only the frame.
       const body = '<p id=notice role=status hidden></p><div id=settings aria-live=polite><p>Loading…</p></div>';

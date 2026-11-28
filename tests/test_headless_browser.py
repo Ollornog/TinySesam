@@ -15,8 +15,11 @@ suite can show that no secret ever reached it.
      signs in), an API key (shown once in TinySesam's dialog), one other session ended by its handle (with the
      confirmation dialog), a connected program disconnected (the form sent by script, the page reloads as done).
   X4 a result the settings page did not ask for (a forged `state`) is ignored.
-  X5 no secret in the application: the password, the new password and the API key are in no request the application
-     received and nowhere on its pages or in their storage.
+  X5 no secret in the application: the password, the new password, the API key and the sign-in link are in no
+     request the application received and nowhere on its pages or in their storage.
+  X6 administration (T-147): an administrator with the application's permission docs.admin drives every admin action
+     on another account from the application's own links — roles, authenticator reset, key, program, one session, a
+     sign-in link shown once, lock, unlock — each confirmed with the password on TinySesam's page, back with done.
 
 Skipped without Chrome, `websockets` or `uvicorn`; needs `node` ≥ 22.18 (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
@@ -153,6 +156,68 @@ async def back_with(p: Page, result: str, action: str) -> None:
     assert notice == {"result": result, "action": action, "hidden": False, "search": ""}, notice
 
 
+async def admin_action(p: Page, name: str, *, roles: tuple = (), check=None) -> None:
+    """One administration action on lou: the application's link, TinySesam's page (the account named, the
+    confirmation typed there), the action done, back with done — and its effect in the database."""
+    await to_action(p, f"{name}-lou", f"/auth/act/{name}")
+    assert "lou" in await p.js("document.getElementById('act_target').textContent"), name
+    for role in roles:
+        await p.js(f"document.querySelector('input[name=roles][value={json.dumps(role)}]').checked=true;true")
+    await p.js(f"document.querySelector('#actform input[name=password]').value={json.dumps(PW)};"
+               "window.__old=true;document.getElementById('act_confirm').click();true")
+    await p.until("window.__old===undefined&&document.readyState==='complete'&&!!document.getElementById('ts_back')"
+                  "&&document.getElementById('ts_back').dataset.state==='done'", f"{name} was not done")
+    if check is not None:
+        assert check(), f"{name}: no effect"
+    await back_with(p, "done", name)
+
+
+async def part_admin(p: Page) -> None:
+    ada = int(auth.create_user("ada", password=PW, roles=["docs-admin"]))
+    auth.store.set_admin(ada, True)
+    auth.grant_permission("docs-admin", "docs.admin", app="docs", by="test")
+    auth.store.set_totp(LOU, "JBSWY3DPEHPK3PXP", confirmed=True)
+    now = int(time.time())
+    auth.store.oauth_create_grant("probe-code-admin", "probe-cli", LOU, "https://app.example.test/mcp", "mcp", now,
+                                  "192.0.2.1", now + 3600, [("probe-token-hash-2", "refresh", "mcp", now + 3600)])
+    auth.start_session(LOU, "password", ua="Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0")
+    await p.go("about:blank")
+    await p.cmd("Network.clearBrowserCookies")
+    await p.go(EX4 + "/settings", "!!document.querySelector('input[name=username]')")
+    await p.js(f"document.querySelector('input[name=username]').value='ada';"
+               f"document.querySelector('input[name=password]').value={json.dumps(PW)};"
+               "window.__old=true;document.querySelector('input[name=password]').form.requestSubmit();true")
+    await p.until("window.__old===undefined&&document.readyState==='complete'", "ada's sign-in did not finish")
+    await on_settings(p)
+    assert await p.js(f"!!document.getElementById('admin-{LOU}')"), "no administration row for lou"
+    assert await p.js("document.querySelectorAll('input[type=password],form').length") == 0, "a form in the app"
+    user = lambda: auth.store.get_user(LOU)  # noqa: E731
+    await admin_action(p, "admin_roles", roles=("docs-admin",),
+                       check=lambda: sorted(auth.user_roles(user())) == ["docs-admin", "docs-reader"])
+    await admin_action(p, "admin_totp_reset", check=lambda: not auth.store.has_confirmed_totp(LOU))
+    await admin_action(p, "admin_key_revoke", check=lambda: all(k["revoked"] for k in auth.list_api_keys(LOU)))
+    await admin_action(p, "admin_program_revoke", check=lambda: not auth._oauth_server().devices(LOU))
+    sessions = len(auth.store.list_sessions(LOU))
+    await admin_action(p, "admin_session_end", check=lambda: len(auth.store.list_sessions(LOU)) == sessions - 1)
+    await to_action(p, "admin_signin_link-lou", "/auth/act/admin_signin_link")
+    await p.js(f"document.querySelector('#actform input[name=password]').value={json.dumps(PW)};"
+               "window.__old=true;document.getElementById('act_confirm').click();true")
+    await p.until("window.__old===undefined&&document.readyState==='complete'&&!!document.getElementById('act_link')",
+                  "no sign-in link shown")
+    link = await p.js("document.getElementById('act_link').textContent")
+    assert link.startswith(f"{AUTH}/auth/magic/"), link
+    SECRETS.append(link)
+    await back_with(p, "done", "admin_signin_link")
+    await admin_action(p, "admin_lock", check=lambda: user()["disabled"] == 2)
+    await admin_action(p, "admin_unlock", check=lambda: not user()["disabled"])
+    assert [a["detail"].split()[0] for a in auth.store.recent_audit(50) if a["event"] == "admin_action"][::-1] == [
+        f"act={n}" for n in ("admin_roles", "admin_totp_reset", "admin_key_revoke", "admin_program_revoke",
+                             "admin_session_end", "admin_signin_link", "admin_lock", "admin_unlock")]
+    ok("X6 administration: an administrator drives every admin action on another account from the application's "
+       "own links — roles, authenticator reset, key, program, one session, a sign-in link shown once, lock, unlock — "
+       "each confirmed with the password on TinySesam's page and back with done; audited in that order")
+
+
 async def part_x(p: Page) -> None:
     console_before, failed_before = len(p.console), len(p.failed)
 
@@ -283,6 +348,10 @@ async def part_x(p: Page) -> None:
     assert await p.js("location.search") == ""
     ok("X4 a result with a state the settings page did not issue is ignored")
 
+    # X6 ─ administration (T-147): an administrator drives every admin action on lou from the application and back.
+    await part_admin(p)
+    await clean(p, "Ex4 after the administration", console_before, failed_before)
+
     # X5 ─ no secret in the application.
     assert proxy.seen, "the proxy saw no request to the application"
     leaked = [s for s in SECRETS if any(s in req for req in proxy.seen)]
@@ -291,7 +360,7 @@ async def part_x(p: Page) -> None:
                            "+JSON.stringify(Object.assign({},localStorage))")
     assert not any(s in page_text for s in SECRETS), "a secret on the application's page or in its storage"
     assert not any("tinysesam_session" in req for req in proxy.seen), "TinySesam's session cookie reached the app"
-    ok(f"X5 no secret in the application: the password, the new password and the API key are in none of the "
+    ok(f"X5 no secret in the application: the passwords, the API key and the sign-in link are in none of the "
        f"{len(proxy.seen)} requests the application received, nor on its page or in its storage; nor the session cookie")
 
 

@@ -62,6 +62,9 @@ def add_routes(r, auth, cfg) -> None:
         application's frame, with the way back (`_actions`). A GET changes nothing; the page's buttons call the same
         routes as the account page, each with its own CSRF and step-up checks."""
         action = _actions.ACTIONS.get(name)
+        if action is not None and action.scope == "admin" and cfg.admin_enabled:
+            from . import _admin_actions
+            return _admin_actions.get_page(auth, request, name, app, return_, state, target)
         if action is None or action.scope != "own":
             raise HTTPException(404)
         path = auth.browser_path(request, f"/auth/act/{name}")
