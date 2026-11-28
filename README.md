@@ -762,8 +762,9 @@ CSS does not reach it. A strict CSP needs only the nonce on the `<script>`. On a
 (`forward_apps[host]` with `home`/`links`) it shows "‹ name" back to `home`, the frame's links and *Security*, framed.
 "Sign out" is a link to TinySesam's sign-out page there (the page does not hold TinySesam's CSRF token). The answer's
 part `frame` and the details: spec §8d of [`spec/gate-client.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/gate-client.md).
-[`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) (Python, library) shows the
-shell at the side.
+[`deploy/ex1`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex1/README.md) (Go, server, shell on top) and
+[`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) (Python, library, shell at
+the side) show both.
 
 **Recipe: link your app's admin from TinySesam — and back.** TinySesam's admin panel gets no tabs of the application
 (T-77 was rejected for this); the two administrations link to each other instead.
@@ -1466,7 +1467,7 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 
 | Surface | Who draws the navigation | Where TinySesam's pages appear | Today |
 |---|---|---|---|
-| **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()` |
+| **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()`, example Ex1 |
 | **Shell at the side** | the same component as a side bar | as above | `layout="side"`, `shell_layout`, `apps[id].layout`, example Ex2 |
 | **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the app frame (T-91), T-104 adds the area |
 | **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the account overview and the account API, T-105 and T-106 add the action pages and the reading side |

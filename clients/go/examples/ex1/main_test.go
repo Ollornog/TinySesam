@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 
 	tinysesam "github.com/Ollornog/TinySesam/clients/go"
@@ -38,7 +39,7 @@ func TestMembersNeedThePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := gate.Middleware(newMux(slog.New(slog.NewTextHandler(io.Discard, nil)), nil, "https://auth.example.com"))
+	h := gate.Middleware(newMux(slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
 	call := func(method, perms string) int {
 		r := httptest.NewRequest(method, "/members", nil)
 		r.RemoteAddr = "192.0.2.1:4711"
@@ -68,5 +69,60 @@ func TestMembersNeedThePermissions(t *testing.T) {
 		if got := call(c.method, c.perms); got != c.want {
 			t.Errorf("%s with %q: %d, want %d", c.method, c.perms, got, c.want)
 		}
+	}
+}
+
+// T-103 acceptance of Ex1, the part Go owns: every page loads the shell from its own host under a strict CSP with a
+// fresh nonce, and the role page checks the role itself (the shell only hides its link).
+func TestPagesCarryTheShell(t *testing.T) {
+	gate, err := tinysesam.New(tinysesam.Config{Mode: tinysesam.HeaderMode,
+		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := gate.Middleware(newMux(slog.New(slog.NewTextHandler(io.Discard, nil)), nil))
+	get := func(path, groups string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.RemoteAddr = "192.0.2.1:4711"
+		r.Header.Set("Remote-User", "anna")
+		r.Header.Set("Remote-Name", "<Anna>")
+		r.Header.Set("Remote-Id", "7")
+		r.Header.Set("Remote-Auth", "session")
+		r.Header.Set("Remote-Kind", "user")
+		if groups != "" {
+			r.Header.Set("Remote-Groups", groups)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	nonces := map[string]bool{}
+	for _, path := range []string{"/", "/staff"} {
+		w := get(path, "ex1-staff")
+		body, csp := w.Body.String(), w.Header().Get("Content-Security-Policy")
+		start := strings.Index(csp, "script-src 'nonce-")
+		if w.Code != http.StatusOK || start < 0 {
+			t.Fatalf("%s: %d, CSP %q", path, w.Code, csp)
+		}
+		nonce := strings.SplitN(csp[start+len("script-src 'nonce-"):], "'", 2)[0]
+		nonces[nonce] = true
+		if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "style-src 'nonce-"+nonce+"'") ||
+			!strings.Contains(body, `<script src="/.tinysesam/shell.js" nonce="`+nonce+`">`) ||
+			!strings.Contains(body, `<style nonce="`+nonce+`">`) ||
+			!strings.Contains(body, `<ts-shell current="`+path+`"></ts-shell>`) {
+			t.Errorf("%s: no shell under a strict CSP:\n%s\n%s", path, csp, body)
+		}
+		if strings.Contains(body, "<Anna>") {
+			t.Errorf("%s: the name is not escaped", path)
+		}
+	}
+	if len(nonces) != 2 {
+		t.Errorf("the nonce repeats: %v", nonces)
+	}
+	if w := get("/staff", "ex1-member"); w.Code != http.StatusForbidden {
+		t.Errorf("/staff without the role: %d", w.Code)
+	}
+	if w := get("/nothing", ""); w.Code != http.StatusNotFound {
+		t.Errorf("/nothing: %d", w.Code)
 	}
 }

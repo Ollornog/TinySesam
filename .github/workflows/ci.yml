@@ -140,6 +140,12 @@ jobs:
           install-dependencies: true
       - name: Chrome present?
         run: which chrome || which google-chrome; chrome --version || google-chrome --version
+      # T-103: tests/test_shell_browser.py builds example Ex1 (Go) and drives it behind a forward-auth proxy; without Go
+      # the suite is red, never skipped.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version: stable
+          cache: false
       - name: Dependencies
         run: pip install -e ".[services]" uvicorn websockets httpx setuptools wheel   # [services]: T-60 section of the account page
       - name: Build the website (must succeed)
@@ -150,7 +156,7 @@ jobs:
         run: python tests/test_browser.py
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
-      # T-103: the shell component and the side layout (Ex2), in the same Chrome.
+      # T-103: the shell component, the side layout (Ex2, library) and the shell on top (Ex1, Go behind a proxy).
       - name: Browser test of the shell
         run: python tests/test_shell_browser.py
         env:
@@ -298,6 +304,12 @@ jobs:
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
           install-dependencies: true
+      # T-103: tests/test_shell_browser.py builds example Ex1 (Go) and drives it behind a forward-auth proxy; without Go
+      # the suite is red, never skipped.
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5  # v7.1.0
+        with:
+          go-version: stable
+          cache: false
       - name: System package for SAML (xmlsec)
         run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
       - name: Install (all extras)

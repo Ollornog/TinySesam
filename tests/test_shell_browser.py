@@ -6,8 +6,6 @@
      difference by design being "Sign out" (a link instead of a form).
   B. Server (Go): example Ex1 as surface "shell on top" — the Go program behind a forward-auth proxy, the component from
      `/.tinysesam/shell.js` on the application's host with the frame of `forward_apps` and the permission links.
-  C. The permission matrix of the panel (T-100): a dangerous permission asks for a step-up, an area administrator sees
-     only the own area.
 
 Skipped without Chrome or `websockets`; part B needs `go` (CI installs it in the jobs that run this suite).
 `TINYSESAM_SCREENSHOTS=<dir>` keeps a screenshot of every state.
@@ -32,7 +30,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
-from voraussetzung import braucht, braucht_modul, find_chrome  # noqa: E402
+from voraussetzung import braucht, braucht_modul, find_chrome, pflicht_werkzeug  # noqa: E402
 
 braucht_modul("websockets")
 braucht_modul("uvicorn")
@@ -266,13 +264,218 @@ async def part_a(p: Page) -> None:
        "CSP, no console error, no broken request")
 
 
+# ══ B. Server: Ex1, shell on top ═════════════════════════════════════════════════════════════════════════════════
+# The stack of deploy/ex1 in one process: the TinySesam server built from deploy/ex1/tinysesam.toml (host names moved
+# to example.test, which Chrome resolves to 127.0.0.1), the Go program of clients/go/examples/ex1, and in front a small
+# forward-auth proxy that does what the Caddy template does: /.tinysesam/* and the sign-in host to TinySesam, every
+# other request on the application's host first to /auth/forward, then — with the Remote-* headers of the answer and
+# without the browser's cookies (spec §2.1, duty 4) — to the Go program.
+GO = pflicht_werkzeug("go", "example Ex1 (Go) behind the proxy")
+EX1 = None
+if GO:
+    import subprocess
+
+    _proxy_sock = socket.socket()
+    _proxy_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    _proxy_sock.bind(("127.0.0.1", 0))
+    _proxy_sock.listen(128)
+    PROXY_PORT = _proxy_sock.getsockname()[1]
+    AUTH_HOST, APP_HOST = f"auth.example.test:{PROXY_PORT}", f"app.example.test:{PROXY_PORT}"
+    _tmp = tempfile.mkdtemp(prefix="ex1-")
+    toml = (ROOT / "deploy" / "ex1" / "tinysesam.toml").read_text(encoding="utf-8")
+    toml = (toml.replace("https://auth.example.com", f"http://{AUTH_HOST}").replace("example.com", "example.test")
+            .replace('trusted_proxies = ["172.30.0.0/16"]', 'trusted_proxies = ["127.0.0.1/32"]')
+            .replace('https_mode = "warn"', 'https_mode = "warn"\ncookie_secure = false\n'
+                                            'cookie_domain = ".example.test"'))
+    assert "example.com" not in toml and "cookie_domain" in toml, "deploy/ex1/tinysesam.toml changed its shape"
+    with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
+        fh.write(toml)
+    _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
+    os.environ.update(TINYSESAM_CONFIG=os.path.join(_tmp, "tinysesam.toml"), TINYSESAM_DB=os.path.join(_tmp, "ex1.db"))
+    try:
+        from tinysesam import gateway
+        ex1_app = gateway.build_app()
+    finally:
+        for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB"):
+            os.environ.pop(_k, None)
+        os.environ.update(_saved)
+    ex1_auth = ex1_app.state.auth
+    TS_PORT, ts_server = serve(ex1_app)
+    _svc = ex1_auth.create_service("svc-ex1")
+    _key = ex1_auth.create_api_key(int(_svc), name="ex1", kind="automation")["key"]
+    SAM = int(ex1_auth.create_user("sam", password=PW, roles=["ex1-staff"]))
+    MIA = int(ex1_auth.create_user("mia", password=PW, roles=["ex1-member"]))
+
+    _bin = os.path.join(_tmp, "ex1-bin")
+    _built = subprocess.run([GO, "build", "-o", _bin, "./examples/ex1"], cwd=ROOT / "clients" / "go",
+                            capture_output=True, text=True, timeout=900)
+    assert _built.returncode == 0, _built.stderr[-2000:]
+    _probe = socket.socket()
+    _probe.bind(("127.0.0.1", 0))
+    GO_PORT = _probe.getsockname()[1]
+    _probe.close()
+    _go_log = open(os.path.join(_tmp, "ex1.log"), "w", encoding="utf-8")
+    go_proc = subprocess.Popen([_bin], env={**os.environ, "TS_AUTH_URL": f"http://{AUTH_HOST}",
+                                            "TS_API_URL": f"http://127.0.0.1:{TS_PORT}", "TS_API_KEY": _key,
+                                            "TS_LISTEN": f"127.0.0.1:{GO_PORT}"},
+                               stdout=_go_log, stderr=subprocess.STDOUT)
+    for _ in range(200):
+        if go_proc.poll() is not None:
+            raise RuntimeError(f"ex1 ended at start (exit {go_proc.returncode})")
+        if ex1_auth.app_permissions("ex1"):
+            try:
+                socket.create_connection(("127.0.0.1", GO_PORT), timeout=1).close()
+                break
+            except OSError:
+                pass  # not listening yet
+        time.sleep(0.1)
+    else:
+        raise RuntimeError("ex1 did not register its permissions or does not listen")
+    ex1_auth.grant_permission("ex1-staff", "ex1.members.read", app="ex1", by="test")
+    HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "host", "proxy-connection"}
+
+    async def _upstream(port: int, method: str, target: str, headers: list, body: bytes) -> bytes:
+        """One request to a server on loopback, the whole raw answer back (`Connection: close`, read to the end)."""
+        r, w = await asyncio.open_connection("127.0.0.1", port)
+        head = "".join(f"{k}: {v}\r\n" for k, v in headers)
+        w.write(f"{method} {target} HTTP/1.1\r\n{head}Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+                .encode("latin-1") + body)
+        await w.drain()
+        data = await r.read()
+        w.close()
+        return data
+
+    def _status_and_headers(raw: bytes) -> tuple[int, list]:
+        lines = raw.split(b"\r\n\r\n", 1)[0].decode("latin-1").split("\r\n")
+        return int(lines[0].split(" ", 2)[1]), [tuple(x.strip() for x in z.split(":", 1)) for z in lines[1:] if ":" in z]
+
+    async def _proxy(reader, writer):
+        """The proxy, on the bytes: one request per connection, the upstream's answer passed back unchanged."""
+        try:
+            head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1").split("\r\n")
+            method, target = head[0].split(" ")[:2]
+            pairs = [tuple(x.strip() for x in z.split(":", 1)) for z in head[1:] if ":" in z]
+            low = {k.lower(): v for k, v in pairs}
+            body = await reader.readexactly(int(low.get("content-length") or 0))
+            host = low.get("host", "")
+            name = host.split(":")[0]
+            own = [(k, v) for k, v in pairs if k.lower() not in HOP and not k.lower().startswith(("remote-", "x-forwarded-"))]
+            fwd = [("X-Forwarded-Host", host), ("X-Forwarded-Proto", "http"), ("X-Forwarded-For", "127.0.0.1")]
+            if name == "auth.example.test" or (name == "app.example.test" and target.startswith("/.tinysesam/")):
+                out = await _upstream(TS_PORT, method, target, own + fwd + [("Host", host)], body)
+            elif name == "app.example.test":
+                check = await _upstream(TS_PORT, "GET", "/auth/forward", [
+                    ("Cookie", low.get("cookie", "")), ("Accept", low.get("accept", "")), ("X-Forwarded-Uri", target),
+                    ("X-Forwarded-Method", method), *fwd, ("Host", AUTH_HOST)], b"")
+                status, answer = _status_and_headers(check)
+                if not 200 <= status < 300:
+                    out = check
+                else:
+                    passed = [(k, v) for k, v in answer if k.lower().startswith("remote-")]
+                    out = await _upstream(GO_PORT, method, target,
+                                          [(k, v) for k, v in own if k.lower() != "cookie"] + passed + [("Host", host)],
+                                          body)
+            else:
+                out = b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            writer.write(out)
+            await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass  # the browser gave up the connection (a preconnect it never used)
+        finally:
+            writer.close()
+
+    EX1 = f"http://{APP_HOST}"
+
+
+async def part_b(p: Page) -> None:
+    import json
+    root = "document.querySelector('ts-shell').shadowRoot"
+    drawn = f"!!document.querySelector('ts-shell')&&!!{root}&&!!{root}.querySelector('.tsbar-btn')"
+    console_before, failed_before = len(p.console), len(p.failed)
+    for uid, name, want in ((SAM, "sam", "Home,Members,Staff"), (MIA, "mia", "Home")):
+        await p.cmd("Network.clearBrowserCookies")
+        token, _ = ex1_auth.start_session(uid, "password")
+        await p.cmd("Network.setCookie", name=ex1_auth.session_cookie_name, value=token, domain=".example.test",
+                    path="/")
+        for width, height in SIZES:
+            for theme in ("light", "dark"):
+                await p.go(EX1 + "/")                       # the origin for localStorage
+                await view(p, width, height, theme)
+                where = f"Ex1 / {name} {width}px {theme}"
+                await p.go(EX1 + "/", drawn)
+                await p.frames()
+                await clean(p, where, console_before, failed_before)
+                assert await p.js("document.querySelector('ts-shell').getAttribute('layout')") == "top", \
+                    f"{where}: the layout of apps.ex1 did not arrive"
+                head = await p.js(f"{root}.querySelector('header').className")
+                assert head == "tsbar tsframe", f"{where}: {head}"
+                assert await p.js("document.documentElement.classList.contains('dark')") == (theme == "dark")
+                bg = await p.js(f"getComputedStyle({root}.querySelector('header')).backgroundColor")
+                assert bg == ("rgb(22, 26, 34)" if theme == "dark" else "rgb(255, 255, 255)"), f"{where}: {bg}"
+                sel = ".tsbar-links a" if width > 640 else ".tsbar-mlinks a"
+                titles = await p.js(f"[...{root}.querySelectorAll('{sel}')].map(a=>a.textContent).join()")
+                assert titles == want, f"{where}: links {titles!r}"
+                hrefs = await p.js(f"[...{root}.querySelectorAll('{sel}')].map(a=>a.getAttribute('href')).join()")
+                assert all(h.startswith("https://app.example.test/") for h in hrefs.split(",")), hrefs
+                back = await p.js(f"{root}.querySelector('a.tsbar-back').getAttribute('aria-label')")
+                assert back == "Back to Ex1", f"{where}: {back}"
+                box = json.loads(await p.js(f"JSON.stringify({root}.querySelector('header').getBoundingClientRect())"))
+                assert box["top"] == 0 and box["left"] == 0 and box["width"] == width and box["height"] < 80, \
+                    f"{where}: not a top bar {box}"
+                # The menu: opens, the account menu names Security (framed) and sign-out; Escape closes, focus back.
+                await p.js(f"{root}.querySelector('.tsbar-btn').click();true")
+                assert await p.js(f"!{root}.querySelector('.tsbar-pop').hidden"), f"{where}: the menu does not open"
+                security = await p.js(f"[...{root}.querySelectorAll('.tsbar-pop a')].find(a=>a.textContent==="
+                                      "'Security').getAttribute('href')")
+                assert security == f"http://{AUTH_HOST}/auth/account?app=app.example.test", security
+                pop = json.loads(await p.js(f"JSON.stringify({root}.querySelector('.tsbar-pop')"
+                                            ".getBoundingClientRect())"))
+                assert pop["left"] >= 0 and pop["right"] <= width and pop["bottom"] <= height, f"{where}: {pop}"
+                small = await p.js(f"[...{root}.querySelectorAll('.tsbar-btn,.tsbar-item,.tsbar-links a')]"
+                                   ".filter(e=>e.offsetHeight&&e.getBoundingClientRect().height<44).length")
+                assert small == 0, f"{where}: tap targets under 44 px"
+                await shot(p, f"ex1-{name}-{width}-{theme}")
+                await p.js(f"{root}.querySelector('.tsbar-btn').focus();true")
+                await p.key("Escape")
+                assert await p.js(f"{root}.querySelector('.tsbar-pop').hidden"), f"{where}: Escape does not close"
+                assert await p.js(f"{root}.activeElement==={root}.querySelector('.tsbar-btn')"), \
+                    f"{where}: the focus is not back on the menu button"
+    ok("B1 Ex1 (Go, server, shell on top): the component from /.tinysesam/shell.js on the application's host at 375 "
+       "and 1280 px, light and dark — the layout of apps.ex1, the frame with \u2039 Ex1, Members (permission) and Staff "
+       "(role) for the staff, Home only for a member; the menu with Security framed, on screen, Escape closes it "
+       "(focus back); tap targets ≥ 44 px; the Go page's strict CSP, no console error, no broken request")
+
+    # The theme switch of the component, and the routes agree with the links.
+    await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
+    await p.go(EX1 + "/", drawn)
+    await p.js(f"{root}.querySelector('.tsbar-btn').click();{root}.querySelector('[data-theme-mode=dark]').click();true")
+    assert await p.js("document.documentElement.classList.contains('dark')&&localStorage.getItem('themeMode')==='dark'")
+    await p.js("document.querySelector('main h1').click();true")
+    assert await p.js(f"{root}.querySelector('.tsbar-pop').hidden"), "a click outside does not close the menu"
+    status = await p.js("fetch('/staff').then(r=>r.status)")
+    assert status == 403, status
+    p.failed = [f for f in p.failed if not f[1].endswith("/staff")]
+    # Security leads to TinySesam's account page in Ex1's frame, in the layout of apps.ex1.
+    await p.go(f"http://{AUTH_HOST}/auth/account?app=app.example.test", "!!document.querySelector('header.tsframe')")
+    assert await p.js("document.querySelector('header.tsframe').className") == "tsbar tsframe"
+    await clean(p, "the framed account page", console_before, failed_before)
+    ok("B2 the component's theme switch sets `dark` on <html> and keeps it; a click outside closes the menu; the Go "
+       "route refuses /staff to a member (403); Security opens TinySesam's account page in Ex1's frame")
+
+
 async def main() -> None:
-    chrome = Chrome(CHROME)
+    chrome = Chrome(CHROME, ("--host-resolver-rules=MAP *.example.test 127.0.0.1",))
     try:
         async with websockets.connect(chrome.new_tab(), max_size=30_000_000) as ws:
             p = Page(ws)
             await p.start()
             await part_a(p)
+            if EX1:
+                proxy = await asyncio.start_server(_proxy, sock=_proxy_sock)
+                try:
+                    await part_b(p)
+                finally:
+                    proxy.close()
     finally:
         chrome.close()
 
@@ -282,3 +485,10 @@ try:
     print("OK test_shell_browser")
 finally:
     ex2_server.should_exit = True
+    if EX1:
+        go_proc.terminate()
+        go_proc.wait(timeout=10)
+        _go_log.close()
+        ts_server.should_exit = True
+        import shutil
+        shutil.rmtree(_tmp, ignore_errors=True)

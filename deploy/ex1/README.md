@@ -32,6 +32,14 @@ people in, its admin panel and account page manage them, and the application cre
 - **The account API** (`spec/provisioning-api.md`): `GET /auth/api/users`, `POST /auth/api/users` with
   `TinySesam-On-Behalf-Of` — the person who clicked "Invite". The application can only create people with the role of
   its allowlist (`ex1-member`) and never touches an account it did not create.
+- **Shell on top** (T-103, surface "shell on top"): every page of the Go program loads TinySesam's shell component from
+  its own host (`<script src="/.tinysesam/shell.js" nonce=…>`, the proxy passes `/.tinysesam/*` to TinySesam) and puts
+  `<ts-shell current="/…">` first in `<body>`. The bar carries the application's frame from `[forward_apps."…"]`
+  (‹ Ex1 back home, *Members* for holders of `ex1.members.read`, *Staff* for the role `ex1-staff`) and the layout of
+  `apps.ex1.layout`; the account menu leads to TinySesam's account page in Ex1's frame. The pages carry a strict CSP
+  with a fresh nonce and colour themselves only with TinySesam's `--ts-*` tokens.
 
 `tests/test_example_ex1.py` builds the server from this `tinysesam.toml` and makes the calls of the Go program; the
-client-go workflow builds and vets the program.
+client-go workflow builds and vets the program. `tests/test_shell_browser.py` (part B) runs the whole stack — this
+configuration, the Go program and a forward-auth proxy doing what the Caddy template does — in Chrome at 375 and
+1280 px, light and dark.
