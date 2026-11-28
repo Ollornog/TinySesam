@@ -75,7 +75,7 @@ Freshly confirm the session with a TOTP code of the own account (step-up) — li
 
 Create a new API key. The return value contains 'key' in PLAINTEXT — only ONCE (afterwards only the hash).
 
-### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'`
+### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None, app=None) -> 'dict'`
 
 Create an invitation (+ optionally send it). Return {url, token}. The token carries the intended roles/admin rights; it is redeemed only at registration. `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`).
 
@@ -243,9 +243,9 @@ Send a login link to an email address IF a matching interactive user exists. Ret
 
 Send a reset link to an email address IF a matching user exists. Outwardly always the same message (no enumeration). `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`). `app` (T-104): the app frame of the request — the token carries it, so the reset page stands in the same frame (see `send_login_link`).
 
-### `send_verify_email(user_id, email, base_url) -> 'bool'`
+### `send_verify_email(user_id, email, base_url, app=None) -> 'bool'`
 
-Send the confirmation link for an address. False if there is no mailer. `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`). If sending fails, the token is invalidated (B6-12) and the error is passed on. The link unlocks an account whose confirmation is pending (registration), never one that the operator has locked (admin panel, `set_disabled(user_id, True)`) — even if the link comes into being only after this lock, e.g. because the call waits via `after_response` (H-18). When redeemed it sets the evidence for the address (`email_verified`), as long as it is still the account's.
+Send the confirmation link for an address. False if there is no mailer. `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`). If sending fails, the token is invalidated (B6-12) and the error is passed on. The link unlocks an account whose confirmation is pending (registration), never one that the operator has locked (admin panel, `set_disabled(user_id, True)`) — even if the link comes into being only after this lock, e.g. because the call waits via `after_response` (H-18). When redeemed it sets the evidence for the address (`email_verified`), as long as it is still the account's. `app` (T-152): the app frame of the request — the token carries its host as `frame` (see `send_magic_link`).
 
 ### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
@@ -652,7 +652,7 @@ Remove an account's passkey — deletion, audit line and `passkey_removed` in on
 
 Release a locked resource again (remove the lock, not unlock it).
 
-### `request_email_change(user_id, new_email, base_url)`
+### `request_email_change(user_id, new_email, base_url, app=None)`
 
 Request the change to a new address: confirmation link to the NEW one. Returns the sending function (for `after_response`) — even when the address is taken or reserved and no link goes out; `send()` says so with True/False. None only for a throttle and for the own, already taken address. `ValueError` for an invalid address or without a mailer. If sending fails before it begins (full queue), `send.discard()` lets the token expire — as `on_overflow` for `after_response` (since 2026-09-27).
 

@@ -809,7 +809,7 @@ function done(){if(typeof tsActionDone==='function')tsActionDone()}
 const say=(id,t,good)=>{if(good)done();const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function setname(){const r=await J('__TS_P__/auth/account/username',{username:un_new.value});
   const j=await r.json().catch(()=>({}));say('un_msg',r.ok?'✓':(j.detail||TXT.error),r.ok)}
-async function setmail(){const r=await J('__TS_P__/auth/account/email',{email:mail_new.value});
+async function setmail(){const q=new URLSearchParams(location.search).get('app');const r=await J('__TS_P__/auth/account/email'+(q?'?app='+encodeURIComponent(q):''),{email:mail_new.value});
   const j=await r.json().catch(()=>({}));say('mail_msg',r.ok?'✓ '+TXT.mail_sent:(j.detail||TXT.error),r.ok);if(r.ok)mail_new.value=''}
 async function changepw(){const r=await J('__TS_P__/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?TXT.changed:(await r.json()).detail||TXT.error,r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
@@ -959,7 +959,7 @@ def _register(auth, ctx) -> str:
     user_field = ("" if email_mode else
                   f"<label>{_e(t('reg.user'))}</label><input name=username required autofocus autocomplete=username autocapitalize=none autocorrect=off spellcheck=false>")
     body = (f"<h1>{_e(t('reg.title'))}</h1>"
-            f"<form method=post action='__TS_P__/auth/register'>"
+            f"<form method=post action='__TS_P__/auth/register{_e(_app_q(ctx))}'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
             f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>{_cf(ctx)}"
             f"{user_field}"

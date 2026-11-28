@@ -211,12 +211,15 @@ async def part_own(p: Page) -> None:
     link = re.search(r"https?://\S+/auth/email/\S+", next(text for to, text in mails if to == "lou@example.test")).group(0)
     SECRETS.append(link.rsplit("/", 1)[1])
     await p.go(link, "document.readyState==='complete'")
+    # T-152: the confirmation page stands in the frame the change was asked for in (the action page's `app`).
+    assert await p.js("document.querySelector('header').className") == "tsbar tsframe", "the confirmation is unframed"
     if await p.js("!!document.querySelector('form[method=post] button')"):
         await p.js("window.__old=true;document.querySelector('form[method=post] button').click();true")
         await p.until("window.__old===undefined&&document.readyState==='complete'", "the confirmation did not load")
     assert auth.store.get_user(LOU)["email"] == "lou@example.test", "the new address is not confirmed"
     await p.go(EX4 + "/settings", SETTINGS)
-    ok("X7 the address: requested on its action page and back with done; the link in the mail confirms it")
+    ok("X7 the address: requested on its action page and back with done; the link in the mail opens in the "
+       "application's frame (T-152) and confirms it")
 
     await own_action(p, "pin", "document.getElementById('pin_new').value='482913';"
                      "document.querySelector('[data-act=setpin]').click()",

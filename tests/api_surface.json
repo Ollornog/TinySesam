@@ -213,7 +213,7 @@
     },
     "create_invite": {
       "server": "POST <admin>/api/invite",
-      "sig": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
+      "sig": "(email, base_url, roles=None, is_admin=False, ttl_min=None, app=None) -> 'dict'",
       "tier": "A"
     },
     "create_magic_token": {
@@ -533,7 +533,7 @@
     },
     "request_email_change": {
       "server": "POST /auth/account/email",
-      "sig": "(user_id, new_email, base_url)",
+      "sig": "(user_id, new_email, base_url, app=None)",
       "tier": "B"
     },
     "require": {
@@ -658,7 +658,7 @@
     },
     "send_verify_email": {
       "server": "POST /auth/register",
-      "sig": "(user_id, email, base_url) -> 'bool'",
+      "sig": "(user_id, email, base_url, app=None) -> 'bool'",
       "tier": "A"
     },
     "session_user": {

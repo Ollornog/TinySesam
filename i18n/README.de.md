@@ -1535,8 +1535,9 @@ links = [["Documents", "/"]]
 64 KiB. Es steht über „Anmelden bei <Anwendung>“ auf der Anmeldeseite des Gates, neben dem Namen im Rahmen und im
 Bereich. Ein Aussehen je Anwendung über Name und Icon hinaus gibt es nicht. Der Bereich liegt auf TinySesams Ursprung,
 nie auf dem der Anwendung hinter einem Proxy: Ein XSS der Anwendung könnte sonst TinySesams Formulare absenden. Ein
-Anmelde- oder Rücksetz-Link, der im Rahmen einer Anwendung angefordert wurde, trägt diesen Rahmen im Token: Die Seite,
-die die Mail öffnet, steht im selben Rahmen.
+Anmelde-, Rücksetz- oder Adresswechsel-Link, eine E-Mail-Bestätigung (Registrierung) oder eine Einladung
+(`create_invite(…, app=)`, `app` im Panel), die im Rahmen einer Anwendung angefordert wurden, tragen diesen Rahmen im
+Token: Die Seite, die die Mail öffnet, steht im selben Rahmen.
 
 Als Bibliothek legt die Anwendung mit `page_layout` ihr eigenes Layout um TinySesams Seiten — den Bereich eingeschlossen:
 

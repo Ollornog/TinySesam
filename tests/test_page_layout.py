@@ -153,3 +153,71 @@ assert "/auth/magic/request?next=%2F&amp;app=docs.example.com" in login_page, \
     "the framed sign-in page loses the frame to the sign-in link"
 ok("B mail links carry the frame: the sign-in and the reset link open in the application's frame they were asked for "
    "in; without one or with an unknown one unframed; the framed sign-in page keeps the frame to both")
+
+# ── C. the frame in the token of address change, e-mail confirmation and invitation (T-152) ────────────────────────
+cauth, capp = make(allow_signup=True, signup_verify_email=True, admin_enabled=True,
+                   forward_auth_enabled=True, trusted_redirect_hosts=[APP_HOST], stepup_max_age_sec=900,
+                   forward_apps={APP_HOST: {"name": "Docs", "home": "/", "links": [("Files", "/files")]}},
+                   apps={"docs": {"name": "Documents", "hosts": [APP_HOST]}})
+cmails = []
+cauth.set_mailer(lambda to, subject, text, html=None: cmails.append(text))
+
+
+def link_of(text, path):
+    url = re.search(rf"https://auth\.example\.com{path}\S+", text).group(0)
+    return urlsplit(url).path + (f"?{urlsplit(url).query}" if urlsplit(url).query else "")
+
+
+def signed_in(uid):
+    c = client(capp)
+    c.cookies.set(cauth.session_cookie_name, cauth.store.create_session(uid, 3600, True, "password",
+                                                                        factors=["password"]))
+    c.get("/auth/account")
+    return c
+
+
+def address_change(query):
+    uid = cauth.create_user(f"amy{len(cmails)}", password=PW, email=f"amy{len(cmails)}@example.com")
+    c = signed_in(uid)
+    r = c.post("/auth/account/email" + query, json={"email": f"new{len(cmails)}@example.com"},
+               headers={"X-CSRF-Token": c.cookies.get(cauth.csrf_cookie_name)})
+    assert r.status_code == 200, r.text
+    return client(capp).get(link_of(next(m for m in reversed(cmails) if "/auth/email/" in m), "/auth/email/"))
+
+
+assert "tsbar tsframe" in address_change("?app=docs").text, "the address-change link opens unframed"
+assert "tsframe" not in address_change("").text, "an address-change link without a frame opens framed"
+assert "tsframe" not in address_change("?app=nosuchapp").text, "an unknown frame travelled in the token"
+
+
+def registration(query):
+    c = client(capp)
+    c.get("/auth/register" + query)
+    n = len(cmails)
+    r = c.post("/auth/register" + query, data={"username": f"reg{n}", "email": f"reg{n}@example.com",
+                                               "password": PW, "_csrf": c.cookies.get(cauth.csrf_cookie_name)})
+    assert r.status_code == 200, r.status_code
+    return client(capp).get(link_of(next(m for m in reversed(cmails) if "/auth/verify/" in m), "/auth/verify/"))
+
+
+assert "tsbar tsframe" in registration(f"?app={APP_HOST}").text, "the confirmation link opens unframed"
+assert "tsframe" not in registration("").text, "a confirmation link without a frame opens framed"
+framed_form = client(capp).get("/auth/register?app=docs").text
+assert "action='/auth/register?app=docs.example.com'" in framed_form, "the framed registration loses its frame"
+
+
+
+def invited(app=None):
+    """The registration page an invitation leads to (`/auth/invite/<t>` → `/auth/register?invite=<t>`)."""
+    r = client(capp).get(urlsplit(cauth.create_invite(f"ivy{len(cmails)}@example.com", BASE, app=app)["url"]).path)
+    assert r.status_code == 303, r.status_code
+    return client(capp).get(r.headers["location"]).text
+
+
+page = invited("docs")
+assert "tsbar tsframe" in page, "the invitation's registration is unframed"
+assert "action='/auth/register?app=docs.example.com'" in page, "the invitation's registration loses its frame"
+assert "tsframe" not in invited(), "an invitation without a frame opens framed"
+assert "tsframe" not in invited("nosuchapp"), "an unknown frame travelled in the invitation"
+ok("C the address-change, confirmation and invitation links open in the application's frame they were asked for in "
+   "(T-152); without one or with an unknown one unframed; the framed registration keeps its frame")

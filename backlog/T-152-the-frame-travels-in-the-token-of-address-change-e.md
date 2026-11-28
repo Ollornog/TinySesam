@@ -1,7 +1,7 @@
 ---
 type: Task
 title: The frame travels in the token of address change, e-mail confirmation and invitation
-status: offen
+status: erledigt
 points: 2
 id: T-152
 milestone: M-2
