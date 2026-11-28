@@ -15,8 +15,11 @@ created: 2026-11-23
 and way back already) · **Estimate:** 12–16 h · **Milestone:** [M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)
 
 **Part 1 (2026-11-28):** `apps[id].icon` with its readers (gate sign-in heading, frame, area), `/auth/area?app=<id>`
-with tiles, frame and way back, `?app=<id>` on every page (`tests/test_app_area.py`). Open: the library slot
-`page_layout`, mail links with `app=` in the token, Ex3 hybrid.
+with tiles, frame and way back, `?app=<id>` on every page (`tests/test_app_area.py`).
+
+**Part 2 (2026-11-28):** the library slot `page_layout`; sign-in and reset links carry the frame in the token (key
+`frame` — `app` already names the application of an account-API link) (`tests/test_page_layout.py`). Open: Ex3
+hybrid.
 
 The application draws its own navigation; everything of TinySesam sits in a delimited TinySesam area.
 

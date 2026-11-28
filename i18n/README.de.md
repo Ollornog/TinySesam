@@ -1534,7 +1534,38 @@ links = [["Documents", "/"]]
 `apps[id].icon` (ADR-19) ist ein Pfad auf TinySesams eigenem Ursprung oder eine `data:image/…`-Adresse von höchstens
 64 KiB. Es steht über „Anmelden bei <Anwendung>“ auf der Anmeldeseite des Gates, neben dem Namen im Rahmen und im
 Bereich. Ein Aussehen je Anwendung über Name und Icon hinaus gibt es nicht. Der Bereich liegt auf TinySesams Ursprung,
-nie auf dem der Anwendung hinter einem Proxy: Ein XSS der Anwendung könnte sonst TinySesams Formulare absenden.
+nie auf dem der Anwendung hinter einem Proxy: Ein XSS der Anwendung könnte sonst TinySesams Formulare absenden. Ein
+Anmelde- oder Rücksetz-Link, der im Rahmen einer Anwendung angefordert wurde, trägt diesen Rahmen im Token: Die Seite,
+die die Mail öffnet, steht im selben Rahmen.
+
+Als Bibliothek legt die Anwendung mit `page_layout` ihr eigenes Layout um TinySesams Seiten — den Bereich eingeschlossen:
+
+```python
+import html
+import os
+import tempfile
+
+from tinysesam import TinySesam, TinySesamConfig
+
+
+def layout(request, page):
+    # request: die Anfrage der Seite; page: der Name der Vorlage ("login", "account", "area", …)
+    return {"head": "<style>.app-nav{display:flex;gap:12px}</style>",
+            "header": f"<nav class=app-nav><a href='/'>Dokumente</a> <a href='/auth/area?app=docs'>Konto</a>"
+                      f"<span>{html.escape(page)}</span></nav>",
+            "footer": "<footer>Dokumente</footer>"}
+
+
+config = TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "docs.db"), apps={"docs": {"name": "Dokumente"}})
+config.page_layout = layout
+auth = TinySesam(config)
+assert auth.cfg.page_layout is layout
+```
+
+Jedes `<script>` und `<style>` in den Teilen bekommt die CSP-Nonce der Seite; die strikte CSP bleibt, wie sie ist (kein
+Inline-Handler, kein `style=`-Attribut). Mit einem `header` zeichnet TinySesam keine eigene Leiste. Eine Funktion, die
+scheitert, wird protokolliert, und die Seite erscheint in TinySesams eigenem Layout. Der Server hat diesen Slot nicht:
+Er führt keinen Anwendungscode aus.
 
 ### Die drei Herkünfte eines Kontos
 
@@ -3263,7 +3294,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**159 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**160 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

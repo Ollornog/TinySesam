@@ -643,7 +643,7 @@
     },
     "send_login_link": {
       "server": "POST /auth/magic/request",
-      "sig": "(email, base_url, next='/') -> 'bool'",
+      "sig": "(email, base_url, next='/', *, app: 'str' = '') -> 'bool'",
       "tier": "A"
     },
     "send_mail": {
@@ -653,7 +653,7 @@
     },
     "send_password_reset": {
       "server": "POST /auth/forgot",
-      "sig": "(email, base_url) -> 'bool'",
+      "sig": "(email, base_url, *, app: 'str' = '') -> 'bool'",
       "tier": "A"
     },
     "send_verify_email": {
@@ -1692,6 +1692,10 @@
     "origin": {
       "field": "str = 'http://localhost:8000'",
       "tier": "A"
+    },
+    "page_layout": {
+      "field": "object = None",
+      "tier": "B"
     },
     "passkey_enabled": {
       "field": "bool = False",

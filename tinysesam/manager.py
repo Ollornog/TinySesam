@@ -346,7 +346,7 @@ _PART_METHODS = {
         "_oidc_application", "_oidc_approval_valid", "_record_oidc_approval",         "approval_jwks", "gate_issuer", "gate_jwks", "gate_public_key",
     ),
     "hardening": (
-        "_check_secure_flag", "_csp_header", "_csp_reporting", "_form_destinations", "_frame", "_frame_of", "_header_lines", "_header_lines_in", "_prefix", "_set_csp", "browser_path", "safe_next",
+        "_check_secure_flag", "_csp_header", "_csp_reporting", "_form_destinations", "_frame", "_frame_of", "_frame_host", "_page_layout", "_header_lines", "_header_lines_in", "_prefix", "_set_csp", "browser_path", "safe_next",
         "_account_name", "_approvals", "_approvals_pending", "_check_app_accounts",
         "_check_orphaned_app_accounts", "_check_role_catalog", "_claim_for_audit", "_cleanup_limit",
         "_end_series", "_fail_reason", "_is_locked", "_lift_after_sign_in", "_lockout_notice", "_panel_actions",

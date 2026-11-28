@@ -36,6 +36,14 @@ class TinySesamConfig:
     # content depends on the request (login state, language) — then evaluated on every call.
     brand_header: object = ""
     brand_footer: object = ""         # footer below every built-in page; HTML string or `fn(auth) -> str`
+    #: The application's own layout around TinySesam's pages (T-104, library only): `fn(request, page) -> dict` with
+    #: the HTML strings `head` (into `<head>`), `header` (above the page) and `footer` (below it); `page` is the
+    #: template's name (`TinySesam.PAGES`, `area`, …). Every `<script>`/`<style>` in them gets the page's CSP nonce, so
+    #: the strict CSP stays as it is — an inline handler or `style=` attribute is still blocked. With a `header`
+    #: TinySesam draws no bar of its own (the application's navigation takes its place); `brand_header`/`brand_footer`
+    #: give way to the parts the function returns. None (or an empty dict) = TinySesam's own layout; an exception is
+    #: logged and the page renders without the layout. Not in the server's file: the server has no application code.
+    page_layout: object = None
     #: Top bar of the built-in pages (T-64): logo (`brand_icon`, else a built-in mark), name, `topbar_links` and,
     #: on the account, setup, reauth and consent pages, the account menu (account, admin panel, light/dark/system,
     #: sign out). Sign-in and error pages show logo and name only. False = no bar (the account page then carries

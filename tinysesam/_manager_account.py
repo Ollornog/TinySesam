@@ -286,10 +286,12 @@ def _send_signup_notice(self, email, base_url) -> bool:
     return True
 
 
-def send_login_link(self, email, base_url, next="/") -> bool:
+def send_login_link(self, email, base_url, next="/", *, app: str = "") -> bool:
     """Send a login link to an email address IF a matching interactive user exists.
     Return only internal — outwardly always the same message (no user enumeration).
     `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`).
+    `app` (T-104): the app frame the request stood in (a host or an application id of the configuration) — the token
+    carries its host as `frame`, so the page the link opens stands in the same frame; anything unknown is dropped.
 
     The check comes first — before the account lookup, so that the exception reveals no address.
     Sending goes to the stored address (R4-11), throttled per target (R4-04); a
@@ -307,7 +309,11 @@ def send_login_link(self, email, base_url, next="/") -> bool:
     destination = u["email"]
     if not self._mail_destination_ok(destination, "login"):
         return False
-    raw = self.create_magic_token("login", user_id=u["id"], email=destination, payload={"next": next})
+    payload = {"next": next}
+    frame = self._frame_host(app)
+    if frame:
+        payload["frame"] = frame    # not "app": that key names the application of an account-API link
+    raw = self.create_magic_token("login", user_id=u["id"], email=destination, payload=payload)
     url = self.magic_url(raw, base_url)
     mins = self.cfg.magiclink_ttl_min
     self._token_mail(raw, destination, self.t("mail.login_link.subject"),

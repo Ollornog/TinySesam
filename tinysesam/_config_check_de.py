@@ -1008,6 +1008,9 @@ _DE: dict[str, str] = {
      "most 64 KiB — no foreign address"):
         ("apps[{app!r}].icon: ein Pfad auf TinySesams eigenem Ursprung (\"/icons/docs.svg\") oder eine "
          "data:image/…-Adresse von höchstens 64 KiB — keine fremde Adresse"),
+    "page_layout: a function fn(request, page) -> {{\"head\", \"header\", \"footer\"}} of the application (library only), not {v!r}":
+        ("page_layout: eine Funktion fn(request, page) -> {{\"head\", \"header\", \"footer\"}} der Anwendung (nur "
+         "Bibliothek), nicht {v!r}"),
     "shell_layout={v!r} — \"top\" or \"side\"":
         "shell_layout={v!r} — \"top\" oder \"side\"",
     ("apps[{app!r}].hosts: a non-empty list of at most {max} host names in lower case, without scheme, port or "
