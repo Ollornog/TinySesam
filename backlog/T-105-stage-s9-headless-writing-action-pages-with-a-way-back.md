@@ -44,3 +44,7 @@ sign-in link instead of "set a password") 13. This stage carries the acceptance 
 
 Proposed as follow-ups: the administrator's actions on action pages (scope `admin`, class `each`, sign-in link instead
 of "set a password"); the five clients normalizing `actions` and the session handle (spec §8a, vectors).
+
+Follow-ups filed (backlog care after sprint S7): [T-147](T-147-administration-actions-on-action-pages-area-admin.md) administration actions,
+[T-148](T-148-the-five-clients-normalise-actions-and-the-session.md) normalising in the clients,
+[T-149](T-149-browser-coverage-of-the-remaining-action-pages-in.md) browser coverage of the remaining action pages.
