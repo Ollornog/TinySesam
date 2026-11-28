@@ -271,6 +271,15 @@ SWITCH_REQUIRES_EXTRA = {
     "ldap_enabled": ("ldap3", "ldap"),
 }
 
+#: What the start warning of a missing extra says follows (T-160) — kept true to the behaviour by
+#: `tests/test_core_install.py`. OIDC, SAML and LDAP: the router builds, a client can still be set, sign-in fails.
+_MISSING_EXTRA_SIGN_IN_FAILS = "Unless the client is set separately, sign-in via this method will fail."
+#: Passkeys: no client to replace — building the router stops with `MissingExtra`, the server does not start.
+_MISSING_EXTRA_ROUTER_STOPS = ("Building the router (auth.router()) stops with MissingExtra — the server does not "
+                               "start; install the extra or set the switch to false.")
+#: Services (T-60): the router builds; pairing and token requests answer server_error (fail-closed).
+_MISSING_EXTRA_SERVICES_FAIL = "Pairing and token requests of services answer server_error until it is installed."
+
 
 
 def _valid_rules(rules) -> list:
@@ -614,7 +623,9 @@ class TinySesam(metaclass=_BuildingBlocks):
         # that. Raising happens at the place where it can never be wrong: at the lazy import
         # in the respective module. The operator thus sees it at startup in the log and, if they
         # overlook that, at the first sign-in attempt as a readable `MissingExtra` instead of a 500.
-        def _demand(module, switch, extra):
+        # The warning names what follows (T-160): passkeys have no client to replace — their routes import `webauthn`,
+        # so building the router stops with `MissingExtra` (router.py) and the server does not start.
+        def _demand(module, switch, extra, consequence=_MISSING_EXTRA_SIGN_IN_FAILS):
             import importlib.util as _ilu
             try:
                 da = _ilu.find_spec(module) is not None
@@ -623,9 +634,8 @@ class TinySesam(metaclass=_BuildingBlocks):
             if not da:
                 security.seclog.warning(
                     "%s=True, but the extra [%s] is not installed (pip install "
-                    "'tinysesam[%s]') — the module '%s' is missing. Unless the client is set "
-                    "separately, sign-in via this method will fail.",
-                    switch, extra, extra, module)
+                    "'tinysesam[%s]') — the module '%s' is missing. %s",
+                    switch, extra, extra, module, consequence)
 
         if config.ldap_enabled and config.ldap_url:
             _demand("ldap3", "ldap_enabled", "ldap")
@@ -638,7 +648,7 @@ class TinySesam(metaclass=_BuildingBlocks):
         if config.oauth_enabled and config.oauth_service_clients:
             # Services (T-60): every token request is a signed assertion — without the library nothing can be
             # checked, and pairing and token requests answer `server_error` (fail-closed). Warned like every extra.
-            _demand("joserfc", "oauth_service_clients", "services")
+            _demand("joserfc", "oauth_service_clients", "services", _MISSING_EXTRA_SERVICES_FAIL)
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             _demand("authlib", "oidc_enabled", "oidc")
             from .oidc import OIDCClients, DEFAULT_CLIENT
@@ -649,7 +659,7 @@ class TinySesam(metaclass=_BuildingBlocks):
             self.oidc = self.oidc_clients[DEFAULT_CLIENT]
         if config.passkey_enabled:
             # Passkey has no incomplete configuration: whoever flips the switch means it.
-            _demand("webauthn", "passkey_enabled", "passkey")
+            _demand("webauthn", "passkey_enabled", "passkey", _MISSING_EXTRA_ROUTER_STOPS)
             from . import webauthn_ as wa
             self.webauthn = wa
         if config.demo_mode and not self.store.get_setting("demo_users") \
