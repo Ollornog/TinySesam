@@ -7,6 +7,7 @@
 //! text, never markup; every href passed [`crate::topbar::safe_href`]. Changes happen on TinySesam's account
 //! page, which the links lead to. Do not cache the answer across sessions.
 
+pub use crate::action_return::{ActionReturn, ActionReturnRefused, parse_action_return};
 use crate::strict::json_value;
 use crate::token::MAX_SAFE_INTEGER;
 use crate::topbar::safe_href;

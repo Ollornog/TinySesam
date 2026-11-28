@@ -3083,6 +3083,10 @@ except gate_client.UntrustedPeer:
   baut die Adresse, zu der die Person geschickt wird — `action_url(session["end"], "https://app.example.com/settings",
   state)` beendet diese eine Sitzung; die Seite führt mit `ts_action`, `ts_result` und `state` zurück (ein unsicheres
   href, ein `return_to`, das keine absolute `http(s)`-URL ist, oder ein ungültiger `state` ist ein `ConfigError`).
+  Zurück auf der eigenen Seite liest `parse_action_return(request_url, state)` diesen Rückweg: `{"action", "result"}`
+  für eine Aktion und ein Ergebnis des Registers mit genau dem ausgegebenen `state` (in konstanter Zeit verglichen),
+  `None` für einen gewöhnlichen Besuch und `ActionReturnRefused` (`reason` `invalid` oder `state`) für alles andere —
+  ein Hinweis für eine Meldung, nie ein Beweis (Spec §8c).
 - **Berechtigungen** (Spec §3.4, T-101): `identity.permissions` kommt aus `Remote-Permissions` oder `ts_perms` — die
   Berechtigungen des Kontos für diese Anwendung; `identity.has_permission("docs.delete")` vergleicht exakt (weder
   `admin` noch eine Rolle schließt eine ein; ein fehlender Header heißt „keine"). Beim Start meldet

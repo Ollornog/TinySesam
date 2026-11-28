@@ -28,6 +28,13 @@ final class Account
         'api_keys', 'app_passwords', 'sessions', 'programs', 'services'];
     /** The longest `state` an action page carries back (spec section 8c). */
     public const int ACTION_STATE_MAX = 128;
+    /** The names an action page hands back in `ts_action`: the own actions and the administration's. */
+    private const array ACTION_NAMES = ['username', 'email', 'password', 'pin', 'totp', 'recovery_codes', 'passkeys',
+        'api_keys', 'app_passwords', 'sessions', 'session_end', 'programs', 'services', 'admin_totp_reset',
+        'admin_lock', 'admin_unlock', 'admin_roles', 'admin_key_revoke', 'admin_program_revoke', 'admin_session_end',
+        'admin_signin_link'];
+    /** The results an action page hands back in `ts_result`. */
+    private const array ACTION_RESULTS = ['done', 'cancelled', 'unavailable'];
 
     private function __construct()
     {
@@ -152,6 +159,63 @@ final class Account
         $url = $href . (str_contains($href, '?') ? '&' : '?') . 'return=' . rawurlencode($returnTo);
 
         return $state === '' ? $url : $url . '&state=' . rawurlencode($state);
+    }
+
+    /**
+     * Reads the way back of an action page (spec section 8c) from the address the person came back on — an absolute
+     * URL, a path with its query (`$_SERVER['REQUEST_URI']`) or the query alone with its `?`; the query is what lies
+     * between the first `?` and the first `#`. $state is the value the application issued with
+     * {@see self::actionUrl()} (null or '' for none). Only the names `ts_action`, `ts_result` and `state` exactly as
+     * written count; every other parameter is the application's. The result is a hint for a message, never a proof.
+     *
+     * @return array{action: string, result: string}|null null when the address carries neither `ts_action` nor
+     *     `ts_result` (an ordinary visit)
+     * @throws ActionReturnRefused `invalid` for a way back no action page gives, `state` when the `state` that came
+     *     back is not the one issued (compared in constant time with hash_equals)
+     */
+    public static function parseActionReturn(string $address, ?string $state = null): ?array
+    {
+        $head = explode('#', $address, 2)[0];
+        $query = str_contains($head, '?') ? explode('?', $head, 2)[1] : '';
+        $found = ['ts_action' => [], 'ts_result' => [], 'state' => []];
+        foreach (explode('&', $query) as $pair) {
+            $parts = explode('=', $pair, 2);
+            if (\array_key_exists($parts[0], $found)) {
+                $found[$parts[0]][] = $parts[1] ?? '';
+            }
+        }
+        if ($found['ts_action'] === [] && $found['ts_result'] === []) {
+            return null;
+        }
+        if (\count($found['ts_action']) !== 1 || \count($found['ts_result']) !== 1 || \count($found['state']) > 1) {
+            throw new ActionReturnRefused('invalid');
+        }
+        $action = self::formDecode($found['ts_action'][0]);
+        $result = self::formDecode($found['ts_result'][0]);
+        $back = $found['state'] === [] ? '' : self::formDecode($found['state'][0]);
+        if (
+            $action === null || $result === null || $back === null
+            || !\in_array($action, self::ACTION_NAMES, true) || !\in_array($result, self::ACTION_RESULTS, true)
+            || \strlen($back) > self::ACTION_STATE_MAX || preg_match('~^[\x21-\x7e]*$~D', $back) !== 1
+        ) {
+            throw new ActionReturnRefused('invalid');
+        }
+        if (!hash_equals($state ?? '', $back)) {
+            throw new ActionReturnRefused('state');
+        }
+
+        return ['action' => $action, 'result' => $result];
+    }
+
+    /** A query value as written: printable ASCII only, `+` a space, `%XX` an octet (either case); null otherwise. */
+    private static function formDecode(string $raw): ?string
+    {
+        // Every `%` followed by two hex digits — urldecode() would keep a broken escape as it is.
+        if (preg_match('~^(?:[\x21-\x24\x26-\x7e]|%[0-9A-Fa-f]{2})*$~D', $raw) !== 1) {
+            return null;
+        }
+
+        return urldecode($raw);
     }
 
     /**

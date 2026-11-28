@@ -21,6 +21,7 @@ export {
   type SignedOutAccount,
   signedOutAccount,
 } from './account.ts';
+export { type ActionReturn, ActionReturnRefused, parseActionReturn } from './action-return.ts';
 export {
   APPROVAL_TOKEN_TYPE,
   type ApprovalClaims,

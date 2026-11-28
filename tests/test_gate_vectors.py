@@ -72,7 +72,7 @@ ATTACK_CLASSES = {
     "remote-auth", "remote-kind", "groups-parsing", "header-missing-user", "header-duplicate", "header-injection", "header-encoding",
     "id-format",
     "jwks-entry", "jwks-shape", "jwks-cache",
-    "topbar-href", "topbar-types", "account-href", "account-types", "action-request",
+    "topbar-href", "topbar-types", "account-href", "account-types", "action-request", "action-return",
     "permissions-parsing", "permissions-header", "register-manifest",
 }
 
@@ -102,6 +102,7 @@ all_vectors = ([("token", v) for v in TOKEN["vectors"]] + [("headers", v) for v 
                + [("jwks", v) for v in JWKS["sets"]] + [("jwks", v) for v in JWKS["scenarios"]]
                + [("topbar", v) for v in TOPBAR["vectors"]] + [("account", v) for v in ACCOUNT["vectors"]]
                + [("account/action_urls", v) for v in ACCOUNT["action_urls"]]
+               + [("account/action_returns", v) for v in ACCOUNT["action_returns"]]
                + [(f"permissions/{part}", v) for part in ("headers", "tokens", "register") for v in PERMISSIONS[part]])
 ids = [f"{kind}/{v['id']}" for kind, v in all_vectors]
 assert len(ids) == len(set(ids)), "duplicate vector ids"
@@ -233,6 +234,15 @@ def run_action_url(v, relax=frozenset()):
             return {"ok": False, "error": "invalid"}
 
 
+def run_action_return(v, relax=frozenset()):
+    i = v["input"]
+    with relax_mod.relaxed(*relax):
+        try:
+            return {"ok": True, "return": gc.parse_action_return(i["url"], i["state"])}
+        except gc.ActionReturnRefused as e:
+            return {"ok": False, "error": e.reason}
+
+
 def permission_result(v, identify):
     try:
         identity = identify()
@@ -290,6 +300,9 @@ def mismatches(relax=frozenset()) -> list:
     for v in ACCOUNT["action_urls"]:
         if run_action_url(v, relax) != v["expected"]:
             bad.append("account/action_urls/" + v["id"])
+    for v in ACCOUNT["action_returns"]:
+        if run_action_return(v, relax) != v["expected"]:
+            bad.append("account/action_returns/" + v["id"])
     for part, run in (("headers", run_perm_headers), ("tokens", run_perm_token), ("register", run_register)):
         for v in PERMISSIONS[part]:
             if run(v, relax) != v["expected"]:
@@ -308,7 +321,8 @@ if failed:
     raise AssertionError(f"the gate client misses {len(failed)} vectors: {failed[:10]} {detail[:5]}")
 ok(f"gate client: {len(TOKEN['vectors'])} token, {len(HEADERS['vectors'])} header, "
    f"{len(JWKS['sets'])} key-set, {len(JWKS['scenarios'])} cache, {len(TOPBAR['vectors'])} top-bar, "
-   f"{len(ACCOUNT['vectors'])} account, {len(ACCOUNT['action_urls'])} action-address, {sum(len(PERMISSIONS[k]) for k in ('headers', 'tokens', 'register'))} "
+   f"{len(ACCOUNT['vectors'])} account, {len(ACCOUNT['action_urls'])} action-address, "
+   f"{len(ACCOUNT['action_returns'])} way-back, {sum(len(PERMISSIONS[k]) for k in ('headers', 'tokens', 'register'))} "
    "permission vectors passed")
 
 _token_cfg = {"mode": "token", "issuer": "https://auth.example.com", "audience": "app.example.com",

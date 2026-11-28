@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 235
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 421 · B 351 names.
+**Status:** A 421 · B 353 names.
 
 ## A · Methods of `TinySesam`
 
@@ -836,6 +836,10 @@ For Flask, Django and other WSGI/ASGI applications behind the gate (T-86); impor
 
 Identifies every HTTP and WebSocket request and stores the `Identity` (or `None`) in `scope["tinysesam.identity"]` and for `current_identity()`. Starlette: `app.add_middleware(ASGIMiddleware, gate=gate)`. With `jwks_url` the check runs in a worker thread, so a key fetch never blocks the event loop.
 
+### `ActionReturnRefused(reason: 'str')` — class
+
+The address carries a way back that `parse_action_return` refuses. `reason` is `invalid` (not a way back an action page gives: an unknown action or result, a name twice, a broken escape) or `state` (a `state` the application did not issue). Show no message for it; the application reads the account overview again anyway.
+
 ### `AudienceError(detail: 'str' = '', *, kid: 'str' = '')` — class
 
 `aud` does not name the configured audience.
@@ -1055,6 +1059,10 @@ None when the request may pass, else the status to answer: 401 without an identi
 ### `parse_account(data: 'Any') -> 'dict[str, Any]'`
 
 Normalize the answer of `/.tinysesam/account.json` (or `/auth/account.json`), spec §8a: signed out (`SIGNED_OUT_ACCOUNT`) unless it is an object with `signed_in` exactly True; otherwise every member of §8a is present, a member of the wrong type reads as missing (None), an `href` that is no safe link becomes None, unknown members are dropped. Every string is text, never markup. Do not cache it across sessions.
+
+### `parse_action_return(address: 'str', state: 'Optional[str]' = None) -> 'Optional[dict[str, str]]'`
+
+Reads the way back of an action page (spec §8c) from the address the person came back on — an absolute URL, a path with its query or the query alone with its `?` (the query is what lies between the first `?` and the first `#`). `state` is the value the application issued with `action_url` (`None` or empty for none).
 
 ### `parse_topbar(data: 'Any') -> 'Topbar'`
 

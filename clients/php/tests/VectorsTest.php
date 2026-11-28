@@ -6,6 +6,7 @@ namespace TinySesam\Gate\Tests;
 
 use PHPUnit\Framework\TestCase;
 use TinySesam\Gate\Account;
+use TinySesam\Gate\ActionReturnRefused;
 use TinySesam\Gate\ConfigError;
 use TinySesam\Gate\ApprovalClaims;
 use TinySesam\Gate\ApprovalExpect;
@@ -58,6 +59,16 @@ final class VectorsTest extends TestCase
                 $got = ['ok' => false, 'error' => 'invalid'];
             }
             self::assertSame(Vectors::normalize($v->expected), Vectors::normalize($got), "action_urls/{$v->id}");
+        }
+        $returns = Vectors::load('account.json')->action_returns;
+        self::assertNotEmpty($returns, 'no action return vectors');
+        foreach ($returns as $v) {
+            try {
+                $got = ['ok' => true, 'return' => Account::parseActionReturn($v->input->url, $v->input->state)];
+            } catch (ActionReturnRefused $e) {
+                $got = ['ok' => false, 'error' => $e->reason];
+            }
+            self::assertSame(Vectors::normalize($v->expected), Vectors::normalize($got), "action_returns/{$v->id}");
         }
     }
 
