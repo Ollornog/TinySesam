@@ -225,7 +225,7 @@ final class Token
         $str = static fn (string $name): string => \is_string($c->raw[$name] ?? null) ? $c->raw[$name] : '';
 
         return new Identity(
-            $str('ts_user'),
+            $str('ts_usr'),
             $str('ts_name'),
             $str('ts_email'),
             $str('ts_groups'),

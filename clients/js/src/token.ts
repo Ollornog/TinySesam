@@ -249,7 +249,7 @@ export function identityFromClaims(c: Claims): Identity {
     return typeof v === 'string' ? v : '';
   };
   return new Identity({
-    user: str('ts_user'),
+    user: str('ts_usr'),
     name: str('ts_name'),
     email: str('ts_email'),
     groups: str('ts_groups'),

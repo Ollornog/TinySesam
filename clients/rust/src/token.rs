@@ -274,7 +274,7 @@ fn identity_from_claims(c: &Map<String, Value>) -> Result<Identity, TokenError> 
     let account_kind =
         check_account_kind(&text("ts_kind"), &text("ts_auth")).ok_or(TokenError::Claims)?;
     Ok(Identity::new(
-        text("ts_user"),
+        text("ts_usr"),
         text("ts_name"),
         text("ts_email"),
         &text("ts_groups"),

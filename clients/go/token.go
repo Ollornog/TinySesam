@@ -257,7 +257,7 @@ func identityFromClaims(c *Claims) *Identity {
 		return s
 	}
 	a, k := kindOf(str("ts_auth"))
-	return &Identity{User: str("ts_user"), Name: str("ts_name"), Email: str("ts_email"),
+	return &Identity{User: str("ts_usr"), Name: str("ts_name"), Email: str("ts_email"),
 		Groups: ParseGroups(str("ts_groups")), ID: c.Subject, Auth: a, Kind: k, AccountKind: AccountKind(str("ts_kind")),
 		Permissions: ParseGroups(str("ts_perms"))}
 }
