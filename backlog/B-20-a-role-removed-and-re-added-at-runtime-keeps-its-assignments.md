@@ -2,7 +2,7 @@
 id: B-20
 type: Bug
 title: "A role removed and re-added at runtime keeps its permission assignments"
-status: offen
+status: erledigt
 points: 1
 milestone: M-2
 tags: [permissions, roles]

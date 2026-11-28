@@ -357,6 +357,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- A role removed and re-added at runtime (without a start in between) no longer keeps its permission assignments
+  (B-20, rest of B-19): the role set is remembered, and a role that left it has its assignments suspended at once —
+  audited `permissions_suspended reason=role_removed` and named in the security log —, not only at the next start.
+  An administrator assigns again to give them back.
 - The shell component's logo (B-21): a `brand_icon` given as a path loaded from the application's host — where it is
   no file — instead of from TinySesam's. `shell.js` now carries it as an address on the origin of `base_url`; a
   `data:image/…` logo is unchanged. Example Ex1's pages name TinySesam's origin in their `img-src` (spec §8d says so for

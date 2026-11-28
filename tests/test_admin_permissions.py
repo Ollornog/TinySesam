@@ -9,7 +9,7 @@
       an area gets 403
   (d) an orphaned permission is shown with its suspended roles, offers no tick, and an administrator deletes it
   (e) the panel page offers the matrix (button, view, texts) and the JS refers to the routes; CSRF guards the writes
-  (f) B-19: a role that leaves the configuration keeps no effective permission — at once (an account may still carry
+  (f) B-19/B-20: a role that leaves the configuration keeps no effective permission — at once (an account may still carry
       it), and from the next start its assignments are suspended, named in the security log and audited; the panel
       shows them in a marked column (symbol and word) for administrators to withdraw; a role created again under the
       same name (configuration or catalog) does not take them over until an administrator assigns anew
@@ -200,8 +200,11 @@ assert auth4.has_permission(auth4.get_user(tia), "docs.delete", app="docs")
 auth4.cfg.available_roles = list(ROLES)
 assert not auth4.has_permission(auth4.get_user(tia), "docs.delete", app="docs"), \
     "a role no longer in the configuration still granted its permission"
+# B-20: back in the configuration without a start in between — the assignment stays suspended (audited once).
 auth4.cfg.available_roles = ROLES + ["temp-role"]
-assert auth4.has_permission(auth4.get_user(tia), "docs.delete", app="docs")
+assert not auth4.has_permission(auth4.get_user(tia), "docs.delete", app="docs"), \
+    "a role removed and re-added at runtime kept its assignment"
+assert row(auth4, "docs", "docs.delete")["suspended_roles"] == ["temp-role"], row(auth4, "docs", "docs.delete")
 
 # The next start without the role: suspended, named, audited; the account still carries the role and holds nothing.
 auth5, app5, log5 = started(db4, list(ROLES))
@@ -224,8 +227,21 @@ _, _, log5b = started(db4, list(ROLES))
 assert "temp-role → docs/docs.delete" in log5b and len(
     [a for a in auth5.store.recent_audit(80) if a["event"] == "permissions_suspended"]) == 1, \
     "a second start must name the row again, but not audit it again"
-ok("(f) B-19: a removed role grants nothing at once; the next start suspends its assignment, names it in the "
-   "security log and audits it once; the panel lists it for administrators only")
+ok("(f) B-19/B-20: a removed role grants nothing at once and its assignment is suspended at once — back without a "
+   "start it holds nothing; the next start names it in the security log, audited once; the panel lists it for "
+   "administrators only")
+
+# B-20: an administrator assigns again — only that gives the permission back (a fresh instance, not the file above).
+authr, appr = build(available_roles=ROLES + ["temp-role"])
+rid = int(authr.create_user("rex", password=PW, roles=["temp-role"]))
+assert authr.grant_permission("temp-role", "docs.delete", app="docs", by="boss")
+authr.cfg.available_roles = list(ROLES)
+assert not authr.has_permission(authr.get_user(rid), "docs.delete", app="docs")
+authr.cfg.available_roles = ROLES + ["temp-role"]
+assert not authr.has_permission(authr.get_user(rid), "docs.delete", app="docs")
+assert authr.grant_permission("temp-role", "docs.delete", app="docs", by="boss") is True, "the tick must re-activate"
+assert authr.has_permission(authr.get_user(rid), "docs.delete", app="docs")
+ok("(f) B-20: removed and re-added at runtime, the role holds nothing until an administrator assigns again")
 
 # The role comes back — in the configuration, and as a catalog role: the assignment stays suspended.
 auth6, app6, log6 = started(db4, ROLES + ["temp-role"])
