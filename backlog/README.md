@@ -11,7 +11,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 15/30 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 91/103 erledigt
+* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 92/103 erledigt
 * ☑ **[M-6](M-6-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -154,7 +154,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-136](T-136-knip-configuration-for-clients-js.md)** knip configuration for clients/js, so the unused-dependency check covers it · M-5
 * ☐ **[T-137](T-137-declare-optional-imports-requests-and-websockets.md)** Declare the optional imports: requests in client.py, websockets in tools/oauth-e2e · M-5
 * ☑ **[T-138](T-138-codeql-findings-before-the-closing-pr-of-a-sprint.md)** CodeQL findings before the closing PR of a sprint, not only in it · M-5
-* ☐ **[T-139](T-139-codeql-before-the-closing-pr-the-real-analysis.md)** CodeQL before the closing PR of a sprint: the real analysis, not one mirrored rule · M-5
+* ☑ **[T-139](T-139-codeql-before-the-closing-pr-the-real-analysis.md)** CodeQL before the closing PR of a sprint: the real analysis, not one mirrored rule · M-5
 * ☐ **[T-140](T-140-http-test-for-register-in-the-php-client.md)** HTTP test for Permissions::register() in the PHP client · M-2
 * ☐ **[T-141](T-141-acceptance-script-sends-a-forged-remote-permissions.md)** Proxy acceptance script sends a forged Remote-Permissions · M-2
 * ☐ **[T-142](T-142-permissions-of-an-application-in-account-json-without-its-host.md)** Permissions of an application in account.json without its host · M-2
