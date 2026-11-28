@@ -213,9 +213,12 @@ def _field(row, key):
         return None
 
 
-def logo(cfg) -> str:
+def logo(cfg, origin: str = "") -> str:
     """The logo in the bar: `brand_icon` as an image when it is a path on the own origin or a `data:image/…`
     address (what the strict CSP's img-src allows), nothing with "none", else the built-in mark.
+
+    `origin` (B-21) goes in front of a path: the shell component draws the bar on the application's page, where a path
+    would load from the application's host instead of TinySesam's (`_shell.script` passes the origin of `base_url`).
 
     `brand_icon_title` becomes the image's `title` (a tooltip, escaped — `'` too, the attribute is single-quoted);
     empty = no attribute. `alt` stays empty: the name stands next to the logo in the same link, an `alt` would read
@@ -226,7 +229,8 @@ def logo(cfg) -> str:
     if (icon.startswith("/") and not icon.startswith("//")) or icon.startswith("data:image/"):
         title = getattr(cfg, "brand_icon_title", "") or ""
         tip = f" title='{_e(title)}'" if title else ""
-        return f"<img class=tsbar-logo src='{_e(icon)}' alt=''{tip} width=26 height=26>"
+        src = origin + icon if icon.startswith("/") else icon
+        return f"<img class=tsbar-logo src='{_e(src)}' alt=''{tip} width=26 height=26>"
     return _MARK
 
 

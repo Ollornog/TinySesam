@@ -300,6 +300,11 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Fixed
 
+- The shell component's logo (B-21): a `brand_icon` given as a path loaded from the application's host — where it is
+  no file — instead of from TinySesam's. `shell.js` now carries it as an address on the origin of `base_url`; a
+  `data:image/…` logo is unchanged. Example Ex1's pages name TinySesam's origin in their `img-src` (spec §8d says so for
+  every page). `tests/test_shell.py`; `tests/test_shell_browser.py` part B3 loads Ex1 on a host without a frame with a
+  relative `brand_icon` — no broken request.
 - A role removed from the configuration no longer keeps its permissions (B-19). It grants nothing from then on, also
   on an account that still carries it; the next start suspends its assignments (`active` = 0, audit
   `permissions_suspended reason=role_removed`) and names them in a security-log warning at every start until an

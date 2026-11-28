@@ -28,6 +28,7 @@ import json
 from fastapi import HTTPException, Request
 from fastapi.responses import Response
 
+from . import security
 from . import topbar as _topbar
 from .theme import THEME_JS, TOKENS, c22_css
 
@@ -161,8 +162,14 @@ def script(auth) -> str:
     texts = {k: auth.t(k) for k in _TEXTS}
     icons = {name: _topbar._svg(name, "tsbar-chev" if name == "chev" else "")
              for name in ("chev", "user", "admin", "light", "dark", "system", "out", "link", "approve", "back", "shield")}
+    # B-21: the logo of a path `brand_icon` as an address on TinySesam's origin — the component runs on the
+    # application's page, where the bare path would load from the application's host.
+    from urllib.parse import urlsplit
+    base = security.normalize_base(str(auth.cfg.base_url or "").strip()) or ""
+    parts = urlsplit(base) if base else None
+    origin = f"{parts.scheme}://{parts.netloc}" if parts and parts.scheme and parts.netloc else ""
     return (_JS.replace("__THEME__", THEME_JS).replace("__TEXTS__", json.dumps(texts))
-            .replace("__LOGO__", json.dumps(_topbar.logo(auth.cfg))).replace("__ICONS__", json.dumps(icons)))
+            .replace("__LOGO__", json.dumps(_topbar.logo(auth.cfg, origin))).replace("__ICONS__", json.dumps(icons)))
 
 
 def css(auth) -> str:
