@@ -661,6 +661,9 @@ def render_page(self, template, status=200, request: Optional[Request] = None, *
     if "frame" not in ctx:
         ctx["frame"] = self._frame(request, ctx) if getattr(self.cfg, "topbar_enabled", True) else None
     built_in = not self.templates.overridden(template)
+    # …and the application's own layout around the built-in pages (T-104, `page_layout`, library only).
+    if built_in and "page_layout" not in ctx:
+        ctx["page_layout"] = self._page_layout(request, template)
     out = self.templates.render(template, self, ctx)
     if isinstance(out, Response):
         resp = out
@@ -847,6 +850,30 @@ def _frame(self, request: Optional[Request] = None, ctx: Optional[dict] = None) 
             if frame:
                 return frame
     return self._frame_of(getattr(self.cfg, "forward_frame_default", "") or "")
+
+
+def _page_layout(self, request: Optional[Request], template: str) -> Optional[dict]:
+    """The parts of `page_layout` (T-104) for one built-in page — `{"head", "header", "footer"}` as strings — or None
+    without the function, with an empty answer or when it fails (logged; the page renders in TinySesam's own layout, a
+    broken layout must not take the sign-in page down with it)."""
+    fn = getattr(self.cfg, "page_layout", None)
+    if not callable(fn):
+        return None
+    try:
+        parts = fn(request, template)
+    except Exception as exc:  # the application's code: any error, the page must still render
+        logging.getLogger("tinysesam").warning("page_layout failed for page=%s: %s", template, type(exc).__name__)
+        return None
+    if not isinstance(parts, dict) or not any(parts.get(k) for k in ("head", "header", "footer")):
+        return None
+    return {k: str(parts.get(k) or "") for k in ("head", "header", "footer")}
+
+
+def _frame_host(self, value) -> str:
+    """The host of the app frame `value` names (a host or an application id, `_frame_of`) — "" without one. What a
+    mail link carries in its token (`frame`, T-104), so the page it opens stands in the same frame."""
+    frame = self._frame_of(value) if value else None
+    return frame["host"] if frame else ""
 
 
 def _frame_of(self, host) -> Optional[dict]:

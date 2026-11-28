@@ -1499,7 +1499,36 @@ links = [["Documents", "/"]]
 `apps[id].icon` (ADR-19) is a path on TinySesam's own origin or a `data:image/…` address of at most 64 KiB. It stands
 above "Sign in to <application>" on the gate's sign-in page, beside the name in the frame and on the area. There is no
 look per application beyond name and icon. The area lives on TinySesam's origin, never on the application's behind a
-proxy: an XSS of the application could otherwise post TinySesam's forms.
+proxy: an XSS of the application could otherwise post TinySesam's forms. A sign-in link or a reset link asked for in an
+application's frame carries that frame in its token: the page the mail opens stands in the same frame.
+
+As a library, the application puts its own layout around TinySesam's pages — the area included — with `page_layout`:
+
+```python
+import html
+import os
+import tempfile
+
+from tinysesam import TinySesam, TinySesamConfig
+
+
+def layout(request, page):
+    # request: the page's request; page: the template's name ("login", "account", "area", …)
+    return {"head": "<style>.app-nav{display:flex;gap:12px}</style>",
+            "header": f"<nav class=app-nav><a href='/'>Documents</a> <a href='/auth/area?app=docs'>Account</a>"
+                      f"<span>{html.escape(page)}</span></nav>",
+            "footer": "<footer>Documents</footer>"}
+
+
+config = TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "docs.db"), apps={"docs": {"name": "Documents"}})
+config.page_layout = layout
+auth = TinySesam(config)
+assert auth.cfg.page_layout is layout
+```
+
+Every `<script>` and `<style>` in the parts gets the page's CSP nonce; the strict CSP stays as it is (no inline handler,
+no `style=` attribute). With a `header` TinySesam draws no bar of its own. A function that fails is logged and the page
+renders in TinySesam's own layout. The server has no such slot: it runs no application code.
 
 ### The three origins of an account
 
@@ -3183,7 +3212,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**159 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**160 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -21,7 +21,7 @@ The tier is recorded per name in `tests/api_surface.json`. The guard `tests/test
 
 **Public is what the hand-written docs describe** (decided before 1.0): the READMEs, `CONFIGURATION.md`, `SECURITY.md` and `docs/OPERATIONS.md`. This page is generated and lists every name with its tier; being listed here alone is no promise. The guard checks that every tier-A/B Python name is named in those documents.
 
-The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 234 in tier A, the others below at their tier.
+The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 235 in tier A, the others below at their tier.
 
 **English, names as well as values** (since 0.22.0, without alias): The names of tiers A and B, their parameters and the keys and values they return or accept — result dicts, the `details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`, `ctx["purpose"]`), the JSON responses of the routes, the kinds of API keys (`automation`, `human`). Since the last breaking pass before the freeze (PO decision 2026-10-29) the same holds for what operators and proxies read — query and form parameters, header and cookie names, logger names, the event words and keys of the security log, message ids — and audit and log lines are English as well. The lists old → new are in the CHANGELOG (0.22.0, [Unreleased]).
 
@@ -31,7 +31,7 @@ The configuration fields are in [CONFIGURATION.md](CONFIGURATION.md): 189 of 234
 
 **`auth.store` is internals**: the storage layer of the built-in routes, without tier, without promise and without transition period — its methods can change with every release. What an app needs is listed below as a method of `TinySesam` (e.g. `set_disabled` instead of `auth.store.set_disabled`).
 
-**Status:** A 420 · B 344 names.
+**Status:** A 420 · B 345 names.
 
 ## A · Methods of `TinySesam`
 
@@ -235,13 +235,13 @@ The FastAPI router with all enabled routes. Mount once, done.
 
 Secure the ?next= target against open redirect (only relative paths resp. trusted_redirect_hosts).
 
-### `send_login_link(email, base_url, next='/') -> 'bool'`
+### `send_login_link(email, base_url, next='/', *, app: 'str' = '') -> 'bool'`
 
-Send a login link to an email address IF a matching interactive user exists. Return only internal — outwardly always the same message (no user enumeration). `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`).
+Send a login link to an email address IF a matching interactive user exists. Return only internal — outwardly always the same message (no user enumeration). `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`). `app` (T-104): the app frame the request stood in (a host or an application id of the configuration) — the token carries its host as `frame`, so the page the link opens stands in the same frame; anything unknown is dropped.
 
-### `send_password_reset(email, base_url) -> 'bool'`
+### `send_password_reset(email, base_url, *, app: 'str' = '') -> 'bool'`
 
-Send a reset link to an email address IF a matching user exists. Outwardly always the same message (no enumeration). `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`).
+Send a reset link to an email address IF a matching user exists. Outwardly always the same message (no enumeration). `base_url` is checked (`ConfigError` for a foreign host, see `magic_url`). `app` (T-104): the app frame of the request — the token carries it, so the reset page stands in the same frame (see `send_login_link`).
 
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
@@ -796,7 +796,7 @@ Value: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite
 
 ## B · `TinySesamConfig`
 
-Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `topbar_enabled`, `shell_layout`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `oidc_group_import`, `saml_group_import`, `ldap_group_import`, `oidc_group_import_filter`, `saml_group_import_filter`, `ldap_group_import_filter`, `idp_group_labels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `oauth_pairing_consent_enabled`, `oauth_pairing_consent_minutes`, `hsts`, `totp_required`, `totp_app_hint`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `approval_pickup_sec`, `approval_token_ttl_sec`, `approval_app_requests_per_hour`, `approval_key_file`, `apps`.
+Fields of this tier (meaning in [CONFIGURATION.md](CONFIGURATION.md)): `c22_stylesheet`, `page_layout`, `topbar_enabled`, `shell_layout`, `topbar_links`, `topbar_menu_links`, `brand_icon_title`, `role_levels`, `oidc_group_import`, `saml_group_import`, `ldap_group_import`, `oidc_group_import_filter`, `saml_group_import_filter`, `ldap_group_import_filter`, `idp_group_labels`, `app_password_default_days`, `app_password_allow_unlimited`, `gate_key_file`, `oauth_enabled`, `oauth_resources`, `oauth_access_token_ttl_sec`, `oauth_refresh_idle_days`, `oauth_refresh_max_days`, `oauth_refresh_grace_sec`, `oauth_pepper_file`, `oauth_service_clients`, `oauth_service_token_ttl_sec`, `oauth_service_key_days`, `oauth_pairing_minutes`, `oauth_pairing_consent_enabled`, `oauth_pairing_consent_minutes`, `hsts`, `totp_required`, `totp_app_hint`, `admin_delegates`, `approvals_enabled`, `approval_pending_sec`, `approval_open_per_account`, `approval_open_per_token`, `approval_requests_per_hour`, `approval_reject_limit`, `approval_pickup_sec`, `approval_token_ttl_sec`, `approval_app_requests_per_hour`, `approval_key_file`, `apps`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 

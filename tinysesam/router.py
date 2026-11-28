@@ -507,9 +507,12 @@ def build_router(auth) -> APIRouter:
             base = _mail_base(auth, request)
             address = email.strip()
 
+            # T-104: the frame the request stands in travels in the token (the form posts with `?app=`, else `next`).
+            frame = (auth._frame(request, {"next": nxt}) or {}).get("host", "")
+
             def _dispatch():
                 try:
-                    auth.send_login_link(address, base, nxt)
+                    auth.send_login_link(address, base, nxt, app=frame)
                 except Exception:
                     auth.audit("magic_send_error", detail=address)   # do not leak errors to the outside
             # always the same answer (no user enumeration) — and at the same time: sending
@@ -540,8 +543,11 @@ def build_router(auth) -> APIRouter:
             if not peeked or auth._app_link_refused(peeked):
                 auth._token_rejected("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
+            # T-104: the page stands in the frame the link was asked for in (`frame` in the token).
+            framed = auth._frame_of((peeked.get("payload") or {}).get("frame"))
             return auth.render_page("magic_confirm", request=request, purpose="login",
-                                    action=auth.browser_path(request, f"/auth/magic/{_q(token)}"))
+                                    action=auth.browser_path(request, f"/auth/magic/{_q(token)}"),
+                                    **({"frame": framed} if framed else {}))
 
         @r.post("/auth/magic/{token}")
         def magic_redeem(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
@@ -903,9 +909,11 @@ def build_router(auth) -> APIRouter:
             base = _mail_base(auth, request)   # fail closed, see /auth/magic/request
             address = email.strip()
 
+            frame = (auth._frame(request) or {}).get("host", "")    # T-104: the frame travels in the token
+
             def _dispatch():
                 try:
-                    auth.send_password_reset(address, base)
+                    auth.send_password_reset(address, base, app=frame)
                 except Exception:
                     auth.audit("reset_send_error", detail=address)
             # generic (no enumeration), sending after the response (R4-05/B6-6)
@@ -914,13 +922,16 @@ def build_router(auth) -> APIRouter:
 
         @r.get("/auth/reset", response_class=HTMLResponse)
         def reset_page(request: Request, token: str = ""):
-            if not auth.peek_magic(token, purpose="reset_password"):
+            peeked = auth.peek_magic(token, purpose="reset_password")
+            if not peeked:
                 # Without a token (bookmark, crawler) this is no presented link — no entry,
                 # otherwise the security log would report a wrong guess that never happened (A3).
                 if token:
                     auth._token_rejected("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
-            return auth.render_page("reset", request=request, token=token, error="")
+            framed = auth._frame_of((peeked.get("payload") or {}).get("frame"))    # T-104: the frame of the request
+            return auth.render_page("reset", request=request, token=token, error="",
+                                    **({"frame": framed} if framed else {}))
 
         @r.post("/auth/reset", response_class=HTMLResponse)
         def reset_submit(request: Request, token: str = Form(""), password: str = Form(""),

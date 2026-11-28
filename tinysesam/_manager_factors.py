@@ -811,10 +811,11 @@ def federated_only(self, user_id) -> bool:
             and not self.store.get_password_hash(user_id))
 
 
-def send_password_reset(self, email, base_url) -> bool:
+def send_password_reset(self, email, base_url, *, app: str = "") -> bool:
     """Send a reset link to an email address IF a matching user exists. Outwardly always the
     same message (no enumeration). `base_url` is checked (`ConfigError` for a
-    foreign host, see `magic_url`).
+    foreign host, see `magic_url`). `app` (T-104): the app frame of the request — the token carries it, so the reset
+    page stands in the same frame (see `send_login_link`).
 
     The check comes first — before the account lookup, so that "exception instead of False" does not
     reveal whether the address exists, and before the token is issued, so that no unusable
@@ -840,7 +841,9 @@ def send_password_reset(self, email, base_url) -> bool:
     destination = u["email"]
     if not self._mail_destination_ok(destination, "reset_password"):
         return False
-    raw = self.create_magic_token("reset_password", user_id=u["id"], email=destination)
+    frame = self._frame_host(app)
+    raw = self.create_magic_token("reset_password", user_id=u["id"], email=destination,
+                                  payload={"frame": frame} if frame else None)
     url = self.magic_url(raw, base_url, "reset_password")
     mins = self.cfg.magiclink_ttl_min
     self._token_mail(raw, destination, self.t("mail.reset.subject"),

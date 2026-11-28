@@ -250,11 +250,21 @@ def _page(auth, title, body, card=True, top="", below="", head="", ctx=None, cur
     brand_footer) — re-skins and frames all pages centrally. `top` lands above the card, `below` below it.
     `ctx` feeds the top bar (viewer, csrf); `current` marks the menu entry of this page."""
     cfg = auth.cfg
+    header, footer = brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth)
+    bar = _bar(auth, ctx, current)
+    # The application's own layout (T-104, `page_layout`): its head, header and footer around the page; with a header
+    # TinySesam's bar gives way to the application's navigation. Its blocks get the nonce in `render_page`.
+    layout = (ctx or {}).get("page_layout")
+    if layout:
+        head = layout["head"] + head
+        if layout["header"]:
+            header, bar = layout["header"], ""
+        if layout["footer"]:
+            footer = layout["footer"]
     return _doc(title, body, cfg.lang, c22_css(cfg) + (getattr(cfg, "brand_css", "") or ""),
                 c22_head(cfg) + (getattr(cfg, "brand_head", "") or ""),
-                card, getattr(cfg, "brand_icon", ""), top,
-                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), below,
-                background(cfg), head, _bar(auth, ctx, current))
+                card, getattr(cfg, "brand_icon", ""), top, header, footer, below,
+                background(cfg), head, bar)
 
 
 #: Message icons — inline SVG in currentColor (nothing is fetched), 24 grid, strokes only.
@@ -414,7 +424,7 @@ def _login(auth, ctx) -> str:
     # Only with the self-request (T-33): with `magiclink_self_request=False` the route is gone and
     # links come from the admin — a button to a 404 would be a dead end.
     if "magic" in methods and getattr(cfg, "magiclink_self_request", True):
-        magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_next_q(next_)}'>{_e(t('login.magic'))}</a>"
+        magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_next_q(next_)}{_e(_app_q(ctx, "&"))}'>{_e(t('login.magic'))}</a>"
     # `app` (T-14) travels along: without it the button would start the round with the default client,
     # and the approval for THIS application would never come about (B-2).
     app_q = f"&app={_e(_quote(ctx['app']))}" if ctx.get("app") else ""
@@ -434,7 +444,7 @@ def _login(auth, ctx) -> str:
     if cfg.allow_signup:
         links.append(f"<a href='__TS_P__/auth/register?next={_next_q(next_)}'>{_e(t('login.signup'))}</a>")
     if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
-        links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
+        links.append(f"<a href='__TS_P__/auth/forgot{_e(_app_q(ctx))}'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _dialog.assets(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _next_q(next_))
           .replace("__PK_FAILED__", json.dumps(t("login.passkey_failed")))
@@ -905,7 +915,7 @@ def _magic_request(auth, ctx) -> str:
     messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('magic.title'))}</h1>"
             f"<div class=hint>{_e(t('magic.hint'))}</div>"
-            f"<form method=post action='__TS_P__/auth/magic/request'>"
+            f"<form method=post action='__TS_P__/auth/magic/request{_e(_app_q(ctx))}'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(t('magic.email'))}</label>"
             f"<input name=email type=email autocomplete=email autofocus>"
@@ -1020,7 +1030,7 @@ def _forgot(auth, ctx) -> str:
     messages = _messages([("error", ctx.get("error"))])
     body = (f"<h1>{_e(t('forgot.title'))}</h1>"
             f"<div class=hint>{_e(t('forgot.hint'))}</div>"
-            f"<form method=post action='__TS_P__/auth/forgot'>{_cf(ctx)}"
+            f"<form method=post action='__TS_P__/auth/forgot{_e(_app_q(ctx))}'>{_cf(ctx)}"
             f"<label>{_e(t('magic.email'))}</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('forgot.send'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
