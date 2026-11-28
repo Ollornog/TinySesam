@@ -2051,9 +2051,13 @@ assert _marks, "the auto-merge no longer names the breaking marks (`local z re='
 BREAKING_MARKS = re.compile(_marks.group(1), re.I)
 
 
-def unreleased_section(text: str) -> str:
-    """The text of `## [Unreleased]` up to the next version heading, "" without one."""
-    m = re.search(r"(?ms)^## \[Unreleased\]\s*$(.*?)(?=^## \[)", text)
+def unreleased_section(text: str, latest: str = "") -> str:
+    """The text of `## [Unreleased]` up to the next version heading, "" without one. With `latest` (the latest
+    release tag, `v0.31.0`), up to that version's heading instead: the release commit closes `[Unreleased]` into
+    `## [0.32.0]`, and the mark the fleet's auto-merge reads (the CHANGELOG lines between the two tags) then stands
+    there — still above the latest release."""
+    end = rf"^## \[{re.escape(latest.lstrip('v'))}\]" if latest else r"^## \["
+    m = re.search(rf"(?ms)^## \[Unreleased\]\s*$(.*?)(?={end})", text)
     return m.group(1) if m else ""
 
 
@@ -2069,16 +2073,20 @@ assert unmarked_breaks("- a fix\n", [("a" * 40, "feat!: gone (T-1)", "")]) == ["
 assert unmarked_breaks("#### Upgrading from 0.31.x\n- gone (T-1)\n", [("a" * 40, "feat!: gone (T-1)", "")]) == []
 assert unmarked_breaks("- a fix\n", [("a" * 40, "fix: fine", "")]) == []
 assert unreleased_section("## [Unreleased]\n\n- x\n\n## [1.0.0] — d\n- y\n").strip() == "- x"
+# the release commit: [Unreleased] is empty, the mark stands under the new version, above the latest tag's section
+_closed = "## [Unreleased]\n\n## [1.1.0] — d\n#### Upgrading from 1.0.x\n\n## [1.0.0] — d\n**A breaking release**\n"
+assert unmarked_breaks(unreleased_section(_closed, "v1.0.0"), [("a" * 40, "feat!: gone (T-1)", "")]) == []
+assert "A breaking release" not in unreleased_section(_closed, "v1.0.0")
 _latest = (_later or [UPGRADE_BASE])[-1]
 _log = _git("log", "--format=%H%x1f%s%x1f%b%x1e", f"{_latest}..HEAD")
 assert _log.returncode == 0, _log.stderr
 _since = [tuple(c.strip("\n").split("\x1f", 2)) for c in _log.stdout.split("\x1e") if c.strip()]
-_unmarked = unmarked_breaks(unreleased_section(read("CHANGELOG.md")), _since)
-assert not _unmarked, (f"breaking commits since {_latest}, but [Unreleased] in CHANGELOG.md has no line with "
+_unmarked = unmarked_breaks(unreleased_section(read("CHANGELOG.md"), _latest), _since)
+assert not _unmarked, (f"breaking commits since {_latest}, but CHANGELOG.md above [{_latest[1:]}] has no line with "
                        f"{BREAKING_MARKS.pattern!r} (say \"#### Upgrading from {_latest[1:].rsplit('.', 1)[0]}.x\" "
                        "above the list) — the fleet's auto-merge would not hold the pin:\n  " + "\n  ".join(_unmarked))
 print(f"  breaking marks: {sum(1 for c in _since if is_breaking(c[1], c[2]))} breaking commit(s) since {_latest}, "
-      "[Unreleased] carries the mark the fleet's auto-merge reads" if any(is_breaking(c[1], c[2]) for c in _since)
+      f"CHANGELOG above [{_latest[1:]}] carries the mark the fleet's auto-merge reads" if any(is_breaking(c[1], c[2]) for c in _since)
       else f"  breaking marks: no breaking commit since {_latest}")
 
 # ---------- Backlog: structure, references, generated index ----------

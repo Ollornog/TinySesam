@@ -32,7 +32,7 @@ x-hardening: &hardening
 services:
   tinysesam:
     <<: *hardening
-    image: ghcr.io/ollornog/tinysesam:v0.31.0
+    image: ghcr.io/ollornog/tinysesam:v0.32.0
     environment:
       # The configuration file next to this one (T-133): the switches, the network, the applications. The variables
       # below overlay it when they are set — what differs per host, from .env.
@@ -63,7 +63,7 @@ services:
 
   caddy:
     <<: *hardening
-    image: ghcr.io/ollornog/tinysesam-caddy-gate:v0.31.0
+    image: ghcr.io/ollornog/tinysesam-caddy-gate:v0.32.0
     # The only capability that comes back: binding ports below 1024 (80/443).
     cap_add: [NET_BIND_SERVICE]
     ports:

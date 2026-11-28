@@ -4,8 +4,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-11-28
+
 **Breaking since 0.31.0** — read "Upgrading from 0.31.x" before you update (the same list in `docs/OPERATIONS.md`,
 "Updating"); whoever comes from 0.30.x works through "Upgrading from 0.30.x" (under 0.31.0) first.
+
+Milestone M-2: TinySesam fits into an application in any of the four surfaces — shell on top, shell at the side, hybrid
+(a TinySesam area beside the application) and headless — with local, IdP or mixed accounts, as a library and as a server
+alike. New: application permissions (`Remote-Permissions`, `has_permission`), action pages with a way back to the
+application (own and administration actions), headless reading of account, events, keys and admin data, the
+application's frame and icon in the shell, normalised in all five gate clients; an acceptance matrix in CI proves every
+example against local, IdP and mixed accounts. Who needs it: everyone who wants these features, and everyone still on
+0.30.x — 0.31.0 and 0.32.0 are best taken in one step, so that API keys and links are issued anew only once. Behind a
+proxy, update the forward-auth template **before** an application reads `Remote-Permissions` (point 3).
 
 #### Upgrading from 0.31.x
 
