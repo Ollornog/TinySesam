@@ -626,6 +626,18 @@ def account_sections(auth, ctx) -> dict:
         f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
 
+    # One session, ended by its handle (T-105: the action page `session_end`).
+    target = ctx.get("target_session")
+    if target:
+        import datetime as _dt
+        since = _dt.datetime.fromtimestamp(int(target["created_at"]), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+        out["session_end"] = (
+            f"<div class=sec><h2 id=session>{_e(t('acc.session_one'))}</h2>"
+            f"<p class='msg evhint'>{_e(target.get('device') or '?')} · {_e(target.get('method') or '?')} · "
+            f"{_e(since)} UTC</p>"
+            f"<button class=warn data-act=endsess data-id='{_e(target['handle'])}'>{_e(t('acc.session_end'))}</button>"
+            "<span id=se_msg class=msg></span></div>")
+
     # Connected programs (OAuth, T-36) and services (T-60)
     out["programs"] = _devices_section(auth, ctx)
     out["pairing"] = _pairing_section(auth, ctx)
@@ -731,6 +743,7 @@ _ACCOUNT_TEXT = {
         "recovery_note": "Write these down safely now — they are shown only once.",
         "revoked": "(revoked)", "revoke": "revoke", "none": "none", "delete": "delete", "this": "(this one)",
         "key_title": "New API key", "key_note": "Copy it now — it is not shown again.", "confirm_end_others": "End all other sessions?",
+        "confirm_end_one": "End this session? The device is signed out at once.", "end_one": "end",
         "ended": "✓ ended", "added": "✓ added", "failed": "failed", "aborted": "aborted: ",
         "ap_title": "New app password", "ap_note": "Copy it now — it is not shown again. Sign in with the user name "
         "“__USER__” and this password; it works only for the applications you chose.",
@@ -753,6 +766,7 @@ _ACCOUNT_TEXT = {
         "recovery_note": "Jetzt sicher notieren — sie werden nur einmal angezeigt.",
         "revoked": "(widerrufen)", "revoke": "widerrufen", "none": "keine", "delete": "löschen", "this": "(diese)",
         "key_title": "Neuer API-Key", "key_note": "Jetzt kopieren — er wird nicht erneut angezeigt.", "confirm_end_others": "Alle anderen Sitzungen beenden?",
+        "confirm_end_one": "Diese Sitzung beenden? Das Gerät wird sofort abgemeldet.", "end_one": "beenden",
         "ended": "✓ beendet", "added": "✓ hinzugefügt", "failed": "fehlgeschlagen", "aborted": "abgebrochen: ",
         "ap_title": "Neues App-Passwort", "ap_note": "Jetzt kopieren — es wird nicht erneut angezeigt. Anmelden mit "
         "dem Benutzernamen „__USER__“ und diesem Passwort; es gilt nur für die gewählten Anwendungen.",
@@ -874,13 +888,24 @@ async function delpk(id){const r=await J('__TS_P__/auth/passkey/delete',{id});if
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
   const ss=await (await fetch('__TS_P__/auth/sessions')).json().catch(()=>[]);
   if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
-  el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString(TXT.locale)} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>'+TXT.this+'</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>'+TXT.none+'</li>'}
+  el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString(TXT.locale)} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>'+TXT.this+'</b>':(s.handle?`<button class=warn data-act=endsess data-id="${esc0(s.handle)}">${TXT.end_one}</button>`:'')}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>'+TXT.none+'</li>'}
 // Every value from the API goes through esc0 before it lands in innerHTML (R8-6): key and
 // passkey names are set by the user, and up to 0.19.0 they stood raw in the markup — a name
 // like <img src=x onerror=…> ran as code. All five characters, because values also appear in attributes.
 function esc0(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+// One session by its handle (T-105): a fresh confirmation like "end the others"; the list reloads.
+async function endsess(id){if(!await tsConfirm(TXT.confirm_end_one,{danger:true}))return;
+  const r=await J('__TS_P__/auth/sessions/end',{handle:id});
+  if(r.ok)say(document.getElementById('se_msg')?'se_msg':'sess_msg',TXT.ended,true);
+  else if(!(r.status===403&&r.headers.get('X-TinySesam-Reauth')))say(document.getElementById('se_msg')?'se_msg':'sess_msg',(await r.json().catch(()=>({}))).detail||TXT.error,false);
+  loadsess()}
 async function revokeothers(){if(!await tsConfirm(TXT.confirm_end_others,{danger:true}))return;
   if(await tsRevokeOthers())say('sess_msg',TXT.ended,true);loadsess()}
+// A program's revocation (a form with the CSRF field) is sent by script and the page reloads (T-105): it stays the page
+// it was — the account page in its frame, an action page that then marks its way back as done.
+document.addEventListener('submit',async function(e){const f=e.target.closest('form.devrevoke');if(!f)return;
+  e.preventDefault();const r=await fetch(f.action,{method:'POST',body:new FormData(f)});
+  if(r.ok){done();location.reload()}});
 // One delegated listener instead of inline click handlers — otherwise the strict CSP
 // blocks the buttons. The buttons loaded later via JS (data-act=revk/delpk) are reached as well.
 document.addEventListener('click',function(e){var b=e.target.closest('[data-act]');if(!b)return;
@@ -1826,15 +1851,13 @@ def _devices_section(auth, ctx) -> str:
 
     def when(ts):
         return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M") + " UTC" if ts else "—"
-    # Where the revocation leads back to: this page — the account page in its frame, an action page (T-105).
-    back = f"<input type=hidden name=next value='{_e(ctx['revoke_next'])}'>" if ctx.get("revoke_next") else ""
     lines = "".join(
         f"<li><b>{_e(d['client_name'])}</b> <small><code>{_e(d['client_id'])}</code></small><br>"
         f"<small class=msg>{_e(t('acc.device_created'))} {_e(when(d['created_at']))} · "
         f"{_e(t('acc.device_last'))} {_e(when(d['last_used']))} · {_e(d['last_ip'] or '?')} · {_e(d['resource'])}"
         + (f" · <span class=devvia>{_e(t('acc.device_via_pairing'))}</span>" if d.get("via") == "pairing" else "")
         + "</small>"
-        f"<form method=post class=devrevoke action='__TS_P__/auth/oauth/devices/{int(d['id'])}/revoke'>{_cf(ctx)}{back}"
+        f"<form method=post class=devrevoke action='__TS_P__/auth/oauth/devices/{int(d['id'])}/revoke'>{_cf(ctx)}"
         f"<button type=submit class=warn>{_e(t('acc.device_revoke'))}</button></form></li>"
         for d in devices) or f"<li>{_e(t('acc.devices_none'))}</li>"
     return (f"<div class=sec><h2 id=devices>{_e(t('acc.devices'))}</h2>"

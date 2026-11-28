@@ -439,6 +439,7 @@ _PART_METHODS = {
     "sessions": (
         "backdate_confirmation", "create_session",
         "delete_session", "delete_session_by_handle", "delete_user_sessions", "delete_user_sessions_except",
+        "end_session_by_public_handle",
         "gc_sessions", "get_session", "get_session_by_handle", "list_sessions", "rewrite_api_key_digest",
         "rotate_session", "session_hash", "sessions_live_before", "set_session_end_others",
         "set_session_factors", "set_session_mfa", "set_session_stay", "token_digest", "token_digests",
@@ -650,7 +651,12 @@ class Store(metaclass=_StoreParts):
     #: 28 — IdP group import (T-102, ADR-18), additive: the tables `idp_role` and `idp_role_membership` and an index.
     #:      The step from 27 (and 26) is again the schema script; a version with schema 27 opens a 28 file with the
     #:      "newer version" warning and never reads the two tables (imported roles stay on the accounts as plain roles).
-    SCHEMA_VERSION = 28
+    #: 29 — the session handle (T-105), additive: the table `session_handle` (an opaque reference per session, the
+    #:      target of ending one session from an action page) and the trigger that gives every new session one. The
+    #:      step from 28 (and 26, 27) is the schema script plus one backfill of the sessions that exist; a version with
+    #:      schema 28 opens a 29 file with the "newer version" warning, never reads the table, and its new sessions
+    #:      still get a handle from the trigger.
+    SCHEMA_VERSION = 29
 
     #: The oldest schema this version opens: the baseline. A database below it was written by a version before
     #: `LAST_MIGRATING_RELEASE` (or never reached it) and is refused at start (`ConfigError`).
@@ -726,6 +732,10 @@ class Store(metaclass=_StoreParts):
                 log.warning("Triggers over username and address not created (%s): the database only enforces the "
                             "shared identifier space after a start with write access.", e)
             self._catch_up_owner()
+            if self.BASELINE_SCHEMA <= present < 29:
+                # The step to 29: a handle for every session that exists (new ones get theirs from the trigger).
+                self.db.execute("INSERT OR IGNORE INTO session_handle(token_hash, handle) SELECT token_hash, "
+                                "lower(hex(randomblob(16))) FROM session WHERE successor IS NULL")
             if present > self.SCHEMA_VERSION:
                 log.warning("The database carries schema version %d, this TinySesam version only knows %d. It comes "
                             "from a newer version — writing with this one can leave data incomplete. Install the "

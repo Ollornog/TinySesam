@@ -102,7 +102,9 @@ work = tempfile.mkdtemp(prefix="ts-baseline-")
 #: The objects each schema step after the baseline adds (additive steps only).
 STEPS = {27: {"table app_permission", "table role_permission", "index idx_role_permission_app"},
          # 28, T-102: the IdP group import (catalog notes and what each source delivered per account).
-         28: {"table idp_role", "table idp_role_membership", "index idx_idp_role_membership_role"}}
+         28: {"table idp_role", "table idp_role_membership", "index idx_idp_role_membership_role"},
+         # 29, T-105: the session handle (one opaque reference per session) and the trigger that hands it out.
+         29: {"table session_handle", "trigger trg_session_handle"}}
 expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
 mine = schema_of(fresh_db(ROOT, tempfile.mkdtemp(dir=work)))
 added = set().union(*STEPS.values())

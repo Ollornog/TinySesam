@@ -42,6 +42,7 @@ class Action:
     cls: str
     sections: tuple
     fresh: bool = False
+    target: str = ""      # the kind of object `?target=` names (`session`: a session handle); "" for none
 
 
 #: The register, in the order of the account page.
@@ -56,6 +57,7 @@ ACTIONS: dict = {a.name: a for a in (
     Action("api_keys", "own", "window", ("api_keys",)),
     Action("app_passwords", "own", "window", ("app_passwords",)),
     Action("sessions", "own", "window", ("sessions",)),
+    Action("session_end", "own", "window", ("session_end",), target="session"),
     Action("programs", "own", "window", ("programs", "pairing")),
     Action("services", "own", "window", ("services",)),
 )}
@@ -80,7 +82,7 @@ def offered(auth, view: dict) -> set:
         return set()
     sign_in, programs = view.get("sign_in") or {}, view.get("programs") or {}
     totp = sign_in.get("totp")
-    out = {"sessions"}
+    out = {"sessions", "session_end"}
     if sign_in.get("password") in ("set", "unset"):
         out.add("password")
     if totp is not None:
@@ -107,10 +109,11 @@ def offered(auth, view: dict) -> set:
 
 def links(auth, view: dict, base: str, query: str) -> dict:
     """The member `actions` of `account_overview`: every own action → the address of its page, or None where it is
-    not offered. `query` is `?app=<host>` in an app frame, else ""; the application adds `return` and `state`."""
+    not offered. `query` is `?app=<host>` in an app frame, else ""; the application adds `return` and `state`. An
+    action on one object (`target`) has its address beside the object instead (`sessions.items[].end`)."""
     on = offered(auth, view)
     return {name: (f"{base}/auth/act/{name}{query}" if name in on else None)
-            for name, a in ACTIONS.items() if a.scope == "own"}
+            for name, a in ACTIONS.items() if a.scope == "own" and not a.target}
 
 
 def state_ok(value) -> bool:

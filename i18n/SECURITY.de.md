@@ -540,6 +540,10 @@ indem sie die Person dorthin schickt.
   Freigabe.
 - **Kein Geheimnis verlässt TinySesams Ursprung**: Passwort, Code, API-Key, App-Passwort oder Kopplungscode werden nur
   auf der Aktionsseite eingegeben oder gezeigt, und der Rückweg trägt keines.
+- **Der Sitzungs-Handle** (Schema 29) ist eine eigene Zufallsreferenz je Sitzung, nie das Token oder sein Hash: Er
+  benennt eine Sitzung zum Beenden und meldet niemanden an. Beenden über ihn (`POST /auth/sessions/end`) verlangt eine
+  frische Bestätigung, beendet nur eine Sitzung desselben Kontos (ein fremder Handle ist 404 wie ein unbekannter) und
+  nie die aktuelle.
 
 ## Rollennamen und der Rollenkatalog
 

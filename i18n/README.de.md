@@ -1588,6 +1588,12 @@ https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.ex
   `actions` von `account.json` (und von `account_overview`) enthält die Adresse jeder Aktion, die diese Installation
   diesem Konto anbietet — auf dem Host der Anwendung in ihrem Rahmen —, `null` für die übrigen. Die Anwendung hängt
   `return` und `state` an.
+- **Eine Sitzung.** Jede Sitzung trägt einen Sitzungs-Handle — eine undurchsichtige, zufällige Referenz, wertlos zum
+  Anmelden, die eine Token-Rotation überdauert (Schema 29). `account.json` nennt ihn je Sitzung
+  (`sessions.items[].handle`) mit der Aktionsseite, die genau diese Sitzung beendet (`end`:
+  `/auth/act/session_end?target=<handle>`, `null` für die Sitzung der Anfrage selbst — das ist Abmelden). Die Kontoseite
+  zeigt je anderer Sitzung einen Knopf „beenden“; die Route dahinter, `POST /auth/sessions/end`, verlangt eine frische
+  Bestätigung und beendet nur eine eigene andere Sitzung.
 - **Was die Seite ist.** Der Abschnitt der Kontoseite für diese Aktion, mit demselben Skript und denselben Routen
   dahinter — also denselben CSRF- und Step-up-Prüfungen —, im Rahmen der Anwendung mit Name und Symbol über der
   Überschrift, selbst nie gerahmt (`frame-ancestors 'none'`). Ein GET ändert nichts. Aktionen, die einen neuen Zugang

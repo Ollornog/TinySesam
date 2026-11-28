@@ -2597,7 +2597,8 @@
       "keys": [
         "query:app",
         "query:return",
-        "query:state"
+        "query:state",
+        "query:target"
       ],
       "tier": "B"
     },
@@ -3171,6 +3172,10 @@
       "keys": [
         "form:_csrf"
       ],
+      "tier": "B"
+    },
+    "POST /auth/sessions/end": {
+      "keys": [],
       "tier": "B"
     },
     "POST /auth/sessions/revoke": {

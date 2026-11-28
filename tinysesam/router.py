@@ -1274,11 +1274,7 @@ def build_router(auth) -> APIRouter:
             # One source (T-91): the page reads the state from `account_overview`, the same function behind
             # `/auth/account.json` — page and data cannot drift apart; its action pages (T-105) read the same.
             view = auth.account_overview(u) or {}
-            app = auth._frame_app(request)
-            return auth.render_page("account", request=request, user=u, **_account_ctx(auth, request, u, view),
-                                    # A revoked program comes back to this page, in its frame.
-                                    revoke_next=auth.browser_path(request, "/auth/account")
-                                    + (f"?app={_q(app)}" if app else ""))
+            return auth.render_page("account", request=request, user=u, **_account_ctx(auth, request, u, view))
 
     # ---------- Self-service: username and address (PO decision 2026-09-25) ----------
     def _fresh_for_identifier(request: Request) -> dict:
@@ -1358,8 +1354,27 @@ def build_router(auth) -> APIRouter:
         cur = auth._session_from_request(request)
         # One source with `account_overview` (T-91): the same rows, here with address and browser string.
         return [{"created_at": s["created_at"], "ip": s["ip"], "method": s["method"], "user_agent": s["user_agent"],
-                 "current": bool(s["current"])}
+                 "current": bool(s["current"]), "handle": s["handle"]}
                 for s in auth._own_session_rows(u["id"], cur["token_hash"] if cur else None)]
+
+    @r.post("/auth/sessions/end")
+    async def own_session_end(request: Request):
+        """End ONE other session by its session handle (T-105) — with a fresh confirmation, like ending the others
+        (F-09). The own session is no target (that is signing out); a handle of another account ends nothing (404)."""
+        if not auth.current_user(request):
+            raise HTTPException(401)
+        u = auth.require_mfa(request)
+        handle = str((await auth.json_body(request)).get("handle") or "")
+        cur = auth._session_from_request(request)
+        own = auth.store.list_sessions(u["id"])
+        if any(s["public_handle"] == handle and cur and s["token_hash"] == cur["token_hash"] for s in own):
+            raise HTTPException(400, auth.t("api.invalid", reason="the current session — sign out instead"))
+        if not auth.store.end_session_by_public_handle(u["id"], handle):
+            raise HTTPException(404)
+        # An open address change may stem from the ended session (as with "end the others", finding 1).
+        auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
+        auth.audit("session_end", u["username"], auth.client_ip(request))
+        return {"ok": True}
 
     @r.post("/auth/sessions/revoke-after-login")
     async def sessions_revoke_after_login(request: Request):

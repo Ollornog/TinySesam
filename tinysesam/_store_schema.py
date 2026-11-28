@@ -535,4 +535,16 @@ CREATE TABLE IF NOT EXISTS idp_role_membership (
     PRIMARY KEY (user_id, source, role)
 );
 CREATE INDEX IF NOT EXISTS idx_idp_role_membership_role ON idp_role_membership(role);
+-- Schema 29 (T-105): the session handle. An opaque, random reference per session — worthless for signing in, only the
+-- target of ending ONE session from an application's action page and of `account.json` — never the token hash. It
+-- follows the session through a rotation (`rotate_session` moves it) and goes with it (cascade). A trigger gives every
+-- new session one, also one an older writer creates (only built-in functions, like the triggers on `users`).
+CREATE TABLE IF NOT EXISTS session_handle (
+    token_hash TEXT PRIMARY KEY REFERENCES session(token_hash) ON DELETE CASCADE,
+    handle     TEXT NOT NULL UNIQUE
+);
+CREATE TRIGGER IF NOT EXISTS trg_session_handle AFTER INSERT ON session WHEN NEW.successor IS NULL
+BEGIN
+    INSERT OR IGNORE INTO session_handle(token_hash, handle) VALUES (NEW.token_hash, lower(hex(randomblob(16))));
+END;
 """

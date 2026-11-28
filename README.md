@@ -1550,6 +1550,11 @@ https://auth.example.com/auth/act/password?app=docs&return=https%3A%2F%2Fdocs.ex
   `app_passwords`, `sessions`, `programs` (connected programs and the pairing code) and `services`. The member
   `actions` of `account.json` (and of `account_overview`) holds the address of each one this installation offers this
   account — in the application's frame on its host —, `null` for the others. The application adds `return` and `state`.
+- **One session.** Every session carries a session handle — an opaque random reference, worthless for signing in,
+  kept through a token rotation (schema 29). `account.json` names it per session (`sessions.items[].handle`) with the
+  action page that ends exactly that session (`end`: `/auth/act/session_end?target=<handle>`, `null` for the
+  session of the request itself — that is signing out). The account page lists an "end" button per other session; the
+  route behind both, `POST /auth/sessions/end`, wants a fresh confirmation and ends only an own other session.
 - **What the page is.** The section of the account page for that action, with the same script and the same routes
   behind it — so the same CSRF and step-up checks —, in the application's frame with its name and icon above the
   heading, never framed itself (`frame-ancestors 'none'`). A GET changes nothing. Actions that create new access

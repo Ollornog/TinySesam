@@ -216,6 +216,9 @@ def rotate_session(self, handle, mercy_sec: int = 0) -> Optional[str]:
             self.db.execute("UPDATE gate_signed_out SET token_hash=? WHERE token_hash=?", (new, old))
             self.db.execute("UPDATE oidc_id_token SET token_hash=? WHERE token_hash=?", (new, old))
             self.db.execute("UPDATE gate_link SET token_hash=? WHERE token_hash=?", (new, old))
+            # The session handle (T-105) stays the session's: the trigger gave the new row a fresh one, the old one moves.
+            self.db.execute("DELETE FROM session_handle WHERE token_hash=?", (new,))
+            self.db.execute("UPDATE session_handle SET token_hash=? WHERE token_hash=?", (new, old))
             if mercy_sec > 0:
                 self.db.execute("UPDATE session SET expires_at=MIN(expires_at, ?), mfa_at=NULL, "
                                 "successor=? WHERE token_hash=?", (_store._now() + int(mercy_sec), new, old))
@@ -247,8 +250,23 @@ def gc_sessions(self) -> int:
 
 
 def list_sessions(self, user_id=None):
-    # Superseded tokens in the grace period (A-6) are not a session of their own.
+    # Superseded tokens in the grace period (A-6) are not a session of their own. `public_handle`: the session handle
+    # (T-105), None for a session without one.
+    query = ("SELECT s.*, h.handle AS public_handle FROM session s "
+             "LEFT JOIN session_handle h ON h.token_hash = s.token_hash WHERE s.successor IS NULL")
     if user_id is not None:
-        return self._all("SELECT * FROM session WHERE user_id=? AND successor IS NULL "
-                         "ORDER BY created_at DESC", (user_id,))
-    return self._all("SELECT * FROM session WHERE successor IS NULL ORDER BY created_at DESC")
+        return self._all(query + " AND s.user_id=? ORDER BY s.created_at DESC", (user_id,))
+    return self._all(query + " ORDER BY s.created_at DESC")
+
+
+def end_session_by_public_handle(self, user_id, handle) -> bool:
+    """End the session of `user_id` that carries the session handle `handle` (T-105) — with its superseded tokens in
+    the grace period. False when the account has no such session: a handle of another account ends nothing."""
+    if not isinstance(handle, str) or not handle:
+        return False
+    row = self._one("SELECT s.token_hash FROM session_handle h JOIN session s ON s.token_hash = h.token_hash "
+                    "WHERE h.handle=? AND s.user_id=? AND s.successor IS NULL", (handle, int(user_id)))
+    if row is None:
+        return False
+    self.delete_session_by_handle(row["token_hash"])
+    return True

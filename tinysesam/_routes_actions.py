@@ -57,7 +57,7 @@ def account_ctx(auth, request: Request, u, view: dict) -> dict:
 def add_routes(r, auth, cfg) -> None:
     @r.get("/auth/act/{name}", response_class=HTMLResponse)
     def action_page(request: Request, name: str, app: str = "", return_: str = Query("", alias="return"),
-                    state: str = ""):
+                    state: str = "", target: str = ""):
         """`/auth/act/<name>?app=<id>&return=<url>&state=<opaque>`: one action of the own account in the
         application's frame, with the way back (`_actions`). A GET changes nothing; the page's buttons call the same
         routes as the account page, each with its own CSRF and step-up checks."""
@@ -75,6 +75,13 @@ def add_routes(r, auth, cfg) -> None:
         host = ctx["frame"]["host"] if ctx["frame"] else None
         view = auth.account_overview(u, app_host=host, request=request) or {}
         available = name in _actions.offered(auth, view)
+        target_session = None
+        if action.target == "session":
+            # One session of this account by its handle — not the current one (that is signing out): anything else
+            # is "not offered", the same answer for a foreign handle as for an invented one.
+            target_session = next((s for s in (view.get("sessions") or {}).get("items") or []
+                                   if target and s.get("handle") == target and s.get("current") is not True), None)
+            available = available and target_session is not None
         if available and action.fresh:
             # Class `window`: a stale confirmation goes to the reauth page first and comes back here (the frame rides
             # along inside `next`).
@@ -83,7 +90,7 @@ def add_routes(r, auth, cfg) -> None:
                 return RedirectResponse(target, 303)
         done_here = path + "?" + urlencode(query + [("ts_done", "1")])
         ctx.update(account_ctx(auth, request, u, view))
-        ctx.update(action=action, available=available, done=request.query_params.get("ts_done") == "1",
+        ctx.update(action=action, available=available, target_session=target_session, done=request.query_params.get("ts_done") == "1",
                    way_back=_actions.way_back(auth, request, ctx, name, return_, state),
-                   totp_next=done_here, revoke_next=done_here)
+                   totp_next=done_here)
         return _actions.no_framing(auth.render_page("action", request=request, user=u, **ctx))

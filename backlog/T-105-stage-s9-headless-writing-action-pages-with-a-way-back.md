@@ -34,10 +34,11 @@ Re-estimated from the code: about 44 SP in all — own action pages with the reg
 browser test 8, the five clients normalizing `actions` and the handle 5, the administrator's actions (class `each`,
 sign-in link instead of "set a password") 13. This stage carries the acceptance (Ex4) first:
 
-- Part 1: the register (`tinysesam/_actions.py`: scope, class, sections, `fresh`), the route `/auth/act/<name>`, the
+- Part 1 (with part 2 in one pull request): the register (`tinysesam/_actions.py`: scope, class, sections, `fresh`), the route `/auth/act/<name>`, the
   way back with `ts_action`/`ts_result`/`state`, the own action pages from the account page's sections, `actions` in
   `account_overview`/`account.json`, spec §8c.
-- Part 2: the session handle (schema 29) and ending one session.
+- Part 2: the session handle (schema 29: table `session_handle`, trigger, kept through a rotation), `POST
+  /auth/sessions/end`, the action page `session_end`, `handle`/`end` per session in `account.json`.
 - Part 3: example Ex4 and its browser test.
 
 Proposed as follow-ups: the administrator's actions on action pages (scope `admin`, class `each`, sign-in link instead

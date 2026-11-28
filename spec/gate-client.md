@@ -463,7 +463,9 @@ The members (TinySesam's answer; `null` means "not offered by this installation"
 Besides these, the answer carries `actions` (T-105): the action pages of §8c — `username`, `email`, `password`, `pin`,
 `totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — each an `href`
 or `null` (not offered to this account). A helper does not normalize it and drops it like any member it does not know
-(the vector `signed-in` carries it); the application's page reads it in the browser and follows the addresses.
+(the vector `signed-in` carries it); the application's page reads it in the browser and follows the addresses. In the
+same way every entry of `sessions.items` carries `handle` (the session handle: an opaque random reference, never the
+token or its hash) and `end` (the action page that ends exactly that session, `null` for the session of the request).
 
 Times are Unix seconds (integer) or `null` (never used). `device` is a coarse "browser · system" taken from the
 User-Agent, or `null`; `current` is `true` for the session of this request, `false` for the others, `null` when the
@@ -507,6 +509,9 @@ GET <actions.password>&return=<url>&state=<opaque>        (?return=… when the 
   → the way back: <url>?ts_action=password&ts_result=done&state=<opaque>
 ```
 
+- **One object.** `session_end` acts on one session: its address is the member `end` of that session in §8a
+  (`…/auth/act/session_end?target=<handle>`), not a member of `actions`. A handle of another account, an unknown one or
+  that of the current session gives the page "not offered" — one answer for all three.
 - **The request.** The application adds `return` — the address to come back to, an `http(s)` URL on its own host — and
   optionally `state` (printable ASCII `0x21`–`0x7e`, at most 128 characters; anything else is dropped). TinySesam
   accepts a `return` that passes its redirect rule (the host of `base_url` or of `trusted_redirect_hosts`, no user

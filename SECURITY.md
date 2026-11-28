@@ -529,6 +529,9 @@ sending the person there.
   reads `account.json` again, and a binding confirmation is an approval.
 - **No secret leaves TinySesam's origin**: a password, a code, an API key, an app password or a pairing code is typed
   or shown on the action page only, and the way back carries none.
+- **The session handle** (schema 29) is a random reference of its own per session, never the token or its hash: it
+  names a session to end and signs nobody in. Ending by it (`POST /auth/sessions/end`) wants a fresh confirmation, ends
+  only a session of the same account (a foreign handle is 404, like an unknown one) and never the current one.
 - **Rate and log:** 60 reads per account and minute; a refusal (429, `Retry-After`) writes a
   `failed verification … reason=ratelimit_account_json` line, never `failed login` (the fail2ban jail stays quiet).
   Reads are not audited (own data; every change is).

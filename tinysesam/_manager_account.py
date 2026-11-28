@@ -335,12 +335,14 @@ def _frame_app(self, request: Optional[Request]) -> str:
 def _own_session_rows(self, user_id, current_hash: Optional[str] = None) -> list:
     """The sessions of an account as the account page lists them — one source for `GET /auth/sessions` and
     `account_overview`. Every row: created_at, last_seen, method, ip, user_agent (cut to 120), current (None
-    without a known current session)."""
+    without a known current session), handle (the session handle, T-105: the target of ending this one session; None
+    without one)."""
     out = []
     for s in self.store.list_sessions(user_id):
         out.append({"created_at": s["created_at"], "last_seen": s["last_seen"], "ip": s["ip"],
                     "method": s["method"], "user_agent": (s["user_agent"] or "")[:120],
-                    "current": (s["token_hash"] == current_hash) if current_hash else None})
+                    "current": (s["token_hash"] == current_hash) if current_hash else None,
+                    "handle": s["public_handle"]})
     return out
 
 
@@ -357,7 +359,8 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     Members: `account` (username, display name, `source`: where the account comes from — a list of `local`, `oidc`,
     `saml`, `ldap`, two or more for a mixed account, T-99); `sign_in` — `password` ("set", "unset", "directory" or None when
     passwords are off), `totp` ({enabled, recovery_left, recovery_low} or None), `passkeys` ({count, items} or None),
-    `pin` (bool or None); `sessions` ({count, items: created_at, last_seen, method, device, current}); `programs` —
+    `pin` (bool or None); `sessions` ({count, items: created_at, last_seen, method, device, current, handle, end — the
+    session handle and the action page that ends this session, T-105, None for the current one}); `programs` —
     `oauth`, `services`, `app_passwords` (lists of {name, created_at, last_used}, None when the feature is off) and
     `api_keys_active` (a number, None when keys are off); `approvals` ({pending} or None); `permissions` ({app, names}:
     the account's permissions for the application whose `apps[id].hosts` name `app_host`, T-101 — None for any other
@@ -405,8 +408,12 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
         # The own cookie, on an application's host also its connection (T-26) — the session of this request.
         s = self._gate_session(request, self._gate_host(request))
         current = s["token_hash"] if s and s["user_id"] == uid else None
+    # T-105: the session handle and, for every session but this request's own, the action page that ends it.
+    end = (f"{base}/auth/act/session_end?" + (f"app={quote(frame['host'], safe='')}&" if frame else "") + "target="
+           if cfg.account_enabled else None)
     sessions = [{"created_at": s["created_at"], "last_seen": s["last_seen"], "method": s["method"],
-                 "device": self._coarse_agent(s["user_agent"]), "current": s["current"]}
+                 "device": self._coarse_agent(s["user_agent"]), "current": s["current"], "handle": s["handle"],
+                 "end": (end + s["handle"]) if end and s["handle"] and s["current"] is not True else None}
                 for s in self._own_session_rows(uid, current)]
     oauth = services = None
     if cfg.oauth_enabled:
