@@ -507,6 +507,9 @@ async def part_c(p: Page) -> None:
     await p.cmd("Emulation.setDeviceMetricsOverride", width=1280, height=900, deviceScaleFactor=1, mobile=False)
 
     async def matrix(uid: int, age: bool) -> None:
+        # Leave the previous account's page first: a request it still sends would go out with the next account's
+        # cookies — or with none, between clearing and setting them (a 401 that was the test's own doing).
+        await p.go("about:blank")
         await p.cmd("Network.clearBrowserCookies")
         token, _ = mx_auth.start_session(uid, "password")
         if age:                                     # signed in long ago: no fresh confirmation any more
@@ -521,14 +524,21 @@ async def part_c(p: Page) -> None:
     def box(app: str, perm: str, role: str) -> str:
         return f"document.querySelector('input[aria-label=\"{role} · {perm}\"]')"
 
+    async def tick(app: str, perm: str, role: str) -> None:
+        """Assign by a click and wait until the panel has drawn the matrix anew from the server (`permsview` after the
+        answer) with the box ticked — the server's state, and no request of the panel still on its way."""
+        await p.js("document.querySelector('table.permgrid').__old=true;" + f"{box(app, perm, role)}.click();true")
+        await p.until(f"!document.querySelector('table.permgrid').__old && {box(app, perm, role)}.checked",
+                      f"the matrix was not drawn anew with {role} · {perm} ticked")
+        await _until_py(lambda: _held(app, perm, role), f"{role} · {perm} not assigned")
+
     # 1. The administrator: an ordinary permission is assigned at once, a dangerous one only after the step-up.
     await matrix(ADA, age=True)
     cards = await p.js("[...document.querySelectorAll('table.permgrid')].length")
     assert cards == 2, f"the administrator sees {cards} applications"
     danger = await p.js("document.querySelector('#perm-docs-docs\\\\.delete th').innerText")
     assert "⚠" in danger and "dangerous" in danger.lower(), f"the danger is not said in words: {danger!r}"
-    await p.js(f"{box('docs', 'docs.read', 'docs-reader')}.click();true")
-    await _until_py(lambda: _held("docs", "docs.read", "docs-reader"), "an ordinary permission was not assigned")
+    await tick("docs", "docs.read", "docs-reader")
     assert await p.js("location.pathname") == "/auth/admin", "an ordinary permission asked for a step-up"
     await p.js("window.__old=true;" + f"{box('docs', 'docs.delete', 'docs-editor')}.click();true")
     await p.until("window.__old===undefined && location.pathname==='/auth/reauth' && document.readyState==='complete'"
@@ -547,8 +557,7 @@ async def part_c(p: Page) -> None:
                   "the reauth page did not lead back to the panel")
     await p.js("location.hash='#perms';true")
     await p.until("!!document.querySelector('table.permgrid')", "permission matrix not built after the step-up")
-    await p.js(f"{box('docs', 'docs.delete', 'docs-editor')}.click();true")
-    await _until_py(lambda: _held("docs", "docs.delete", "docs-editor"), "not assigned after the step-up")
+    await tick("docs", "docs.delete", "docs-editor")
     await clean(p, "the panel after the step-up", console_before, failed_before)
     ok("C1 permission matrix, administrator: an ordinary permission is assigned at once; a dangerous one (⚠ and the "
        "word) sends a signed-in-long-ago administrator over the reauth page and back, and only then is assigned")
@@ -560,8 +569,7 @@ async def part_c(p: Page) -> None:
     heads = await p.js("[...document.querySelector('table.permgrid').querySelectorAll('thead th')]"
                        ".slice(1).map(t=>t.innerText.split('\\n')[0])")
     assert heads == ["docs-editor", "docs-reader"], f"the area administrator sees the roles {heads}"
-    await p.js(f"{box('docs', 'docs.read', 'docs-editor')}.click();true")
-    await _until_py(lambda: _held("docs", "docs.read", "docs-editor"), "the area administrator could not assign")
+    await tick("docs", "docs.read", "docs-editor")
     r = await p.js("fetch('/auth/admin/api/permissions/assign',{method:'POST',headers:{'Content-Type':"
                    "'application/json','X-CSRF-Token':(document.cookie.match(/(?:^|; )"
                    f"{mx_auth.csrf_cookie_name}=([^;]+)/)||[])[1]||''}},body:JSON.stringify({{app:'wiki',"
