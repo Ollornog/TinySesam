@@ -75,6 +75,29 @@ switch ($path) {
         header('Content-Type: application/json');
         echo '{"authenticated":false,"signed_in":false}';
         break;
+    case '/auth/api/apps/docs/permissions':
+    case '/auth/api/apps/deny/permissions':
+    case '/auth/api/apps/text/permissions':
+    case '/auth/api/apps/hang/permissions':
+        // The permission registration (spec section 3.4): method, API key, content type and body go to TS_HITS.
+        if (is_string($hits) && $hits !== '') {
+            $text = static fn (string $name): string => is_string($_SERVER[$name] ?? null) ? $_SERVER[$name] : '';
+            $seen = ['method:' . $text('REQUEST_METHOD'), 'key:' . $text('HTTP_X_API_KEY'),
+                'type:' . $text('CONTENT_TYPE'), 'body:' . file_get_contents('php://input')];
+            file_put_contents($hits, implode("\n", $seen) . "\n", FILE_APPEND | LOCK_EX);
+        }
+        header('Content-Type: application/json');
+        if (str_contains($path, '/deny/')) {
+            http_response_code(403);
+            echo '{"detail":"missing scope permissions:register"}';
+        } elseif (str_contains($path, '/text/')) {
+            echo 'registered';
+        } elseif (str_contains($path, '/hang/')) {
+            sleep(30);
+        } else {
+            echo '{"added":["docs.read"],"updated":[],"returned":[],"orphaned":[]}';
+        }
+        break;
     case '/identify':
         header('Content-Type: application/json');
         try {

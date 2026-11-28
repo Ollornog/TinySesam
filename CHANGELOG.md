@@ -61,6 +61,10 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- The PHP client's `Permissions::register()` has an HTTP test of its own (T-140, `tests/RegisterHttpTest.php`): a
+  `PUT` with the key in `X-Api-Key` and the manifest as the body, any answer but `200` (and one that is no JSON object,
+  and no answer at all) a `RegistrationFailed` without the key in its text, and the 5-second deadline against a server
+  that never answers.
 - The five gate clients normalise `events`, `programs.api_keys` and `admin` of `account.json` (T-161, spec §8a) — a
   list of `{at, event, by_admin}`, a list of `{name, kind, created_at, last_used, expires_at}` or `null`, and
   `{accounts}` (a safe href) or `null`; they used to drop them. New helper for the administration data (spec §8b):
