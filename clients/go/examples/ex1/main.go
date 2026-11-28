@@ -41,6 +41,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -170,6 +171,11 @@ func main() {
 	if authURL == "" {
 		log.Fatal("TS_AUTH_URL is not set (the address of TinySesam, e.g. https://auth.example.com)")
 	}
+	// B-21: the shell draws a brand_icon given as a path from TinySesam's origin; the page's CSP lets images come from
+	// there (an icon given as data:image/… needs nothing).
+	if u, err := url.Parse(authURL); err == nil && u.Scheme != "" && u.Host != "" {
+		imageSources += " " + u.Scheme + "://" + u.Host
+	}
 	// The proxy of deploy/ex1 reaches the application over the compose network; only it may set Remote-* headers.
 	proxies := []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32"), netip.MustParsePrefix("::1/128")}
 	if extra := os.Getenv("TS_TRUSTED_PROXY"); extra != "" {
@@ -199,6 +205,9 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
+// imageSources is the img-src of the pages' CSP: the own origin, data: and TinySesam's origin (set in main).
+var imageSources = "'self' data:"
+
 // pageStyle is the page's own CSS: colours only through TinySesam's --ts-* tokens, which shell.css brings.
 const pageStyle = "body{margin:0;background:var(--ts-bg)}main{max-width:760px;margin:0 auto;padding:24px 16px;" +
 	"font-family:var(--ts-font);color:var(--ts-ink)}main a{color:var(--ts-link)}main li{margin:6px 0}"
@@ -215,7 +224,7 @@ func page(w http.ResponseWriter, title, current, body string) {
 	nonce := base64.RawURLEncoding.EncodeToString(raw)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+
-		nonce+"'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
+		nonce+"'; img-src "+imageSources+"; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
 	_, _ = fmt.Fprintf(w, "<!doctype html><html lang=en><head><meta charset=utf-8>"+
 		"<meta name=viewport content=\"width=device-width,initial-scale=1\"><title>%s</title><link rel=icon href=\"data:,\">"+
 		"<script src=\"/.tinysesam/shell.js\" nonce=\"%s\"></script><style nonce=\"%s\">%s</style></head><body>"+

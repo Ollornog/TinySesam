@@ -5,7 +5,8 @@
      instance the component from `/auth/shell.js` draws exactly the markup of `auth.topbar()` (`topbar.py`), the only
      difference by design being "Sign out" (a link instead of a form).
   B. Server (Go): example Ex1 as surface "shell on top" — the Go program behind a forward-auth proxy, the component from
-     `/.tinysesam/shell.js` on the application's host with the frame of `forward_apps` and the permission links.
+     `/.tinysesam/shell.js` on the application's host with the frame of `forward_apps` and the permission links; on a
+     host without a frame the logo of a relative `brand_icon` loads from TinySesam's origin (B-21).
   C. The permission matrix of the panel (T-100): a dangerous permission asks for a step-up, an area administrator sees
      only the own area.
 
@@ -287,8 +288,12 @@ if GO:
     toml = (toml.replace("https://auth.example.com", f"http://{AUTH_HOST}").replace("example.com", "example.test")
             .replace('trusted_proxies = ["172.30.0.0/16"]', 'trusted_proxies = ["127.0.0.1/32"]')
             .replace('https_mode = "warn"', 'https_mode = "warn"\ncookie_secure = false\n'
-                                            'cookie_domain = ".example.test"'))
-    assert "example.com" not in toml and "cookie_domain" in toml, "deploy/ex1/tinysesam.toml changed its shape"
+                                            'cookie_domain = ".example.test"\nbrand_icon = "/brand/ex1.svg"')
+            # B-21: a second host of the Go program without an app frame — there the shell draws the logo.
+            .replace('trusted_redirect_hosts = ["app.example.test"]',
+                     'trusted_redirect_hosts = ["app.example.test", "plain.example.test"]'))
+    assert "example.com" not in toml and "cookie_domain" in toml and "plain.example.test" in toml, \
+        "deploy/ex1/tinysesam.toml changed its shape"
     with open(os.path.join(_tmp, "tinysesam.toml"), "w", encoding="utf-8") as fh:
         fh.write(toml)
     _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("TINYSESAM_")}
@@ -296,6 +301,13 @@ if GO:
     try:
         from tinysesam import gateway
         ex1_app = gateway.build_app()
+
+        @ex1_app.get("/brand/ex1.svg")
+        def _brand_icon():
+            """The relative brand_icon of B-21, served on TinySesam's origin (as a proxy or the operator would)."""
+            from fastapi.responses import Response
+            return Response("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'><rect width='8' height='8'/></svg>",
+                            media_type="image/svg+xml")
     finally:
         for _k in ("TINYSESAM_CONFIG", "TINYSESAM_DB"):
             os.environ.pop(_k, None)
@@ -350,6 +362,8 @@ if GO:
         lines = raw.split(b"\r\n\r\n", 1)[0].decode("latin-1").split("\r\n")
         return int(lines[0].split(" ", 2)[1]), [tuple(x.strip() for x in z.split(":", 1)) for z in lines[1:] if ":" in z]
 
+    APP_NAMES = ("app.example.test", "plain.example.test")    # plain: the Go program on a host without a frame (B-21)
+
     async def _proxy(reader, writer):
         """The proxy, on the bytes: one request per connection, the upstream's answer passed back unchanged."""
         try:
@@ -362,9 +376,9 @@ if GO:
             name = host.split(":")[0]
             own = [(k, v) for k, v in pairs if k.lower() not in HOP and not k.lower().startswith(("remote-", "x-forwarded-"))]
             fwd = [("X-Forwarded-Host", host), ("X-Forwarded-Proto", "http"), ("X-Forwarded-For", "127.0.0.1")]
-            if name == "auth.example.test" or (name == "app.example.test" and target.startswith("/.tinysesam/")):
+            if name == "auth.example.test" or (name in APP_NAMES and target.startswith("/.tinysesam/")):
                 out = await _upstream(TS_PORT, method, target, own + fwd + [("Host", host)], body)
-            elif name == "app.example.test":
+            elif name in APP_NAMES:
                 check = await _upstream(TS_PORT, "GET", "/auth/forward", [
                     ("Cookie", low.get("cookie", "")), ("Accept", low.get("accept", "")), ("X-Forwarded-Uri", target),
                     ("X-Forwarded-Method", method), *fwd, ("Host", AUTH_HOST)], b"")
@@ -462,6 +476,18 @@ async def part_b(p: Page) -> None:
     await clean(p, "the framed account page", console_before, failed_before)
     ok("B2 the component's theme switch sets `dark` on <html> and keeps it; a click outside closes the menu; the Go "
        "route refuses /staff to a member (403); Security opens TinySesam's account page in Ex1's frame")
+
+    # B-21: on a host without an app frame the component draws the logo — a `brand_icon` given as a path must load from
+    # TinySesam's origin, not from the application's host (where it is no file: a broken request).
+    plain = f"http://plain.example.test:{PROXY_PORT}"
+    await p.go(plain + "/", drawn)
+    logo = f"{root}.querySelector('img.tsbar-logo')"
+    assert await p.js(f"{logo}.getAttribute('src')") == f"http://{AUTH_HOST}/brand/ex1.svg", \
+        await p.js(f"{logo}.getAttribute('src')")
+    await p.until(f"{logo}.complete&&{logo}.naturalWidth>0", "the logo of the relative brand_icon did not load")
+    await clean(p, "Ex1 on a host without a frame, with a relative brand_icon", console_before, failed_before)
+    ok("B3 a relative brand_icon in the component's logo loads from TinySesam's origin; the Go page's CSP allows it, no "
+       "broken request (B-21)")
 
 
 # ══ C. The permission matrix of the panel (T-100) ════════════════════════════════════════════════════════════════

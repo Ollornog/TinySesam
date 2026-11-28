@@ -511,7 +511,8 @@ M-2.
   its own nonce, and defines `<ts-shell>`. The element fetches `topbar.json` beside the script (same origin, the
   browser's cookies) and draws the bar of TinySesam's own pages in its shadow DOM, with the same CSS. A page with a
   strict CSP needs nothing but the nonce on the `<script>`: every element the component adds carries it, and it uses no
-  inline handler, no `style=` attribute and no system dialog.
+  inline handler, no `style=` attribute and no system dialog. Only a logo (`brand_icon`) given as a path is an image
+  on TinySesam's origin (`base_url`), so such a page's `img-src` names that origin; a `data:image/…` logo needs nothing.
 - **Attributes.** `layout`: `top` (the top bar) or `side` (a 248 px side bar on the left; the `<body>` gives way with
   `padding-left`; below 900 px it folds back into the top bar). Without it the answer's `frame.layout` holds.
   `current`: the path of the page shown; the link to it carries `aria-current="page"`.

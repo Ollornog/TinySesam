@@ -187,3 +187,13 @@ if node:
 ok("assets: /auth/shell.js (texts in the instance's language, ETag/304, nosniff, no system dialog) and "
    "/auth/shell.css (tokens, side layout, host rules, no colour outside the tokens); /.tinysesam/ on a protected "
    "host only; 404 with topbar_enabled=False; node --check")
+
+# B-21: the component draws the logo on the application's page — a `brand_icon` given as a path goes out as an address
+# on TinySesam's origin (the origin of `base_url`), a data: address unchanged.
+_, logo_app, *_ = make(brand_icon="/brand/logo.svg")
+js = TestClient(logo_app).get("/auth/shell.js").text
+assert "src='https://auth.example.com/brand/logo.svg'" in js and "src='/brand/logo.svg'" not in js, \
+    "a path brand_icon in shell.js is not an address on TinySesam's origin"
+_, data_app, *_ = make(brand_icon="data:image/png;base64,iVBORw0KGgo=")
+assert "src='data:image/png;base64,iVBORw0KGgo='" in TestClient(data_app).get("/auth/shell.js").text
+ok("B-21: a path brand_icon goes into shell.js as an address on TinySesam's origin, a data: address unchanged")

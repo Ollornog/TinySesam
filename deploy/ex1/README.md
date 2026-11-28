@@ -37,7 +37,8 @@ people in, its admin panel and account page manage them, and the application cre
   `<ts-shell current="/…">` first in `<body>`. The bar carries the application's frame from `[forward_apps."…"]`
   (‹ Ex1 back home, *Members* for holders of `ex1.members.read`, *Staff* for the role `ex1-staff`) and the layout of
   `apps.ex1.layout`; the account menu leads to TinySesam's account page in Ex1's frame. The pages carry a strict CSP
-  with a fresh nonce and colour themselves only with TinySesam's `--ts-*` tokens.
+  with a fresh nonce (images also from TinySesam's origin, for a `brand_icon` given as a path, B-21) and colour
+  themselves only with TinySesam's `--ts-*` tokens.
 
 `tests/test_example_ex1.py` builds the server from this `tinysesam.toml` and makes the calls of the Go program; the
 client-go workflow builds and vets the program. `tests/test_shell_browser.py` (part B) runs the whole stack — this
