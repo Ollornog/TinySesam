@@ -8,10 +8,10 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 26/36 erledigt
-* ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/6 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 26/37 erledigt
+* ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/7 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
-* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 92/106 erledigt
+* ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 92/110 erledigt
 * ☑ **[M-6](M-6-gate-in-front-of-third-party-apps.md)** Gate in front of third-party apps — fast, sign in once, sign out cleanly — 8/8 erledigt
 
 ## Aufgaben
@@ -171,6 +171,11 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-153](T-153-test-shell-browser-py-on-the-shared-tests-browser.md)** test_shell_browser.py on the shared tests/_browser_stack.py · M-5
 * ☐ **[T-154](T-154-codeql-py-unused-global-variable-on-urls-and-hashe.md)** CodeQL py/unused-global-variable on _URLS_AND_HASHES in test_english_code.py · M-5
 * ☐ **[T-155](T-155-duplicate-import-of-security-in-tinysesam-router-p.md)** Duplicate import of security in tinysesam/router.py · M-5
+* ☐ **[T-156](T-156-administration-action-confirmed-by-passkey-or-prov.md)** Administration action confirmed by passkey or provider sign-in · M-3
+* ☐ **[T-157](T-157-panel-field-for-the-app-of-an-invitation.md)** Panel field for the app of an invitation · M-5
+* ☐ **[T-158](T-158-gate-clients-parse-the-return-of-an-action-page.md)** Gate clients parse the return of an action page · M-2
+* ☐ **[T-159](T-159-client-http-tests-stale-comment-about-dropped-memb.md)** Client HTTP tests: stale comment about dropped members · M-5
+* ☐ **[T-160](T-160-passkey-start-warning-and-operations-promise-a-sta.md)** Passkey start warning and OPERATIONS promise a start that the router build refuses · M-5
 
 ## Fehler
 
@@ -195,6 +200,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[B-19](B-19-a-removed-role-keeps-its-permission-assignments.md)** A role removed from available_roles keeps its permission assignments · M-2
 * ☑ **[B-20](B-20-a-role-removed-and-re-added-at-runtime-keeps-its-assignments.md)** A role removed and re-added at runtime keeps its permission assignments · M-2
 * ☑ **[B-21](B-21-brand-icon-path-in-the-shell-resolves-on-the-application-host.md)** A brand_icon path in the shell logo resolves on the application's host · M-2
+* ☐ **[B-22](B-22-role-removed-and-re-added-between-two-permission-c.md)** Role removed and re-added between two permission checks stays unnoticed · M-5
 
 ## Entscheidungen (ADR)
 
