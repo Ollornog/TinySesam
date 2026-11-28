@@ -1,7 +1,7 @@
 ---
 type: Task
 title: Browser coverage of the remaining action pages in Ex4
-status: offen
+status: erledigt
 points: 3
 id: T-149
 milestone: M-2

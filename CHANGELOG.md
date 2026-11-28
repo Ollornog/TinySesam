@@ -285,12 +285,19 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
   finding the sprint adds is red with an annotation; one already on `main`, open or dismissed, is not; no analysis to
   compare with is red too. The other CodeQL jobs skip in the sprint lane, Go and Rust stay with the closing pull
   request. Three sprints in a row the closing pull request was red on CodeQL in its first run.
+- Example Ex4 turns on every own action page (T-149): PIN, passkeys, app passwords for its host and services join
+  password, TOTP, API keys, sessions and programs; the address change appears once a mailer is configured.
+  `tests/test_headless_browser.py` (X7) drives user name, address (the mail's link confirms it), PIN, authenticator
+  app (set up from the action page and back to it), recovery codes, an app password, a service's pairing code and a
+  passkey (virtual authenticator) from the settings page and back with `done`; X5 now also proves that the TOTP
+  secret, the codes, the app password, the pairing code and the links never reach the application.
 - CI: the sprint lane runs a gate client's jobs when a sprint pull request changes that client, the specification
   `spec/` or the client's workflow (T-150). The job `classify` asks the new `scripts/_client_scope.sh` with the
   workflow's name and answers `nur_text=ja` only when it says no; the scope steps of the client jobs ask the same
   script, so the pattern lives once. The fast checks (the repository's extra of the pre-push hook, also in the sprint lane) run the
   Python client's vector and HTTP suites on a change of `spec/`, its generators or `tinysesam/gate_client.py`. The
-  closing pull request of sprint S7 was red at the clients' HTTP tests because every client job had skipped.
+  closing pull request of sprint S7 was red at the clients' HTTP tests because every client job had skipped. The extra picks a
+  Python that imports FastAPI (a linked worktree has no `.venv` of its own).
   `tests/test_codeql_sprint.py` checks the comparison, the choice of analyses and the workflow.
 - `topbar.json` on an application's host with an app frame (T-103): `account.href` and `approvals.href` carry
   `app=<host>`, so TinySesam's pages open in the application's frame — as `account.json` already did.
