@@ -531,10 +531,6 @@ def split_comment(line: str) -> tuple:
     return line, ""
 
 
-#: `de = "…"` in a TOML line — the German translation of an interface text (a value without a quote inside).
-_TOML_DE_VALUE = re.compile(r'\bde\s*=\s*"[^"\n]*"')
-
-
 def nonpython_text_findings(path: str, text: str) -> list:
     """[(path:line, text, words)] — German words in a text that is not Python.
 
@@ -552,7 +548,7 @@ def nonpython_text_findings(path: str, text: str) -> list:
         if path.endswith(".toml"):
             # The German half of the interface, as under a `"de"` key in Python: `de = "…"` inside a TOML table of
             # languages (an application's name or a permission's label in a server configuration, T-104).
-            code = _TOML_DE_VALUE.sub(" ", code)
+            code = re.sub(r'\bde\s*=\s*"[^"\n]*"', " ", code)
         found = set(german_in_text(comment)) if comment else set()
         if not only_comments:
             found |= set(german_in_text(code, quoted=True))

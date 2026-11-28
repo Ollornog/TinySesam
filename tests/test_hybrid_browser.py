@@ -101,7 +101,7 @@ if NODE:
     assert _kim.get(f"/auth/oidc/callback?code=x&state={_state}").status_code == 303
     KIM_TOKEN = _kim.cookies.get(auth.session_cookie_name)
     assert KIM_TOKEN and auth.user_roles(auth.store.get_user_by_name("kim")) == ["team-docs"]
-    LOU = int(auth.create_user("lou", password=PW, roles=["docs-local"]))
+    auth.create_user("lou", password=PW, roles=["docs-local"])     # signs in through the pages (H1)
     ADA = int(auth.create_user("ada", password=PW, is_admin=True))
     NIA = int(auth.create_user("nia", password=PW))
     for _role in ("team-docs", "docs-local"):
