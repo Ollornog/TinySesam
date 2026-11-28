@@ -39,7 +39,9 @@ schweren Jobs überspringen; ebenso bei einem Pull Request, der nur Text ändert
 Suite läuft einmal, im abschließenden Pull Request nach `main`. Ein Sprint-Pull-Request, der einen Gate-Client, die
 Spezifikation `spec/` oder den Workflow eines Clients ändert, fährt die Jobs dieses Clients trotzdem
 (`scripts/_client_scope.sh`; die Vektor- und HTTP-Suiten des Python-Clients laufen in den schnellen Prüfungen,
-`.githooks/pre-push.zusatz`). `tests/test_ci_aggregate.py` hält jeden Workflow daran.
+`.githooks/pre-push.zusatz`); ein Sprint-Pull-Request, der die Bibliothek, ein Beispiel oder eine Browser-Suite
+ändert, fährt den Browser-Job (eigener Klassifizierer `classify-browser`, Bereich `browser`).
+`tests/test_ci_aggregate.py` hält jeden Workflow daran.
 
 ```bash
 git switch -c meine-aenderung

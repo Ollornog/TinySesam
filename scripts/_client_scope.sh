@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# _client_scope.sh <workflow> — does this pull request touch the gate client a workflow checks? (T-150)
+# _client_scope.sh <workflow> — does this pull request touch the gate client a workflow checks? (T-150) Also the
+# scope `browser`: the browser suites of ci.yml (job `browser`, its own classifier `classify-browser`).
 #
 # The one place for the scope of the client workflows (client-go, client-js, client-php, client-rust): the client's
 # folder, the specification spec/ (its text and vectors concern every client) and the workflow itself; for Go also the
@@ -20,8 +21,11 @@ case "${1:-}" in
     client-js) pattern='^(clients/js/|spec/|\.github/workflows/client-js\.yml$)' ;;
     client-php) pattern='^(clients/php/|spec/|\.github/workflows/client-php\.yml$)' ;;
     client-rust) pattern='^(clients/rust/|spec/|\.github/workflows/client-rust\.yml$)' ;;
+    # The browser suites drive TinySesam's pages and the examples behind a proxy: the library, the examples and their
+    # deployments, the suites and their helpers, the workflow. (The sprint lane missed it for T-149: #451 was red.)
+    browser) pattern='^(tinysesam/|examples/|clients/js/examples/|deploy/ex[0-9]+/|tests/test_[a-z_]*browser\.py$|tests/_browser_stack\.py$|tests/_cdp\.py$|tests/voraussetzung\.py$|\.github/workflows/ci\.yml$)' ;;
     *)
-        echo "workflow ${1:-<none>} checks no gate client"
+        echo "workflow ${1:-<none>} has no scope here"
         exit 1
         ;;
 esac
@@ -31,8 +35,8 @@ if ! changed="$(git diff --name-only --no-renames HEAD^1 HEAD 2>/dev/null)"; the
 fi
 hit="$(grep -m1 -E -e "$pattern" <<<"$changed")"
 if [[ -n "$hit" ]]; then
-    echo "$1: the pull request changes $hit (the client, spec/ or the workflow) — the client's tests run"
+    echo "$1: the pull request changes $hit — its tests run"
     exit 0
 fi
-echo "$1: nothing of the client, spec/ or the workflow changed"
+echo "$1: nothing in its scope changed"
 exit 1
