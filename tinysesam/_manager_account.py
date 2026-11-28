@@ -351,11 +351,12 @@ def _own_session_rows(self, user_id, current_hash: Optional[str] = None) -> list
 
 
 def account_overview(self, user, *, base: Optional[str] = None, app_host: Optional[str] = None,
-                     request: Optional[Request] = None) -> Optional[dict]:
+                     request: Optional[Request] = None, app: Optional[str] = None) -> Optional[dict]:
     """The own account's security state as data (T-91) — what the account page shows, for an application that
     draws its own settings page: the same answer `GET /auth/account.json` gives the session.
 
-    `user`: an account dict (`session_user`, `get_user`); a locked, unknown or service account gives None.
+    `user`: an account dict (`session_user`, `get_user`); a locked, unknown or service account gives None. `app`: an
+    application id of `apps` whose permissions `permissions` names when `app_host` belongs to no application (T-142).
     `base` goes in front of the links (default: `base_url`); `app_host` (a host of `forward_apps` with an app
     frame) adds `app=<host>` to them, so the account page opens framed. `request`: the person's request with its
     session cookie — only then does a session carry `current` (True/False); without it `current` is None.
@@ -372,8 +373,9 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     the administration data on the application's host} for a person who administers accounts inside the area of the
     application of `app_host` — `user` from a browser session, `_via` "session" —, None for anyone else, without
     `app_host` or without the panel); `permissions` ({app, names}:
-    the account's permissions for the application whose `apps[id].hosts` name `app_host`, T-101 — None for any other
-    host or without one); `links` (the account page
+    the account's permissions for the application whose `apps[id].hosts` name `app_host`, T-101 — or, when `app_host`
+    names none, for the application `app` (an id of `apps`, T-142: TinySesam's origin, a library) — None otherwise;
+    never another account's); `links` (the account page
     and its sections, absolute); `actions` (T-105: each own action of the register — `username`, `email`, `password`,
     `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — → the
     address of its action page `/auth/act/<name>`, None where not offered). None means "not offered here", `[]` "offered, empty". Never a hash, a secret, a key
@@ -455,9 +457,14 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
         links[key] = f"{account}#{anchor}" if cfg.account_enabled and offered[key] else None
     links["approvals"] = f"{base}/auth/approvals{q}" if pending is not None else None
     source = self.store.account_sources([uid]).get(uid, ["local"])
-    # T-101: on an application's host (`apps[id].hosts`) the account's permissions for that application.
-    app = self._app_of_host(app_host) if app_host else None
-    permissions = {"app": app, "names": self.permissions_of(row, app=app)} if app else None
+    # T-101: on an application's host (`apps[id].hosts`) the account's permissions for that application. T-142: without
+    # such a host, `app` names one application of `apps` by its id (TinySesam's origin, a library); the host wins.
+    host_app = self._app_of_host(app_host) if app_host else None
+    perm_app = host_app
+    if perm_app is None and isinstance(app, str) and app and isinstance(getattr(cfg, "apps", None), dict) \
+            and isinstance(cfg.apps.get(app), dict):
+        perm_app = app
+    permissions = {"app": perm_app, "names": self.permissions_of(row, app=perm_app)} if perm_app else None
     view = {"account": {"username": row["username"], "display_name": row["display_name"] or row["username"],
                         "source": source},
             "sign_in": {"password": password, "totp": totp, "passkeys": passkeys, "pin": pin},
@@ -474,9 +481,9 @@ def account_overview(self, user, *, base: Optional[str] = None, app_host: Option
     # T-106: where the application's own administration page reads its data — only for a person who administers
     # accounts inside this application's area (an administrator, or a delegate of it), by browser session.
     admin = None
-    if app and cfg.admin_enabled:
+    if host_app and cfg.admin_enabled:
         from . import _admin_actions
-        if _admin_actions.area_actor(self, user, app) is not None:
+        if _admin_actions.area_actor(self, user, host_app) is not None:
             admin = {"accounts": "/.tinysesam/admin/accounts.json"}
     view["admin"] = admin
     # T-105: the action pages, where an application sends a person to change something.

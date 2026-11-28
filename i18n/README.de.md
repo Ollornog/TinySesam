@@ -252,7 +252,9 @@ assert auth.permissions_of(auth.get_user(ed["id"]), app="docs") == ["docs.delete
 - **Hinter dem Gate** (`apps[id].hosts`): die Forward-Auth schickt die Berechtigungen des Kontos für die Anwendung
   des angefragten Hosts als `Remote-Permissions` (mit `,` verbunden, wie `Remote-Groups`), das Gate-Token trägt sie als
   `ts_perms`, und `/.tinysesam/account.json` auf diesem Host nennt sie (`permissions: {"app", "names"}`). Ein Host
-  ohne Anwendung bekommt keine. Eine Änderung zählt bei der nächsten Anfrage — am Proxy-Weg, sobald das Gate-Token
+  ohne Anwendung bekommt keine. Auf TinySesams eigenem Ursprung nennt `/auth/account.json?app=<id>` (und
+  `account_overview(user, app=<id>)`) die eigenen Berechtigungen der angemeldeten Person für diese Anwendung (T-142);
+  auf dem Host einer Anwendung entscheidet der Host. Eine Änderung zählt bei der nächsten Anfrage — am Proxy-Weg, sobald das Gate-Token
   abläuft (`gate_token_ttl_sec`). Eine Menge über `PERMISSIONS_VALUE_MAX` Bytes wird mit 403 abgelehnt, nie gekürzt.
   Zuerst die Proxy-Konfiguration aktualisieren: die Vorlagen in `deploy/` entfernen ein vom Client geschicktes
   `Remote-Permissions`.

@@ -49,6 +49,9 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- `/auth/account.json?app=<id>` and `account_overview(user, app=<id>)` (T-142, ADR-17 addendum): the signed-in
+  person's own permissions for one application of `apps` on TinySesam's origin — never another account's; an unknown
+  id gives `null`; on an application's host the host decides and the parameter is ignored.
 - **Headless reading** (T-106, spec §8a, new §8b). `account.json` carries the account's own events (`events`: `at`,
   `event`, `by_admin` — never an address), its API keys by name (`programs.api_keys`: name, kind, times — never the
   prefix) and, for a person who administers accounts inside the application's area, `admin.accounts` (the path of the

@@ -28,5 +28,15 @@ Applications have only roles (`has_role`). Fine-grained rights ("may delete docu
 - **Admin**: accounts, roles, permissions, approvals.
 - **Area administrator** (formerly "delegate", [T-74](T-74-delegated-admins.md)): manages accounts and assigns permissions only for applications in their area; `danger` permissions only with a step-up. The area administration stays a matter of the panel.
 
+## Addendum 2026-11-28 (T-142): one application's permissions without its host
+
+`/auth/account.json?app=<id>` (and `account_overview(user, app=<id>)`) names the signed-in person's OWN permissions
+for one application of `apps` on TinySesam's origin — for a front end there (a library application, the headless pages
+of a library) that has no application host to ask from. Decided yes, because it shows nothing the person could not
+see at that application's host anyway, and limited so it stays that way: no parameter chooses an account; an unknown
+id gives `null`; on an application's host (`/.tinysesam/account.json`) the host decides and the parameter is ignored,
+so an application's page never learns the person's permissions in another application. Another account's permissions
+stay with the account API (`GET /auth/api/users/{id}/permissions?app=`, the application's own service account).
+
 ## Consequences
 Schema 27 (additive: `app_permission`, `role_permission`), see [T-100](T-100-stage-s4-permissions-app-identity-registration-assignme.md) and [T-101](T-101-stage-s5-permissions-at-the-server-and-in-the-clients.md). App identity is unified: `apps[id]` carries `hosts`, `layout`, `permissions`, name and icon; `forward_apps` stays as an alias. Extends [ADR-5](ADR-5-roles-in-forward-auth.md).

@@ -461,7 +461,7 @@ The members (TinySesam's answer; `null` means "not offered by this installation"
 | `approvals` | object or null | `pending` (integer) |
 | `admin` | object or null | on an application's host, for a person who administers accounts inside its area (§8b): `accounts` (the path of the administration data, `/.tinysesam/admin/accounts.json`); `null` for anyone else and on any other host |
 | `events` | list | the account's own events of the account page (T-106), newest first, at most 20: `at` (time), `event` (TinySesam's event name, text — an application shows it or its own word for it, and keeps an unknown one as text), `by_admin` (boolean: another person caused it) |
-| `permissions` | object or null | on an application's host (§3.4): `app` (string, the application id) and `names` (list of strings); `null` on any other host |
+| `permissions` | object or null | on an application's host (§3.4): `app` (string, the application id) and `names` (list of strings); `null` on any other host — except `/auth/account.json?app=<id>` on TinySesam's origin, which names the person's own permissions for that application (T-142; on an application's host the host decides) |
 | `links` | object | `account`, `sessions`, `totp`, `passkeys`, `devices`, `app_passwords`, `services`, `approvals`: each an `href` or `null` |
 | `actions` | object | the own action pages of §8c (T-105): `username`, `email`, `password`, `pin`, `totp`, `recovery_codes`, `passkeys`, `api_keys`, `app_passwords`, `sessions`, `programs`, `services` — each an `href` or `null` (not offered to this account) |
 

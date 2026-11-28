@@ -35,7 +35,7 @@ def add_routes(r, auth, cfg):
                                 headers={**_DATA_HEADERS, "Retry-After": "60"})
         return None
 
-    def _account_json(viewer, request: Request, app_host: str = ""):
+    def _account_json(viewer, request: Request, app_host: str = "", app: str = ""):
         """The account page's state for the account of this request's FULL browser session — an API key, an OAuth
         token, an app password or a half session is "not signed in" (401). No parameter chooses an account. Like the
         bar: `no-store` + `Vary: Cookie`, no CORS header (another origin's page cannot read it), and a request a
@@ -47,7 +47,8 @@ def add_routes(r, auth, cfg):
         if refused is not None:
             return refused
         base = (security.normalize_base(str(cfg.base_url or "").strip()) or "").rstrip("/") or auth._prefix(request)
-        view = auth.account_overview(viewer, base=base, app_host=app_host or None, request=request)
+        view = auth.account_overview(viewer, base=base, app_host=app_host or None, request=request,
+                                     app=app[:32] or None)
         if view is None:
             return JSONResponse({"authenticated": False, "signed_in": False, "error": "signed_out"}, 401,
                                 headers=_DATA_HEADERS)
@@ -67,7 +68,9 @@ def add_routes(r, auth, cfg):
         return JSONResponse(data, headers=_DATA_HEADERS)
 
     @r.get("/auth/account.json")
-    def account_json(request: Request):
-        return _account_json(auth.session_user(request), request)
+    def account_json(request: Request, app: str = ""):
+        """`?app=<id>` (T-142): the person's OWN permissions for that application of `apps` — on TinySesam's origin only;
+        on an application's host (`/.tinysesam/account.json`) the host decides and no parameter names another one."""
+        return _account_json(auth.session_user(request), request, app=app)
 
     return _account_json, _admin_json
