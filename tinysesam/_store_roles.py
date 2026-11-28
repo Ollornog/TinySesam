@@ -295,6 +295,18 @@ def idp_role_sources(self, user_id) -> dict:
     return out
 
 
+def idp_role_deliveries(self) -> dict:
+    """`{account id: {role: [{source, seen_at, held_before}, …]}}` — every role an identity source currently delivers,
+    with the time of its last delivery and whether the account held it by hand before (T-135, the panel's account
+    page). One query for all accounts."""
+    out: dict = {}
+    for r in self._all("SELECT user_id, role, source, seen_at, held_before FROM idp_role_membership "
+                       "ORDER BY user_id, role, source"):
+        out.setdefault(int(r["user_id"]), {}).setdefault(r["role"], []).append(
+            {"source": r["source"], "seen_at": r["seen_at"], "held_before": bool(r["held_before"])})
+    return out
+
+
 def roles_in_use(self) -> list:
     """Every role some account carries, sorted (for the start check against `available_roles`)."""
     out: set = set()

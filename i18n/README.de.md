@@ -2269,7 +2269,9 @@ wie bei jeder Rolle.
   Lieferung und ihrem Anzeigenamen; die Karte **Gruppenimport** listet jede übersprungene Gruppe mit ihrem Grund, eine
   Anmeldung ohne Gruppen-Claim und eine Liste über der Grenze (jeder Hinweis geht, sobald eine spätere Anmeldung ihn
   auflöst, ein ungelöster nach 30 Tagen). Auch die Berechtigungsmatrix markiert die Spalte einer importierten Rolle mit
-  **⇄ vom IdP**.
+  **⇄ vom IdP**. Die Seite eines Kontos listet jede Rolle, die es hält, mit ihrer Herkunft (T-135): **⇄ vom IdP** mit
+  Quelle und letzter Lieferung oder **✋ von Hand vergeben** — beides, wenn das Konto die Rolle schon von Hand hielt,
+  bevor eine Quelle sie lieferte.
 - **Eine vollständige Anwendung:** Beispiel Ex3, [`deploy/ex3`](https://github.com/Ollornog/TinySesam/blob/main/deploy/ex3/README.md) — eine
   Node-Dokumenten-Anwendung hinter dem TinySesam-Server mit Anmeldung über einen OIDC-Provider (importierte
   `team-*`-Gruppen) neben lokalen Konten; `tests/test_example_ex3.py` ist ihre Abnahme: Die Gruppe kommt an, der Administrator vergibt `docs.read` in der

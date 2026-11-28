@@ -652,6 +652,8 @@ MESSAGES = {
         "admin.usage_approvals": "pending approvals",
         "admin.usage_permissions": "assigned permissions",
         "admin.src_idp": "⇄ from IdP ({source}) — last delivered {date}",
+        "admin.role_sources": "Where the roles come from",
+        "admin.role_by_hand": "✋ assigned by hand",
         "admin.idp_mark": "⇄ from IdP",
         "admin.import_title": "Group import",
         "admin.import_hint": "Groups an identity provider delivered at sign-in but that were not imported, and "
@@ -1531,6 +1533,8 @@ MESSAGES = {
         "admin.usage_approvals": "offene Freigaben",
         "admin.usage_permissions": "zugewiesene Berechtigungen",
         "admin.src_idp": "⇄ vom IdP ({source}) — zuletzt geliefert {date}",
+        "admin.role_sources": "Woher die Rollen kommen",
+        "admin.role_by_hand": "✋ von Hand vergeben",
         "admin.idp_mark": "⇄ vom IdP",
         "admin.import_title": "Gruppenimport",
         "admin.import_hint": "Gruppen, die ein Identitätsprovider bei der Anmeldung geliefert hat, die aber nicht "

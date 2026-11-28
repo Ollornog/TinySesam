@@ -433,7 +433,7 @@ _PART_METHODS = {
     ),
     "roles": (
         "_catalog_hook", "_role_usage_locked", "add_catalog_roles", "catalog_roles",
-        "delete_catalog_roles_if_unused", "idp_group_notes", "idp_role_sources", "import_idp_roles",
+        "delete_catalog_roles_if_unused", "idp_group_notes", "idp_role_deliveries", "idp_role_sources", "import_idp_roles",
         "note_idp_groups", "role_usage", "roles_in_use",
     ),
     "sessions": (

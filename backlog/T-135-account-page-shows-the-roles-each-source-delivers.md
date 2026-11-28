@@ -2,7 +2,7 @@
 id: T-135
 type: Task
 title: "Account page in the panel: the roles each source delivers"
-status: offen
+status: erledigt
 points: 2
 milestone: M-2
 tags: [idp, roles, admin]
@@ -23,3 +23,11 @@ assigned by hand.
 ## Acceptance
 - Browser test at 390 px, light and dark, strict CSP: an account with a hand-assigned and an imported role shows both
   with their source.
+
+## Done (S9)
+
+The panel's account page (*Accounts → <account>*, section Access) lists each held role with its source: "⇄ from IdP
+(<source>) — last delivered <date>" per delivering source, "✋ assigned by hand" for a role no source delivers, both for
+a role the account held by hand before a source delivered it. `/api/users` carries `role_sources`
+(`Store.idp_role_deliveries`, one query). `tests/test_browser.py` (group import part, 1280 and 390 px, light and dark,
+strict CSP), `tests/test_group_import.py`.

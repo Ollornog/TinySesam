@@ -388,7 +388,7 @@ def build_admin_router(auth) -> APIRouter:
                                                                 pa.owner_protection, pa.log)
     other_active_admins, roles_from = pa.other_active_admins, pa.roles_from
 
-    def uview(u, apps=None, hint=False, sources=None):
+    def uview(u, apps=None, hint=False, sources=None, deliveries=None):
         managed = u["managed_by"] or None
         app = (apps or {}).get(managed) if managed else None
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -406,6 +406,9 @@ def build_admin_router(auth) -> APIRouter:
                 # Shown only; no decision reads it.
                 "source": (sources if sources is not None else auth.store.account_sources([u["id"]])).get(
                     int(u["id"]), ["local"]),
+                # T-135: which identity source delivers which role, with its last delivery and whether the account held
+                # it by hand before; a held role missing here is assigned by hand. Shown only.
+                "role_sources": (deliveries or {}).get(int(u["id"]), {}),
                 # The account API (stage B): which application manages the account, whether that application is still
                 # configured, and the end of a pending deletion by it.
                 "managed_by": managed,
@@ -429,7 +432,8 @@ def build_admin_router(auth) -> APIRouter:
         # A delegate sees only the accounts in scope — not the names and addresses of everyone else (T-74). An
         # application's account is no exception: in scope only when all its roles are (`may_manage`).
         sources = auth.store.account_sources()   # one query for the list, not one per account
-        return [uview(u, apps, scopes is None, sources) for u in auth.store.list_users()
+        deliveries = auth.store.idp_role_deliveries()
+        return [uview(u, apps, scopes is None, sources, deliveries) for u in auth.store.list_users()
                 if scopes is None or visible(u, me, scopes)]
 
     @ar.post("/api/users")
@@ -1115,7 +1119,7 @@ _KEYS = (
     "usage_links usage_approvals usage_permissions perms_btn perms_title perms_hint perms_none perm_col perm_danger "
     "perm_orphaned perm_suspended perm_delete perm_suggested confirm.perm_delete perm_role_removed perm_withdraw "
     "src_idp idp_mark import_title import_hint import_skipped skip_config skip_catalog skip_case skip_accounts "
-    "skip_ladder skip_invalid skip_full import_missing import_over"
+    "skip_ladder skip_invalid skip_full import_missing import_over role_sources role_by_hand"
 ).split()
 
 
@@ -1267,6 +1271,10 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin tr.click{cursor:pointer}
 .tsadmin tr.click:hover td{background:var(--ts-surface)}
 .tsadmin td.roles{white-space:normal}
+.tsadmin ul.rolesrc{list-style:none;margin:10px 0 0;padding:0}
+.tsadmin ul.rolesrc li{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:4px 0;
+     border-bottom:1px solid var(--ts-line-soft)}
+.tsadmin ul.rolesrc li:last-child{border-bottom:0}
 .tsadmin .chip{display:inline-block;padding:1px 8px;margin:1px 0;border-radius:20px;font-size:11px;
   background:var(--ts-chip);color:var(--ts-ink);border:1px solid var(--ts-line-soft)}
 .tsadmin .chip.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink);border-color:var(--ts-warn-line)}
@@ -1406,6 +1414,14 @@ function chips(u,max){const held=new Set(u.roles||[]),out=[];
   held.forEach(r=>out.push(`<span class=chip>${esc(r)}</span>`));
   if(!out.length)return '<span class=muted>—</span>';
   return out.slice(0,max||99).join(" ")+(max&&out.length>max?` <span class="chip more">+${out.length-max}</span>`:"")}
+// T-135: where each role the account holds comes from — an identity source (⇄ and the word, the source, the time of its
+// last delivery) or by hand (✋ and the word); a role the account held by hand before a source delivered it says both.
+function rolesrc(u){const by=u.role_sources||{};
+  const rows=(u.roles||[]).map(r=>{const d=Array.isArray(by[r])?by[r]:[];
+    const parts=d.map(x=>L.src_idp.replace("{source}",L["source."+x.source]||x.source).replace("{date}",dt(x.seen_at)));
+    if(!d.length||d.some(x=>x.held_before))parts.unshift(L.role_by_hand);
+    return `<li data-role="${esc(r)}"><span class=chip>${esc(r)}</span><span class="muted small">${parts.map(esc).join(" · ")}</span></li>`});
+  return rows.length?`<h3 class=small>${esc(L.role_sources)}</h3><ul class=rolesrc>${rows.join("")}</ul>`:""}
 async function users(){US=await g("/api/users");route()}
 async function refresh(){US=await g("/api/users");route()}
 function nav(h){if(location.hash===h)route();else location.hash=h}
@@ -1513,7 +1529,7 @@ function detail(u){const admin=!SCOPE,svc=u.is_service,self=u.id===ME.id;
       ${u.managed_by?`<dt>${esc(L.managed_by)}</dt><dd class=managed><span class="badge app">${esc(u.managed_name||u.managed_by)}</span>${u.managed_known?"":` <span class=muted>(${esc(L.not_configured)})</span>`}</dd>`:""}</dl></section>
     <section class=card><h2>${esc(L["sec.access"])}</h2>${CAN("roles")?picker("pk",u.roles)+`
       <div class=row>${admin&&!svc?`<label class=mr12><input type=checkbox id=ra${u.is_admin?" checked":""}> ${esc(L["f.admin"])}</label>`:""}
-      <button ${on("saveroles",u.id)}>${esc(L.save)}</button><span id=rs class="muted small" role=status aria-live=polite></span></div>`:chips(u)}</section>
+      <button ${on("saveroles",u.id)}>${esc(L.save)}</button><span id=rs class="muted small" role=status aria-live=polite></span></div>`:chips(u)}${rolesrc(u)}</section>
     ${signin?`<section class=card><h2>${esc(L["sec.signin"])}</h2>${signin}</section>`:""}
     ${appl?`<section class="card appcard"><h2>${esc(L.app_section)}</h2>${appl}</section>`:""}
     ${danger?`<section class="card danger"><h2>${esc(L["sec.danger"])}</h2>${danger}</section>`:""}`);

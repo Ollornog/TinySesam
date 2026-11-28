@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-clean-baseline-and-modules-before-shell-and-headless.md)** Clean baseline and modules — before shell and headless continue — 6/6 erledigt
-* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 28/37 erledigt
+* ☐ **[M-2](M-2-shell-and-headless-every-ui-mode-local-idp-mixed-users.md)** Shell and headless: every UI mode, local/IdP/mixed users, library and server alike — 29/37 erledigt
 * ☐ **[M-3](M-3-trust-hardening-and-launch.md)** Trust, hardening and launch — before TinySesam is promoted widely — 0/7 erledigt
 * ☐ **[M-4](M-4-api-stable-1-0.md)** 1.0 — API stable enough for PyPI — 14/14 erledigt
 * ☐ **[M-5](M-5-after-1-0.md)** After 1.0 — keeping the published package maintained — 92/110 erledigt
@@ -150,7 +150,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-132](T-132-upgrade-list-for-breaks-after-0-31-0.md)** Upgrade list for the breaks after 0.31.0 · M-2
 * ☐ **[T-133](T-133-quickstart-with-a-configuration-file.md)** deploy/quickstart with a configuration file · M-2
 * ☑ **[T-134](T-134-docs-recipe-for-an-own-server-image-with-saml.md)** Docs: recipe for an own server image with the [saml] extra · M-2
-* ☐ **[T-135](T-135-account-page-shows-the-roles-each-source-delivers.md)** Account page in the panel: the roles each source delivers · M-2
+* ☑ **[T-135](T-135-account-page-shows-the-roles-each-source-delivers.md)** Account page in the panel: the roles each source delivers · M-2
 * ☐ **[T-136](T-136-knip-configuration-for-clients-js.md)** knip configuration for clients/js, so the unused-dependency check covers it · M-5
 * ☐ **[T-137](T-137-declare-optional-imports-requests-and-websockets.md)** Declare the optional imports: requests in client.py, websockets in tools/oauth-e2e · M-5
 * ☑ **[T-138](T-138-codeql-findings-before-the-closing-pr-of-a-sprint.md)** CodeQL findings before the closing PR of a sprint, not only in it · M-5
