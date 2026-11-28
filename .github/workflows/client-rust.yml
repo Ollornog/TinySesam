@@ -36,8 +36,17 @@ jobs:
           fetch-depth: 2
       - name: Classify
         id: classify
+        env:
+          WORKFLOW: ${{ github.workflow }}
         run: |
-          if reason="$(scripts/_nur_text.sh)"; then echo "nur_text=ja" >> "$GITHUB_OUTPUT"; fi
+          if reason="$(scripts/_nur_text.sh)"; then
+            # Sprint lane, T-150: a sprint pull request that changes this workflow's gate client or spec/ runs its jobs.
+            if [[ "$reason" == "SPRINT LANE"* ]] && scope="$(scripts/_client_scope.sh "$WORKFLOW")"; then
+              reason="$reason. But $scope"
+            else
+              echo "nur_text=ja" >> "$GITHUB_OUTPUT"
+            fi
+          fi
           echo "$reason"
 
   test:
@@ -65,11 +74,11 @@ jobs:
           if [ "$EVENT" != "pull_request" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"; echo "not a pull request: full run"; exit 0
           fi
-          changed="$(git diff --name-only HEAD^1 HEAD)"
-          if printf '%s\n' "$changed" | grep -qE '^(clients/rust/|spec/|\.github/workflows/client-rust\.yml$)'; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; echo "the client, the specification or this workflow changed"
+          # The scope lives in scripts/_client_scope.sh (T-150), shared with the job `classify`.
+          if scripts/_client_scope.sh client-rust; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nothing of the Rust client changed: green without a run"
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "green without a run"
           fi
 
       # The current stable toolchain (the only maintained Rust release); rustup is part of the runner image.

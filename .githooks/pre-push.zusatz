@@ -1,24 +1,39 @@
 #!/usr/bin/env bash
-# Repo extra of the fast pre-push (kit hook, "Repo-eigener Zusatz"): a change near the gate runs the gate-Caddy suite (T-116).
+# Repo extra of the fast pre-push (kit hook, "Repo-eigener Zusatz"). It also runs in the sprint lane of the PR CI
+# (the kit's hygiene calls the hook with PREPUSH_SPRINT_BASIS=<base of the pull request>).
 #
-# The hook picks tests by NAME of the changed file; a change in deploy/forward-auth/ names no test, and the suite skips
-# without a Caddy that has caddy-jwt (exit 77), which the hook counts as red. So: when the change touches the forward-auth
-# templates or the Caddy build, the suite runs here — it builds the Caddy with Docker once and keeps it by content
-# (tests/_gate_caddy_binary.py). Without Docker (or without a module the suite needs) the skip is named loudly and the
-# push goes on: the PR CI job `gate-caddy` always runs the suite.
+# The hook picks tests by NAME of the changed file; a change in spec/ or deploy/forward-auth/ names no test. Two extras:
+#
+# 1. The Python gate client (T-150): a change of the specification spec/, its generators or tinysesam/gate_client.py runs
+#    the client's vector and HTTP suites. The other clients' jobs (client-go, -js, -php, -rust) run in the sprint lane
+#    on such a change on their own: scripts/_client_scope.sh.
+# 2. The gate-Caddy suite (T-116): a change of the forward-auth templates or the Caddy build runs it — it builds the
+#    Caddy with Docker once and keeps it by content (tests/_gate_caddy_binary.py). Without Docker (or without a module
+#    the suite needs) the skip is named loudly and the push goes on: the PR CI job `gate-caddy` always runs the suite.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
-basis="$(git merge-base HEAD origin/main 2>/dev/null)" || basis=""
-[[ -n "$basis" ]] || { echo "  gate-caddy: no origin/main to compare with — PR CI"; exit 0; }
+basis="${PREPUSH_SPRINT_BASIS:-}"
+[[ -n "$basis" ]] || basis="$(git merge-base HEAD origin/main 2>/dev/null)" || basis=""
+[[ -n "$basis" ]] || { echo "  repo extra: no origin/main to compare with — PR CI"; exit 0; }
 changed="$(git diff --name-only "$basis" HEAD)"
-
-# The test file itself is run by the hook by name; everything else near the gate is not.
-grep -qE '^tests/test_gate_caddy\.py$' <<<"$changed" && exit 0
-grep -qE '^(deploy/forward-auth/|tests/_gate_caddy_binary\.py$)' <<<"$changed" || exit 0
 
 py=python3
 [[ -x .venv/bin/python ]] && py=.venv/bin/python
+
+# 1. Python gate client: vectors (spec/vectors against the client and the generators), HTTP and middleware.
+if grep -qE '^(spec/|scripts/_(gate|approval)_vectors\.py$|tinysesam/gate_client\.py$)' <<<"$changed"; then
+    echo "  python gate client: spec/ or the client changed — its vector and HTTP suites"
+    for suite in tests/test_gate_vectors.py tests/test_approval_vectors.py tests/test_gate_client.py; do
+        echo "  $suite"
+        "$py" "$suite" || { echo "  python gate client: $suite is red" >&2; exit 1; }
+    done
+fi
+
+# 2. Gate-Caddy. The test file itself is run by the hook by name; everything else near the gate is not.
+grep -qE '^tests/test_gate_caddy\.py$' <<<"$changed" && exit 0
+grep -qE '^(deploy/forward-auth/|tests/_gate_caddy_binary\.py$)' <<<"$changed" || exit 0
+
 echo "  gate-caddy: a change near the gate — running tests/test_gate_caddy.py"
 "$py" tests/test_gate_caddy.py
 rc=$?

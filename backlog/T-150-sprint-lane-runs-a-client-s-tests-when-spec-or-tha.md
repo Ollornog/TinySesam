@@ -1,7 +1,7 @@
 ---
 type: Task
 title: Sprint lane runs a client's tests when spec/ or that client changes
-status: offen
+status: erledigt
 points: 3
 id: T-150
 milestone: M-2
