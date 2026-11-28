@@ -304,8 +304,11 @@ def _approvals(config, error: list) -> None:
 APP_ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 #: The members of one `apps` entry: the account API (`provisioning`), the approvals of the application's own
 #: actions (`approvals`, stage B), its permissions (`permissions`, T-100), the hosts it is served on (`hosts`) and what
-#: its service account may do with the permission API (`permission_scopes`, T-101).
-APP_KEYS = ("account", "name", "provisioning", "approvals", "permissions", "hosts", "permission_scopes")
+#: its service account may do with the permission API (`permission_scopes`, T-101) and the shell layout on its hosts
+#: (`layout`, T-103).
+APP_KEYS = ("account", "name", "provisioning", "approvals", "permissions", "hosts", "permission_scopes", "layout")
+#: The layouts of the shell (T-103): `shell_layout`, `apps[id].layout`, `auth.topbar(layout=…)`.
+SHELL_LAYOUTS = ("top", "side")
 #: The scopes of the permission API (T-101): register the manifest (`PUT /auth/api/apps/{id}/permissions`), read the
 #: permissions of an account for the application (`GET /auth/api/users/{id}/permissions?app=`).
 PERMISSION_SCOPES = ("permissions:register", "permissions:read")
@@ -397,6 +400,15 @@ def _apps(config, error: list, warnings: list) -> None:
                                                 "at most one application (its permissions travel with the requests "
                                                 "to it)", a=other, b=app_id, host=host))
                     host_owner.setdefault(host, app_id)
+        layout = entry.get("layout")
+        if layout is not None:
+            if layout not in SHELL_LAYOUTS:
+                error.append(_t(config, "apps[{app!r}].layout: {v!r} — \"top\" or \"side\"", app=app_id, v=layout))
+            elif hosts is None:
+                # Config without a reader (T-103): the layout is read for the application's hosts only.
+                error.append(_t(config, "apps[{app!r}].layout without hosts: the layout holds on the application's "
+                                        "hosts, so nothing would ever read it — name the hosts or drop the layout",
+                                app=app_id))
         scopes_api = entry.get("permission_scopes")
         if scopes_api is not None:
             permission_api = True

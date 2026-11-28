@@ -41,12 +41,20 @@ class TinySesamConfig:
     #: sign out). Sign-in and error pages show logo and name only. False = no bar (the account page then carries
     #: its admin and sign-out links itself) — e.g. when `brand_header` already frames the pages with an own navigation.
     topbar_enabled: bool = True
+    #: Layout of the shell (T-103): "top" (the top bar, default) or "side" (the same bar as a side bar on the left; below
+    #: 900 px wide it folds back into the top bar, its links into the menu). It holds for TinySesam's own pages — the
+    #: panel and the account page included —, for `auth.topbar()` without a `layout` and for the shell component
+    #: `<ts-shell>` (`/auth/shell.js`, `/.tinysesam/shell.js`) without a `layout` attribute. An application of `apps`
+    #: chooses its own with `apps[id].layout` for its `hosts` (and for TinySesam's pages in its frame).
+    shell_layout: str = "top"
     #: Links in the top bar, as (title, target) pairs: `[("Wiki", "/wiki"), ("Files", "https://files.example.com/")]`.
     #: A target is a path on the own origin (`/…`, as the browser sees it) or an https address on a host that a
     #: `next=` may reach too (`base_url`, `trusted_redirect_hosts`). Shown next to the name, on a phone in the menu.
     #: An optional third element limits who sees the link (T-76): `("Admin", "/admin", {"admin": True})` for accounts
     #: with the admin flag, `("Team", "/team", {"role": "teamadmin"})` for accounts with the role — decided by
-    #: `has_role`, so with `admin_implies_roles` (default) an admin sees role links too. A pair stays visible to
+    #: `has_role`, so with `admin_implies_roles` (default) an admin sees role links too —, and (T-103)
+    #: `("Trash", "/trash", {"permission": "docs.delete", "app": "docs"})` for accounts holding the permission of that
+    #: application (`has_permission`). A pair stays visible to
     #: everyone. Visibility is a convenience, not a protection: the target checks access itself. Pages without the
     #: account menu (sign-in, errors) show no links at all. The same filter answers `GET /auth/topbar.json`.
     topbar_links: list = field(default_factory=list)
@@ -623,6 +631,9 @@ class TinySesamConfig:
     # `forward_apps` without its own `name` takes the application's. `permission_scopes` lets the service account's
     # automation key register the manifest (`"permissions:register"`, `PUT /auth/api/apps/{id}/permissions`) and read
     # an account's permissions for the application (`"permissions:read"`, `GET /auth/api/users/{id}/permissions?app=`).
+    # `layout` (T-103, `"top"` | `"side"`) is the shell layout on the application's `hosts` — the `frame` part of
+    # `/.tinysesam/topbar.json`, read by the shell component `<ts-shell>` without a `layout` attribute, and the layout
+    # of TinySesam's own pages in the application's frame; without it `shell_layout` holds. It needs `hosts`.
     apps: dict = field(default_factory=dict)
 
     # --- Sessions (server-side, revocable) ---

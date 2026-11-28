@@ -67,7 +67,8 @@ app.example.com {
 	# (?scope=app|all, otherwise forward_logout applies); register
 	# https://app.example.com/.tinysesam/after-logout with the provider as Logout Callback URL.
 	# The same prefix carries the top bar and the own account as data for the application's page
-	# (T-76: /.tinysesam/topbar.json, T-91: /.tinysesam/account.json), with the browser's cookies.
+	# (T-76: /.tinysesam/topbar.json, T-91: /.tinysesam/account.json), with the browser's cookies, and the shell
+	# component the page loads (T-103: /.tinysesam/shell.js, /.tinysesam/shell.css).
 	handle /.tinysesam/* {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 	}

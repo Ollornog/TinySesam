@@ -419,9 +419,13 @@ try:
         assert "path" not in a and h.get("Cache-Control") == "no-store", (was, dict(h))
         st, h, a = request("/.tinysesam/account.json", None, port=port)
         assert st == 401, (was, "without a session", st, a)
-    ok("T-76/T-91: /.tinysesam/topbar.json and /.tinysesam/account.json on the application's host reach TinySesam "
-       "with the browser's cookies (account.json 401 without) — "
-       "plain, quickstart and gate template")
+        # T-103: the shell component the application's page loads — TinySesam's script and stylesheet, not the app's.
+        for asset, kind in (("shell.js", "text/javascript"), ("shell.css", "text/css")):
+            st, h, a = request(f"/.tinysesam/{asset}", None, port=port)
+            assert st == 200 and (h.get("Content-Type") or "").startswith(kind) and a is None, (was, asset, st, a)
+    ok("T-76/T-91/T-103: /.tinysesam/topbar.json, /.tinysesam/account.json and the shell component "
+       "(/.tinysesam/shell.js, shell.css) on the application's host reach TinySesam with the browser's cookies "
+       "(account.json 401 without) — plain, quickstart and gate template")
 
     # ---------- with gate cookie: TinySesam is not asked ----------
     with_gate = {**session, "__Host-tinysesam_gate": tok, "other": "1"}

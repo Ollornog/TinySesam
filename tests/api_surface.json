@@ -748,12 +748,12 @@
     },
     "topbar": {
       "server": "GET /auth/topbar.json",
-      "sig": "(request: 'Request', *, nonce: 'str' = '', current: 'str' = '') -> 'str'",
+      "sig": "(request: 'Request', *, nonce: 'str' = '', current: 'str' = '', layout: 'str' = '') -> 'str'",
       "tier": "B"
     },
     "topbar_data": {
       "server": "GET /auth/topbar.json",
-      "sig": "(user=None, *, base: 'Optional[str]' = None) -> 'dict'",
+      "sig": "(user=None, *, base: 'Optional[str]' = None, host: 'str' = '') -> 'dict'",
       "tier": "B"
     },
     "topbar_head": {
@@ -1897,6 +1897,10 @@
       "field": "int = 12",
       "tier": "A"
     },
+    "shell_layout": {
+      "field": "str = 'top'",
+      "tier": "B"
+    },
     "signin_link_max_ttl_min": {
       "field": "int = 1440",
       "tier": "A"
@@ -2538,6 +2542,14 @@
       ],
       "tier": "A"
     },
+    "GET /.tinysesam/shell.css": {
+      "keys": [],
+      "tier": "A"
+    },
+    "GET /.tinysesam/shell.js": {
+      "keys": [],
+      "tier": "A"
+    },
     "GET /.tinysesam/start": {
       "keys": [
         "query:rd",
@@ -2746,8 +2758,18 @@
       ],
       "tier": "B"
     },
-    "GET /auth/topbar.json": {
+    "GET /auth/shell.css": {
       "keys": [],
+      "tier": "B"
+    },
+    "GET /auth/shell.js": {
+      "keys": [],
+      "tier": "B"
+    },
+    "GET /auth/topbar.json": {
+      "keys": [
+        "query:app"
+      ],
       "tier": "B"
     },
     "GET /auth/totp": {

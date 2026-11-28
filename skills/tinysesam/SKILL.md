@@ -188,7 +188,11 @@ def dashboard(request: Request, response: Response):
             f"{auth.topbar(request, nonce=nonce, current='/dashboard')}<main>…</main></body></html>")
 ```
 
-A third element limits a link: `("Admin", "/admin", {"admin": True})`, `("Team", "/team", {"role": "teamadmin"})`.
+A third element limits a link: `("Admin", "/admin", {"admin": True})`, `("Team", "/team", {"role": "teamadmin"})`,
+`("Trash", "/trash", {"permission": "docs.delete", "app": "docs"})`. A side bar instead of the top bar:
+`shell_layout="side"` (every built-in page too) or `auth.topbar(request, layout="side")` for one page. An application in
+another language loads the shell component instead of drawing the bar: `<script src="/.tinysesam/shell.js" nonce=…>` in
+`<head>` and `<ts-shell current="/docs"></ts-shell>` in `<body>` (spec §8d).
 An interface not drawn in Python takes the bar as data: `auth.topbar_data(account)` in the host app, or
 `GET /auth/topbar.json` (on an app host behind the gate `/.tinysesam/topbar.json`). Linking the app's own admin from
 TinySesam and back: README *Recipe: link your app's admin*, runnable as `examples/app_admin.py`.

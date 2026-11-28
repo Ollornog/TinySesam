@@ -38,6 +38,22 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Added
 
+- Shell on top and at the side, one component (T-103, part 1). `shell_layout` (`"top"` | `"side"`, tier B) draws the
+  bar of the built-in pages — the account page and the admin panel included — as a 248 px side bar on the left (below
+  900 px it folds back into the top bar, the links into the menu); `auth.topbar(request, layout=…)` chooses per page,
+  `apps[id].layout` for an application's `hosts` (it needs `hosts`: a layout nothing reads is a `ConfigError`), and
+  TinySesam's pages in that application's frame follow it. The shell component `<ts-shell layout="top|side"
+  current="/docs">` (`/.tinysesam/shell.js` on the application's host, `/auth/shell.js` in the library; `shell.css`
+  beside it) restores light/dark before the first paint, adds the tokens with the script's nonce and draws the bar of
+  `topbar.py` from `topbar.json` in its shadow DOM — no client code, a strict CSP needs only the nonce on the
+  `<script>`. `topbar.json` gains the part `frame` (`layout`, and on a host with an app frame its `name`, `home` and
+  the links the person may see; spec §8d, `spec/vectors/topbar.json` regenerated, every client ignores it), and a
+  link may be limited to the holders of one permission (`{"permission": "docs.delete", "app": "docs"}`, besides
+  `admin` and `role`). Example Ex2 is the surface "shell at the side" (Python, library): its pages carry a strict
+  CSP, *Editing guide* follows a role, *Trash* a permission. `tests/test_shell.py` checks configuration, data, pages and
+  assets; `tests/test_shell_browser.py` (CI job `browser`) drives Ex2 at 375 and 1280 px, light and dark, and proves
+  that the component draws exactly the markup of `auth.topbar()`. The proxy templates already pass `/.tinysesam/*`
+  through; their comments and the gate-Caddy suite name the two files.
 - Permissions in the Rust and PHP gate clients (T-101 part 4): `has_permission` / `hasPermission`, the
   `Remote-Permissions` slot and `ts_perms`, `account` normalization with `permissions`, `register_request` /
   `register_permissions` (Rust, sending with the feature `jwks`) and `Permissions::request` / `Permissions::register`
@@ -184,6 +200,8 @@ All notable changes. Format loosely based on [Keep a Changelog](https://keepacha
 
 ### Changed
 
+- `topbar.json` on an application's host with an app frame (T-103): `account.href` and `approvals.href` carry
+  `app=<host>`, so TinySesam's pages open in the application's frame — as `account.json` already did.
 - Hygiene test: no call with a side effect inside an `assert` (T-138). `tests/test_repo.py` mirrors CodeQL's
   `py/side-effect-in-assert` (the names `print`, `write`, `append`, `pop`, `remove`, `discard`, `delete`, `close`,
   `open`, `exit`, the `subprocess` calls, `yield`) over every tracked Python file, with a self-probe. The sprint lane

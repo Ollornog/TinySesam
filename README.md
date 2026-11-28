@@ -691,7 +691,9 @@ TinySesamConfig(topbar_links=[("Docs", "/"),
 
 `{"admin": True}` shows the link to accounts with the admin flag, `{"role": "…"}` to accounts with the role — decided
 by `has_role`, so with `admin_implies_roles` (on by default) an administrator sees role links too, exactly as the
-target's own `require(role=…)` lets them in. A plain pair is shown to everyone. The bar, the phone menu and
+target's own `require(role=…)` lets them in. `{"permission": "docs.delete", "app": "docs"}` shows it to the holders of
+that permission of the application (`has_permission`, the answer of `require_permission`); a permission of an
+application not in `apps` or a name off the permission rule is a `ConfigError`. A plain pair is shown to everyone. The bar, the phone menu and
 `auth.topbar(request)` apply the same filter; pages without the account menu (sign-in, errors) carry no link at all,
 not even in the HTML source. A role missing from `available_roles` is a warning at the start (a typo would hide the
 link from everyone), any other third element a `ConfigError`. Visibility is a convenience, not a protection: the
@@ -737,6 +739,31 @@ An application that uses TinySesam as a library but draws its interface elsewher
 engine of another language) gets the same dict from `auth.topbar_data(account)` — for `session_user(request)` or for
 the account behind `Remote-Id`; a locked or unknown account gets no menu. TinySesam's paths in it are absolute on
 `base_url`; `base=` puts another prefix in front.
+
+**Shell at the side.** `shell_layout="side"` draws the same bar as a side bar on the left — logo and name on top, the
+links below each other, the account menu at the foot (it opens upwards) — on every built-in page, the account page and
+the admin panel included, and in `auth.topbar(request)`; the `<body>` gives way with `padding-left`. Below 900 px it
+folds back into the top bar with the links in the menu. `auth.topbar(request, layout="side")` chooses it for one page,
+and `apps[id].layout` (`"top"` or `"side"`) for an application's `hosts`: TinySesam's pages in that application's frame
+follow it, and so does the shell component there.
+
+**The shell component.** An application in any language shows the bar without drawing it — one script in `<head>`, one
+element first thing in `<body>`:
+
+```html
+<script src="/.tinysesam/shell.js" nonce="…"></script>   <!-- behind the gate; library: /auth/shell.js -->
+<ts-shell current="/docs"></ts-shell>                      <!-- layout="top" | "side", else apps[id].layout -->
+```
+
+The script sets light/dark before the first paint, adds `shell.css` (the tokens, the room for the side bar) with its
+own nonce and defines `<ts-shell>`; the element fetches `topbar.json` beside it, same origin with the browser's cookies,
+and draws the bar of TinySesam's pages in its shadow DOM — the markup of `topbar.py`, the same CSS, so the application's
+CSS does not reach it. A strict CSP needs only the nonce on the `<script>`. On an application's host with an app frame
+(`forward_apps[host]` with `home`/`links`) it shows "‹ name" back to `home`, the frame's links and *Security*, framed.
+"Sign out" is a link to TinySesam's sign-out page there (the page does not hold TinySesam's CSRF token). The answer's
+part `frame` and the details: spec §8d of [`spec/gate-client.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/gate-client.md).
+[`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) (Python, library) shows the
+shell at the side.
 
 **Recipe: link your app's admin from TinySesam — and back.** TinySesam's admin panel gets no tabs of the application
 (T-77 was rejected for this); the two administrations link to each other instead.
@@ -1439,8 +1466,8 @@ cells are the tasks of milestone M-2 in `backlog/`. What exists today is named i
 
 | Surface | Who draws the navigation | Where TinySesam's pages appear | Today |
 |---|---|---|---|
-| **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the top bar of spec §8 (`topbar.json`, `auth.topbar_data`), T-103 adds the layout switch |
-| **Shell at the side** | the same component as a side bar | as above | T-103 |
+| **Shell on top** | TinySesam's top bar above the application | The account and administration pages open from the bar | the shell component `<ts-shell>` (spec §8d) or `auth.topbar()` |
+| **Shell at the side** | the same component as a side bar | as above | `layout="side"`, `shell_layout`, `apps[id].layout`, example Ex2 |
 | **Hybrid** | the application | one link "Account"; everything else in a TinySesam area, framed with the application's name and a way back | the app frame (T-91), T-104 adds the area |
 | **Headless** | the application, completely | none inside the application: it reads data (`account.json`, `admin/*.json`) and sends the person to a TinySesam action page for every change | the account overview and the account API, T-105 and T-106 add the action pages and the reading side |
 
@@ -3126,7 +3153,7 @@ Every Python block in both files runs in the test suite, and every name they men
 
 ## Status
 
-**155 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**157 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

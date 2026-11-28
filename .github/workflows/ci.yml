@@ -150,6 +150,11 @@ jobs:
         run: python tests/test_browser.py
         env:
           CHROME: ${{ steps.chrome.outputs.chrome-path }}
+      # T-103: the shell component and the side layout (Ex2), in the same Chrome.
+      - name: Browser test of the shell
+        run: python tests/test_shell_browser.py
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
       - name: Repo hygiene
         run: python tests/test_repo.py
       - name: Website test

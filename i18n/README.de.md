@@ -707,7 +707,9 @@ TinySesamConfig(topbar_links=[("Doku", "/"),
 
 `{"admin": True}` zeigt den Link Konten mit Admin-Flag, `{"role": "…"}` Konten mit der Rolle — entschieden von
 `has_role`, mit `admin_implies_roles` (Vorgabe an) sieht ein Admin also auch Rollen-Links, genau wie ihn das
-`require(role=…)` des Ziels hineinlässt. Ein einfaches Paar sehen alle. Leiste, Handy-Menü und `auth.topbar(request)`
+`require(role=…)` des Ziels hineinlässt. `{"permission": "docs.delete", "app": "docs"}` zeigt ihn den Inhabern dieser
+Berechtigung der Anwendung (`has_permission`, die Antwort von `require_permission`); eine Berechtigung einer Anwendung,
+die nicht in `apps` steht, oder ein Name abseits der Regel für Berechtigungen ist ein `ConfigError`. Ein einfaches Paar sehen alle. Leiste, Handy-Menü und `auth.topbar(request)`
 filtern gleich; Seiten ohne Kontomenü (Anmeldung, Fehler) tragen gar keinen Link, auch nicht im HTML-Quelltext. Eine
 Rolle, die nicht in `available_roles` steht, ist beim Start eine Warnung (ein Tippfehler versteckte den Link vor
 allen), jedes andere dritte Element ein `ConfigError`. Sichtbarkeit ist Komfort, kein Schutz: Das Ziel prüft den
@@ -754,6 +756,32 @@ Eine Anwendung, die TinySesam als Bibliothek nutzt, ihre Oberfläche aber anders
 Template-Engine einer anderen Sprache), bekommt dasselbe Dict von `auth.topbar_data(account)` — für
 `session_user(request)` oder das Konto hinter `Remote-Id`; ein gesperrtes oder unbekanntes Konto bekommt kein Menü.
 TinySesams Pfade darin sind absolut auf `base_url`; `base=` setzt ein anderes Präfix davor.
+
+**Hülle an der Seite.** `shell_layout="side"` zeichnet dieselbe Leiste als Seitenleiste links — Logo und Name oben,
+die Links untereinander, das Kontomenü am Fuß (es öffnet nach oben) — auf jeder eingebauten Seite, Kontoseite und
+Admin-Panel eingeschlossen, und in `auth.topbar(request)`; der `<body>` weicht mit `padding-left` aus. Unter 900 px
+klappt sie in die Kopfleiste zurück, die Links ins Menü. `auth.topbar(request, layout="side")` wählt sie für eine
+Seite, `apps[id].layout` (`"top"` oder `"side"`) für die `hosts` einer Anwendung: TinySesams Seiten im Rahmen dieser
+Anwendung folgen ihm, und die Hüllen-Komponente dort auch.
+
+**Die Hüllen-Komponente.** Eine Anwendung in jeder Sprache zeigt die Leiste, ohne sie zu zeichnen — ein Skript in
+`<head>`, ein Element als Erstes in `<body>`:
+
+```html
+<script src="/.tinysesam/shell.js" nonce="…"></script>   <!-- hinter dem Gate; Bibliothek: /auth/shell.js -->
+<ts-shell current="/docs"></ts-shell>                      <!-- layout="top" | "side", sonst apps[id].layout -->
+```
+
+Das Skript setzt Hell/Dunkel vor dem ersten Zeichnen, hängt `shell.css` (die Tokens, den Platz für die Seitenleiste)
+mit seiner eigenen Nonce an und definiert `<ts-shell>`; das Element holt `topbar.json` daneben, gleicher Ursprung mit den
+Cookies des Browsers, und zeichnet die Leiste von TinySesams Seiten in sein Shadow DOM — das Markup aus `topbar.py`,
+dasselbe CSS, das CSS der Anwendung erreicht sie nicht. Eine strikte CSP braucht nur die Nonce am `<script>`. Auf dem
+Host einer Anwendung mit App-Rahmen (`forward_apps[host]` mit `home`/`links`) zeigt sie „‹ Name“ zurück zu `home`, die
+Links des Rahmens und *Sicherheit*, gerahmt. „Abmelden“ ist dort ein Link auf TinySesams Abmeldeseite (die Seite hält
+TinySesams CSRF-Token nicht). Der Teil `frame` der Antwort und die Einzelheiten: Spezifikation §8d in
+[`spec/gate-client.md`](https://github.com/Ollornog/TinySesam/blob/main/spec/gate-client.md).
+[`examples/ex2/app.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/ex2/app.py) (Python, Bibliothek) zeigt
+die Hülle an der Seite.
 
 **Rezept: den Admin deiner App aus TinySesam verlinken — und zurück.** TinySesams Admin-Panel bekommt keine Reiter der
 Anwendung (T-77 wurde dafür verworfen); die beiden Verwaltungen verlinken einander.
@@ -1473,8 +1501,8 @@ Zellen bauen, sind die Aufgaben des Meilensteins M-2 in `backlog/`. Was heute sc
 
 | Oberfläche | Wer die Navigation zeichnet | Wo TinySesams Seiten erscheinen | Heute |
 |---|---|---|---|
-| **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Kopfleiste nach Spezifikation §8 (`topbar.json`, `auth.topbar_data`), T-103 bringt den Layout-Schalter |
-| **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | T-103 |
+| **Hülle oben** | TinySesams Kopfleiste über der Anwendung | Konto- und Verwaltungsseiten öffnen sich aus der Leiste | die Hüllen-Komponente `<ts-shell>` (Spezifikation §8d) oder `auth.topbar()` |
+| **Hülle an der Seite** | dieselbe Komponente als Seitenleiste | wie oben | `layout="side"`, `shell_layout`, `apps[id].layout`, Beispiel Ex2 |
 | **Hybrid** | die Anwendung | ein Link „Konto“; alles andere in einem TinySesam-Bereich, gerahmt mit dem Namen der Anwendung und einem Rückweg | der App-Rahmen (T-91), T-104 bringt den Bereich |
 | **Headless** | die Anwendung, vollständig | keine innerhalb der Anwendung: sie liest Daten (`account.json`, `admin/*.json`) und schickt die Person für jede Änderung auf eine TinySesam-Aktionsseite | die Kontoübersicht und die Konten-API, T-105 und T-106 bringen Aktionsseiten und die Leseseite |
 
@@ -3205,7 +3233,7 @@ Jeder Python-Block beider Dateien läuft in der Testsuite, und jeder genannte Na
 
 ## Status
 
-**155 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**157 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -116,3 +116,31 @@ ok("5. withdrawn in the panel: the button is gone at once and the route refuses"
 assert signed_in("nora").get("/").status_code == 403
 assert TestClient(app).get("/", headers={"Accept": "application/json"}).status_code == 401
 ok("6. an account without a role reads nothing (403); without a session 401")
+
+# 7 ──────────────────────────────────────────────────────────────────────────────────────────────────
+# T-103: the shell at the side — the application's pages and TinySesam's own, links by role and by permission.
+import re  # noqa: E402
+
+panel(admin, "/permissions/assign", {"app": "docs", "permission": "docs.delete", "role": "docs-editor", "granted": True})
+
+
+def bar_links(c, path="/"):
+    page = c.get(path, headers={"Accept": "text/html"})
+    assert page.status_code == 200, (path, page.status_code)
+    assert "<header class='tsbar tsside'>" in page.text, f"{path}: not the side layout"
+    nav = re.search(r"<nav class=tsbar-links[^>]*>(.*?)</nav>", page.text, re.S).group(1)
+    return re.findall(r">([^<]+)</a>", nav), page
+
+
+titles, page = bar_links(editor)
+assert titles == ["Documents", "Editing guide", "Trash"], titles
+assert "nonce-" in page.headers["content-security-policy"] and "unsafe-inline" not in page.headers["content-security-policy"]
+assert all("nonce=" in tag for tag in re.findall(r"<(?:script|style)\b[^>]*>", page.text)), "a tag without the nonce"
+assert bar_links(reader)[0] == ["Documents"]
+assert editor.get("/trash").status_code == 200 and reader.get("/trash").status_code == 403
+assert editor.get("/guide").status_code == 200 and reader.get("/guide").status_code == 403
+for path in ("/auth/account", "/auth/admin"):
+    who = admin if path == "/auth/admin" else editor
+    assert "<header class='tsbar tsside'>" in who.get(path, headers={"Accept": "text/html"}).text, path
+ok("7. shell at the side on the application's pages and on TinySesam's account page and panel; the editor sees "
+   "Editing guide (role) and Trash (permission), the reader neither — and the routes agree; strict CSP with a nonce")

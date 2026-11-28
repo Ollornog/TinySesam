@@ -1157,7 +1157,8 @@ def render_panel(auth, base: str, warn: str = "", prefix: str = "", viewer=None,
     me = {"id": seen.get("id"), "owner": bool(seen.get("is_owner"))}
     bar = ""
     if getattr(cfg, "topbar_enabled", True):
-        bar = (_topbar.render(auth, viewer=viewer, csrf=csrf, current="admin").replace("__TS_P__", prefix)
+        bar = (_topbar.render(auth, viewer=viewer, csrf=csrf, current="admin", layout=_topbar.layout_for(auth))
+               .replace("__TS_P__", prefix)
                + _topbar.assets())
     # `__TS_P__` first and only in the scaffold — mark, warning and header/footer come after (T-15).
     return (_PAGE.replace("__TS_P__", prefix).replace("__TOKENS__", TOKENS)

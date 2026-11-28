@@ -801,8 +801,14 @@ _DE: dict[str, str] = {
          "ohne Anführungszeichen, spitze Klammern, Backslash und Leerzeichen"),
     "{f}: {v!r} — each entry is a (title, target) pair with a title of 1–60 characters":
         "{f}: {v!r} — jeder Eintrag ist ein Paar (Titel, Ziel) mit einem Titel aus 1–60 Zeichen",
-    "{f}: {v!r} — the visibility is {{\"admin\": True}} or {{\"role\": \"name\"}}":
-        "{f}: {v!r} — die Sichtbarkeit ist {{\"admin\": True}} oder {{\"role\": \"name\"}}",
+    ("{f}: {v!r} — the visibility is {{\"admin\": True}}, {{\"role\": \"name\"}} or "
+     "{{\"permission\": \"app.name\", \"app\": \"id\"}}"):
+        ("{f}: {v!r} — die Sichtbarkeit ist {{\"admin\": True}}, {{\"role\": \"name\"}} oder "
+         "{{\"permission\": \"app.name\", \"app\": \"id\"}}"),
+    ("{f}: the link {title!r} names the permission {perm!r} of the application {app!r} — the name must follow the "
+     "permission rule and the application must stand in apps, or nobody would ever see the link"):
+        ("{f}: Der Link {title!r} nennt die Berechtigung {perm!r} der Anwendung {app!r} — der Name muss der Regel für "
+         "Berechtigungen folgen und die Anwendung in apps stehen, sonst sähe den Link nie jemand"),
     ("{f}: the link {title!r} is shown only to the role {role!r}, which is not in "
      "available_roles — a typo hides it from everyone. List the role in available_roles."):
         ("{f}: Der Link {title!r} erscheint nur für die Rolle {role!r}, die nicht in available_roles "
@@ -992,6 +998,14 @@ _DE: dict[str, str] = {
      "({{\"en\": \"Example\", \"de\": \"Example\"}})"):
         ("apps[{app!r}]: \"name\" ist ein Text oder eine Zuordnung Sprache → Text "
          "({{\"en\": \"Example\", \"de\": \"Example\"}})"),
+    "apps[{app!r}].layout: {v!r} — \"top\" or \"side\"":
+        "apps[{app!r}].layout: {v!r} — \"top\" oder \"side\"",
+    ("apps[{app!r}].layout without hosts: the layout holds on the application's hosts, so nothing would ever read it "
+     "— name the hosts or drop the layout"):
+        ("apps[{app!r}].layout ohne hosts: Das Layout gilt auf den Hosts der Anwendung, also läse es nie etwas — die "
+         "Hosts nennen oder das Layout weglassen"),
+    "shell_layout={v!r} — \"top\" or \"side\"":
+        "shell_layout={v!r} — \"top\" oder \"side\"",
     ("apps[{app!r}].hosts: a non-empty list of at most {max} host names in lower case, without scheme, port or "
      "trailing dot (\"docs.example.com\")"):
         ("apps[{app!r}].hosts: eine nicht leere Liste von höchstens {max} Hostnamen in Kleinbuchstaben, ohne Schema, "

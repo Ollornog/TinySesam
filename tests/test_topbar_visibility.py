@@ -165,7 +165,7 @@ assert [x["title"] for x in c_lead.get("/auth/topbar.json").json()["links"]] == 
 j = anon.get("/auth/topbar.json").json()
 assert j == {"brand": auth.cfg.rp_name, "signed_in": False, "name": None, "links": [], "menu_links": [],
              "account": {"shown": False, "href": None}, "admin_panel": {"shown": False, "href": None},
-             "logout": None}, j
+             "logout": None, "frame": {"name": None, "home": None, "links": [], "layout": "top"}}, j
 # An API key is no browser session: the bar shows it no menu, the JSON says the same.
 key = auth.create_api_key(admin, name="probe")["key"]
 j = TestClient(app).get("/auth/topbar.json", headers={"Authorization": f"Bearer {key}"}).json()

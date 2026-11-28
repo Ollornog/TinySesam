@@ -220,6 +220,8 @@ def check_config(config) -> tuple[list[str], list[str]]:
                           warnings)
     _topbar_link_findings(config, "topbar_menu_links", getattr(config, "topbar_menu_links", None), _hosts, _roles_known,
                           error, warnings)
+    if getattr(config, "shell_layout", "top") not in ("top", "side"):
+        error.append(_t(config, "shell_layout={v!r} — \"top\" or \"side\"", v=getattr(config, "shell_layout", None)))
     _menu = getattr(config, "topbar_menu_links", None) or []
     if isinstance(_menu, (list, tuple)) and len(_menu) > 10:
         warnings.append(_t(
